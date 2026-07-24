@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 env:
-  PNPM_VERSION: 10.24.0
+  PNPM_VERSION: "10.24.0"
   NODE_VERSION: "24"
 
 jobs:
@@ -136,19 +136,8 @@ jobs:
         shell: bash
         run: |
           mkdir -p desktop-dist
-          # Windows NSIS/MSI
-          find apps/client/src-tauri/target -type f \( -name '*.msi' -o -name '*.exe' -o -name '*.nsis.zip' \) \
-            ! -name 'prometheus-server*.exe' ! -path '*/deps/*' ! -path '*/build/*' \
-            -print -exec cp {} desktop-dist/ \; || true
-          # macOS DMG/APP bundles as zip
-          find apps/client/src-tauri/target -type f \( -name '*.dmg' -o -name '*.app.tar.gz' \) \
-            -print -exec cp {} desktop-dist/ \; || true
-          # Linux deb/AppImage/rpm
-          find apps/client/src-tauri/target -type f \( -name '*.deb' -o -name '*.AppImage' -o -name '*.rpm' \) \
-            -print -exec cp {} desktop-dist/ \; || true
-          # Fallback: main packaged binary folder
+          find apps/client/src-tauri/target -type f \( -name '*.msi' -o -name '*-setup.exe' -o -name '*.nsis.zip' -o -name '*.dmg' -o -name '*.app.tar.gz' -o -name '*.deb' -o -name '*.AppImage' -o -name '*.rpm' \) -print -exec cp {} desktop-dist/ \; || true
           if [ -z "$(ls -A desktop-dist 2>/dev/null)" ]; then
-            find apps/client/src-tauri/target -type d -name bundle -print
             find apps/client/src-tauri/target -path '*/release/bundle/*' -type f -print -exec cp {} desktop-dist/ \; || true
           fi
           ls -laR desktop-dist
@@ -182,17 +171,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
-      - name: Install cargo-ndk helpers
-        run: |
-          cargo install cargo-ndk --locked || true
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @prometheus/protocol build
       - name: Init Android project
         working-directory: apps/client
         env:
           CI: "true"
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
         run: |
           if [ ! -d src-tauri/gen/android ]; then
             pnpm exec tauri android init --ci --skip-targets-install
@@ -238,23 +224,8 @@ jobs:
       - name: Configure iOS development team
         working-directory: apps/client
         env:
-          IOS_DEVELOPMENT_TEAM: ${{ secrets.IOS_DEVELOPMENT_TEAM }}
-        run: |
-          TEAM="${IOS_DEVELOPMENT_TEAM:-0000000000}"
-          python3 - <<PY
-          import json
-          from pathlib import Path
-          team = "${TEAM}"
-          for rel in ["src-tauri/tauri.conf.json", "src-tauri/tauri.ios.conf.json"]:
-              path = Path(rel)
-              data = json.loads(path.read_text())
-              bundle = data.setdefault("bundle", {})
-              ios = bundle.setdefault("iOS", {})
-              ios["developmentTeam"] = team
-              path.write_text(json.dumps(data, indent=2) + "
-")
-          print(f"configured developmentTeam={team}")
-          PY
+          TEAM: ${{ secrets.IOS_DEVELOPMENT_TEAM }}
+        run: python3 scripts/configure_ios_team.py
       - name: Init iOS project
         working-directory: apps/client
         env:
@@ -263,100 +234,23 @@ jobs:
           if [ ! -d src-tauri/gen/apple ] && [ ! -d src-tauri/gen/ios ]; then
             pnpm exec tauri ios init --ci --skip-targets-install
           fi
-          echo "iOS gen tree:"
           find src-tauri/gen -maxdepth 3 -type d -print || true
       - name: Build iOS app
         working-directory: apps/client
         env:
           CI: "true"
           IOS_DEVELOPMENT_TEAM: ${{ secrets.IOS_DEVELOPMENT_TEAM }}
-        run: |
-          set +e
-          if [ -n "$IOS_DEVELOPMENT_TEAM" ]; then
-            pnpm exec tauri ios build --ci --config src-tauri/tauri.mobile.conf.json --export-method debugging
-            status=$?
-          else
-            pnpm exec tauri ios build --ci --config src-tauri/tauri.mobile.conf.json -- --target aarch64-apple-ios-sim
-            status=$?
-          fi
-          if [ $status -eq 0 ]; then
-            exit 0
-          fi
-          echo "tauri ios build failed ($status); falling back to unsigned simulator xcodebuild"
-          APP_DIR=""
-          if [ -d src-tauri/gen/apple ]; then
-            APP_DIR="src-tauri/gen/apple"
-          elif [ -d src-tauri/gen/ios ]; then
-            APP_DIR="src-tauri/gen/ios"
-          else
-            echo "No generated Apple project found"
-            exit $status
-          fi
-          shopt -s nullglob
-          projects=("$APP_DIR"/*.xcodeproj)
-          workspaces=("$APP_DIR"/*.xcworkspace)
-          SCHEME="prometheus_iOS"
-          if [ ${#workspaces[@]} -gt 0 ]; then
-            xcodebuild -list -workspace "${workspaces[0]}" || true
-            xcodebuild \
-              -workspace "${workspaces[0]}" \
-              -scheme "$SCHEME" \
-              -configuration Release \
-              -sdk iphonesimulator \
-              -destination 'generic/platform=iOS Simulator' \
-              -derivedDataPath ios-derived \
-              CODE_SIGNING_ALLOWED=NO \
-              CODE_SIGNING_REQUIRED=NO \
-              CODE_SIGN_IDENTITY="" \
-              build
-          elif [ ${#projects[@]} -gt 0 ]; then
-            xcodebuild -list -project "${projects[0]}" || true
-            xcodebuild \
-              -project "${projects[0]}" \
-              -scheme "$SCHEME" \
-              -configuration Release \
-              -sdk iphonesimulator \
-              -destination 'generic/platform=iOS Simulator' \
-              -derivedDataPath ios-derived \
-              CODE_SIGNING_ALLOWED=NO \
-              CODE_SIGNING_REQUIRED=NO \
-              CODE_SIGN_IDENTITY="" \
-              build
-          else
-            echo "No xcodeproj/xcworkspace under $APP_DIR"
-            exit $status
-          fi
+        run: bash scripts/build_ios.sh
       - name: Collect iOS artifacts
         if: always()
         shell: bash
-        run: |
-          mkdir -p ios-dist
-          # IPA if any
-          find apps/client -type f -name '*.ipa' -print -exec cp {} ios-dist/ \; || true
-          # Built .app bundles
-          find apps/client apps/client/ios-derived -type d -name '*.app' 2>/dev/null | while read -r app; do
-            name=$(basename "$app" .app)
-            ditto -c -k --sequesterRsrc --keepParent "$app" "ios-dist/${name}-ios-app.zip" || true
-          done
-          # Always ship generated Xcode project for local signing
-          if [ -d apps/client/src-tauri/gen/apple ]; then
-            ditto -c -k --sequesterRsrc --keepParent apps/client/src-tauri/gen/apple ios-dist/prometheus-ios-xcodeproj.zip || true
-          fi
-          if [ -d apps/client/src-tauri/gen/ios ]; then
-            ditto -c -k --sequesterRsrc --keepParent apps/client/src-tauri/gen/ios ios-dist/prometheus-ios-gen-ios.zip || true
-          fi
-          ls -laR ios-dist || true
-          if [ -z "$(ls -A ios-dist 2>/dev/null)" ]; then
-            echo "No iOS artifacts produced" >&2
-            exit 1
-          fi
+        run: bash apps/client/scripts/collect_ios_artifacts.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: ios-artifacts
           path: ios-dist/*
           if-no-files-found: error
-
 
   publish:
     needs: [server, web, desktop, android, ios]
@@ -367,49 +261,11 @@ jobs:
         with:
           path: artifacts
       - name: Package release files
-        run: |
-          mkdir -p release
-          find artifacts -type f -print
-          find artifacts -type f -exec cp -n {} release/ \;
-          # avoid name collisions by namespacing duplicates
-          python3 - <<'PY'
-          from pathlib import Path
-          import shutil
-          root = Path('artifacts')
-          out = Path('release')
-          out.mkdir(exist_ok=True)
-          for path in root.rglob('*'):
-              if path.is_file():
-                  rel = path.relative_to(root)
-                  target = out / rel.name
-                  if target.exists():
-                      target = out / f"{rel.parts[0]}-{rel.name}"
-                  shutil.copy2(path, target)
-          print('release contents:')
-          for p in sorted(out.iterdir()):
-              print(p.name, p.stat().st_size)
-          PY
+        run: python3 scripts/package_release_artifacts.py
       - uses: softprops/action-gh-release@v2
         with:
           files: release/*
           generate_release_notes: true
           body: |
             ## Prometheus multi-platform packages
-
-            ### Control plane
-            - `prometheus-server-windows-x64.exe`
-            - `prometheus-server-linux-x64`
-            - `prometheus-server-macos-arm64`
-            - `prometheus-server-macos-x64`
-
-            ### Desktop installers (Tauri + bundled server sidecar)
-            - Windows: NSIS/MSI under `desktop-x86_64-pc-windows-msvc-*`
-            - macOS: DMG for arm64/x64
-            - Linux: deb/AppImage
-
-            ### Mobile
-            - Android APK (debug/unsigned unless keystore secrets configured)
-            - iOS: IPA when Apple signing secrets exist; otherwise simulator app zip + Xcode project zip for local signing
-
-            ### Web
-            - `prometheus-webui.zip`
+            Desktop installers include the Rust control-plane sidecar. Android APK and iOS simulator/Xcode artifacts are included when those jobs succeed. Set IOS_DEVELOPMENT_TEAM for signed iOS IPA exports.
