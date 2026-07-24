@@ -257,15 +257,28 @@ jobs:
     runs-on: ubuntu-22.04
     if: ${{ always() && !cancelled() && startsWith(github.ref, 'refs/tags/') && needs.server.result == 'success' && needs.web.result == 'success' && needs.desktop.result == 'success' }}
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
       - name: Package release files
         run: python3 scripts/package_release_artifacts.py
+      - name: Verify release package set
+        run: |
+          test -d release
+          ls -la release
+          test "$(ls -A release | wc -l)" -gt 0
       - uses: softprops/action-gh-release@v2
         with:
           files: release/*
           generate_release_notes: true
+          fail_on_unmatched_files: true
           body: |
             ## Prometheus multi-platform packages
-            Desktop installers include the Rust control-plane sidecar. Android APK and iOS simulator/Xcode artifacts are included when those jobs succeed. Set IOS_DEVELOPMENT_TEAM for signed iOS IPA exports.
+            Desktop installers include the Rust control-plane sidecar.
+            - Windows: NSIS setup.exe + MSI
+            - macOS: DMG (arm64 / x64)
+            - Linux: AppImage + deb + rpm
+            - Android: APK (CI-built, not Play Store signed)
+            - iOS: Xcode project / simulator artifacts when available; signed IPA requires IOS_DEVELOPMENT_TEAM
+            - Server sidecars + WebUI zip are also attached
