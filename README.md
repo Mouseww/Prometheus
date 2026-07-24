@@ -158,3 +158,80 @@ pnpm tauri:build
 
 
 
+
+
+## 安装包如何使用
+
+### 1. 桌面安装包（推荐本机使用）
+
+从 GitHub Release 下载并安装：
+
+- Windows: `Prometheus_0.1.0_x64-setup.exe` 或 `.msi`
+- macOS: `Prometheus_0.1.0_aarch64.dmg` / `Prometheus_0.1.0_x64.dmg`
+- Linux: `.AppImage` / `.deb` / `.rpm`
+
+安装后直接打开 **Prometheus**。桌面端会尝试自动启动本地 control-plane sidecar，并连接：
+
+```text
+http://127.0.0.1:4310
+```
+
+首次可用路径：
+
+1. 右上角/侧栏状态应显示 **SERVER ONLINE** 或 **Reachable**
+2. 打开 **Configure runtime**
+3. 在 **Control plane server** 确认 URL 为 `http://127.0.0.1:4310`，必要时点 **Retry connect**
+4. 配置 Provider（OpenAI / Anthropic / 兼容接口）与 Agent
+5. **Create task** 创建任务，再发送消息
+
+如果一直 Connecting / Create Task 无效：
+
+1. 浏览器访问 `http://127.0.0.1:4310/api/health` 看服务是否起来
+2. 若 health 不通，单独启动 server 二进制（见下）
+3. 回到客户端 Configure runtime → Save and reconnect
+
+### 2. 独立 Server + WebUI
+
+下载 `prometheus-server-windows-x64.exe`（或对应平台二进制）后：
+
+```powershell
+# Windows 示例：在任意目录运行
+.\prometheus-server-windows-x64.exe
+```
+
+默认监听 `http://127.0.0.1:4310`，工作区为当前目录。可选环境变量：
+
+```powershell
+$env:PROMETHEUS_HOST = "127.0.0.1"
+$env:PROMETHEUS_PORT = "4310"
+$env:PROMETHEUS_WORKSPACE_ROOT = "D:\work\my-project"
+$env:PROMETHEUS_DATA_FILE = "D:\work\my-project\.prometheus\prometheus.db"
+.\prometheus-server-windows-x64.exe
+```
+
+验证：
+
+```powershell
+curl http://127.0.0.1:4310/api/health
+```
+
+然后：
+
+- 浏览器打开 `http://127.0.0.1:4310`（若已附带 WebUI 静态资源）
+- 或打开桌面客户端，把 Control plane URL 指到该地址
+
+### 3. Android / iOS
+
+Android APK：CI 会用仓库内 debug 证书签名，可侧载安装（非 Play 商店签名；仅 arm64）。手机需允许未知来源。APK **不内置 server**，需能访问 control plane（模拟器可用 10.0.2.2:4310 指向宿主机）。若安装器报 PackageInfo is null，说明拿到了未签名/损坏包，请改用带 debugsigned 的新版本。
+- iOS 当前 Release 主要提供 Xcode 工程，**不是**可直接安装的签名 IPA
+
+### 4. 资产职责对照
+
+| 资产 | 作用 |
+|------|------|
+| Desktop installer | GUI + 本地 sidecar（本机一站式） |
+| `prometheus-server-*` | 独立 control plane / 多端共享后端 |
+| `prometheus-webui.zip` | 纯 Web 前端静态文件，需配合 server |
+| Android APK | 移动客户端，不内置本机 server |
+| iOS zip | 工程产物，不是商店包 |
+

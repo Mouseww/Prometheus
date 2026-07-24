@@ -30,9 +30,55 @@ import {
 } from "@prometheus/protocol";
 import { z } from "zod";
 
-const defaultHost = globalThis.location?.hostname || "127.0.0.1";
-const apiBase = import.meta.env.VITE_API_URL ?? `http://${defaultHost}:4310`;
-const socketBase = apiBase.replace(/^http/, "ws");
+const CONTROL_PLANE_STORAGE_KEY = "prometheus.controlPlaneUrl";
+const DEFAULT_CONTROL_PLANE_URL = "http://127.0.0.1:4310";
+
+function normalizeControlPlaneUrl(url: string): string {
+  return url.trim().replace(/\/+$/, "");
+}
+
+export function getDefaultControlPlaneUrl(): string {
+  const fromEnv = import.meta.env.VITE_API_URL;
+  if (typeof fromEnv === "string" && fromEnv.trim()) {
+    return normalizeControlPlaneUrl(fromEnv);
+  }
+  // Never derive from location.hostname: Tauri serves from tauri.localhost, which breaks
+  // CSP connect-src and does not reach the local control-plane sidecar on 127.0.0.1:4310.
+  return DEFAULT_CONTROL_PLANE_URL;
+}
+
+export function getControlPlaneUrl(): string {
+  try {
+    const stored = globalThis.localStorage?.getItem(CONTROL_PLANE_STORAGE_KEY);
+    if (stored && stored.trim()) {
+      return normalizeControlPlaneUrl(stored);
+    }
+  } catch {
+    // Ignore storage access failures.
+  }
+  return getDefaultControlPlaneUrl();
+}
+
+export function setControlPlaneUrl(url: string): string {
+  const normalized = normalizeControlPlaneUrl(url);
+  if (!/^https?:\/\//i.test(normalized)) {
+    throw new Error("Control plane URL must start with http:// or https://");
+  }
+  try {
+    globalThis.localStorage?.setItem(CONTROL_PLANE_STORAGE_KEY, normalized);
+  } catch {
+    // Still return the normalized runtime value even if persistence fails.
+  }
+  return normalized;
+}
+
+function getApiBase(): string {
+  return getControlPlaneUrl();
+}
+
+function getSocketBase(): string {
+  return getApiBase().replace(/^http/i, "ws");
+}
 
 const healthSchema = z.object({
   status: z.literal("ok"),
@@ -192,7 +238,7 @@ export function subscribeToSession(
 
   const connect = () => {
     if (!active) return;
-    socket = new WebSocket(`${socketBase}/ws?sessionId=${sessionId}&afterSequence=${afterSequence}`);
+    socket = new WebSocket(`${getSocketBase()}/ws?sessionId=${sessionId}&afterSequence=${afterSequence}`);
     socket.addEventListener("open", () => onConnection(true));
     socket.addEventListener("close", () => {
       onConnection(false);
@@ -224,7 +270,7 @@ async function request(path: string, init?: RequestInit): Promise<unknown> {
   if (init?.body !== undefined && init.body !== null && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
-  const response = await fetch(`${apiBase}${path}`, {
+  const response = await fetch(`${getApiBase()}${path}`, {
     ...init,
     headers,
   });

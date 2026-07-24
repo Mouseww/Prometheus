@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { applyTeamTaskChanges } from "./api";
+import { applyTeamTaskChanges, getControlPlaneUrl, getDefaultControlPlaneUrl, setControlPlaneUrl } from "./api";
 
 const teamRunId = "b4f3742a-a771-4dba-9620-7184061a3148";
 const teamTaskId = "0c7cb9df-31e3-48cb-a722-a0410290236a";
@@ -53,4 +53,19 @@ it("does not declare an empty body as JSON for bodyless team actions", async () 
   const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
   expect(init.body).toBeUndefined();
   expect(new Headers(init.headers).has("content-type")).toBe(false);
+});
+
+
+it("defaults control plane URL to 127.0.0.1:4310 instead of page hostname", () => {
+  expect(getDefaultControlPlaneUrl()).toBe("http://127.0.0.1:4310");
+  const previous = globalThis.localStorage?.getItem("prometheus.controlPlaneUrl");
+  globalThis.localStorage?.removeItem("prometheus.controlPlaneUrl");
+  expect(getControlPlaneUrl()).toBe("http://127.0.0.1:4310");
+  expect(setControlPlaneUrl("http://127.0.0.1:4310/")).toBe("http://127.0.0.1:4310");
+  expect(getControlPlaneUrl()).toBe("http://127.0.0.1:4310");
+  if (previous == null) {
+    globalThis.localStorage?.removeItem("prometheus.controlPlaneUrl");
+  } else {
+    globalThis.localStorage?.setItem("prometheus.controlPlaneUrl", previous);
+  }
 });

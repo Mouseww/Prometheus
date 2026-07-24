@@ -77,6 +77,10 @@ export function App() {
     event.preventDefault();
     const title = newSessionTitle.trim();
     if (!title) return;
+    if (prometheus.controlPlane !== "online") {
+      setRuntimeSetupOpen(true);
+      return;
+    }
     await prometheus.createSession(title);
     setNewSessionTitle("");
     setNewSessionOpen(false);
@@ -90,7 +94,7 @@ export function App() {
         <div className="context-heading">
           <div>
             <span className="eyebrow">WORKSPACE</span>
-            <h1>{prometheus.health?.workspace ?? "Connecting…"}</h1>
+            <h1>{prometheus.health?.workspace ?? (prometheus.controlPlane === "connecting" ? "Connecting…" : "Control plane offline")}</h1>
           </div>
           <button className="icon-button mobile-only" onClick={() => setMobilePanelOpen(false)}>
             <X size={17} />
@@ -156,9 +160,17 @@ export function App() {
             <span className="breadcrumb">PROMETHEUS / TASK</span>
             <h2>{prometheus.selectedSession?.title ?? "No task selected"}</h2>
           </div>
-          <div className={`connection-pill ${prometheus.connection}`}>
+          <div className={`connection-pill ${prometheus.controlPlane === "online" ? (prometheus.connection === "live" ? "live" : prometheus.connection === "connecting" ? "connecting" : "idle") : "offline"}`}>
             <Radio size={13} />
-            {prometheus.connection === "live" ? "LIVE SYNC" : prometheus.connection.toUpperCase()}
+            {prometheus.controlPlane !== "online"
+              ? (prometheus.controlPlane === "connecting" ? "CONNECTING" : "SERVER OFFLINE")
+              : prometheus.connection === "live"
+                ? "LIVE SYNC"
+                : prometheus.connection === "connecting"
+                  ? "SYNCING"
+                  : prometheus.connection === "idle"
+                    ? "SERVER ONLINE"
+                    : "SYNC OFFLINE"}
           </div>
         </header>
 
@@ -202,7 +214,18 @@ export function App() {
               <span className="eyebrow">NO ACTIVE TASK</span>
               <h3>Create a mission to begin.</h3>
               <p>Prometheus keeps each task as a replayable timeline, independent of the terminal you started on.</p>
-              <button className="primary-button" onClick={() => setNewSessionOpen(true)}>Create task</button>
+              <button
+                className="primary-button"
+                onClick={() => {
+                  if (prometheus.controlPlane !== "online") {
+                    setRuntimeSetupOpen(true);
+                    return;
+                  }
+                  setNewSessionOpen(true);
+                }}
+              >
+                {prometheus.controlPlane === "online" ? "Create task" : "Connect server"}
+              </button>
             </div>
           )}
           <div ref={timelineEnd} />
@@ -260,9 +283,11 @@ export function App() {
         <TelemetryCard
           icon={<Globe2 size={18} />}
           label="Control plane"
-          value={prometheus.health ? "Reachable" : "Unavailable"}
-          detail={prometheus.health ? new Date(prometheus.health.timestamp).toLocaleTimeString() : "Waiting for health check"}
-          tone={prometheus.health ? "good" : "quiet"}
+          value={prometheus.controlPlane === "online" ? "Reachable" : prometheus.controlPlane === "connecting" ? "Connecting" : "Unavailable"}
+          detail={prometheus.health
+            ? `${prometheus.controlPlaneUrl} · ${new Date(prometheus.health.timestamp).toLocaleTimeString()}`
+            : `${prometheus.controlPlaneUrl} · waiting for /api/health`}
+          tone={prometheus.controlPlane === "online" ? "good" : "quiet"}
         />
         <TelemetryCard
           icon={<GitBranch size={18} />}
@@ -325,6 +350,10 @@ export function App() {
       )}
       {runtimeSetupOpen && (
         <RuntimeSetupModal
+          controlPlane={prometheus.controlPlane}
+          controlPlaneUrl={prometheus.controlPlaneUrl}
+          onConfigureControlPlane={prometheus.configureControlPlane}
+          onReconnectControlPlane={prometheus.reconnectControlPlane}
           providers={prometheus.providers}
           agents={prometheus.agents}
           permissionRules={prometheus.permissionRules}
@@ -618,6 +647,10 @@ function TeamRunModal({
 }
 
 function RuntimeSetupModal({
+  controlPlane,
+  controlPlaneUrl,
+  onConfigureControlPlane,
+  onReconnectControlPlane,
   providers,
   agents,
   permissionRules,
@@ -632,6 +665,10 @@ function RuntimeSetupModal({
   onRefreshSkills,
   onClose,
 }: {
+  controlPlane: "connecting" | "online" | "offline";
+  controlPlaneUrl: string;
+  onConfigureControlPlane: (url: string) => string;
+  onReconnectControlPlane: () => void;
   providers: Provider[];
   agents: AgentProfile[];
   permissionRules: PermissionRule[];
@@ -646,6 +683,7 @@ function RuntimeSetupModal({
   onRefreshSkills: () => Promise<SkillSummary[]>;
   onClose: () => void;
 }) {
+  const [controlUrlDraft, setControlUrlDraft] = useState(controlPlaneUrl);
   const [kind, setKind] = useState<ProviderKind>("openai");
   const [providerName, setProviderName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
@@ -776,10 +814,52 @@ function RuntimeSetupModal({
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <div className="runtime-modal" onMouseDown={(event) => event.stopPropagation()}>
         <div className="runtime-modal-header">
-          <div><span className="eyebrow">AGENT RUNTIME</span><h3>Connect real model providers</h3></div>
+          <div><span className="eyebrow">AGENT RUNTIME</span><h3>Connect control plane and providers</h3></div>
           <button className="icon-button" onClick={onClose}><X size={18} /></button>
         </div>
         {error && <div className="runtime-error">{error}</div>}
+        <form
+          className="runtime-form control-plane-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setBusy(true);
+            try {
+              onConfigureControlPlane(controlUrlDraft);
+              setError(null);
+            } catch (reason) {
+              setError(reason instanceof Error ? reason.message : "Invalid control plane URL");
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <div className="runtime-form-title">
+            <Globe2 size={16} />
+            <strong>Control plane server</strong>
+            <small className={controlPlane === "online" ? "tone-good" : "tone-quiet"}>
+              {controlPlane === "online" ? "online" : controlPlane}
+            </small>
+          </div>
+          <p className="runtime-help">
+            Desktop installers should auto-start a local sidecar on <code>http://127.0.0.1:4310</code>.
+            If Create Task stays unavailable, start <code>prometheus-server</code> manually or point this URL at a reachable control plane.
+          </p>
+          <label>
+            Server URL
+            <input
+              value={controlUrlDraft}
+              onChange={(event) => setControlUrlDraft(event.target.value)}
+              placeholder="http://127.0.0.1:4310"
+              required
+            />
+          </label>
+          <div className="modal-actions">
+            <button type="button" className="secondary-button" disabled={busy} onClick={() => onReconnectControlPlane()}>
+              Retry connect
+            </button>
+            <button className="primary-button" disabled={busy || !controlUrlDraft.trim()}>Save and reconnect</button>
+          </div>
+        </form>
         <div className="runtime-grid">
           <form className="runtime-form" onSubmit={submitProvider}>
             <div className="runtime-form-title"><ServerCog size={16} /><strong>Provider</strong><small>{providers.length} configured</small></div>

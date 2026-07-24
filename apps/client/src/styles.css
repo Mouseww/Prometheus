@@ -80,6 +80,14 @@ button { color: inherit; }
 .connection-pill { margin-left: auto; display: inline-flex; align-items: center; gap: 7px; padding: 7px 9px; border: 1px solid var(--line); font: 400 10px "IBM Plex Mono", monospace; letter-spacing: .08em; color: var(--muted); white-space: nowrap; }
 .connection-pill.live { color: var(--signal); border-color: rgba(183,226,90,.24); background: rgba(183,226,90,.05); }
 .connection-pill.connecting { color: #e4c267; }
+.connection-pill.offline { color: #f26a62; border-color: rgba(242,106,98,.28); background: rgba(201,69,48,.12); }
+.connection-pill.idle { color: #9fb0c3; }
+.control-plane-form { margin: 0 18px 14px; }
+.runtime-help { margin: 0 0 10px; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.runtime-help code { font-family: var(--mono); font-size: 12px; }
+.tone-good { color: var(--signal); }
+.tone-quiet { color: var(--muted); }
+
 .error-banner { padding: 9px 24px; background: rgba(201,69,48,.14); border-bottom: 1px solid rgba(242,106,61,.28); color: #f0a088; font-size: 13px; }
 .timeline { flex: 1; min-height: 0; overflow: auto; padding: 30px clamp(20px,4vw,58px) 16px; }
 .timeline-event { display: grid; grid-template-columns: 34px 1fr; max-width: 880px; margin: 0 auto; }

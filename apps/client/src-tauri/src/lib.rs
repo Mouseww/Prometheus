@@ -85,55 +85,118 @@ fn start_desktop_sidecar(app: &AppHandle) -> Result<(), Box<dyn std::error::Erro
 
 #[cfg(desktop)]
 fn resolve_sidecar_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let mut path = std::env::current_exe()?;
-    path.pop();
-    // externalBin is placed next to the app executable.
-    let candidate = path.join(if cfg!(windows) {
-        "prometheus-server.exe"
-    } else {
-        "prometheus-server"
-    });
-    if candidate.exists() {
-        return Ok(candidate);
+    let mut exe_dir = std::env::current_exe()?;
+    exe_dir.pop();
+
+    // Prefer exact names first, then Tauri externalBin target-triple suffixes.
+    let mut candidates = vec![
+        exe_dir.join(if cfg!(windows) {
+            "prometheus-server.exe"
+        } else {
+            "prometheus-server"
+        }),
+    ];
+
+    if let Ok(entries) = std::fs::read_dir(&exe_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let is_sidecar = if cfg!(windows) {
+                name.eq_ignore_ascii_case("prometheus-server.exe")
+                    || (name.starts_with("prometheus-server-")
+                        && name.to_ascii_lowercase().ends_with(".exe"))
+            } else {
+                name == "prometheus-server" || name.starts_with("prometheus-server-")
+            };
+            if is_sidecar {
+                candidates.push(entry.path());
+            }
+        }
     }
+
+    // macOS app bundles sometimes place helpers one directory up from MacOS.
+    if cfg!(target_os = "macos") {
+        if let Some(parent) = exe_dir.parent() {
+            for sub in ["MacOS", "Resources", "Helpers"] {
+                let dir = parent.join(sub);
+                if let Ok(entries) = std::fs::read_dir(&dir) {
+                    for entry in entries.flatten() {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        if name == "prometheus-server" || name.starts_with("prometheus-server-") {
+                            candidates.push(entry.path());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for candidate in &candidates {
+        if candidate.is_file() {
+            return Ok(candidate.clone());
+        }
+    }
+
     // Dev / CI fallback: repo-built server binary.
     if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-        let debug = PathBuf::from(&manifest_dir)
-            .join("../../server-rs/target/debug")
-            .join(if cfg!(windows) {
-                "prometheus-server.exe"
-            } else {
-                "prometheus-server"
-            });
-        if debug.exists() {
-            return Ok(debug);
-        }
-        let release = PathBuf::from(&manifest_dir)
-            .join("../../server-rs/target/release")
-            .join(if cfg!(windows) {
-                "prometheus-server.exe"
-            } else {
-                "prometheus-server"
-            });
-        if release.exists() {
-            return Ok(release);
+        for profile in ["debug", "release"] {
+            let candidate = PathBuf::from(&manifest_dir)
+                .join("../../server-rs/target")
+                .join(profile)
+                .join(if cfg!(windows) {
+                    "prometheus-server.exe"
+                } else {
+                    "prometheus-server"
+                });
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
         }
     }
-    Ok(candidate)
+
+    Ok(candidates
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| exe_dir.join("prometheus-server")))
 }
 
 #[cfg(desktop)]
 fn wait_for_health(timeout: Duration) {
     let started = Instant::now();
     while started.elapsed() < timeout {
-        if let Ok(response) = std::net::TcpStream::connect_timeout(
-            &"127.0.0.1:4310".parse().expect("addr"),
-            Duration::from_millis(250),
-        ) {
-            drop(response);
+        if control_plane_ready() {
             return;
         }
         thread::sleep(Duration::from_millis(200));
+    }
+    eprintln!(
+        "Prometheus control-plane sidecar did not become healthy on 127.0.0.1:4310 within {:?}",
+        timeout
+    );
+}
+
+#[cfg(desktop)]
+fn control_plane_ready() -> bool {
+    use std::io::{Read, Write};
+
+    let Ok(mut stream) = std::net::TcpStream::connect_timeout(
+        &"127.0.0.1:4310".parse().expect("addr"),
+        Duration::from_millis(250),
+    ) else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(400)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(400)));
+    let request = b"GET /api/health HTTP/1.1\r\nHost: 127.0.0.1:4310\r\nConnection: close\r\n\r\n";
+    if stream.write_all(request).is_err() {
+        return false;
+    }
+    let mut buf = [0_u8; 256];
+    match stream.read(&mut buf) {
+        Ok(n) if n > 0 => {
+            let body = String::from_utf8_lossy(&buf[..n]);
+            body.contains("200") && body.contains("ok")
+        }
+        _ => false,
     }
 }
 

@@ -24,6 +24,7 @@ import {
   deletePermissionRule as deletePermissionRuleRequest,
   discardTeamTaskChanges as discardTeamTaskChangesRequest,
   createSession as createSessionRequest,
+  getControlPlaneUrl,
   getHealth,
   listEvents,
   listAgents,
@@ -38,6 +39,7 @@ import {
   createMcpServer as createMcpServerRequest,
   deleteMcpServer as deleteMcpServerRequest,
   runAgent,
+  setControlPlaneUrl,
   startTeamRun,
   resolveApproval as resolveApprovalRequest,
   subscribeToSession,
@@ -47,7 +49,8 @@ import {
 } from "./api";
 import { applyRunStreamEnvelope, clearRunStreamForEvent, mergeEvents } from "./state";
 
-export type ConnectionState = "connecting" | "live" | "offline";
+export type ConnectionState = "connecting" | "live" | "offline" | "idle";
+export type ControlPlaneState = "connecting" | "online" | "offline";
 
 export function usePrometheus() {
   const [health, setHealth] = useState<Health | null>(null);
@@ -68,32 +71,42 @@ export function usePrometheus() {
   const [rootNodes, setRootNodes] = useState<WorkspaceNode[]>([]);
   const [childrenByPath, setChildrenByPath] = useState<Record<string, WorkspaceNode[]>>({});
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
-  const [connection, setConnection] = useState<ConnectionState>("connecting");
+  const [connection, setConnection] = useState<ConnectionState>("idle");
+  const [controlPlane, setControlPlane] = useState<ControlPlaneState>("connecting");
+  const [controlPlaneUrl, setControlPlaneUrlState] = useState(() => getControlPlaneUrl());
+  const [bootstrapNonce, setBootstrapNonce] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
-    Promise.all([
-      getHealth(),
-      listWorkspace(),
-      listSessions(),
-      listProviders(),
-      listAgents(),
-      listPermissionRules(),
-      listSkillsRequest(),
-      listMcpServersRequest(),
-    ])
-      .then(([
-        nextHealth,
-        workspace,
-        nextSessions,
-        nextProviders,
-        nextAgents,
-        nextPermissionRules,
-        nextSkills,
-        nextMcpServers,
-      ]) => {
+    let attempt = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    setLoading(true);
+    setControlPlane("connecting");
+
+    const bootstrap = async () => {
+      attempt += 1;
+      try {
+        const [
+          nextHealth,
+          workspace,
+          nextSessions,
+          nextProviders,
+          nextAgents,
+          nextPermissionRules,
+          nextSkills,
+          nextMcpServers,
+        ] = await Promise.all([
+          getHealth(),
+          listWorkspace(),
+          listSessions(),
+          listProviders(),
+          listAgents(),
+          listPermissionRules(),
+          listSkillsRequest(),
+          listMcpServersRequest(),
+        ]);
         if (!active) return;
         setHealth(nextHealth);
         setRootNodes(workspace.nodes);
@@ -105,14 +118,34 @@ export function usePrometheus() {
         setMcpServers(nextMcpServers);
         setSelectedAgentId((current) => current ?? nextAgents[0]?.id ?? null);
         setSelectedSessionId((current) => current ?? nextSessions[0]?.id ?? null);
+        setControlPlane("online");
         setError(null);
-      })
-      .catch((reason: Error) => active && setError(reason.message))
-      .finally(() => active && setLoading(false));
+        setLoading(false);
+      } catch (reason) {
+        if (!active) return;
+        const message = reason instanceof Error ? reason.message : "Control plane unreachable";
+        setHealth(null);
+        setControlPlane("offline");
+        setError(
+          `${message}. Control plane: ${getControlPlaneUrl()}. Desktop builds should auto-start the local sidecar; or run prometheus-server and open Configure runtime.`,
+        );
+        // Retry while the sidecar is still booting.
+        if (attempt < 30) {
+          timer = setTimeout(() => {
+            void bootstrap();
+          }, Math.min(1000 + attempt * 250, 4000));
+          return;
+        }
+        setLoading(false);
+      }
+    };
+
+    void bootstrap();
     return () => {
       active = false;
+      if (timer) clearTimeout(timer);
     };
-  }, []);
+  }, [bootstrapNonce]);
 
   useEffect(() => {
     if (!selectedSessionId) {
@@ -120,7 +153,7 @@ export function usePrometheus() {
       setTeamRuns([]);
       setTeamMessages([]);
       setActiveStreams([]);
-      setConnection("offline");
+      setConnection("idle");
       return;
     }
 
@@ -381,12 +414,26 @@ export function usePrometheus() {
     [selectedSessionId, sessions],
   );
 
+  const reconnectControlPlane = useCallback(() => {
+    setBootstrapNonce((value) => value + 1);
+  }, []);
+
+  const configureControlPlane = useCallback((url: string) => {
+    const next = setControlPlaneUrl(url);
+    setControlPlaneUrlState(next);
+    setBootstrapNonce((value) => value + 1);
+    return next;
+  }, []);
+
   return {
     activeStreams,
     applyTeamChanges,
     agents,
     childrenByPath,
+    configureControlPlane,
     connection,
+    controlPlane,
+    controlPlaneUrl,
     createSession,
     createAgent,
     createProvider,
@@ -401,6 +448,7 @@ export function usePrometheus() {
     health,
     loading,
     mcpServers,
+    reconnectControlPlane,
     providers,
     permissionRules,
     refreshSkills,

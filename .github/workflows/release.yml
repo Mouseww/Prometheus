@@ -196,6 +196,29 @@ jobs:
           mkdir -p android-dist
           find apps/client/src-tauri/gen/android -type f \( -name '*.apk' -o -name '*.aab' \) -print -exec cp {} android-dist/ \;
           ls -laR android-dist
+      - name: Sign Android APK for sideload
+        shell: bash
+        run: |
+          set -euo pipefail
+          UNSIGNED=$(find android-dist -type f -name '*.apk' | sed -n '1p')
+          if [ -z "$UNSIGNED" ]; then
+            echo 'No APK found to sign' >&2
+            exit 1
+          fi
+          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | sed -n '$p')
+          KEYSTORE=apps/client/android/prometheus-debug.p12
+          if [ ! -f "$KEYSTORE" ]; then
+            echo "Missing $KEYSTORE" >&2
+            exit 1
+          fi
+          ALIGNED=android-dist/prometheus-aligned.apk
+          SIGNED=android-dist/prometheus-android-arm64-debugsigned.apk
+          "$BUILD_TOOLS/zipalign" -p -f 4 "$UNSIGNED" "$ALIGNED"
+          "$BUILD_TOOLS/apksigner" sign             --ks "$KEYSTORE"             --ks-type PKCS12             --ks-pass pass:prometheus-debug             --ks-key-alias prometheusedebug             --key-pass pass:prometheus-debug             --out "$SIGNED"             "$ALIGNED"
+          "$BUILD_TOOLS/apksigner" verify --verbose "$SIGNED"
+          find android-dist -type f -name '*.apk' ! -name 'prometheus-android-arm64-debugsigned.apk' -delete
+          rm -f "$ALIGNED"
+          ls -laR android-dist
       - uses: actions/upload-artifact@v4
         with:
           name: android-apk
@@ -279,6 +302,6 @@ jobs:
             - Windows: NSIS setup.exe + MSI
             - macOS: DMG (arm64 / x64)
             - Linux: AppImage + deb + rpm
-            - Android: APK (CI-built, not Play Store signed)
+            - Android: arm64 APK debug-signed for sideload (not Play Store)
             - iOS: Xcode project / simulator artifacts when available; signed IPA requires IOS_DEVELOPMENT_TEAM
             - Server sidecars + WebUI zip are also attached
