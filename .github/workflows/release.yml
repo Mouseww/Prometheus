@@ -234,10 +234,30 @@ jobs:
         run: sudo gem install cocoapods
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @prometheus/protocol build
+      - name: Configure iOS development team
+        working-directory: apps/client
+        env:
+          IOS_DEVELOPMENT_TEAM: ${{ secrets.IOS_DEVELOPMENT_TEAM }}
+        run: |
+          TEAM="${IOS_DEVELOPMENT_TEAM:-0000000000}"
+          python3 - <<PY
+          import json
+          from pathlib import Path
+          team = "${TEAM}"
+          for rel in ["src-tauri/tauri.conf.json", "src-tauri/tauri.ios.conf.json"]:
+              path = Path(rel)
+              data = json.loads(path.read_text())
+              bundle = data.setdefault("bundle", {})
+              ios = bundle.setdefault("iOS", {})
+              ios["developmentTeam"] = team
+              path.write_text(json.dumps(data, indent=2) + "\n")
+          print(f"configured developmentTeam={team}")
+          PY
       - name: Init iOS project
         working-directory: apps/client
         env:
           CI: "true"
+          IOS_DEVELOPMENT_TEAM: ${{ secrets.IOS_DEVELOPMENT_TEAM }}
         run: |
           if [ ! -d src-tauri/gen/ios ]; then
             pnpm exec tauri ios init --ci --skip-targets-install
@@ -254,7 +274,7 @@ jobs:
             status=$?
           else
             # Without Apple signing secrets, produce a simulator build artifact.
-            pnpm exec tauri ios build --ci --config src-tauri/tauri.mobile.conf.json -- --target aarch64-apple-ios-sim
+            pnpm exec tauri ios build --ci --config 'src-tauri/tauri.mobile.conf.json' --config '{"bundle":{"iOS":{"developmentTeam":"0000000000"}}}' -- --target aarch64-apple-ios-sim
             status=$?
           fi
           set -e
@@ -308,7 +328,7 @@ jobs:
   publish:
     needs: [server, web, desktop, android, ios]
     runs-on: ubuntu-22.04
-    if: startsWith(github.ref, 'refs/tags/')
+    if: ${{ always() && !cancelled() && startsWith(github.ref, 'refs/tags/') && needs.server.result == 'success' && needs.web.result == 'success' && needs.desktop.result == 'success' }}
     steps:
       - uses: actions/download-artifact@v4
         with:

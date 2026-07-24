@@ -1,5 +1,8 @@
 {
   "bundle": {
-    "externalBin": []
+    "externalBin": [],
+    "iOS": {
+      "developmentTeam": "0000000000"
+    }
   }
 }

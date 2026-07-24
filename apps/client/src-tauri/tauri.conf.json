@@ -57,7 +57,7 @@
       "minSdkVersion": 24
     },
     "iOS": {
-      "developmentTeam": ""
+      "developmentTeam": "0000000000"
     }
   },
   "plugins": {}
