@@ -8,7 +8,10 @@
     "dev": "vite --host 127.0.0.1",
     "tauri": "tauri",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.app.json --noEmit --pretty false && tsc -p tsconfig.node.json --noEmit --pretty false"
+    "typecheck": "tsc -p tsconfig.app.json --noEmit --pretty false && tsc -p tsconfig.node.json --noEmit --pretty false",
+    "tauri:build": "tauri build",
+    "tauri:android:build": "tauri android build --apk --config src-tauri/tauri.mobile.conf.json",
+    "tauri:ios:build": "tauri ios build --config src-tauri/tauri.mobile.conf.json"
   },
   "dependencies": {
     "@fontsource-variable/source-sans-3": "5.2.6",

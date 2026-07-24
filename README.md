@@ -124,6 +124,35 @@ pnpm start:server-rs
 
 访问 `http://127.0.0.1:4310` 即可同时使用 WebUI、HTTP API 与 WebSocket。Node 回退：`node apps/server/dist/index.js`。容器部署入口见根目录 `Dockerfile`；挂载 `/data` 保存事件数据库，挂载 `/workspace` 暴露执行工作区。
 
+
+
+## 多平台安装包（GitHub Actions）
+
+推送 `v*` tag 会触发完整 Release 矩阵：
+
+| 产物 | Runner | 说明 |
+|---|---|---|
+| Control plane 二进制 | Win/Linux/macOS | `prometheus-server-*` |
+| Desktop installers | Win/Linux/macOS | Tauri NSIS/MSI、DMG、deb/AppImage，并打包 control-plane sidecar |
+| Android APK | Ubuntu + Android SDK/NDK | `tauri android build --apk` |
+| iOS | macOS + Xcode | 有 `IOS_DEVELOPMENT_TEAM` 时导出调试 IPA；否则产出 simulator app zip 与 Xcode 工程 zip |
+| WebUI | Ubuntu | `prometheus-webui.zip` |
+
+本地桌面构建：
+
+```powershell
+pnpm install
+cargo build --release --manifest-path apps/server-rs/Cargo.toml
+# 按当前 triple 复制 sidecar 到 apps/client/src-tauri/binaries/
+pnpm tauri:build
+```
+
+可选 secrets：
+
+- `IOS_DEVELOPMENT_TEAM`：启用 iOS 真机/调试导出
+- Android 发布签名可在后续接入 keystore secrets（当前默认产出 CI APK）
+
+
 架构与范围见 [docs/architecture.md](docs/architecture.md)，参考项目研究见 [docs/research/agent-tools-benchmark.md](docs/research/agent-tools-benchmark.md)。
 
 

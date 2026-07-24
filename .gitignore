@@ -19,3 +19,6 @@ target/
 __pycache__/
 *.pyc
 .pytest_cache/
+apps/client/src-tauri/binaries/prometheus-server*
+!apps/client/src-tauri/binaries/README.md
+!apps/client/src-tauri/binaries/.gitkeep

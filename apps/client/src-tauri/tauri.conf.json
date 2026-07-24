@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://127.0.0.1:5173",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "pnpm -C ../.. --filter @prometheus/protocol build && pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -26,6 +26,39 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all"
-  }
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Multi-device AI development control plane",
+    "longDescription": "Prometheus desktop client with bundled Rust control plane sidecar for local-first multi-device AI development.",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
+    "linux": {
+      "deb": {
+        "depends": []
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    },
+    "android": {
+      "minSdkVersion": 24
+    },
+    "iOS": {
+      "developmentTeam": ""
+    }
+  },
+  "plugins": {}
 }

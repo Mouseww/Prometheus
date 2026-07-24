@@ -9,8 +9,12 @@ on:
 permissions:
   contents: write
 
+env:
+  PNPM_VERSION: 10.24.0
+  NODE_VERSION: "24"
+
 jobs:
-  build:
+  server:
     strategy:
       fail-fast: false
       matrix:
@@ -19,7 +23,7 @@ jobs:
             target: x86_64-pc-windows-msvc
             bin: prometheus-server.exe
             asset: prometheus-server-windows-x64.exe
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             bin: prometheus-server
             asset: prometheus-server-linux-x64
@@ -51,26 +55,259 @@ jobs:
           path: dist/${{ matrix.asset }}
 
   web:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
-          version: 10.24.0
+          version: ${{ env.PNPM_VERSION }}
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @prometheus/protocol build && pnpm --filter @prometheus/client build
+      - name: Package WebUI zip
+        run: |
+          cd apps/client/dist
+          zip -r "$GITHUB_WORKSPACE/prometheus-webui.zip" .
       - uses: actions/upload-artifact@v4
         with:
           name: prometheus-webui
-          path: apps/client/dist
+          path: prometheus-webui.zip
+
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+            args: --target x86_64-pc-windows-msvc
+            sidecar_name: prometheus-server-x86_64-pc-windows-msvc.exe
+            server_bin: prometheus-server.exe
+          - os: ubuntu-22.04
+            rust_target: x86_64-unknown-linux-gnu
+            args: --target x86_64-unknown-linux-gnu
+            sidecar_name: prometheus-server-x86_64-unknown-linux-gnu
+            server_bin: prometheus-server
+          - os: macos-latest
+            rust_target: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin
+            sidecar_name: prometheus-server-aarch64-apple-darwin
+            server_bin: prometheus-server
+          - os: macos-latest
+            rust_target: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin
+            sidecar_name: prometheus-server-x86_64-apple-darwin
+            server_bin: prometheus-server
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install Linux WebKit deps
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+      - name: Build control-plane sidecar
+        run: cargo build --release --manifest-path apps/server-rs/Cargo.toml --target ${{ matrix.rust_target }}
+      - name: Stage sidecar for Tauri externalBin
+        shell: bash
+        run: |
+          mkdir -p apps/client/src-tauri/binaries
+          src="apps/server-rs/target/${{ matrix.rust_target }}/release/${{ matrix.server_bin }}"
+          cp "$src" "apps/client/src-tauri/binaries/${{ matrix.sidecar_name }}"
+          ls -la apps/client/src-tauri/binaries
+      - run: pnpm install --frozen-lockfile
+      - name: Build Tauri desktop installer
+        working-directory: apps/client
+        run: pnpm exec tauri build ${{ matrix.args }}
+      - name: Collect desktop artifacts
+        shell: bash
+        run: |
+          mkdir -p desktop-dist
+          # Windows NSIS/MSI
+          find apps/client/src-tauri/target -type f \( -name '*.msi' -o -name '*.exe' -o -name '*.nsis.zip' \) \
+            ! -name 'prometheus-server*.exe' ! -path '*/deps/*' ! -path '*/build/*' \
+            -print -exec cp {} desktop-dist/ \; || true
+          # macOS DMG/APP bundles as zip
+          find apps/client/src-tauri/target -type f \( -name '*.dmg' -o -name '*.app.tar.gz' \) \
+            -print -exec cp {} desktop-dist/ \; || true
+          # Linux deb/AppImage/rpm
+          find apps/client/src-tauri/target -type f \( -name '*.deb' -o -name '*.AppImage' -o -name '*.rpm' \) \
+            -print -exec cp {} desktop-dist/ \; || true
+          # Fallback: main packaged binary folder
+          if [ -z "$(ls -A desktop-dist 2>/dev/null)" ]; then
+            find apps/client/src-tauri/target -type d -name bundle -print
+            find apps/client/src-tauri/target -path '*/release/bundle/*' -type f -print -exec cp {} desktop-dist/ \; || true
+          fi
+          ls -laR desktop-dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.rust_target }}
+          path: desktop-dist/*
+          if-no-files-found: error
+
+  android:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install Android packages
+        run: |
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "ndk;27.0.12077973" "platform-tools"
+          yes | sdkmanager --licenses || true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+      - name: Install cargo-ndk helpers
+        run: |
+          cargo install cargo-ndk --locked || true
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @prometheus/protocol build
+      - name: Init Android project
+        working-directory: apps/client
+        env:
+          CI: "true"
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+        run: |
+          if [ ! -d src-tauri/gen/android ]; then
+            pnpm exec tauri android init --ci --skip-targets-install
+          fi
+      - name: Build Android APK
+        working-directory: apps/client
+        env:
+          CI: "true"
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+        run: pnpm exec tauri android build --apk --ci --config src-tauri/tauri.mobile.conf.json --target aarch64
+      - name: Collect Android artifacts
+        shell: bash
+        run: |
+          mkdir -p android-dist
+          find apps/client/src-tauri/gen/android -type f \( -name '*.apk' -o -name '*.aab' \) -print -exec cp {} android-dist/ \;
+          ls -laR android-dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: android-dist/*
+          if-no-files-found: error
+
+  ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
+      - name: Install CocoaPods
+        run: sudo gem install cocoapods
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @prometheus/protocol build
+      - name: Init iOS project
+        working-directory: apps/client
+        env:
+          CI: "true"
+        run: |
+          if [ ! -d src-tauri/gen/ios ]; then
+            pnpm exec tauri ios init --ci --skip-targets-install
+          fi
+      - name: Build iOS app (signed IPA when secrets present, otherwise simulator app)
+        working-directory: apps/client
+        env:
+          CI: "true"
+          IOS_DEVELOPMENT_TEAM: ${{ secrets.IOS_DEVELOPMENT_TEAM }}
+        run: |
+          set +e
+          if [ -n "$IOS_DEVELOPMENT_TEAM" ]; then
+            pnpm exec tauri ios build --ci --config src-tauri/tauri.mobile.conf.json --export-method debugging
+            status=$?
+          else
+            # Without Apple signing secrets, produce a simulator build artifact.
+            pnpm exec tauri ios build --ci --config src-tauri/tauri.mobile.conf.json -- --target aarch64-apple-ios-sim
+            status=$?
+          fi
+          set -e
+          if [ $status -ne 0 ]; then
+            echo "Primary iOS build failed; trying xcodebuild simulator fallback"
+            APP_DIR="src-tauri/gen/ios"
+            if [ -d "$APP_DIR" ]; then
+              shopt -s nullglob
+              workspaces=("$APP_DIR"/*.xcworkspace)
+              projects=("$APP_DIR"/*.xcodeproj)
+              if [ ${#workspaces[@]} -gt 0 ]; then
+                xcodebuild -workspace "${workspaces[0]}" -scheme app -configuration Release -sdk iphonesimulator -derivedDataPath ios-derived build
+              elif [ ${#projects[@]} -gt 0 ]; then
+                xcodebuild -project "${projects[0]}" -scheme app -configuration Release -sdk iphonesimulator -derivedDataPath ios-derived build
+              else
+                exit $status
+              fi
+            else
+              exit $status
+            fi
+          fi
+      - name: Collect iOS artifacts
+        shell: bash
+        run: |
+          mkdir -p ios-dist
+          find apps/client -type f \( -name '*.ipa' -o -name '*.app' -o -name 'Prometheus.app' \) 2>/dev/null | head
+          find apps/client -type d -name 'Prometheus.app' -print0 2>/dev/null | while IFS= read -r -d '' app; do
+            base=$(basename "$(dirname "$app")")
+            ditto -c -k --sequesterRsrc --keepParent "$app" "ios-dist/Prometheus-ios-${base}.zip" || true
+          done
+          find apps/client -type f -name '*.ipa' -print -exec cp {} ios-dist/ \; || true
+          find apps/client/src-tauri -type d -name '*.app' -print0 2>/dev/null | while IFS= read -r -d '' app; do
+            name=$(basename "$app" .app)
+            ditto -c -k --sequesterRsrc --keepParent "$app" "ios-dist/${name}-ios-app.zip" || true
+          done
+          # Always ship the generated Xcode project for local signing when IPA is unavailable.
+          if [ -d apps/client/src-tauri/gen/ios ]; then
+            ditto -c -k --sequesterRsrc --keepParent apps/client/src-tauri/gen/ios ios-dist/prometheus-ios-xcodeproj.zip || true
+          fi
+          ls -laR ios-dist
+          if [ -z "$(ls -A ios-dist 2>/dev/null)" ]; then
+            echo "No iOS artifacts produced" >&2
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-artifacts
+          path: ios-dist/*
+          if-no-files-found: error
 
   publish:
-    needs: [build, web]
-    runs-on: ubuntu-latest
+    needs: [server, web, desktop, android, ios]
+    runs-on: ubuntu-22.04
     if: startsWith(github.ref, 'refs/tags/')
     steps:
       - uses: actions/download-artifact@v4
@@ -80,11 +317,46 @@ jobs:
         run: |
           mkdir -p release
           find artifacts -type f -print
-          cp artifacts/*/* release/ || true
-          # flatten nested artifact dirs
-          find artifacts -type f -exec cp {} release/ \;
-          ls -la release
+          find artifacts -type f -exec cp -n {} release/ \;
+          # avoid name collisions by namespacing duplicates
+          python3 - <<'PY'
+          from pathlib import Path
+          import shutil
+          root = Path('artifacts')
+          out = Path('release')
+          out.mkdir(exist_ok=True)
+          for path in root.rglob('*'):
+              if path.is_file():
+                  rel = path.relative_to(root)
+                  target = out / rel.name
+                  if target.exists():
+                      target = out / f"{rel.parts[0]}-{rel.name}"
+                  shutil.copy2(path, target)
+          print('release contents:')
+          for p in sorted(out.iterdir()):
+              print(p.name, p.stat().st_size)
+          PY
       - uses: softprops/action-gh-release@v2
         with:
           files: release/*
           generate_release_notes: true
+          body: |
+            ## Prometheus multi-platform packages
+
+            ### Control plane
+            - `prometheus-server-windows-x64.exe`
+            - `prometheus-server-linux-x64`
+            - `prometheus-server-macos-arm64`
+            - `prometheus-server-macos-x64`
+
+            ### Desktop installers (Tauri + bundled server sidecar)
+            - Windows: NSIS/MSI under `desktop-x86_64-pc-windows-msvc-*`
+            - macOS: DMG for arm64/x64
+            - Linux: deb/AppImage
+
+            ### Mobile
+            - Android APK (debug/unsigned unless keystore secrets configured)
+            - iOS: IPA when Apple signing secrets exist; otherwise simulator app zip + Xcode project zip for local signing
+
+            ### Web
+            - `prometheus-webui.zip`
