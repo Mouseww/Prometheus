@@ -1,0 +1,16 @@
+[package]
+name = "prometheus"
+version = "0.1.0"
+description = "Prometheus cross-platform AI development client"
+authors = ["Prometheus contributors"]
+edition = "2021"
+
+[lib]
+name = "prometheus_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }

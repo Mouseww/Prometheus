@@ -1,0 +1,7 @@
+.git
+.prometheus
+**/node_modules
+**/dist
+**/target
+coverage
+*.log

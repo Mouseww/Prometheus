@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Prometheus">
+  <rect width="512" height="512" rx="104" fill="#111311"/>
+  <path d="M256 54 421 149v214L256 458 91 363V149Z" fill="none" stroke="#353b36" stroke-width="18"/>
+  <path d="M256 108 375 177v158l-119 69-119-69V177Z" fill="#181c19" stroke="#7ecfc7" stroke-opacity=".42" stroke-width="8"/>
+  <path d="M205 356V156h72c56 0 91 30 91 78 0 52-38 82-98 82h-9v40Zm56-91h12c24 0 38-10 38-30 0-19-13-29-36-29h-14Z" fill="#f26a3d"/>
+  <circle cx="145" cy="175" r="13" fill="#b7e25a"/>
+  <circle cx="375" cy="337" r="9" fill="#7ecfc7"/>
+  <path d="M145 175 256 108M375 337 256 404" stroke="#e7e8df" stroke-opacity=".22" stroke-width="5"/>
+</svg>

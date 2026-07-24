@@ -1,0 +1,23 @@
+{
+  "name": "prometheus",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.24.0",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "dev": "pnpm --filter @prometheus/protocol build && concurrently -n server-rs,client -c yellow,cyan \"pnpm dev:server-rs\" \"pnpm --filter @prometheus/client dev\"",
+    "dev:node": "pnpm --filter @prometheus/protocol build && concurrently -n server,client -c yellow,cyan \"pnpm --filter @prometheus/server dev\" \"pnpm --filter @prometheus/client dev\"",
+    "dev:server-rs": "cargo run --manifest-path apps/server-rs/Cargo.toml",
+    "start:server-rs": "cargo run --release --manifest-path apps/server-rs/Cargo.toml",
+    "test": "pnpm -r --if-present test",
+    "test:server-rs": "cargo test --manifest-path apps/server-rs/Cargo.toml",
+    "typecheck": "pnpm -r --if-present typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "9.2.1",
+    "typescript": "5.9.2"
+  }
+}
