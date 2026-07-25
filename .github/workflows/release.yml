@@ -131,7 +131,18 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Build Tauri desktop installer
         working-directory: apps/client
-        run: pnpm exec tauri build ${{ matrix.args }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Windows bundling occasionally hits transient CDN/NSIS download 504s.
+          for attempt in 1 2 3; do
+            if pnpm exec tauri build ${{ matrix.args }}; then
+              exit 0
+            fi
+            echo "Tauri build attempt $attempt failed; retrying..."
+            sleep $((attempt * 15))
+          done
+          exit 1
       - name: Collect desktop artifacts
         shell: bash
         run: |
