@@ -24,6 +24,7 @@ export const eventTypeSchema = z.enum([
   "agent.run.started",
   "agent.run.completed",
   "agent.run.failed",
+  "agent.run.cancelled",
   "team.workspace.created",
   "team.changes.detected",
   "team.changes.applied",

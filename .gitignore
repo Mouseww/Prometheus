@@ -22,3 +22,15 @@ __pycache__/
 apps/client/src-tauri/binaries/prometheus-server*
 !apps/client/src-tauri/binaries/README.md
 !apps/client/src-tauri/binaries/.gitkeep
+
+# 构建产物：release 由 CI 生成并发布，不进仓库。
+/prometheus-server-*.exe
+/prometheus-server-*
+
+# 一次性脚手架：下划线前缀标记 "临时补丁脚本 / 中间产物"，
+# 它们相对源码会立刻过期，留在仓库里只会误导下一个读代码的人。
+scripts/_*
+apps/client/src/_*
+apps/client/src/*.part[0-9]*.tsx
+
+apps/server-rs/target-test/

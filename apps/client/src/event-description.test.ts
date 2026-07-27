@@ -26,6 +26,15 @@ it("describes durable tool lifecycle events without dumping payload JSON", () =>
   })).toBe("Failed read_file");
 });
 
+
+it("describes cancelled agent runs", () => {
+  expect(describeEvent({
+    ...base,
+    type: "agent.run.cancelled",
+    payload: { message: "Cancelled by user", runId: crypto.randomUUID() },
+  })).toBe("Cancelled by user");
+});
+
 it("describes approval requests and decisions", () => {
   expect(describeEvent({
     ...base,

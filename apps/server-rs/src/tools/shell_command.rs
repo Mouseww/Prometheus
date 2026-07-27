@@ -7,7 +7,10 @@ use std::{
 use serde_json::{Value, json};
 use wait_timeout::ChildExt;
 
-use crate::{error::AppError, workspace_service::WorkspaceService};
+use crate::{
+    error::AppError, terminal_policy::sensitive_env_keys,
+    terminal_session_service::redact_command_secrets, workspace_service::WorkspaceService,
+};
 
 use super::{AgentTool, ToolApprovalPolicy, ToolResult};
 
@@ -77,11 +80,62 @@ pub fn shell_command_tool(workspace: WorkspaceService) -> AgentTool {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct ShellExecResult {
+    pub exit_code: Option<i32>,
+    pub duration_ms: u128,
+    pub output: String,
+    pub total_bytes: usize,
+    pub timed_out: bool,
+    pub is_error: bool,
+}
+
+pub fn execute_shell(
+    workspace: &WorkspaceService,
+    command: &str,
+    workdir: &str,
+    timeout_ms: Option<u64>,
+) -> Result<ShellExecResult, AppError> {
+    let command = command.trim();
+    if command.is_empty() || command.chars().count() > 20_000 {
+        return Err(AppError::invalid_request("command is invalid"));
+    }
+    if workdir.chars().count() > 2_048 {
+        return Err(AppError::invalid_request("workdir is too long"));
+    }
+    let timeout_ms = timeout_ms.unwrap_or(10_000).clamp(100, 120_000);
+    let cwd = workspace.resolve_directory(workdir.trim())?;
+    run_shell_raw(command, &cwd, timeout_ms)
+}
+
 fn run_shell(
     command: &str,
     cwd: &std::path::Path,
     timeout_ms: u64,
 ) -> Result<ToolResult, AppError> {
+    let result = run_shell_raw(command, cwd, timeout_ms)?;
+    let timeout_reason = if result.timed_out {
+        Some(format!("Command timed out after {timeout_ms} ms"))
+    } else {
+        None
+    };
+    Ok(ToolResult {
+        content: format_result(
+            result.exit_code,
+            result.duration_ms,
+            &result.output,
+            result.total_bytes,
+            timeout_reason.as_deref(),
+        ),
+        is_error: result.is_error,
+    })
+}
+
+fn run_shell_raw(
+    command: &str,
+    cwd: &std::path::Path,
+    timeout_ms: u64,
+) -> Result<ShellExecResult, AppError> {
     let started = Instant::now();
     let mut process = if cfg!(windows) {
         let mut cmd = Command::new("powershell.exe");
@@ -97,6 +151,10 @@ fn run_shell(
     process.stdin(Stdio::null());
     process.stdout(Stdio::piped());
     process.stderr(Stdio::piped());
+    // 与 PTY 共用同一份剥离清单——能力等价则脱敏等价。
+    for key in sensitive_env_keys() {
+        process.env_remove(&key);
+    }
 
     let mut child = process
         .spawn()
@@ -109,14 +167,12 @@ fn run_shell(
     let Some(status) = status else {
         let _ = child.kill();
         let _ = child.wait();
-        return Ok(ToolResult {
-            content: format_result(
-                None,
-                started.elapsed().as_millis(),
-                "",
-                0,
-                Some(&format!("Command timed out after {timeout_ms} ms")),
-            ),
+        return Ok(ShellExecResult {
+            exit_code: None,
+            duration_ms: started.elapsed().as_millis(),
+            output: String::new(),
+            total_bytes: 0,
+            timed_out: true,
             is_error: true,
         });
     };
@@ -139,8 +195,12 @@ fn run_shell(
     };
     let text = sanitize_output(&String::from_utf8_lossy(tail));
     let exit_code = status.code();
-    Ok(ToolResult {
-        content: format_result(exit_code, started.elapsed().as_millis(), &text, total, None),
+    Ok(ShellExecResult {
+        exit_code,
+        duration_ms: started.elapsed().as_millis(),
+        output: text,
+        total_bytes: total,
+        timed_out: false,
         is_error: exit_code != Some(0),
     })
 }
@@ -188,26 +248,6 @@ fn sanitize_output(value: &str) -> String {
             }
         })
         .collect()
-}
-
-fn redact_command_secrets(command: &str) -> String {
-    let mut output = command.to_owned();
-    for key in ["api_key", "token", "password", "secret"] {
-        if let Some(index) = output.to_ascii_lowercase().find(key) {
-            let after = index + key.len();
-            if let Some(rest) = output.get(after..)
-                && (rest.starts_with('=') || rest.starts_with(':'))
-            {
-                let value_start = after + 1;
-                let value_end = output[value_start..]
-                    .find(char::is_whitespace)
-                    .map(|offset| value_start + offset)
-                    .unwrap_or(output.len());
-                output.replace_range(value_start..value_end, "[redacted]");
-            }
-        }
-    }
-    output
 }
 
 fn required_string<'a>(arguments: &'a Value, field: &str) -> Result<&'a str, AppError> {

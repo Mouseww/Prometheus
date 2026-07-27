@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::{
+    active_run_hub::{ActiveRunHandle, ActiveRunHub},
     approval_coordinator::{ApprovalCoordinator, ApprovalDecision},
     config_repository::ConfigRepository,
     error::AppError,
@@ -50,6 +51,7 @@ pub struct AgentRunService {
     tools: SharedTools,
     approvals: ApprovalCoordinator,
     run_streams: RunStreamHub,
+    active_runs: ActiveRunHub,
     team_messages: TeamMessageService,
     teams: TeamRunRepository,
     worktrees: Option<GitWorktreeManager>,
@@ -66,6 +68,7 @@ impl AgentRunService {
         tools: SharedTools,
         approvals: ApprovalCoordinator,
         run_streams: RunStreamHub,
+        active_runs: ActiveRunHub,
         team_messages: TeamMessageService,
         teams: TeamRunRepository,
         worktrees: Option<GitWorktreeManager>,
@@ -79,6 +82,7 @@ impl AgentRunService {
             tools,
             approvals,
             run_streams,
+            active_runs,
             team_messages,
             teams,
             worktrees,
@@ -143,6 +147,7 @@ impl AgentRunService {
             .ok_or_else(|| AppError::configuration_not_found("Provider not found"))?;
 
         let run_id = Uuid::new_v4().to_string();
+        let run_handle = self.active_runs.begin(session_id, &run_id)?;
         let actor = Actor {
             kind: "agent".to_owned(),
             id: agent.id.clone(),
@@ -325,6 +330,10 @@ impl AgentRunService {
         let mut last_provider_response_id: Option<String> = None;
 
         for turn in 1..=MAX_TURNS {
+            if run_handle.is_cancelled() {
+                self.run_streams.clear(session_id, &run_id).await;
+                return self.cancel_run(session_id, &actor, &run_id).await;
+            }
             self.run_streams
                 .start_turn(session_id, &run_id, &agent.id, &agent.name, turn)
                 .await;
@@ -427,8 +436,13 @@ impl AgentRunService {
                 .await?;
 
                 let result = self
-                    .execute_tool(session_id, &run_id, tool, &tool_call)
+                    .execute_tool(session_id, &run_id, tool, &tool_call, &run_handle)
                     .await;
+
+                if run_handle.is_cancelled() {
+                    self.run_streams.clear(session_id, &run_id).await;
+                    return self.cancel_run(session_id, &actor, &run_id).await;
+                }
 
                 let output = truncate_output(&result.content, TOOL_OUTPUT_LIMIT);
                 self.commit(
@@ -474,6 +488,7 @@ impl AgentRunService {
         run_id: &str,
         tool: Option<&AgentTool>,
         tool_call: &ToolCall,
+        run_handle: &ActiveRunHandle,
     ) -> ToolResult {
         let Some(tool) = tool else {
             return ToolResult {
@@ -484,7 +499,7 @@ impl AgentRunService {
 
         if tool.approval == ToolApprovalPolicy::Always {
             match self
-                .authorize_tool(session_id, run_id, tool, tool_call)
+                .authorize_tool(session_id, run_id, tool, tool_call, run_handle)
                 .await
             {
                 Ok(AuthorizationOutcome::Approved) => {}
@@ -518,6 +533,7 @@ impl AgentRunService {
         run_id: &str,
         tool: &AgentTool,
         tool_call: &ToolCall,
+        run_handle: &ActiveRunHandle,
     ) -> Result<AuthorizationOutcome, String> {
         if let Some(permission_target) = &tool.permission_target {
             let target = permission_target(&tool_call.arguments);
@@ -595,7 +611,18 @@ impl AgentRunService {
             )
             .await;
 
-        let decision = receiver.await.unwrap_or(ApprovalDecision::Denied);
+        let mut receiver = receiver;
+        let decision = loop {
+            if run_handle.is_cancelled() {
+                let _ = self.approvals.deny_all_for_session(session_id);
+                break ApprovalDecision::Denied;
+            }
+            match tokio::time::timeout(std::time::Duration::from_millis(200), &mut receiver).await {
+                Ok(result) => break result.unwrap_or(ApprovalDecision::Denied),
+                Err(_) => continue,
+            }
+        };
+        let cancelled = run_handle.is_cancelled();
         let _ = self
             .commit(
                 session_id,
@@ -613,10 +640,17 @@ impl AgentRunService {
                         "toolCallId": tool_call.id,
                         "toolName": tool_call.name,
                         "decision": decision.as_str(),
+                        "cancelled": cancelled,
                     }),
                 },
             )
             .await;
+
+        if cancelled {
+            return Ok(AuthorizationOutcome::Denied {
+                message: "Tool execution cancelled because the agent run was stopped".into(),
+            });
+        }
 
         Ok(match decision {
             ApprovalDecision::Approved => AuthorizationOutcome::Approved,
@@ -677,6 +711,29 @@ impl AgentRunService {
             reply_event,
             completed_event,
         })
+    }
+
+    async fn cancel_run(
+        &self,
+        session_id: &str,
+        actor: &Actor,
+        run_id: &str,
+    ) -> Result<AgentRunResult, AppError> {
+        self
+            .commit(
+                session_id,
+                AppendEventInput {
+                    event_id: Uuid::new_v4().to_string(),
+                    event_type: "agent.run.cancelled".to_owned(),
+                    actor: actor.clone(),
+                    payload: json!({
+                        "runId": run_id,
+                        "message": "Cancelled by user",
+                    }),
+                },
+            )
+            .await?;
+        Err(AppError::invalid_request("Cancelled by user"))
     }
 
     async fn fail_run(

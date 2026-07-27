@@ -25,6 +25,7 @@ const EVENT_TYPES: &[&str] = &[
     "agent.run.started",
     "agent.run.completed",
     "agent.run.failed",
+    "agent.run.cancelled",
     "team.workspace.created",
     "team.changes.detected",
     "team.changes.applied",

@@ -50,11 +50,14 @@ fn start_desktop_sidecar(app: &AppHandle) -> Result<(), Box<dyn std::error::Erro
     }
 
     let db_file = data_dir.join("prometheus.db");
+    let runtime_file = data_dir.join("runtime.json");
+    let (host, port, workspace_root) = read_runtime_bind(&runtime_file, &workspace_dir);
     let mut child = Command::new(&server)
-        .env("PROMETHEUS_HOST", "127.0.0.1")
-        .env("PROMETHEUS_PORT", "4310")
+        .env("PROMETHEUS_HOST", &host)
+        .env("PROMETHEUS_PORT", port.to_string())
         .env("PROMETHEUS_DATA_FILE", &db_file)
-        .env("PROMETHEUS_WORKSPACE_ROOT", &workspace_dir)
+        .env("PROMETHEUS_RUNTIME_FILE", &runtime_file)
+        .env("PROMETHEUS_WORKSPACE_ROOT", &workspace_root)
         .env("PROMETHEUS_WEB_ROOT", &web_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -75,7 +78,7 @@ fn start_desktop_sidecar(app: &AppHandle) -> Result<(), Box<dyn std::error::Erro
         });
     }
 
-    wait_for_health(Duration::from_secs(20));
+    wait_for_health(&host, port, Duration::from_secs(20));
 
     if let Ok(mut guard) = app.state::<SidecarState>().0.lock() {
         *guard = Some(child);
@@ -160,34 +163,65 @@ fn resolve_sidecar_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
 }
 
 #[cfg(desktop)]
-fn wait_for_health(timeout: Duration) {
+fn read_runtime_bind(runtime_file: &PathBuf, default_workspace: &PathBuf) -> (String, u16, PathBuf) {
+    let mut host = "127.0.0.1".to_string();
+    let mut port = 4310_u16;
+    let mut workspace = default_workspace.clone();
+    if let Ok(raw) = std::fs::read_to_string(runtime_file) {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) {
+            if let Some(v) = value.get("host").and_then(|v| v.as_str()) {
+                if !v.trim().is_empty() {
+                    host = v.trim().to_string();
+                }
+            }
+            if let Some(v) = value.get("port").and_then(|v| v.as_u64()) {
+                if v > 0 && v <= u16::MAX as u64 {
+                    port = v as u16;
+                }
+            }
+            if let Some(v) = value.get("workspaceRoot").and_then(|v| v.as_str()) {
+                let path = PathBuf::from(v);
+                if path.is_dir() {
+                    workspace = path;
+                }
+            }
+        }
+    }
+    (host, port, workspace)
+}
+
+#[cfg(desktop)]
+fn wait_for_health(host: &str, port: u16, timeout: Duration) {
     let started = Instant::now();
     while started.elapsed() < timeout {
-        if control_plane_ready() {
+        if control_plane_ready(host, port) {
             return;
         }
         thread::sleep(Duration::from_millis(200));
     }
     eprintln!(
-        "Prometheus control-plane sidecar did not become healthy on 127.0.0.1:4310 within {:?}",
-        timeout
+        "Prometheus control-plane sidecar did not become healthy on {}:{} within {:?}",
+        host, port, timeout
     );
 }
 
 #[cfg(desktop)]
-fn control_plane_ready() -> bool {
+fn control_plane_ready(host: &str, port: u16) -> bool {
     use std::io::{Read, Write};
 
-    let Ok(mut stream) = std::net::TcpStream::connect_timeout(
-        &"127.0.0.1:4310".parse().expect("addr"),
-        Duration::from_millis(250),
-    ) else {
+    let addr = format!("{host}:{port}");
+    let Ok(socket_addr) = addr.parse() else {
+        return false;
+    };
+    let Ok(mut stream) = std::net::TcpStream::connect_timeout(&socket_addr, Duration::from_millis(250)) else {
         return false;
     };
     let _ = stream.set_read_timeout(Some(Duration::from_millis(400)));
     let _ = stream.set_write_timeout(Some(Duration::from_millis(400)));
-    let request = b"GET /api/health HTTP/1.1\r\nHost: 127.0.0.1:4310\r\nConnection: close\r\n\r\n";
-    if stream.write_all(request).is_err() {
+    let request = format!(
+        "GET /api/health HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n"
+    );
+    if stream.write_all(request.as_bytes()).is_err() {
         return false;
     }
     let mut buf = [0_u8; 256];

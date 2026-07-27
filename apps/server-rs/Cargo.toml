@@ -1,6 +1,6 @@
 [package]
 name = "prometheus-server"
-version = "0.1.0"
+version = "0.1.7"
 edition = "2024"
 description = "Rust compatibility control plane for Prometheus"
 license = "MIT"
@@ -32,6 +32,7 @@ tower-http = { version = "0.6", features = ["cors", "fs"] }
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 wait-timeout = "0.2"
+portable-pty = "0.8"
 
 [dev-dependencies]
 tempfile = "3"

@@ -27,13 +27,18 @@ import {
   Clock3,
   Command,
   FileCode2,
+  Files,
   Folder,
   FolderOpen,
   GitBranch,
   Globe2,
   Menu,
+  MessageSquare,
   MessageSquarePlus,
+  Plug,
   Radio,
+  Save,
+  Search,
   Send,
   ServerCog,
   ShieldCheck,
@@ -44,25 +49,251 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { describeApprovalRequest, describeEvent } from "./event-description";
 import type { McpServer, SkillSummary } from "./api";
+import { execTerminal, getAccessToken, listWorkspaceFiles, readWorkspaceFile, searchWorkspace, setAccessToken, writeWorkspaceFile, type WorkspaceSearchHit } from "./api";
+import { BottomPanel, type BottomPanelTab, type EditorProblem } from "./BottomPanel";
+import { CodeEditor } from "./CodeEditor";
+import { CommandPalette, type PaletteCommand, type PaletteMode } from "./CommandPalette";
+import { agentShellLines, extractWritePathFromStarted, inputLine, resultLines, systemLine, type TerminalLine } from "./terminal-model";
 import { usePrometheus } from "./use-prometheus";
+
+type ActivityId = "explorer" | "search" | "sessions" | "agents" | "extensions" | "settings";
+type SettingsSection = "connection" | "server" | "providers" | "agents" | "permissions" | "mcp" | "skills";
+type EditorTab = {
+  path: string;
+  content: string;
+  original: string;
+  truncated: boolean;
+  dirty: boolean;
+  saving: boolean;
+  error: string | null;
+};
 
 export function App() {
   const prometheus = usePrometheus();
+  const [activity, setActivity] = useState<ActivityId>("explorer");
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("connection");
   const [message, setMessage] = useState("");
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [newSessionTitle, setNewSessionTitle] = useState("");
   const [mobilePanelOpen, setMobilePanelOpen] = useState(false);
-  const [runtimeSetupOpen, setRuntimeSetupOpen] = useState(false);
   const [teamSetupOpen, setTeamSetupOpen] = useState(false);
+  const [tabs, setTabs] = useState<EditorTab[]>([]);
+  const [activePath, setActivePath] = useState<string | null>(null);
+  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteMode, setPaletteMode] = useState<PaletteMode>("files");
+  const [workspaceFiles, setWorkspaceFiles] = useState<string[]>([]);
+  const [bottomOpen, setBottomOpen] = useState(true);
+  const [bottomTab, setBottomTab] = useState<BottomPanelTab>("terminal");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchHits, setSearchHits] = useState<WorkspaceSearchHit[]>([]);
+  const [searchBusy, setSearchBusy] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [revealLine, setRevealLine] = useState<number | null>(null);
+  const [terminalLines, setTerminalLines] = useState<TerminalLine[]>(() => [
+    systemLine("Prometheus terminal ready. Commands execute on the control-plane workspace."),
+  ]);
+  const [terminalBusy, setTerminalBusy] = useState(false);
+  const [terminalWorkdir, setTerminalWorkdir] = useState("");
+  const seenTerminalEvents = useRef<Set<string>>(new Set());
+  const pendingWritePaths = useRef<Map<string, string>>(new Map());
   const timelineEnd = useRef<HTMLDivElement>(null);
   const agentRunning = prometheus.running || prometheus.teamRunning || prometheus.activeStreams.length > 0;
+  const activeTab = tabs.find((tab) => tab.path === activePath) ?? null;
+
+  const openFile = async (path: string) => {
+    setSelectedFilePath(path);
+    setActivity("explorer");
+    const existing = tabs.find((tab) => tab.path === path);
+    if (existing) {
+      setActivePath(path);
+      return;
+    }
+    try {
+      const file = await readWorkspaceFile(path);
+      setTabs((current) => [
+        ...current.filter((tab) => tab.path !== path),
+        {
+          path: file.path,
+          content: file.content,
+          original: file.content,
+          truncated: file.truncated,
+          dirty: false,
+          saving: false,
+          error: null,
+        },
+      ]);
+      setActivePath(file.path);
+    } catch (reason) {
+      const error = reason instanceof Error ? reason.message : "Unable to open file";
+      setTabs((current) => [
+        ...current.filter((tab) => tab.path !== path),
+        { path, content: "", original: "", truncated: false, dirty: false, saving: false, error },
+      ]);
+      setActivePath(path);
+    }
+  };
+
+  const updateActiveContent = (content: string) => {
+    if (!activePath) return;
+    setTabs((current) =>
+      current.map((tab) =>
+        tab.path === activePath
+          ? { ...tab, content, dirty: content !== tab.original, error: null }
+          : tab,
+      ),
+    );
+  };
+
+  const saveActiveTab = async () => {
+    if (!activePath) return;
+    const tab = tabs.find((item) => item.path === activePath);
+    if (!tab || tab.saving) return;
+    setTabs((current) => current.map((item) => item.path === activePath ? { ...item, saving: true, error: null } : item));
+    try {
+      await writeWorkspaceFile(tab.path, tab.content);
+      setTabs((current) => current.map((item) => item.path === activePath
+        ? { ...item, original: item.content, dirty: false, saving: false, error: null }
+        : item));
+    } catch (reason) {
+      const error = reason instanceof Error ? reason.message : "Save failed";
+      setTabs((current) => current.map((item) => item.path === activePath ? { ...item, saving: false, error } : item));
+    }
+  };
+
+  const closeTab = (path: string) => {
+    setTabs((current) => {
+      const next = current.filter((tab) => tab.path !== path);
+      if (activePath === path) setActivePath(next.at(-1)?.path ?? null);
+      return next;
+    });
+  };
+
+  const openFileAtLine = async (path: string, line?: number) => {
+    await openFile(path);
+    if (line && line > 0) setRevealLine(line);
+  };
+
+  const runWorkspaceSearch = async (raw = searchQuery) => {
+    const query = raw.trim();
+    if (!query) {
+      setSearchHits([]);
+      setSearchError(null);
+      return;
+    }
+    if (prometheus.controlPlane !== "online") {
+      setActivity("settings");
+      setSettingsSection("connection");
+      setSearchError("Control plane offline");
+      return;
+    }
+    setSearchBusy(true);
+    setSearchError(null);
+    try {
+      const hits = await searchWorkspace(query);
+      setSearchHits(hits);
+      setBottomOpen(true);
+      setBottomTab("search");
+    } catch (reason) {
+      setSearchHits([]);
+      setSearchError(reason instanceof Error ? reason.message : "Search failed");
+    } finally {
+      setSearchBusy(false);
+    }
+  };
+
+  const runTerminalCommand = async (command: string) => {
+    if (prometheus.controlPlane !== "online") {
+      setActivity("settings");
+      setSettingsSection("connection");
+      setTerminalLines((current) => [...current, systemLine("Control plane offline — connect server first.", "error")]);
+      return;
+    }
+    // 终端命令与 agent 工具调用共享同一条审批/审计链，因此必须归属到一个会话。
+    const sessionId = prometheus.selectedSessionId;
+    if (!sessionId) {
+      setActivity("sessions");
+      setTerminalLines((current) => [...current, systemLine("Select or create a session before running commands.", "error")]);
+      return;
+    }
+    setTerminalBusy(true);
+    setBottomOpen(true);
+    setBottomTab("terminal");
+    setTerminalLines((current) => [...current, inputLine(command, terminalWorkdir)]);
+    try {
+      const result = await execTerminal({ sessionId, command, workdir: terminalWorkdir, timeoutMs: 30_000 });
+      setTerminalLines((current) => [...current, ...resultLines(result)]);
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : "Terminal command failed";
+      setTerminalLines((current) => [...current, systemLine(message, "error")]);
+    } finally {
+      setTerminalBusy(false);
+    }
+  };
+
+  const problems: EditorProblem[] = tabs.flatMap((tab) => {
+    const items: EditorProblem[] = [];
+    if (tab.error) items.push({ path: tab.path, message: tab.error, severity: "error" });
+    if (tab.truncated) items.push({ path: tab.path, message: "File truncated at 512KB read limit", severity: "warning" });
+    return items;
+  });
 
   useEffect(() => {
     timelineEnd.current?.scrollIntoView({ behavior: "smooth" });
   }, [prometheus.events, prometheus.activeStreams]);
+
+  useEffect(() => {
+    if (prometheus.controlPlane !== "online") {
+      setWorkspaceFiles([]);
+      return;
+    }
+    let cancelled = false;
+    void listWorkspaceFiles()
+      .then((files) => { if (!cancelled) setWorkspaceFiles(files); })
+      .catch(() => { if (!cancelled) setWorkspaceFiles([]); });
+    return () => { cancelled = true; };
+  }, [prometheus.controlPlane, prometheus.health?.workspace]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      const mod = event.ctrlKey || event.metaKey;
+      if (mod && key === "s") {
+        if (!activePath) return;
+        event.preventDefault();
+        void saveActiveTab();
+        return;
+      }
+      if (mod && event.shiftKey && key === "p") {
+        event.preventDefault();
+        setPaletteMode("commands");
+        setPaletteOpen(true);
+        return;
+      }
+      if (mod && !event.shiftKey && key === "p") {
+        event.preventDefault();
+        setPaletteMode("files");
+        setPaletteOpen(true);
+        return;
+      }
+      if (mod && event.shiftKey && key === "f") {
+        event.preventDefault();
+        setActivity("search");
+        setBottomOpen(true);
+        setBottomTab("search");
+        return;
+      }
+      if (mod && key === "j") {
+        event.preventDefault();
+        setBottomOpen((open) => !open);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [activePath, tabs]);
 
   const submitMessage = async (event: FormEvent) => {
     event.preventDefault();
@@ -78,7 +309,8 @@ export function App() {
     const title = newSessionTitle.trim();
     if (!title) return;
     if (prometheus.controlPlane !== "online") {
-      setRuntimeSetupOpen(true);
+      setActivity("settings");
+      setSettingsSection("connection");
       return;
     }
     await prometheus.createSession(title);
@@ -86,261 +318,504 @@ export function App() {
     setNewSessionOpen(false);
   };
 
+  const paletteCommands: PaletteCommand[] = [
+    {
+      id: "file.quickOpen",
+      label: "Go to File…",
+      detail: "Ctrl+P",
+      run: () => { setPaletteMode("files"); setPaletteOpen(true); },
+    },
+    {
+      id: "file.save",
+      label: "File: Save",
+      detail: "Ctrl+S",
+      run: () => { void saveActiveTab(); },
+    },
+    {
+      id: "workbench.view.explorer",
+      label: "View: Show Explorer",
+      run: () => setActivity("explorer"),
+    },
+    {
+      id: "workbench.view.search",
+      label: "View: Show Search",
+      detail: "Ctrl+Shift+F",
+      run: () => setActivity("search"),
+    },
+    {
+      id: "workbench.view.sessions",
+      label: "View: Show Sessions",
+      run: () => setActivity("sessions"),
+    },
+    {
+      id: "workbench.action.terminal",
+      label: "Terminal: Focus Terminal",
+      run: () => { setBottomOpen(true); setBottomTab("terminal"); },
+    },
+    {
+      id: "workbench.action.togglePanel",
+      label: "View: Toggle Bottom Panel",
+      detail: "Ctrl+J",
+      run: () => setBottomOpen((open) => !open),
+    },
+    {
+      id: "workbench.action.openSettings",
+      label: "Preferences: Open Settings",
+      run: () => { setActivity("settings"); setSettingsSection("connection"); },
+    },
+    {
+      id: "agent.cancel",
+      label: "Agent: Stop Running",
+      run: () => { void prometheus.cancelRun(prometheus.activeStreams[0]?.runId ?? null); },
+    },
+    {
+      id: "session.create",
+      label: "Task: Create Session",
+      run: () => {
+        if (prometheus.controlPlane !== "online") {
+          setActivity("settings");
+          setSettingsSection("connection");
+          return;
+        }
+        setNewSessionOpen(true);
+      },
+    },
+  ];
+
   return (
-    <main className="app-shell">
-      <NavigationRail />
+    <div className="ide-shell">
+      <NavigationRail activity={activity} onChange={setActivity} />
 
-      <aside className={`context-panel ${mobilePanelOpen ? "is-open" : ""}`}>
-        <div className="context-heading">
-          <div>
-            <span className="eyebrow">WORKSPACE</span>
-            <h1>{prometheus.health?.workspace ?? (prometheus.controlPlane === "connecting" ? "Connecting…" : "Control plane offline")}</h1>
-          </div>
-          <button className="icon-button mobile-only" onClick={() => setMobilePanelOpen(false)}>
-            <X size={17} />
-          </button>
-        </div>
-
-        <section className="workspace-tree" aria-label="Workspace files">
-          {prometheus.rootNodes.map((node) => (
-            <TreeEntry
-              key={node.path}
-              node={node}
-              depth={0}
-              expandedPaths={prometheus.expandedPaths}
-              childrenByPath={prometheus.childrenByPath}
-              onToggle={prometheus.toggleDirectory}
-            />
-          ))}
-          {!prometheus.loading && prometheus.rootNodes.length === 0 && (
-            <p className="muted-note">The workspace is empty.</p>
-          )}
-        </section>
-
-        <div className="section-divider" />
-
-        <div className="section-title-row">
-          <span className="eyebrow">ACTIVE TASKS</span>
-          <button className="mini-button" onClick={() => setNewSessionOpen(true)}>
-            <MessageSquarePlus size={14} /> New
-          </button>
-        </div>
-        <nav className="session-list" aria-label="Sessions">
-          {prometheus.sessions.map((session) => (
-            <button
-              key={session.id}
-              className={session.id === prometheus.selectedSessionId ? "session-item active" : "session-item"}
-              onClick={() => {
-                prometheus.setSelectedSessionId(session.id);
-                setMobilePanelOpen(false);
-              }}
-            >
-              <span className="session-pulse" />
-              <span className="session-copy">
-                <strong>{session.title}</strong>
-                <small>seq {session.lastSequence.toString().padStart(4, "0")}</small>
-              </span>
-            </button>
-          ))}
-          {!prometheus.loading && prometheus.sessions.length === 0 && (
-            <button className="empty-session" onClick={() => setNewSessionOpen(true)}>
-              <span>Create the first task</span>
-              <small>It will be available on every connected client.</small>
-            </button>
-          )}
-        </nav>
-      </aside>
-
-      <section className="mission-panel">
-        <header className="mission-header">
-          <button className="icon-button mobile-only" onClick={() => setMobilePanelOpen(true)}>
-            <Menu size={18} />
-          </button>
-          <div className="mission-title">
-            <span className="breadcrumb">PROMETHEUS / TASK</span>
-            <h2>{prometheus.selectedSession?.title ?? "No task selected"}</h2>
-          </div>
-          <div className={`connection-pill ${prometheus.controlPlane === "online" ? (prometheus.connection === "live" ? "live" : prometheus.connection === "connecting" ? "connecting" : "idle") : "offline"}`}>
-            <Radio size={13} />
-            {prometheus.controlPlane !== "online"
-              ? (prometheus.controlPlane === "connecting" ? "CONNECTING" : "SERVER OFFLINE")
-              : prometheus.connection === "live"
-                ? "LIVE SYNC"
-                : prometheus.connection === "connecting"
-                  ? "SYNCING"
-                  : prometheus.connection === "idle"
-                    ? "SERVER ONLINE"
-                    : "SYNC OFFLINE"}
-          </div>
-        </header>
-
-        {prometheus.error && <div className="error-banner">{prometheus.error}</div>}
-        {prometheus.teamRuns[0] && (
-          <TeamRunSummary
-            team={prometheus.teamRuns[0]}
-            messages={prometheus.teamMessages}
-            onApply={prometheus.applyTeamChanges}
-            onDiscard={prometheus.discardTeamChanges}
-          />
+      <aside className={`ide-sidebar context-panel ${mobilePanelOpen ? "is-open" : ""}`}>
+        {activity === "explorer" && (
+          <>
+            <div className="context-heading">
+              <div>
+                <span className="eyebrow">EXPLORER</span>
+                <h1>{prometheus.health?.workspace ?? (prometheus.controlPlane === "connecting" ? "Connecting…" : "Offline")}</h1>
+              </div>
+              <button className="icon-button mobile-only" onClick={() => setMobilePanelOpen(false)}><X size={17} /></button>
+            </div>
+            <section className="workspace-tree" aria-label="Workspace files">
+              {prometheus.rootNodes.map((node) => (
+                <TreeEntry
+                  key={node.path}
+                  node={node}
+                  depth={0}
+                  expandedPaths={prometheus.expandedPaths}
+                  childrenByPath={prometheus.childrenByPath}
+                  selectedPath={selectedFilePath}
+                  onToggle={prometheus.toggleDirectory}
+                  onOpenFile={(path) => { void openFile(path); }}
+                />
+              ))}
+              {!prometheus.loading && prometheus.rootNodes.length === 0 && (
+                <p className="muted-note">Workspace empty or control plane offline.</p>
+              )}
+            </section>
+          </>
         )}
 
-        <div className="timeline">
-          {prometheus.selectedSession ? (
-            prometheus.events.length > 0 || prometheus.activeStreams.length > 0 ? (
-              <>
-                {prometheus.events.map((event) => (
-                  <TimelineEvent
-                    key={event.eventId}
-                    event={event}
-                    events={prometheus.events}
-                    onResolveApproval={prometheus.resolveApproval}
-                  />
-                ))}
-                {prometheus.activeStreams.map((stream) => (
-                  <StreamingEvent key={stream.runId} stream={stream} />
-                ))}
-              </>
-            ) : (
-              <div className="empty-state">
-                <div className="orbital-mark"><Sparkles size={27} /></div>
-                <span className="eyebrow">DURABLE TASK READY</span>
-                <h3>Start with an outcome.</h3>
-                <p>Your message will be committed to the server event log and appear on every connected device.</p>
+        {activity === "search" && (
+          <>
+            <div className="context-heading">
+              <div>
+                <span className="eyebrow">SEARCH</span>
+                <h1>Workspace</h1>
               </div>
-            )
-          ) : (
-            <div className="empty-state">
-              <div className="orbital-mark"><Command size={27} /></div>
-              <span className="eyebrow">NO ACTIVE TASK</span>
-              <h3>Create a mission to begin.</h3>
-              <p>Prometheus keeps each task as a replayable timeline, independent of the terminal you started on.</p>
-              <button
-                className="primary-button"
-                onClick={() => {
-                  if (prometheus.controlPlane !== "online") {
-                    setRuntimeSetupOpen(true);
-                    return;
-                  }
-                  setNewSessionOpen(true);
-                }}
-              >
-                {prometheus.controlPlane === "online" ? "Create task" : "Connect server"}
-              </button>
             </div>
-          )}
-          <div ref={timelineEnd} />
-        </div>
-
-        <form className="composer" onSubmit={submitMessage}>
-          <div className="composer-meta">
-            <span><TerminalSquare size={13} /> TASK INPUT</span>
-            <span>{agentRunning ? "AGENT STREAMING" : `${message.length}/12000`}</span>
-          </div>
-          <textarea
-            value={message}
-            onChange={(event) => setMessage(event.target.value.slice(0, 12000))}
-            placeholder={prometheus.selectedSession ? "Describe the next outcome or add context…" : "Create a task before sending input"}
-            disabled={!prometheus.selectedSession || agentRunning}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                event.currentTarget.form?.requestSubmit();
-              }
-            }}
-          />
-          <div className="composer-footer">
-            <div className="composer-runtime-actions">
-              <label className="agent-selector">
-                <Bot size={13} />
-                <select
-                  value={prometheus.selectedAgentId ?? ""}
-                  onChange={(event) => prometheus.setSelectedAgentId(event.target.value || null)}
-                >
-                  <option value="">Store message only</option>
-                  {prometheus.agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
-                </select>
+            <form
+              className="sidebar-search"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void runWorkspaceSearch();
+              }}
+            >
+              <label>
+                Query
+                <input
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder="Search text in workspace"
+                  autoFocus
+                />
               </label>
-              <button
-                type="button"
-                className="team-run-button"
-                disabled={!prometheus.selectedSession || prometheus.agents.length === 0 || agentRunning}
-                onClick={() => setTeamSetupOpen(true)}
-              >
-                <Users size={13} /> Team run
+              <button className="primary-button" type="submit" disabled={searchBusy || !searchQuery.trim()}>
+                {searchBusy ? "Searching…" : "Search"}
               </button>
+              <p className="muted-note">Results open in the bottom panel. Click a hit to open the file.</p>
+            </form>
+            <div className="sidebar-stack">
+              {searchHits.slice(0, 30).map((hit) => (
+                <button
+                  key={hit.path + ":" + hit.line + ":" + hit.text}
+                  className="side-card"
+                  onClick={() => { void openFileAtLine(hit.path, hit.line); }}
+                >
+                  <strong>{hit.path}</strong>
+                  <small>line {hit.line}</small>
+                </button>
+              ))}
             </div>
-            <button className="send-button" type="submit" disabled={!prometheus.selectedSession || !message.trim() || agentRunning}>
-              {agentRunning ? "Streaming" : "Transmit"} <Send size={15} />
-            </button>
+          </>
+        )}
+
+        {activity === "sessions" && (
+          <>
+            <div className="context-heading">
+              <div>
+                <span className="eyebrow">SESSIONS</span>
+                <h1>Durable tasks</h1>
+              </div>
+              <button className="mini-button" onClick={() => setNewSessionOpen(true)}><MessageSquarePlus size={14} /> New</button>
+            </div>
+            <nav className="session-list" aria-label="Sessions">
+              {prometheus.sessions.map((session) => (
+                <button
+                  key={session.id}
+                  className={session.id === prometheus.selectedSessionId ? "session-item active" : "session-item"}
+                  onClick={() => { prometheus.setSelectedSessionId(session.id); setMobilePanelOpen(false); }}
+                >
+                  <span className="session-pulse" />
+                  <span className="session-copy">
+                    <strong>{session.title}</strong>
+                    <small>seq {session.lastSequence.toString().padStart(4, "0")}</small>
+                  </span>
+                </button>
+              ))}
+              {!prometheus.loading && prometheus.sessions.length === 0 && (
+                <button className="empty-session" onClick={() => setNewSessionOpen(true)}>
+                  <span>Create the first task</span>
+                  <small>Shared across every connected client.</small>
+                </button>
+              )}
+            </nav>
+          </>
+        )}
+
+        {activity === "agents" && (
+          <>
+            <div className="context-heading"><div><span className="eyebrow">AGENTS</span><h1>{prometheus.agents.length} profiles</h1></div></div>
+            <div className="sidebar-stack">
+              {prometheus.agents.map((agent) => (
+                <button key={agent.id} className={agent.id === prometheus.selectedAgentId ? "side-card active" : "side-card"} onClick={() => prometheus.setSelectedAgentId(agent.id)}>
+                  <strong>{agent.name}</strong>
+                  <small>{agent.model}</small>
+                </button>
+              ))}
+              {prometheus.agents.length === 0 && <p className="muted-note">No agents yet.</p>}
+              <button className="secondary-button" onClick={() => { setActivity("settings"); setSettingsSection("agents"); }}>Manage in Settings</button>
+            </div>
+          </>
+        )}
+
+        {activity === "extensions" && (
+          <>
+            <div className="context-heading"><div><span className="eyebrow">EXTENSIONS</span><h1>Skills & MCP</h1></div></div>
+            <div className="sidebar-stack">
+              <div className="side-card static"><strong>Skills</strong><small>{prometheus.skills.length} discovered</small></div>
+              <div className="side-card static"><strong>MCP servers</strong><small>{prometheus.mcpServers.length} configured</small></div>
+              <button className="secondary-button" onClick={() => { setActivity("settings"); setSettingsSection("mcp"); }}>Open extension settings</button>
+            </div>
+          </>
+        )}
+
+        {activity === "settings" && (
+          <>
+            <div className="context-heading"><div><span className="eyebrow">SETTINGS</span><h1>Configuration</h1></div></div>
+            <nav className="settings-nav">
+              {([
+                ["connection", "Connection"],
+                ["server", "Server"],
+                ["providers", "Providers"],
+                ["agents", "Agents"],
+                ["permissions", "Permissions"],
+                ["mcp", "MCP"],
+                ["skills", "Skills"],
+              ] as const).map(([id, label]) => (
+                <button key={id} className={settingsSection === id ? "settings-nav-item active" : "settings-nav-item"} onClick={() => setSettingsSection(id)}>
+                  {label}
+                </button>
+              ))}
+            </nav>
+          </>
+        )}
+      </aside>
+
+      <section className="ide-main">
+        {activity === "settings" ? (
+          <div className="settings-workspace">
+            <header className="settings-header">
+              <div>
+                <span className="eyebrow">SETTINGS</span>
+                <h2>{{
+                  connection: "Connection",
+                  server: "Server & Projects",
+                  providers: "Providers",
+                  agents: "Agents",
+                  permissions: "Permissions",
+                  mcp: "MCP Servers",
+                  skills: "Skills",
+                }[settingsSection]}</h2>
+              </div>
+              <div className="telemetry-inline">
+                <Globe2 size={15} />
+                <span>{prometheus.controlPlaneUrl}</span>
+                <strong className={prometheus.controlPlane === "online" ? "tone-good" : "tone-quiet"}>{prometheus.controlPlane}</strong>
+              </div>
+            </header>
+            <div className="settings-content">
+              <RuntimeSetupModal
+                embedded
+                section={settingsSection}
+                controlPlane={prometheus.controlPlane}
+                controlPlaneMode={prometheus.controlPlaneMode}
+                controlPlaneUrl={prometheus.controlPlaneUrl}
+                runtime={prometheus.runtime}
+                onConfigureControlPlane={prometheus.configureControlPlane}
+                onConfigureControlPlaneMode={prometheus.configureControlPlaneMode}
+                onReconnectControlPlane={prometheus.reconnectControlPlane}
+                onSaveRuntime={prometheus.saveRuntime}
+                onAddProject={prometheus.addProject}
+                onOpenProject={prometheus.openProject}
+                onRemoveProject={prometheus.removeProject}
+                providers={prometheus.providers}
+                agents={prometheus.agents}
+                permissionRules={prometheus.permissionRules}
+                skills={prometheus.skills}
+                mcpServers={prometheus.mcpServers}
+                onCreateProvider={prometheus.createProvider}
+                onCreateAgent={prometheus.createAgent}
+                onCreatePermissionRule={prometheus.createPermissionRule}
+                onDeletePermissionRule={prometheus.deletePermissionRule}
+                onCreateMcpServer={prometheus.createMcpServer}
+                onDeleteMcpServer={prometheus.deleteMcpServer}
+                onRefreshSkills={prometheus.refreshSkills}
+                onClose={() => setActivity("explorer")}
+              />
+            </div>
           </div>
-        </form>
+        ) : (
+          <div className="workbench">
+            <div className="workbench-main">
+            <div className="editor-column">
+              <div className="editor-tabs" role="tablist" aria-label="Open editors">
+                {tabs.map((tab) => (
+                  <div key={tab.path} className={tab.path === activePath ? "editor-tab active" : "editor-tab"} role="tab" onClick={() => setActivePath(tab.path)}>
+                    <FileCode2 size={13} />
+                    <span>{tab.path.split("/").pop()}</span>
+                    {tab.dirty && <i className="dirty-dot" />}
+                    <button className="tab-close" aria-label={`Close ${tab.path}`} onClick={(event) => { event.stopPropagation(); closeTab(tab.path); }}>
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
+                {tabs.length === 0 && <div className="editor-tab placeholder">No file open</div>}
+              </div>
+              <div className="editor-body">
+                {activeTab ? (
+                  <>
+                    <div className="editor-toolbar">
+                      <div>
+                        <strong>{activeTab.path}</strong>
+                        <small>{activeTab.truncated ? "truncated · " : ""}{activeTab.dirty ? "unsaved" : "saved"}</small>
+                      </div>
+                      <button className="mini-button" disabled={!activeTab.dirty || activeTab.saving} onClick={() => { void saveActiveTab(); }}>
+                        <Save size={13} /> {activeTab.saving ? "Saving…" : "Save"}
+                      </button>
+                    </div>
+                    {activeTab.error && <div className="error-banner">{activeTab.error}</div>}
+                    <CodeEditor
+                      path={activeTab.path}
+                      value={activeTab.content}
+                      onChange={updateActiveContent}
+                      onSave={() => { void saveActiveTab(); }}
+                      revealLine={revealLine}
+                      onRevealHandled={() => setRevealLine(null)}
+                    />
+                  </>
+                ) : (
+                  <div className="empty-state editor-empty">
+                    <div className="orbital-mark"><Files size={28} /></div>
+                    <span className="eyebrow">EDITOR</span>
+                    <h3>Open a file from Explorer</h3>
+                    <p>Click a file in the left tree to preview and edit. Save with the toolbar button.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="chat-column mission-panel">
+
+              <header className="mission-header chat-header">
+                <button className="icon-button mobile-only" onClick={() => setMobilePanelOpen(true)}><Menu size={18} /></button>
+                <div className="mission-title">
+                  <span className="breadcrumb">AGENT CHAT</span>
+                  <h2>{prometheus.selectedSession?.title ?? "No session selected"}</h2>
+                </div>
+                <div className={`connection-pill ${prometheus.controlPlane === "online" ? (prometheus.connection === "live" ? "live" : prometheus.connection === "connecting" ? "connecting" : "idle") : "offline"}`}>
+                  <Radio size={13} />
+                  {prometheus.controlPlane !== "online"
+                    ? (prometheus.controlPlane === "connecting" ? "CONNECTING" : "SERVER OFFLINE")
+                    : prometheus.connection === "live"
+                      ? "LIVE SYNC"
+                      : prometheus.connection === "connecting"
+                        ? "SYNCING"
+                        : "SERVER ONLINE"}
+                </div>
+              </header>
+
+              {agentRunning && (
+                <div className="agent-run-banner" aria-live="polite">
+                  <span className="dot" />
+                  Agent running{prometheus.selectedAgentId ? " · " + (prometheus.agents.find((agent) => agent.id === prometheus.selectedAgentId)?.name ?? "selected") : ""}
+                  {prometheus.activeStreams[0] ? " · streaming turn " + prometheus.activeStreams[0].turn : ""}
+                  <button
+                    type="button"
+                    className="stop-button"
+                    onClick={() => {
+                      const runId = prometheus.activeStreams[0]?.runId ?? null;
+                      void prometheus.cancelRun(runId);
+                    }}
+                  >
+                    Stop
+                  </button>
+                </div>
+              )}
+              {prometheus.error && <div className="error-banner">{prometheus.error}</div>}
+              {prometheus.teamRuns[0] && (
+                <TeamRunSummary
+                  team={prometheus.teamRuns[0]}
+                  messages={prometheus.teamMessages}
+                  onApply={prometheus.applyTeamChanges}
+                  onDiscard={prometheus.discardTeamChanges}
+                />
+              )}
+
+              <div className="timeline">
+                {prometheus.selectedSession ? (
+                  prometheus.events.length > 0 || prometheus.activeStreams.length > 0 ? (
+                    <>
+                      {prometheus.events.map((event) => (
+                        <TimelineEvent key={event.eventId} event={event} events={prometheus.events} onResolveApproval={prometheus.resolveApproval} />
+                      ))}
+                      {prometheus.activeStreams.map((stream) => (
+                        <StreamingEvent key={stream.runId} stream={stream} />
+                      ))}
+                    </>
+                  ) : (
+                    <div className="empty-state">
+                      <div className="orbital-mark"><Sparkles size={27} /></div>
+                      <span className="eyebrow">DURABLE TASK READY</span>
+                      <h3>Start with an outcome.</h3>
+                      <p>Your message will be committed to the server event log and appear on every connected device.</p>
+                    </div>
+                  )
+                ) : (
+                  <div className="empty-state">
+                    <div className="orbital-mark"><Command size={27} /></div>
+                    <span className="eyebrow">NO ACTIVE TASK</span>
+                    <h3>Create a session to begin.</h3>
+                    <p>Use Sessions activity or create a task. Files stay in the editor while you chat.</p>
+                    <button className="primary-button" onClick={() => {
+                      if (prometheus.controlPlane !== "online") { setActivity("settings"); setSettingsSection("connection"); return; }
+                      setNewSessionOpen(true);
+                    }}>{prometheus.controlPlane === "online" ? "Create task" : "Connect server"}</button>
+                  </div>
+                )}
+                <div ref={timelineEnd} />
+              </div>
+
+              <form className="composer" onSubmit={submitMessage}>
+                <div className="composer-meta">
+                  <span><TerminalSquare size={13} /> TASK INPUT</span>
+                  <span>{agentRunning ? "AGENT STREAMING" : `${message.length}/12000`}</span>
+                </div>
+                <textarea
+                  value={message}
+                  onChange={(event) => setMessage(event.target.value.slice(0, 12000))}
+                  placeholder={prometheus.selectedSession ? "Describe the next outcome or ask the agent to edit code…" : "Create a task before sending input"}
+                  disabled={!prometheus.selectedSession || agentRunning}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                      event.currentTarget.form?.requestSubmit();
+                    }
+                  }}
+                />
+                <div className="composer-footer">
+                  <div className="composer-runtime-actions">
+                    <label className="agent-selector">
+                      <Bot size={13} />
+                      <select value={prometheus.selectedAgentId ?? ""} onChange={(event) => prometheus.setSelectedAgentId(event.target.value || null)}>
+                        <option value="">Store message only</option>
+                        {prometheus.agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+                      </select>
+                    </label>
+                    <button type="button" className="team-run-button" disabled={!prometheus.selectedSession || prometheus.agents.length === 0 || agentRunning} onClick={() => setTeamSetupOpen(true)}>
+                      <Users size={13} /> Team run
+                    </button>
+                  </div>
+                  <button className="send-button" type="submit" disabled={!prometheus.selectedSession || !message.trim() || agentRunning}>
+                    {agentRunning ? "Streaming" : "Transmit"} <Send size={15} />
+                  </button>
+                </div>
+              </form>
+            </div>
+            </div>
+            <BottomPanel
+              open={bottomOpen}
+              tab={bottomTab}
+              sessionId={prometheus.selectedSessionId}
+              onTabChange={setBottomTab}
+              onClose={() => setBottomOpen(false)}
+              events={prometheus.events}
+              problems={problems}
+              searchQuery={searchQuery}
+              searchHits={searchHits}
+              searchBusy={searchBusy}
+              searchError={searchError}
+              terminalLines={terminalLines}
+              terminalBusy={terminalBusy}
+              terminalWorkdir={terminalWorkdir}
+              onTerminalWorkdirChange={setTerminalWorkdir}
+              onRunTerminal={runTerminalCommand}
+              onClearTerminal={() => setTerminalLines([systemLine("Terminal cleared.")])}
+              onOpenSearchHit={(path, line) => { void openFileAtLine(path, line); }}
+              onOpenProblem={(path) => { void openFile(path); }}
+            />
+          </div>
+        )}
       </section>
 
-      <aside className="telemetry-panel">
-        <div className="telemetry-header">
-          <span className="eyebrow">SYSTEM TELEMETRY</span>
-          <Activity size={15} />
-        </div>
-        <TelemetryCard
-          icon={<Globe2 size={18} />}
-          label="Control plane"
-          value={prometheus.controlPlane === "online" ? "Reachable" : prometheus.controlPlane === "connecting" ? "Connecting" : "Unavailable"}
-          detail={prometheus.health
-            ? `${prometheus.controlPlaneUrl} · ${new Date(prometheus.health.timestamp).toLocaleTimeString()}`
-            : `${prometheus.controlPlaneUrl} · waiting for /api/health`}
-          tone={prometheus.controlPlane === "online" ? "good" : "quiet"}
-        />
-        <TelemetryCard
-          icon={<GitBranch size={18} />}
-          label="Durable sequence"
-          value={String(prometheus.events.at(-1)?.sequence ?? 0).padStart(4, "0")}
-          detail={`${prometheus.events.length} event${prometheus.events.length === 1 ? "" : "s"} loaded`}
-          tone="neutral"
-        />
-        <TelemetryCard
-          icon={<Bot size={18} />}
-          label="Agent runtime"
-          value={prometheus.agents.length > 0 ? `${prometheus.agents.length} configured` : "Not configured"}
-          detail={prometheus.agents.find((agent) => agent.id === prometheus.selectedAgentId)?.name ?? "Add a provider and agent profile"}
-          tone={prometheus.agents.length > 0 ? "good" : "quiet"}
-        />
-        <button className="runtime-config-button" onClick={() => setRuntimeSetupOpen(true)}>
-          <Settings2 size={14} /> Configure runtime
-        </button>
-
-        <section className="capability-stack">
-          <span className="eyebrow">RUNTIME LAYERS</span>
-          <Capability icon={<FileCode2 size={15} />} label="Workspace read tools" status="connected" />
-          <Capability icon={<TerminalSquare size={15} />} label="Approved shell commands" status="connected" />
-          <Capability icon={<ShieldCheck size={15} />} label="Persistent permission policy" status="connected" />
-          <Capability icon={<Users size={15} />} label="SubAgent teams" status="connected" />
-          <Capability
-            icon={<Boxes size={15} />}
-            label="Skills & MCP"
-            status={prometheus.skills.length > 0 || prometheus.mcpServers.length > 0 ? "connected" : "planned"}
-          />
-          <Capability icon={<ServerCog size={15} />} label="SSH execution" />
-          <Capability icon={<Clock3 size={15} />} label="Scheduled tasks" />
-          <Capability icon={<ShieldCheck size={15} />} label="Cross-device approvals" status="connected" />
-        </section>
-        <div className="telemetry-footer">
-          <CircleDot size={13} />
-          <span>Team Runtime 3C / protocol v0.8</span>
-        </div>
-      </aside>
+      <footer className="status-bar">
+        <button type="button" className="status-action" onClick={() => setBottomOpen((open) => !open)}>Panel</button>
+        <button type="button" className="status-action" onClick={() => { setBottomOpen(true); setBottomTab("terminal"); }}>Terminal</button>
+        <button type="button" className="status-action" onClick={() => { setPaletteMode("files"); setPaletteOpen(true); }}>Quick Open</button>
+        {agentRunning && (
+          <button
+            type="button"
+            className="status-action stop"
+            onClick={() => {
+              const runId = prometheus.activeStreams[0]?.runId ?? null;
+              void prometheus.cancelRun(runId);
+            }}
+          >
+            Stop Agent
+          </button>
+        )}
+        <span>{prometheus.controlPlaneUrl}</span>
+        <span>{prometheus.controlPlane === "online" ? "online" : prometheus.controlPlane}</span>
+        <span>{agentRunning ? "agent running" : activeTab ? activeTab.path : "no editor"}</span>
+        <span>{problems.length} problems</span>
+        <span className="status-right">Prometheus IDE · Ctrl+P / Ctrl+Shift+P</span>
+      </footer>
 
       {newSessionOpen && (
         <div className="modal-backdrop" role="presentation" onMouseDown={() => setNewSessionOpen(false)}>
           <form className="modal-card" onSubmit={submitSession} onMouseDown={(event) => event.stopPropagation()}>
             <span className="eyebrow">NEW DURABLE TASK</span>
             <h3>Name the outcome</h3>
-            <p>The task timeline can be opened and continued from any connected Prometheus client.</p>
-            <input
-              autoFocus
-              value={newSessionTitle}
-              onChange={(event) => setNewSessionTitle(event.target.value)}
-              maxLength={160}
-              placeholder="e.g. Ship authentication flow"
-            />
+            <input autoFocus value={newSessionTitle} onChange={(event) => setNewSessionTitle(event.target.value)} maxLength={160} placeholder="e.g. Ship authentication flow" />
             <div className="modal-actions">
               <button type="button" className="secondary-button" onClick={() => setNewSessionOpen(false)}>Cancel</button>
               <button type="submit" className="primary-button" disabled={!newSessionTitle.trim()}>Create task</button>
@@ -348,35 +823,18 @@ export function App() {
           </form>
         </div>
       )}
-      {runtimeSetupOpen && (
-        <RuntimeSetupModal
-          controlPlane={prometheus.controlPlane}
-          controlPlaneUrl={prometheus.controlPlaneUrl}
-          onConfigureControlPlane={prometheus.configureControlPlane}
-          onReconnectControlPlane={prometheus.reconnectControlPlane}
-          providers={prometheus.providers}
-          agents={prometheus.agents}
-          permissionRules={prometheus.permissionRules}
-          skills={prometheus.skills}
-          mcpServers={prometheus.mcpServers}
-          onCreateProvider={prometheus.createProvider}
-          onCreateAgent={prometheus.createAgent}
-          onCreatePermissionRule={prometheus.createPermissionRule}
-          onDeletePermissionRule={prometheus.deletePermissionRule}
-          onCreateMcpServer={prometheus.createMcpServer}
-          onDeleteMcpServer={prometheus.deleteMcpServer}
-          onRefreshSkills={prometheus.refreshSkills}
-          onClose={() => setRuntimeSetupOpen(false)}
-        />
-      )}
       {teamSetupOpen && (
-        <TeamRunModal
-          agents={prometheus.agents}
-          onStart={prometheus.startTeam}
-          onClose={() => setTeamSetupOpen(false)}
-        />
+        <TeamRunModal agents={prometheus.agents} onStart={prometheus.startTeam} onClose={() => setTeamSetupOpen(false)} />
       )}
-    </main>
+      <CommandPalette
+        open={paletteOpen}
+        mode={paletteMode}
+        files={workspaceFiles}
+        commands={paletteCommands}
+        onClose={() => setPaletteOpen(false)}
+        onOpenFile={(path) => { void openFile(path); }}
+      />
+    </div>
   );
 }
 
@@ -647,10 +1105,19 @@ function TeamRunModal({
 }
 
 function RuntimeSetupModal({
+  embedded = false,
+  section = "connection" as SettingsSection,
   controlPlane,
+  controlPlaneMode,
   controlPlaneUrl,
+  runtime,
   onConfigureControlPlane,
+  onConfigureControlPlaneMode,
   onReconnectControlPlane,
+  onSaveRuntime,
+  onAddProject,
+  onOpenProject,
+  onRemoveProject,
   providers,
   agents,
   permissionRules,
@@ -665,10 +1132,19 @@ function RuntimeSetupModal({
   onRefreshSkills,
   onClose,
 }: {
+  embedded?: boolean;
+  section?: SettingsSection;
   controlPlane: "connecting" | "online" | "offline";
+  controlPlaneMode: "local" | "remote";
   controlPlaneUrl: string;
+  runtime: import("./api").RuntimeInfo | null;
   onConfigureControlPlane: (url: string) => string;
+  onConfigureControlPlaneMode: (mode: "local" | "remote") => "local" | "remote";
   onReconnectControlPlane: () => void;
+  onSaveRuntime: (input: { host?: string; port?: number; workspaceRoot?: string }) => Promise<import("./api").RuntimeInfo>;
+  onAddProject: (path: string, open?: boolean) => Promise<unknown>;
+  onOpenProject: (projectId: string) => Promise<unknown>;
+  onRemoveProject: (projectId: string) => Promise<void>;
   providers: Provider[];
   agents: AgentProfile[];
   permissionRules: PermissionRule[];
@@ -684,6 +1160,23 @@ function RuntimeSetupModal({
   onClose: () => void;
 }) {
   const [controlUrlDraft, setControlUrlDraft] = useState(controlPlaneUrl);
+  const [accessTokenDraft, setAccessTokenDraft] = useState(() => getAccessToken(controlPlaneUrl));
+  const [listenHost, setListenHost] = useState(runtime?.host ?? "127.0.0.1");
+  const [listenPort, setListenPort] = useState(String(runtime?.port ?? 4310));
+  const [projectPath, setProjectPath] = useState("");
+  const [restartHint, setRestartHint] = useState<string | null>(null);
+
+  useEffect(() => {
+    setControlUrlDraft(controlPlaneUrl);
+    // 令牌按 URL 分别存储，切换控制平面时必须重新加载对应的那一份。
+    setAccessTokenDraft(getAccessToken(controlPlaneUrl));
+  }, [controlPlaneUrl]);
+
+  useEffect(() => {
+    if (!runtime) return;
+    setListenHost(runtime.host);
+    setListenPort(String(runtime.port));
+  }, [runtime]);
   const [kind, setKind] = useState<ProviderKind>("openai");
   const [providerName, setProviderName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
@@ -803,6 +1296,8 @@ function RuntimeSetupModal({
     } finally { setBusy(false); }
   };
 
+  const show = (id: SettingsSection) => !embedded || section === id;
+
   const permissionPlaceholder =
     permissionTool === "shell_command"
       ? "e.g. pnpm test*"
@@ -810,21 +1305,36 @@ function RuntimeSetupModal({
         ? "e.g. docs/*"
         : "e.g. *";
 
-  return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <div className="runtime-modal" onMouseDown={(event) => event.stopPropagation()}>
+  const body = (
+    <>
+      {!embedded && (
         <div className="runtime-modal-header">
-          <div><span className="eyebrow">AGENT RUNTIME</span><h3>Connect control plane and providers</h3></div>
-          <button className="icon-button" onClick={onClose}><X size={18} /></button>
+          <div>
+            <span className="eyebrow">AGENT RUNTIME</span>
+            <h3>Connect control plane and providers</h3>
+          </div>
+          <button className="icon-button" onClick={onClose} aria-label="Close settings">
+            <X size={18} />
+          </button>
         </div>
-        {error && <div className="runtime-error">{error}</div>}
+      )}
+      {error && <div className="runtime-error">{error}</div>}
+
+      {show("connection") && (
         <form
-          className="runtime-form control-plane-form"
+          className="runtime-form control-plane-form settings-section-panel"
           onSubmit={(event) => {
             event.preventDefault();
             setBusy(true);
             try {
-              onConfigureControlPlane(controlUrlDraft);
+              if (controlPlaneMode === "local") {
+                onConfigureControlPlaneMode("local");
+                setAccessToken(accessTokenDraft, "http://127.0.0.1:4310");
+              } else {
+                const normalized = onConfigureControlPlane(controlUrlDraft);
+                // 令牌必须落在归一化后的 URL 上，否则 request() 读不到它。
+                setAccessToken(accessTokenDraft, normalized);
+              }
               setError(null);
             } catch (reason) {
               setError(reason instanceof Error ? reason.message : "Invalid control plane URL");
@@ -835,110 +1345,435 @@ function RuntimeSetupModal({
         >
           <div className="runtime-form-title">
             <Globe2 size={16} />
-            <strong>Control plane server</strong>
+            <strong>Client connection</strong>
             <small className={controlPlane === "online" ? "tone-good" : "tone-quiet"}>
               {controlPlane === "online" ? "online" : controlPlane}
             </small>
           </div>
           <p className="runtime-help">
-            Desktop installers should auto-start a local sidecar on <code>http://127.0.0.1:4310</code>.
-            If Create Task stays unavailable, start <code>prometheus-server</code> manually or point this URL at a reachable control plane.
+            每个客户端默认可本地独立运行。Local 模式连接本机 control plane（桌面端自动拉起 sidecar）；
+            Remote 模式才需要填写共享服务器地址。Server 与客户端共用同一套 WebUI。
           </p>
+          <div className="mode-toggle" role="group" aria-label="Connection mode">
+            <button
+              type="button"
+              className={controlPlaneMode === "local" ? "mode-chip active" : "mode-chip"}
+              onClick={() => {
+                onConfigureControlPlaneMode("local");
+                setControlUrlDraft("http://127.0.0.1:4310");
+                setError(null);
+              }}
+            >
+              Local
+            </button>
+            <button
+              type="button"
+              className={controlPlaneMode === "remote" ? "mode-chip active" : "mode-chip"}
+              onClick={() => {
+                onConfigureControlPlaneMode("remote");
+                setError(null);
+              }}
+            >
+              Remote
+            </button>
+          </div>
+          {controlPlaneMode === "remote" ? (
+            <label>
+              Remote server URL
+              <input
+                value={controlUrlDraft}
+                onChange={(event) => setControlUrlDraft(event.target.value)}
+                placeholder="http://192.168.1.10:4310"
+                required
+              />
+            </label>
+          ) : (
+            <label>
+              Local control plane
+              <input value="http://127.0.0.1:4310" readOnly />
+            </label>
+          )}
           <label>
-            Server URL
+            Access token
             <input
-              value={controlUrlDraft}
-              onChange={(event) => setControlUrlDraft(event.target.value)}
-              placeholder="http://127.0.0.1:4310"
-              required
+              type="password"
+              value={accessTokenDraft}
+              onChange={(event) => setAccessTokenDraft(event.target.value)}
+              placeholder="PROMETHEUS_ACCESS_TOKEN（本机回环模式可留空）"
+              autoComplete="off"
+              spellCheck={false}
             />
           </label>
+          <p className="runtime-help">
+            服务端绑定非回环地址时必须配置 <code>PROMETHEUS_ACCESS_TOKEN</code>，否则拒绝启动。
+            令牌按服务器地址分别保存，切换远程实例不会串用。
+          </p>
           <div className="modal-actions">
             <button type="button" className="secondary-button" disabled={busy} onClick={() => onReconnectControlPlane()}>
               Retry connect
             </button>
-            <button className="primary-button" disabled={busy || !controlUrlDraft.trim()}>Save and reconnect</button>
+            <button className="primary-button" disabled={busy || (controlPlaneMode === "remote" && !controlUrlDraft.trim())}>
+              Save and reconnect
+            </button>
           </div>
         </form>
-        <div className="runtime-grid">
-          <form className="runtime-form" onSubmit={submitProvider}>
-            <div className="runtime-form-title"><ServerCog size={16} /><strong>Provider</strong><small>{providers.length} configured</small></div>
-            <label>Protocol<select value={kind} onChange={(event) => setKind(event.target.value as ProviderKind)}><option value="openai">OpenAI Responses</option><option value="anthropic">Anthropic Messages</option><option value="gemini">Google Gemini</option><option value="openai_compatible">OpenAI-compatible</option></select></label>
-            <label>Name<input value={providerName} onChange={(event) => setProviderName(event.target.value)} required placeholder="Team OpenAI" /></label>
-            {(kind === "openai_compatible" || kind === "anthropic") && <label>Base URL<input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} required={kind === "openai_compatible"} placeholder="https://api.example.com/v1" /></label>}
-            <label>Default model<input value={defaultModel} onChange={(event) => setDefaultModel(event.target.value)} required placeholder="Provider model ID" /></label>
-            <label>API key<input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} required placeholder="Encrypted before storage" /></label>
-            <button className="primary-button" disabled={busy}>Save provider</button>
-          </form>
-          <form className="runtime-form" onSubmit={submitAgent}>
-            <div className="runtime-form-title"><Bot size={16} /><strong>Agent profile</strong><small>{agents.length} configured</small></div>
-            <label>Provider<select value={providerId} onChange={(event) => { const id = event.target.value; setProviderId(id); setAgentModel(providers.find((provider) => provider.id === id)?.defaultModel ?? ""); }} required><option value="">Select provider</option>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>
-            <label>Name<input value={agentName} onChange={(event) => setAgentName(event.target.value)} required placeholder="Builder" /></label>
-            <label>Description<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What this agent is responsible for" /></label>
-            <label>Model<input value={agentModel} onChange={(event) => setAgentModel(event.target.value)} required placeholder="Provider model ID" /></label>
-            <label>System prompt<textarea value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} required placeholder="Define role, constraints and expected evidence." /></label>
-            <button className="primary-button" disabled={busy || providers.length === 0}>Save agent</button>
-          </form>
-        </div>
-        <section className="extensions-config">
-          <div className="permission-config-header">
-            <div className="permission-config-title">
-              <Boxes size={17} />
-              <div><strong>Skills & MCP</strong><small>{skillList.length} skills · {mcpServers.length} servers</small></div>
-            </div>
-            <button type="button" className="secondary-button" disabled={busy} onClick={() => void reloadSkills()}>Refresh skills</button>
+      )}
+
+      {show("server") && (
+        <div className="settings-section-panel runtime-form">
+          <div className="runtime-form-title">
+            <ServerCog size={16} />
+            <strong>Server runtime</strong>
+            <small>{runtime ? runtime.workspaceName : "offline"}</small>
           </div>
-          <div className="extensions-grid">
-            <div className="extension-list">
-              <div className="runtime-form-title"><Sparkles size={16} /><strong>Discovered skills</strong><small>.prometheus/skills · skills</small></div>
-              {skillList.length === 0 ? (
-                <div className="permission-empty">No SKILL.md files discovered yet. Drop skills into `.prometheus/skills/&lt;id&gt;/SKILL.md`.</div>
-              ) : skillList.map((skill) => (
-                <div className="extension-row" key={skill.id}>
+          {!runtime || controlPlane !== "online" ? (
+            <p className="runtime-help">先在 Connection 连上 control plane，再管理监听地址与项目工作区。</p>
+          ) : (
+            <>
+              <p className="runtime-help">
+                配置当前 control plane 的监听地址与项目。host/port 写入 runtime.json，重启 server 后生效；切换项目即时生效。
+              </p>
+              <form
+                className="runtime-grid"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  setBusy(true);
+                  void onSaveRuntime({
+                    host: listenHost.trim(),
+                    port: Number(listenPort),
+                  })
+                    .then((next) => {
+                      setRestartHint(next.restartRequired ? next.listenHint : null);
+                      setError(null);
+                    })
+                    .catch((reason) => {
+                      setError(reason instanceof Error ? reason.message : "Unable to save runtime");
+                    })
+                    .finally(() => setBusy(false));
+                }}
+              >
+                <label>
+                  Listen IP
+                  <input value={listenHost} onChange={(event) => setListenHost(event.target.value)} placeholder="127.0.0.1" required />
+                </label>
+                <label>
+                  Listen port
+                  <input value={listenPort} onChange={(event) => setListenPort(event.target.value)} inputMode="numeric" required />
+                </label>
+                <label className="full-width">
+                  Active workspace
+                  <input value={runtime.workspaceRoot} readOnly />
+                </label>
+                <div className="modal-actions full-width">
+                  <button className="primary-button" disabled={busy}>Save listen settings</button>
+                </div>
+              </form>
+              {restartHint && <div className="runtime-help tone-warn">{restartHint}</div>}
+              <div className="runtime-meta">
+                <span>Data: {runtime.dataFile}</span>
+                <span>Runtime file: {runtime.runtimeFile}</span>
+              </div>
+              <form
+                className="runtime-form nested"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (!projectPath.trim()) return;
+                  setBusy(true);
+                  void onAddProject(projectPath.trim(), true)
+                    .then(() => {
+                      setProjectPath("");
+                      setError(null);
+                    })
+                    .catch((reason) => {
+                      setError(reason instanceof Error ? reason.message : "Unable to open project");
+                    })
+                    .finally(() => setBusy(false));
+                }}
+              >
+                <div className="runtime-form-title">
+                  <strong>Projects</strong>
+                  <small>{runtime.projects.length} saved</small>
+                </div>
+                <label>
+                  Open folder path
+                  <input
+                    value={projectPath}
+                    onChange={(event) => setProjectPath(event.target.value)}
+                    placeholder="E:/work/my-app"
+                    required
+                  />
+                </label>
+                <div className="modal-actions">
+                  <button className="primary-button" disabled={busy || !projectPath.trim()}>Open project</button>
+                </div>
+              </form>
+              <div className="project-list">
+                {runtime.projects.length === 0 && <div className="panel-empty">No saved projects yet.</div>}
+                {runtime.projects.map((project) => {
+                  const active = runtime.activeProjectId === project.id || runtime.workspaceRoot === project.path;
+                  return (
+                    <div className={active ? "project-row active" : "project-row"} key={project.id}>
+                      <div>
+                        <strong>{project.name}</strong>
+                        <small>{project.path}</small>
+                      </div>
+                      <div className="project-actions">
+                        <button
+                          type="button"
+                          className="mini-button"
+                          disabled={busy || active}
+                          onClick={() => {
+                            setBusy(true);
+                            void onOpenProject(project.id)
+                              .catch((reason) => setError(reason instanceof Error ? reason.message : "Unable to switch project"))
+                              .finally(() => setBusy(false));
+                          }}
+                        >
+                          {active ? "Active" : "Open"}
+                        </button>
+                        <button
+                          type="button"
+                          className="mini-button danger"
+                          disabled={busy}
+                          onClick={() => {
+                            setBusy(true);
+                            void onRemoveProject(project.id)
+                              .catch((reason) => setError(reason instanceof Error ? reason.message : "Unable to remove project"))
+                              .finally(() => setBusy(false));
+                          }}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {show("providers") && (
+        <form className="runtime-form settings-section-panel" onSubmit={submitProvider}>
+          <div className="runtime-form-title">
+            <ServerCog size={16} />
+            <strong>Provider</strong>
+            <small>{providers.length} configured</small>
+          </div>
+          <label>
+            Protocol
+            <select value={kind} onChange={(event) => setKind(event.target.value as ProviderKind)}>
+              <option value="openai">OpenAI Responses</option>
+              <option value="anthropic">Anthropic Messages</option>
+              <option value="gemini">Google Gemini</option>
+              <option value="openai_compatible">OpenAI-compatible</option>
+            </select>
+          </label>
+          <label>
+            Name
+            <input value={providerName} onChange={(event) => setProviderName(event.target.value)} required placeholder="Team OpenAI" />
+          </label>
+          {(kind === "openai_compatible" || kind === "anthropic") && (
+            <label>
+              Base URL
+              <input
+                value={baseUrl}
+                onChange={(event) => setBaseUrl(event.target.value)}
+                required={kind === "openai_compatible"}
+                placeholder="https://api.example.com/v1"
+              />
+            </label>
+          )}
+          <label>
+            Default model
+            <input value={defaultModel} onChange={(event) => setDefaultModel(event.target.value)} required placeholder="Provider model ID" />
+          </label>
+          <label>
+            API key
+            <input
+              type="password"
+              autoComplete="off"
+              value={apiKey}
+              onChange={(event) => setApiKey(event.target.value)}
+              required
+              placeholder="Encrypted before storage"
+            />
+          </label>
+          <button className="primary-button" disabled={busy}>Save provider</button>
+          {providers.length > 0 && (
+            <div className="extension-list compact">
+              {providers.map((provider) => (
+                <div className="extension-row" key={provider.id}>
                   <div>
-                    <strong>{skill.name}</strong>
-                    <small>{skill.id}</small>
+                    <strong>{provider.name}</strong>
+                    <small>{provider.kind} · {provider.defaultModel}</small>
                   </div>
-                  <p>{skill.description || "No description"}</p>
                 </div>
               ))}
             </div>
-            <form className="runtime-form extension-form" onSubmit={submitMcpServer}>
-              <div className="runtime-form-title"><Boxes size={16} /><strong>MCP server</strong><small>stdio transport</small></div>
-              <label>Name<input value={mcpName} onChange={(event) => setMcpName(event.target.value)} required placeholder="echo" /></label>
-              <label>Command<input value={mcpCommand} onChange={(event) => setMcpCommand(event.target.value)} required placeholder="python" /></label>
-              <label>Args<textarea value={mcpArgs} onChange={(event) => setMcpArgs(event.target.value)} placeholder={"one arg per line\nscripts/mcp_echo_fixture.py"} /></label>
-              <button className="primary-button" disabled={busy || !mcpName.trim() || !mcpCommand.trim()}>Add MCP server</button>
-              <div className="extension-list compact">
-                {mcpServers.length === 0 ? (
-                  <div className="permission-empty">No MCP servers configured.</div>
-                ) : mcpServers.map((server) => (
-                  <div className="extension-row" key={server.id}>
-                    <div>
-                      <strong>{server.name}</strong>
-                      <small>{server.enabled ? "enabled" : "disabled"} · mcp__{server.name.replace(/[^A-Za-z0-9_-]/g, "_")}__*</small>
-                    </div>
-                    <p><code>{server.command} {server.args.join(" ")}</code></p>
-                    <button type="button" className="permission-delete" aria-label={`Delete MCP server ${server.name}`} disabled={busy} onClick={() => void removeMcpServer(server.id)}><Trash2 size={14} /></button>
+          )}
+        </form>
+      )}
+
+      {show("agents") && (
+        <form className="runtime-form settings-section-panel" onSubmit={submitAgent}>
+          <div className="runtime-form-title">
+            <Bot size={16} />
+            <strong>Agent profile</strong>
+            <small>{agents.length} configured</small>
+          </div>
+          <label>
+            Provider
+            <select
+              value={providerId}
+              onChange={(event) => {
+                const id = event.target.value;
+                setProviderId(id);
+                setAgentModel(providers.find((provider) => provider.id === id)?.defaultModel ?? "");
+              }}
+              required
+            >
+              <option value="">Select provider</option>
+              {providers.map((provider) => (
+                <option key={provider.id} value={provider.id}>{provider.name}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Name
+            <input value={agentName} onChange={(event) => setAgentName(event.target.value)} required placeholder="Builder" />
+          </label>
+          <label>
+            Description
+            <input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What this agent is responsible for" />
+          </label>
+          <label>
+            Model
+            <input value={agentModel} onChange={(event) => setAgentModel(event.target.value)} required placeholder="Provider model ID" />
+          </label>
+          <label>
+            System prompt
+            <textarea value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} required placeholder="Define role, constraints and expected evidence." />
+          </label>
+          <button className="primary-button" disabled={busy || providers.length === 0}>Save agent</button>
+          {agents.length > 0 && (
+            <div className="extension-list compact">
+              {agents.map((agent) => (
+                <div className="extension-row" key={agent.id}>
+                  <div>
+                    <strong>{agent.name}</strong>
+                    <small>{agent.model}</small>
                   </div>
-                ))}
+                  <p>{agent.description || "No description"}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </form>
+      )}
+
+      {show("skills") && (
+        <section className="extensions-config settings-section-panel">
+          <div className="permission-config-header">
+            <div className="permission-config-title">
+              <Sparkles size={17} />
+              <div>
+                <strong>Skills</strong>
+                <small>{skillList.length} discovered</small>
               </div>
-            </form>
+            </div>
+            <button type="button" className="secondary-button" disabled={busy} onClick={() => void reloadSkills()}>
+              Refresh skills
+            </button>
+          </div>
+          <div className="extension-list">
+            {skillList.length === 0 ? (
+              <div className="permission-empty">
+                No SKILL.md files discovered yet. Drop skills into <code>.prometheus/skills/&lt;id&gt;/SKILL.md</code>.
+              </div>
+            ) : skillList.map((skill) => (
+              <div className="extension-row" key={skill.id}>
+                <div>
+                  <strong>{skill.name}</strong>
+                  <small>{skill.id}</small>
+                </div>
+                <p>{skill.description || "No description"}</p>
+              </div>
+            ))}
           </div>
         </section>
-        <section className="permission-config">
+      )}
+
+      {show("mcp") && (
+        <form className="runtime-form extension-form settings-section-panel" onSubmit={submitMcpServer}>
+          <div className="runtime-form-title">
+            <Boxes size={16} />
+            <strong>MCP server</strong>
+            <small>stdio transport</small>
+          </div>
+          <label>
+            Name
+            <input value={mcpName} onChange={(event) => setMcpName(event.target.value)} required placeholder="echo" />
+          </label>
+          <label>
+            Command
+            <input value={mcpCommand} onChange={(event) => setMcpCommand(event.target.value)} required placeholder="python" />
+          </label>
+          <label>
+            Args
+            <textarea
+              value={mcpArgs}
+              onChange={(event) => setMcpArgs(event.target.value)}
+              placeholder={"one arg per line\nscripts/mcp_echo_fixture.py"}
+            />
+          </label>
+          <button className="primary-button" disabled={busy || !mcpName.trim() || !mcpCommand.trim()}>Add MCP server</button>
+          <div className="extension-list compact">
+            {mcpServers.length === 0 ? (
+              <div className="permission-empty">No MCP servers configured.</div>
+            ) : mcpServers.map((server) => (
+              <div className="extension-row" key={server.id}>
+                <div>
+                  <strong>{server.name}</strong>
+                  <small>{server.enabled ? "enabled" : "disabled"} · mcp__{server.name.replace(/[^A-Za-z0-9_-]/g, "_")}__*</small>
+                </div>
+                <p><code>{server.command} {server.args.join(" ")}</code></p>
+                <button
+                  type="button"
+                  className="permission-delete"
+                  aria-label={`Delete MCP server ${server.name}`}
+                  disabled={busy}
+                  onClick={() => void removeMcpServer(server.id)}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </form>
+      )}
+
+      {show("permissions") && (
+        <section className="permission-config settings-section-panel">
           <div className="permission-config-header">
             <div className="permission-config-title">
               <ShieldCheck size={17} />
-              <div><strong>Permission policy</strong><small>{permissionRules.length} persistent rules on this node</small></div>
+              <div>
+                <strong>Permission policy</strong>
+                <small>{permissionRules.length} persistent rules on this node</small>
+              </div>
             </div>
-            <div className="permission-precedence"><span>DENY</span><i>→</i><span>ASK</span><i>→</i><span>ALLOW</span></div>
+            <div className="permission-precedence">
+              <span>DENY</span><i>→</i><span>ASK</span><i>→</i><span>ALLOW</span>
+            </div>
           </div>
           <p className="permission-guidance">
-            Shell compound commands are evaluated one subcommand at a time. MCP tools default to approval and can be allowed with exact tool names such as `mcp__echo__echo`.
+            Shell compound commands are evaluated one subcommand at a time. MCP tools default to approval and can be allowed with exact tool names such as <code>mcp__echo__echo</code>.
           </p>
           <form className="permission-rule-form" onSubmit={submitPermissionRule}>
-            <label>Tool
+            <label>
+              Tool
               <input
                 list="permission-tool-options"
                 aria-label="Permission tool"
@@ -957,8 +1792,29 @@ function RuntimeSetupModal({
                 ))}
               </datalist>
             </label>
-            <label>Effect<select aria-label="Permission effect" value={permissionEffect} onChange={(event) => setPermissionEffect(event.target.value as PermissionRuleEffect)}><option value="deny">Deny</option><option value="ask">Ask every time</option><option value="allow">Allow without prompt</option></select></label>
-            <label className="permission-pattern-field">Pattern<input aria-label="Permission pattern" value={permissionPattern} onChange={(event) => setPermissionPattern(event.target.value)} required maxLength={2000} placeholder={permissionPlaceholder} /></label>
+            <label>
+              Effect
+              <select
+                aria-label="Permission effect"
+                value={permissionEffect}
+                onChange={(event) => setPermissionEffect(event.target.value as PermissionRuleEffect)}
+              >
+                <option value="deny">Deny</option>
+                <option value="ask">Ask every time</option>
+                <option value="allow">Allow without prompt</option>
+              </select>
+            </label>
+            <label className="permission-pattern-field">
+              Pattern
+              <input
+                aria-label="Permission pattern"
+                value={permissionPattern}
+                onChange={(event) => setPermissionPattern(event.target.value)}
+                required
+                maxLength={2000}
+                placeholder={permissionPlaceholder}
+              />
+            </label>
             <button className="primary-button" disabled={busy || !permissionPattern.trim() || !permissionTool.trim()}>Add rule</button>
           </form>
           <div className="permission-rule-list">
@@ -969,28 +1825,68 @@ function RuntimeSetupModal({
                 <span className="permission-effect">{rule.effect}</span>
                 <span className="permission-tool">{rule.toolName}</span>
                 <code>{rule.pattern}</code>
-                <button type="button" className="permission-delete" aria-label={`Delete permission rule ${rule.pattern}`} disabled={busy} onClick={() => void removePermissionRule(rule.id)}><Trash2 size={14} /></button>
+                <button
+                  type="button"
+                  className="permission-delete"
+                  aria-label={`Delete permission rule ${rule.pattern}`}
+                  disabled={busy}
+                  onClick={() => void removePermissionRule(rule.id)}
+                >
+                  <Trash2 size={14} />
+                </button>
               </div>
             ))}
           </div>
         </section>
+      )}
+    </>
+  );
+
+  if (embedded) {
+    return <div className="runtime-setup embedded">{body}</div>;
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <div className="runtime-modal" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
+        {body}
       </div>
     </div>
   );
 }
 
-function NavigationRail() {
+function NavigationRail({
+  activity,
+  onChange,
+}: {
+  activity: ActivityId;
+  onChange: (id: ActivityId) => void;
+}) {
+  const items: Array<{ id: ActivityId; label: string; icon: ReactNode }> = [
+    { id: "explorer", label: "Explorer", icon: <Files size={18} /> },
+    { id: "search", label: "Search", icon: <Search size={18} /> },
+    { id: "sessions", label: "Sessions", icon: <MessageSquare size={18} /> },
+    { id: "agents", label: "Agents", icon: <Bot size={18} /> },
+    { id: "extensions", label: "Extensions", icon: <Plug size={18} /> },
+    { id: "settings", label: "Settings", icon: <Settings2 size={18} /> },
+  ];
   return (
-    <nav className="navigation-rail" aria-label="Primary navigation">
-      <div className="brand-mark" aria-label="Prometheus"><span>P</span></div>
+    <nav className="navigation-rail activity-bar" aria-label="Primary activities">
+      <div className="brand-mark" title="Prometheus"><span>P</span></div>
       <div className="rail-actions">
-        <button className="rail-button active" title="Mission control"><Command size={19} /></button>
-        <button className="rail-button" title="Workspace"><FileCode2 size={19} /></button>
-        <button className="rail-button" title="Agents"><Users size={19} /></button>
-        <button className="rail-button" title="Extensions"><Boxes size={19} /></button>
+        {items.map((item) => (
+          <button
+            key={item.id}
+            className={activity === item.id ? "rail-button active" : "rail-button"}
+            title={item.label}
+            aria-label={item.label}
+            aria-pressed={activity === item.id}
+            onClick={() => onChange(item.id)}
+          >
+            {item.icon}
+          </button>
+        ))}
       </div>
-      <div className="rail-spacer" />
-      <div className="node-indicator" title="Local node"><span /></div>
     </nav>
   );
 }
@@ -1000,22 +1896,32 @@ function TreeEntry({
   depth,
   expandedPaths,
   childrenByPath,
+  selectedPath,
   onToggle,
+  onOpenFile,
 }: {
   node: WorkspaceNode;
   depth: number;
   expandedPaths: Set<string>;
   childrenByPath: Record<string, WorkspaceNode[]>;
-  onToggle: (path: string) => Promise<void>;
+  selectedPath?: string | null;
+  onToggle: (path: string) => void | Promise<void>;
+  onOpenFile?: (path: string) => void;
 }) {
   const expanded = expandedPaths.has(node.path);
   const children = childrenByPath[node.path] ?? [];
   return (
     <div>
       <button
-        className="tree-row"
+        className={selectedPath === node.path ? "tree-row selected" : "tree-row"}
         style={{ paddingLeft: `${12 + depth * 16}px` }}
-        onClick={() => node.kind === "directory" && void onToggle(node.path)}
+        onClick={() => {
+          if (node.kind === "directory") {
+            void onToggle(node.path);
+            return;
+          }
+          onOpenFile?.(node.path);
+        }}
       >
         {node.kind === "directory" ? (
           <>
@@ -1034,7 +1940,9 @@ function TreeEntry({
           depth={depth + 1}
           expandedPaths={expandedPaths}
           childrenByPath={childrenByPath}
+          selectedPath={selectedPath}
           onToggle={onToggle}
+          onOpenFile={onOpenFile}
         />
       ))}
     </div>
@@ -1092,6 +2000,20 @@ function TimelineEvent({
           <time>{new Date(event.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
         </div>
         <p>{text}</p>
+        {(event.type === "tool.call.started" || event.type === "tool.call.completed") && (
+          <div className={"tool-card" + (event.payload.isError === true ? " error" : "")}>
+            <div className="tool-card-header">
+              <strong>{String(event.payload.toolName ?? event.actor.label)}</strong>
+              <span>{event.type === "tool.call.started" ? "running" : event.payload.isError === true ? "failed" : "done"}</span>
+            </div>
+            {event.type === "tool.call.started" && event.payload.arguments != null && (
+              <pre>{JSON.stringify(event.payload.arguments, null, 2)}</pre>
+            )}
+            {event.type === "tool.call.completed" && typeof event.payload.output === "string" && event.payload.output && (
+              <pre>{event.payload.output}</pre>
+            )}
+          </div>
+        )}
         {event.type === "approval.requested" && approvalId && (
           <ApprovalRequest
             event={event}
@@ -1180,7 +2102,7 @@ function ApprovalRequest({
 }
 
 function TelemetryCard({ icon, label, value, detail, tone }: {
-  icon: React.ReactNode;
+  icon: ReactNode;
   label: string;
   value: string;
   detail: string;
@@ -1195,7 +2117,7 @@ function TelemetryCard({ icon, label, value, detail, tone }: {
 }
 
 function Capability({ icon, label, status = "planned" }: {
-  icon: React.ReactNode;
+  icon: ReactNode;
   label: string;
   status?: "connected" | "planned";
 }) {

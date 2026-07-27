@@ -22,6 +22,17 @@ describe("protocol schemas", () => {
     expect(result.success).toBe(false);
   });
 
+  it("accepts cancelled agent run events", () => {
+    const result = appendEventSchema.safeParse({
+      eventId: crypto.randomUUID(),
+      type: "agent.run.cancelled",
+      actor: { kind: "agent", id: "builder", label: "Builder" },
+      payload: { runId: crypto.randomUUID(), message: "Cancelled by user" },
+    });
+
+    expect(result.success).toBe(true);
+  });
+
   it("rejects malformed websocket events", () => {
     const result = websocketEnvelopeSchema.safeParse({
       kind: "event",

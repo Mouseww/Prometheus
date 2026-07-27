@@ -25,7 +25,14 @@ import {
   discardTeamTaskChanges as discardTeamTaskChangesRequest,
   createSession as createSessionRequest,
   getControlPlaneUrl,
+  getControlPlaneMode,
   getHealth,
+  getRuntime,
+  addRuntimeProject,
+  openRuntimeProject,
+  deleteRuntimeProject,
+  updateRuntime,
+  setControlPlaneMode,
   listEvents,
   listAgents,
   listProviders,
@@ -39,12 +46,15 @@ import {
   createMcpServer as createMcpServerRequest,
   deleteMcpServer as deleteMcpServerRequest,
   runAgent,
+  cancelAgentRuns,
   setControlPlaneUrl,
   startTeamRun,
   resolveApproval as resolveApprovalRequest,
   subscribeToSession,
+  type ControlPlaneMode,
   type Health,
   type McpServer,
+  type RuntimeInfo,
   type SkillSummary,
 } from "./api";
 import { applyRunStreamEnvelope, clearRunStreamForEvent, mergeEvents } from "./state";
@@ -54,6 +64,8 @@ export type ControlPlaneState = "connecting" | "online" | "offline";
 
 export function usePrometheus() {
   const [health, setHealth] = useState<Health | null>(null);
+  const [runtime, setRuntime] = useState<RuntimeInfo | null>(null);
+  const [controlPlaneMode, setControlPlaneModeState] = useState<ControlPlaneMode>(() => getControlPlaneMode());
   const [sessions, setSessions] = useState<Session[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [agents, setAgents] = useState<AgentProfile[]>([]);
@@ -90,6 +102,7 @@ export function usePrometheus() {
       try {
         const [
           nextHealth,
+          nextRuntime,
           workspace,
           nextSessions,
           nextProviders,
@@ -99,6 +112,7 @@ export function usePrometheus() {
           nextMcpServers,
         ] = await Promise.all([
           getHealth(),
+          getRuntime(),
           listWorkspace(),
           listSessions(),
           listProviders(),
@@ -109,6 +123,7 @@ export function usePrometheus() {
         ]);
         if (!active) return;
         setHealth(nextHealth);
+        setRuntime(nextRuntime);
         setRootNodes(workspace.nodes);
         setSessions(nextSessions);
         setProviders(nextProviders);
@@ -125,6 +140,7 @@ export function usePrometheus() {
         if (!active) return;
         const message = reason instanceof Error ? reason.message : "Control plane unreachable";
         setHealth(null);
+        setRuntime(null);
         setControlPlane("offline");
         setError(
           `${message}. Control plane: ${getControlPlaneUrl()}. Desktop builds should auto-start the local sidecar; or run prometheus-server and open Configure runtime.`,
@@ -267,12 +283,31 @@ export function usePrometheus() {
     setRunning(true);
     try {
       await runAgent(selectedSessionId, selectedAgentId);
+      setError(null);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Agent run failed");
+      const message = reason instanceof Error ? reason.message : "Agent run failed";
+      if (message.toLowerCase().includes("cancelled")) {
+        setError(null);
+      } else {
+        setError(message);
+      }
     } finally {
       setRunning(false);
     }
   }, [selectedAgentId, selectedSessionId, sendMessage]);
+
+  const cancelRun = useCallback(async (runId?: string | null) => {
+    if (!selectedSessionId) return null;
+    try {
+      const result = await cancelAgentRuns(selectedSessionId, runId);
+      setError(null);
+      return result;
+    } catch (reason) {
+      const error = reason instanceof Error ? reason : new Error("Unable to cancel agent run");
+      setError(error.message);
+      throw error;
+    }
+  }, [selectedSessionId]);
 
   const createProvider = useCallback(async (input: CreateProviderInput) => {
     const provider = await createProviderRequest(input);
@@ -425,6 +460,55 @@ export function usePrometheus() {
     return next;
   }, []);
 
+  const configureControlPlaneMode = useCallback((mode: ControlPlaneMode) => {
+    const next = setControlPlaneMode(mode);
+    setControlPlaneModeState(next);
+    if (mode === "local") {
+      setControlPlaneUrlState(getControlPlaneUrl());
+    }
+    setBootstrapNonce((value) => value + 1);
+    return next;
+  }, []);
+
+  const refreshRuntime = useCallback(async () => {
+    const next = await getRuntime();
+    setRuntime(next);
+    return next;
+  }, []);
+
+  const saveRuntime = useCallback(async (input: { host?: string; port?: number; workspaceRoot?: string }) => {
+    const next = await updateRuntime(input);
+    setRuntime(next);
+    setHealth((current) => current ? {
+      ...current,
+      workspace: next.workspaceName,
+      workspaceRoot: next.workspaceRoot,
+      host: next.host,
+      port: next.port,
+    } : current);
+    setBootstrapNonce((value) => value + 1);
+    return next;
+  }, []);
+
+  const openProject = useCallback(async (projectId: string) => {
+    const result = await openRuntimeProject(projectId);
+    await refreshRuntime();
+    setBootstrapNonce((value) => value + 1);
+    return result;
+  }, [refreshRuntime]);
+
+  const addProject = useCallback(async (path: string, open = true) => {
+    const result = await addRuntimeProject(path, open);
+    await refreshRuntime();
+    setBootstrapNonce((value) => value + 1);
+    return result;
+  }, [refreshRuntime]);
+
+  const removeProject = useCallback(async (projectId: string) => {
+    await deleteRuntimeProject(projectId);
+    await refreshRuntime();
+  }, [refreshRuntime]);
+
   return {
     activeStreams,
     applyTeamChanges,
@@ -433,7 +517,15 @@ export function usePrometheus() {
     configureControlPlane,
     connection,
     controlPlane,
+    controlPlaneMode,
     controlPlaneUrl,
+    configureControlPlaneMode,
+    runtime,
+    refreshRuntime,
+    saveRuntime,
+    openProject,
+    addProject,
+    removeProject,
     createSession,
     createAgent,
     createProvider,
@@ -462,6 +554,7 @@ export function usePrometheus() {
     sendMessage,
     setSelectedAgentId,
     submitTask,
+    cancelRun,
     startTeam,
     sessions,
     setSelectedSessionId,

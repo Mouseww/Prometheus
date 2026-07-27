@@ -21,6 +21,9 @@ export function describeEvent(event: SessionEvent): string {
   if (event.type === "agent.run.failed") {
     return `Failed · ${String(event.payload.message ?? "Provider request failed")}`;
   }
+  if (event.type === "agent.run.cancelled") {
+    return "Cancelled by user";
+  }
   if (event.type === "agent.spawned") {
     return `Queued ${String(event.payload.agentLabel ?? event.actor.label)} for the team goal`;
   }
@@ -56,7 +59,12 @@ export function describeEvent(event: SessionEvent): string {
   }
   if (event.type === "tool.call.completed") {
     const prefix = event.payload.isError === true ? "Failed" : "Completed";
-    return `${prefix} ${String(event.payload.toolName ?? event.actor.label)}`;
+    const name = String(event.payload.toolName ?? event.actor.label);
+    const output = typeof event.payload.output === "string" ? event.payload.output.trim() : "";
+    if (!output) return `${prefix} ${name}`;
+    const preview = output.split(/\r?\n/).find((line) => line.trim()) ?? output;
+    const short = preview.length > 120 ? preview.slice(0, 117) + "..." : preview;
+    return `${prefix} ${name} · ${short}`;
   }
   if (event.type === "approval.requested") {
     return `Approval required for ${String(event.payload.toolName ?? "tool call")}`;

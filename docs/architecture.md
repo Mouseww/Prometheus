@@ -85,6 +85,28 @@ flowchart LR
 - 桌面端使用 OS keychain；服务端托管节点使用外部 secret store 或注入式环境变量。
 - 高风险操作进入 approval event，客户端可在任意终端批准或拒绝。
 
+### 网络暴露面
+
+Control Plane 的能力集合等价于一个远程 shell，因此暴露面按「默认关闭、显式解锁」建模：
+
+- **启动前校验**：`Config::validate_security()` 在 `TcpListener::bind` 之前运行。绑定非回环地址而未配置 `PROMETHEUS_ACCESS_TOKEN` 时直接拒绝启动——只监听一瞬间也等同于暴露。
+- **鉴权中间件**：`/api/*` 与 `/ws*` 需要 Bearer 令牌（常量时间比较，支持 `Authorization` 头、`x-prometheus-token` 头、`?token=` 查询参数三种来源，后者是 WebSocket 握手无法设置自定义头的唯一出路）。`/api/health` 保持公开，否则客户端无法区分「服务器离线」与「令牌错误」。静态资源同样公开，否则连接设置界面自己都加载不出来。
+- **CORS**：来源白名单取代 `Any`，由 `PROMETHEUS_ALLOWED_ORIGINS` 配置，缺省仅含本机开发地址与 Tauri 自定义协议。
+
+### 终端能力
+
+`TerminalMode` 是终端能力的总闸，默认 `Disabled`：
+
+| 模式 | 语义 |
+|---|---|
+| `disabled` | PTY 与 exec 端点一律返回 403。 |
+| `approval` | 每次开终端 / 执行命令都进入审批流。 |
+| `trusted` | 免审批，但仅允许回环绑定；`validate_for_bind` 会在非回环时拒绝启动。 |
+
+**能力等价则策略等价**：交互式 PTY（`/ws/terminal`）、一次性执行（`POST /api/terminal/exec`）与 agent 的 `shell_command` 工具共用 `TerminalSessionService` 这一条准入路径——权限规则求值（deny → ask → allow）→ 跨终端审批（5 分钟超时视为拒绝）→ durable 事件（`tool.call.started` / `permission.rule.matched` / `approval.requested` / `approval.resolved` / `tool.call.completed`）。exec 复用 `shell_command` 规则命名空间，用户已有策略自动生效；PTY 使用独立的 `terminal_session` 名字，因为「开一个交互式 shell」和「跑一条命令」是两个不同的决策。拒绝发生在 spawn 之前，且拒绝本身也是持久化事件。
+
+两条终端通道在子进程创建时剥离同一份敏感环境变量清单（`PROMETHEUS_MASTER_KEY`、`*_API_KEY` / `*_TOKEN` / `*_SECRET` / `*_PASSWORD` 等），避免一条 `env` 就解开整个 SecretVault。
+
 ## 交付阶段
 
 1. Foundation：工作区树、durable session、WebSocket 多端同步、Tauri 壳层。

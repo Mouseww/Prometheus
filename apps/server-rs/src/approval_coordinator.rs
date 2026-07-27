@@ -75,6 +75,25 @@ impl ApprovalCoordinator {
         Ok((approval_id, receiver))
     }
 
+    pub fn deny_all_for_session(&self, session_id: &str) -> usize {
+        let Ok(mut pending) = self.pending.lock() else {
+            return 0;
+        };
+        let keys: Vec<String> = pending
+            .iter()
+            .filter(|(_, value)| value.session_id == session_id)
+            .map(|(key, _)| key.clone())
+            .collect();
+        let mut count = 0;
+        for key in keys {
+            if let Some(item) = pending.remove(&key) {
+                let _ = item.sender.send(ApprovalDecision::Denied);
+                count += 1;
+            }
+        }
+        count
+    }
+
     pub fn resolve(
         &self,
         session_id: &str,

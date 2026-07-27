@@ -109,7 +109,21 @@ pnpm --filter @prometheus/client build
 pnpm start:server-rs
 ```
 
-环境变量：`PROMETHEUS_WORKSPACE_ROOT`、`PROMETHEUS_DATA_FILE`、`PROMETHEUS_PORT`、`PROMETHEUS_HOST`、`PROMETHEUS_MASTER_KEY`、`PROMETHEUS_WEB_ROOT`、`PROMETHEUS_WORKTREE_ROOT`。
+环境变量：`PROMETHEUS_WORKSPACE_ROOT`、`PROMETHEUS_DATA_FILE`、`PROMETHEUS_PORT`、`PROMETHEUS_HOST`、`PROMETHEUS_MASTER_KEY`、`PROMETHEUS_WEB_ROOT`、`PROMETHEUS_WORKTREE_ROOT`、`PROMETHEUS_ACCESS_TOKEN`、`PROMETHEUS_ALLOWED_ORIGINS`、`PROMETHEUS_TERMINAL_MODE`。
+
+### 安全边界
+
+Control Plane 拥有工作区读写与 shell 执行能力，所以它的网络暴露面等同于一个远程 shell。默认配置按「本机自用」收紧，向外暴露必须显式解锁：
+
+| 变量 | 默认 | 语义 |
+|---|---|---|
+| `PROMETHEUS_ACCESS_TOKEN` | 未设置 | 所有 `/api/*` 与 `/ws*` 的 Bearer 令牌（≥16 字符）。绑定非回环地址而未设置时，server 在 `bind` 之前拒绝启动。`/api/health` 保持公开，客户端才能区分「服务器离线」与「令牌错误」。 |
+| `PROMETHEUS_ALLOWED_ORIGINS` | 本机开发地址 | 逗号分隔的浏览器来源白名单，不再是 `Any`。 |
+| `PROMETHEUS_TERMINAL_MODE` | `disabled` | `disabled` \| `approval`（每次开终端走审批）\| `trusted`（免审批，仅允许回环绑定）。 |
+
+交互式 PTY（`/ws/terminal`）与一次性执行（`POST /api/terminal/exec`）与 agent 的 `shell_command` 工具走同一条链路：权限规则 → 跨终端审批 → `tool.call.started` / `permission.rule.matched` / `approval.requested` / `approval.resolved` / `tool.call.completed` 持久化事件。两条通道都会在子进程中剥离 `PROMETHEUS_MASTER_KEY`、各类 `*_API_KEY` / `*_TOKEN` / `*_SECRET`，避免一条 `env` 就解开 SecretVault。
+
+WebSocket 握手无法自定义请求头，令牌通过 `?token=` 查询参数传递；客户端按控制平面 URL 分别保存令牌，切换远程实例不会串用。
 
 5A 默认入口已切换到 **Rust Control Plane**；5B 已接入真实 **Skills + MCP**（`read_skill`、stdio MCP tools）；5C 提供 GitHub Release 多平台二进制与 Docker Rust 镜像。4I 多 Provider、4H `delegate_team`、4G 消息总线与 4F worktree 仍可用。SSH/定时任务尚未接入。
 
@@ -219,6 +233,17 @@ curl http://127.0.0.1:4310/api/health
 
 - 浏览器打开 `http://127.0.0.1:4310`（若已附带 WebUI 静态资源）
 - 或打开桌面客户端，把 Control plane URL 指到该地址
+
+**要让局域网/公网的其他设备连进来**，必须同时设置访问令牌，否则 server 会拒绝启动：
+
+```powershell
+$env:PROMETHEUS_HOST = "0.0.0.0"
+$env:PROMETHEUS_ACCESS_TOKEN = [Convert]::ToHexString((New-Object byte[] 32 | % { (New-Object Random).NextBytes($_); $_ }))
+$env:PROMETHEUS_ALLOWED_ORIGINS = "http://192.168.1.10:5173"
+.\prometheus-server-windows-x64.exe
+```
+
+在客户端 Settings → Connection 里把同一个令牌填入 Access token 后保存重连。
 
 ### 3. Android / iOS
 

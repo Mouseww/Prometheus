@@ -36,6 +36,10 @@ pub enum AppError {
     RuntimeNotMigrated(String),
     #[error("{0}")]
     TeamRunConflict(String),
+    #[error("{0}")]
+    Unauthorized(String),
+    #[error("{0}")]
+    Forbidden(String),
     #[error("Database operation failed")]
     Database(#[from] sqlx::Error),
 }
@@ -107,6 +111,14 @@ impl AppError {
     pub fn team_run_conflict(message: impl Into<String>) -> Self {
         Self::TeamRunConflict(message.into())
     }
+
+    pub fn unauthorized(message: impl Into<String>) -> Self {
+        Self::Unauthorized(message.into())
+    }
+
+    pub fn forbidden(message: impl Into<String>) -> Self {
+        Self::Forbidden(message.into())
+    }
 }
 
 #[derive(Serialize)]
@@ -161,6 +173,8 @@ impl IntoResponse for AppError {
             Self::TeamRunConflict(message) => {
                 (StatusCode::CONFLICT, "team_run_conflict", message)
             }
+            Self::Unauthorized(message) => (StatusCode::UNAUTHORIZED, "unauthorized", message),
+            Self::Forbidden(message) => (StatusCode::FORBIDDEN, "forbidden", message),
             Self::Configuration(message) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "configuration_error",

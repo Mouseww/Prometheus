@@ -248,6 +248,66 @@ impl WorkspaceService {
         Ok(matches)
     }
 
+    pub fn list_files(
+        &self,
+        relative_path: &str,
+        max_results: Option<usize>,
+    ) -> Result<Vec<String>, AppError> {
+        let max_results = max_results.unwrap_or(2_000);
+        let start = self.resolve_existing(relative_path)?;
+        let mut files = Vec::new();
+        self.visit_files(&start, max_results, &mut files)?;
+        Ok(files)
+    }
+
+    fn visit_files(
+        &self,
+        path: &Path,
+        max_results: usize,
+        files: &mut Vec<String>,
+    ) -> Result<(), AppError> {
+        if files.len() >= max_results {
+            return Ok(());
+        }
+        let metadata = fs::metadata(path).map_err(|error| {
+            AppError::configuration(format!("Unable to inspect file index path: {error}"))
+        })?;
+        if metadata.is_file() {
+            let relative = path
+                .strip_prefix(&self.root)
+                .map_err(|_| AppError::workspace_boundary(path.display().to_string()))?;
+            files.push(relative_to_posix(relative));
+            return Ok(());
+        }
+        if !metadata.is_dir() {
+            return Ok(());
+        }
+        let mut entries: Vec<_> = fs::read_dir(path)
+            .map_err(|error| {
+                AppError::configuration(format!("Unable to read file index directory: {error}"))
+            })?
+            .filter_map(Result::ok)
+            .collect();
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if IGNORED_NAMES.contains(&name.as_str()) {
+                continue;
+            }
+            let file_type = entry.file_type().map_err(|error| {
+                AppError::configuration(format!("Unable to inspect file index entry: {error}"))
+            })?;
+            if file_type.is_symlink() {
+                continue;
+            }
+            self.visit_files(&entry.path(), max_results, files)?;
+            if files.len() >= max_results {
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
     fn visit_search(
         &self,
         path: &Path,
