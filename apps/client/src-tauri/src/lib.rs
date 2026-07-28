@@ -31,6 +31,7 @@ struct SidecarState {
     port: Mutex<u16>,
     workspace: Mutex<PathBuf>,
     binary: Mutex<Option<PathBuf>>,
+    starting: Mutex<bool>,
 }
 
 impl Default for SidecarState {
@@ -41,6 +42,7 @@ impl Default for SidecarState {
             port: Mutex::new(4310),
             workspace: Mutex::new(PathBuf::from(".")),
             binary: Mutex::new(None),
+            starting: Mutex::new(false),
         }
     }
 }
@@ -162,6 +164,32 @@ fn build_status(app: &AppHandle, state: &State<SidecarState>) -> LocalRuntimeSta
 #[cfg(desktop)]
 fn start_desktop_sidecar(app: &AppHandle, force_restart: bool) -> Result<(), Box<dyn std::error::Error>> {
     let state = app.state::<SidecarState>();
+    // Serialize start attempts so setup + UI ensure cannot double-bind the same port.
+    let mut starting = state
+        .starting
+        .lock()
+        .map_err(|_| "local runtime start lock poisoned".to_string())?;
+    if *starting {
+        drop(starting);
+        let host = state.host.lock().map(|value| value.clone()).unwrap_or_else(|_| "127.0.0.1".into());
+        let port = state.port.lock().map(|value| *value).unwrap_or(4310);
+        if wait_for_health(&host, port, Duration::from_secs(12)) {
+            return Ok(());
+        }
+        return Err("Local runtime is already starting but not healthy yet".into());
+    }
+    *starting = true;
+    struct StartingGuard<'a>(&'a Mutex<bool>);
+    impl Drop for StartingGuard<'_> {
+        fn drop(&mut self) {
+            if let Ok(mut guard) = self.0.lock() {
+                *guard = false;
+            }
+        }
+    }
+    let _starting_guard = StartingGuard(&state.starting);
+    drop(starting);
+
     if !force_restart {
         let host = state.host.lock().map(|value| value.clone()).unwrap_or_else(|_| "127.0.0.1".into());
         let port = state.port.lock().map(|value| *value).unwrap_or(4310);
@@ -270,13 +298,22 @@ fn start_desktop_sidecar(app: &AppHandle, force_restart: bool) -> Result<(), Box
         *guard = Some(child);
     }
 
-    if !wait_for_health(&host, port, Duration::from_secs(20)) {
-        return Err(format!(
-            "Local control plane did not become healthy on http://{host}:{port}"
-        )
-        .into());
+    if wait_for_health(&host, port, Duration::from_secs(20)) {
+        return Ok(());
     }
-    Ok(())
+
+    // If bind lost the race (AddrInUse) but another healthy control plane already owns the port,
+    // treat that as success instead of failing the desktop Local mode.
+    if control_plane_ready(&host, port) {
+        stop_sidecar(app);
+        return Ok(());
+    }
+
+    stop_sidecar(app);
+    Err(format!(
+        "Local control plane did not become healthy on http://{host}:{port}. If the port is already used by a non-Prometheus process, free it or change the runtime port."
+    )
+    .into())
 }
 
 
@@ -489,23 +526,48 @@ fn control_plane_ready(host: &str, port: u16) -> bool {
     else {
         return false;
     };
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(400)));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(400)));
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
     let request = format!(
         "GET /api/health HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n"
     );
     if stream.write_all(request.as_bytes()).is_err() {
         return false;
     }
-    let mut buf = [0_u8; 256];
-    match stream.read(&mut buf) {
-        Ok(n) if n > 0 => {
-            let body = String::from_utf8_lossy(&buf[..n]);
-            body.contains("200") && body.contains("ok")
+
+    // CORS/vary headers can push the JSON body well past 256 bytes. Read until EOF or enough body.
+    let mut raw = Vec::with_capacity(1024);
+    let mut chunk = [0_u8; 512];
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                raw.extend_from_slice(&chunk[..n]);
+                if raw.len() >= 8192 {
+                    break;
+                }
+                let preview = String::from_utf8_lossy(&raw).to_ascii_lowercase();
+                if preview.contains("\r\n\r\n")
+                    && (preview.contains("\"status\":\"ok\"")
+                        || preview.contains("\"status\": \"ok\""))
+                {
+                    break;
+                }
+            }
+            Err(_) => break,
         }
-        _ => false,
     }
+    if raw.is_empty() {
+        return false;
+    }
+    let lower = String::from_utf8_lossy(&raw).to_ascii_lowercase();
+    let status_ok = lower.starts_with("http/1.0 200")
+        || lower.starts_with("http/1.1 200")
+        || lower.contains(" 200 ok");
+    let payload_ok = lower.contains("\"status\":\"ok\"") || lower.contains("\"status\": \"ok\"");
+    status_ok && payload_ok
 }
+
 
 fn stop_sidecar(app: &AppHandle) {
     let Some(state) = app.try_state::<SidecarState>() else {
