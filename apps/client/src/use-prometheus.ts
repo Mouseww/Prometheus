@@ -58,6 +58,14 @@ import {
   type SkillSummary,
 } from "./api";
 import { applyRunStreamEnvelope, clearRunStreamForEvent, mergeEvents } from "./state";
+import {
+  ensureLocalRuntime,
+  getLocalRuntimeStatus,
+  isServerHostedUi,
+  isTauriDesktop,
+  restartLocalRuntime,
+  type LocalRuntimeStatus,
+} from "./local-runtime";
 
 export type ConnectionState = "connecting" | "live" | "offline" | "idle";
 export type ControlPlaneState = "connecting" | "online" | "offline";
@@ -66,6 +74,11 @@ export function usePrometheus() {
   const [health, setHealth] = useState<Health | null>(null);
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null);
   const [controlPlaneMode, setControlPlaneModeState] = useState<ControlPlaneMode>(() => getControlPlaneMode());
+  const [localRuntime, setLocalRuntime] = useState<LocalRuntimeStatus | null>(null);
+  const [hostMode] = useState(() => ({
+    desktop: isTauriDesktop(),
+    serverHosted: isServerHostedUi(),
+  }));
   const [sessions, setSessions] = useState<Session[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [agents, setAgents] = useState<AgentProfile[]>([]);
@@ -100,6 +113,40 @@ export function usePrometheus() {
     const bootstrap = async () => {
       attempt += 1;
       try {
+        if (hostMode.desktop && getControlPlaneMode() === "local") {
+          try {
+            const status = await ensureLocalRuntime();
+            if (!active) return;
+            if (status) {
+              setLocalRuntime(status);
+              if (status.url) {
+                setControlPlaneUrlState(status.url);
+              }
+              if (!status.healthy) {
+                throw new Error(status.message || "Local runtime is not healthy");
+              }
+            }
+          } catch (reason) {
+            if (!active) return;
+            const message = reason instanceof Error ? reason.message : "Failed to start local runtime";
+            const status = await getLocalRuntimeStatus();
+            if (status) setLocalRuntime(status);
+            setControlPlane("offline");
+            setError(`Local runtime: ${message}`);
+            if (attempt < 20) {
+              timer = setTimeout(() => {
+                void bootstrap();
+              }, Math.min(1000 + attempt * 300, 4000));
+              return;
+            }
+            setLoading(false);
+            return;
+          }
+        } else if (hostMode.desktop) {
+          const status = await getLocalRuntimeStatus();
+          if (status) setLocalRuntime(status);
+        }
+
         const [
           nextHealth,
           nextRuntime,
@@ -509,6 +556,32 @@ export function usePrometheus() {
     await refreshRuntime();
   }, [refreshRuntime]);
 
+  const restartEmbeddedRuntime = useCallback(async () => {
+    const status = await restartLocalRuntime();
+    if (status) {
+      setLocalRuntime(status);
+      if (status.url) setControlPlaneUrlState(status.url);
+    }
+    setBootstrapNonce((value) => value + 1);
+    return status;
+  }, []);
+
+  const refreshEmbeddedRuntime = useCallback(async () => {
+    if (hostMode.desktop && getControlPlaneMode() === "local") {
+      const status = await ensureLocalRuntime();
+      if (status) {
+        setLocalRuntime(status);
+        if (status.url) setControlPlaneUrlState(status.url);
+      }
+      setBootstrapNonce((value) => value + 1);
+      return status;
+    }
+    const status = await getLocalRuntimeStatus();
+    if (status) setLocalRuntime(status);
+    setBootstrapNonce((value) => value + 1);
+    return status;
+  }, [hostMode.desktop]);
+
   return {
     activeStreams,
     applyTeamChanges,
@@ -520,6 +593,10 @@ export function usePrometheus() {
     controlPlaneMode,
     controlPlaneUrl,
     configureControlPlaneMode,
+    hostMode,
+    localRuntime,
+    refreshEmbeddedRuntime,
+    restartEmbeddedRuntime,
     runtime,
     refreshRuntime,
     saveRuntime,

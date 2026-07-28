@@ -1,0 +1,8 @@
+[[permission]]
+identifier = "allow-local-runtime"
+description = "Allow the UI to inspect and manage the embedded local control plane"
+commands.allow = [
+  "local_runtime_status",
+  "ensure_local_runtime",
+  "restart_local_runtime"
+]

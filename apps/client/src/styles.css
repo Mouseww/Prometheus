@@ -1294,3 +1294,25 @@ button { color: inherit; }
 .tone-warn {
   color: #ffd39a;
 }
+
+
+.local-runtime-card {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(213, 216, 209, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  margin-bottom: 12px;
+}
+
+.local-runtime-card.online {
+  border-color: rgba(183, 226, 90, 0.35);
+  background: rgba(183, 226, 90, 0.08);
+}
+
+.local-runtime-card code {
+  font-size: 11px;
+  opacity: 0.75;
+  word-break: break-all;
+}

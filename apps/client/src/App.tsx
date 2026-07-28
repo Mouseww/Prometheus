@@ -572,9 +572,13 @@ export function App() {
                 controlPlaneMode={prometheus.controlPlaneMode}
                 controlPlaneUrl={prometheus.controlPlaneUrl}
                 runtime={prometheus.runtime}
+                hostMode={prometheus.hostMode}
+                localRuntime={prometheus.localRuntime}
                 onConfigureControlPlane={prometheus.configureControlPlane}
                 onConfigureControlPlaneMode={prometheus.configureControlPlaneMode}
                 onReconnectControlPlane={prometheus.reconnectControlPlane}
+                onRefreshEmbeddedRuntime={prometheus.refreshEmbeddedRuntime}
+                onRestartEmbeddedRuntime={prometheus.restartEmbeddedRuntime}
                 onSaveRuntime={prometheus.saveRuntime}
                 onAddProject={prometheus.addProject}
                 onOpenProject={prometheus.openProject}
@@ -1111,9 +1115,13 @@ function RuntimeSetupModal({
   controlPlaneMode,
   controlPlaneUrl,
   runtime,
+  hostMode,
+  localRuntime,
   onConfigureControlPlane,
   onConfigureControlPlaneMode,
   onReconnectControlPlane,
+  onRefreshEmbeddedRuntime,
+  onRestartEmbeddedRuntime,
   onSaveRuntime,
   onAddProject,
   onOpenProject,
@@ -1138,9 +1146,13 @@ function RuntimeSetupModal({
   controlPlaneMode: "local" | "remote";
   controlPlaneUrl: string;
   runtime: import("./api").RuntimeInfo | null;
+  hostMode: { desktop: boolean; serverHosted: boolean };
+  localRuntime: import("./local-runtime").LocalRuntimeStatus | null;
   onConfigureControlPlane: (url: string) => string;
   onConfigureControlPlaneMode: (mode: "local" | "remote") => "local" | "remote";
   onReconnectControlPlane: () => void;
+  onRefreshEmbeddedRuntime: () => Promise<import("./local-runtime").LocalRuntimeStatus | null>;
+  onRestartEmbeddedRuntime: () => Promise<import("./local-runtime").LocalRuntimeStatus | null>;
   onSaveRuntime: (input: { host?: string; port?: number; workspaceRoot?: string }) => Promise<import("./api").RuntimeInfo>;
   onAddProject: (path: string, open?: boolean) => Promise<unknown>;
   onOpenProject: (projectId: string) => Promise<unknown>;
@@ -1329,7 +1341,13 @@ function RuntimeSetupModal({
             try {
               if (controlPlaneMode === "local") {
                 onConfigureControlPlaneMode("local");
-                setAccessToken(accessTokenDraft, "http://127.0.0.1:4310");
+                const localUrl = localRuntime?.url ?? "http://127.0.0.1:4310";
+                setAccessToken(accessTokenDraft, localUrl);
+                if (hostMode.desktop) {
+                  void onRefreshEmbeddedRuntime();
+                } else {
+                  onReconnectControlPlane();
+                }
               } else {
                 const normalized = onConfigureControlPlane(controlUrlDraft);
                 // 令牌必须落在归一化后的 URL 上，否则 request() 读不到它。
@@ -1351,8 +1369,12 @@ function RuntimeSetupModal({
             </small>
           </div>
           <p className="runtime-help">
-            每个客户端默认可本地独立运行。Local 模式连接本机 control plane（桌面端自动拉起 sidecar）；
-            Remote 模式才需要填写共享服务器地址。Server 与客户端共用同一套 WebUI。
+            {hostMode.desktop
+              ? "桌面客户端内置 control plane：Local 模式会自动拉起本机 sidecar，无需先手动启动 server。"
+              : hostMode.serverHosted
+                ? "当前页面已由 control plane 直接托管，属于同一进程内的 Server UI，默认即可使用。"
+                : "浏览器开发模式仍需本机 control plane。可用桌面客户端获得真正的一键本地独立运行。"}
+            {" "}Remote 模式才连接共享服务器。
           </p>
           <div className="mode-toggle" role="group" aria-label="Connection mode">
             <button
@@ -1388,10 +1410,30 @@ function RuntimeSetupModal({
               />
             </label>
           ) : (
-            <label>
-              Local control plane
-              <input value="http://127.0.0.1:4310" readOnly />
-            </label>
+            <>
+              <label>
+                Local runtime URL
+                <input value={localRuntime?.url ?? controlPlaneUrl} readOnly />
+              </label>
+              <div className={"local-runtime-card" + (localRuntime?.healthy || controlPlane === "online" ? " online" : "")}>
+                <strong>
+                  {hostMode.desktop
+                    ? "Embedded desktop runtime"
+                    : hostMode.serverHosted
+                      ? "Server-hosted UI"
+                      : "Local development runtime"}
+                </strong>
+                <small>
+                  {localRuntime?.message
+                    ?? (controlPlane === "online"
+                      ? "Control plane online"
+                      : hostMode.desktop
+                        ? "Starting embedded control plane..."
+                        : "Waiting for local control plane on this machine")}
+                </small>
+                {localRuntime?.binaryPath && <code>{localRuntime.binaryPath}</code>}
+              </div>
+            </>
           )}
           <label>
             Access token
@@ -1409,6 +1451,36 @@ function RuntimeSetupModal({
             令牌按服务器地址分别保存，切换远程实例不会串用。
           </p>
           <div className="modal-actions">
+            {hostMode.desktop && controlPlaneMode === "local" && (
+              <>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={busy}
+                  onClick={() => {
+                    setBusy(true);
+                    void onRefreshEmbeddedRuntime()
+                      .catch((reason) => setError(reason instanceof Error ? reason.message : "Unable to start local runtime"))
+                      .finally(() => setBusy(false));
+                  }}
+                >
+                  Start local runtime
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={busy}
+                  onClick={() => {
+                    setBusy(true);
+                    void onRestartEmbeddedRuntime()
+                      .catch((reason) => setError(reason instanceof Error ? reason.message : "Unable to restart local runtime"))
+                      .finally(() => setBusy(false));
+                  }}
+                >
+                  Restart runtime
+                </button>
+              </>
+            )}
             <button type="button" className="secondary-button" disabled={busy} onClick={() => onReconnectControlPlane()}>
               Retry connect
             </button>

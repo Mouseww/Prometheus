@@ -3,5 +3,8 @@
   "identifier": "default",
   "description": "Foundation client capability set",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "allow-local-runtime"
+  ]
 }

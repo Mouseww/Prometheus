@@ -113,10 +113,23 @@ export function getDefaultControlPlaneUrl(): string {
 
   }
 
-  // Never derive from location.hostname: Tauri serves from tauri.localhost, which breaks
+  // Server-hosted UI (production build or control-plane origin on :4310) is already on the
+  // control plane. Use same-origin so this surface does not depend on a separately configured remote URL.
+  if (typeof window !== "undefined") {
+    try {
+      const origin = window.location.origin;
+      const port = window.location.port;
+      const isTauriOrigin = origin.startsWith("tauri://") || origin.includes("tauri.localhost");
+      const serverHosted = import.meta.env.PROD || port === "4310" || port === "";
+      if (origin && !isTauriOrigin && serverHosted) {
+        return normalizeControlPlaneUrl(origin);
+      }
+    } catch {
+      // fall through
+    }
+  }
 
-  // CSP connect-src and does not reach the local control-plane sidecar on 127.0.0.1:4310.
-
+  // Tauri webview / Vite dev client talks to the local control plane sidecar by default.
   return DEFAULT_CONTROL_PLANE_URL;
 
 }
@@ -125,9 +138,8 @@ export function getDefaultControlPlaneUrl(): string {
 
 export function getControlPlaneUrl(): string {
 
-  // Local mode always prefers the on-device control plane.
   if (getControlPlaneMode() === "local") {
-    return DEFAULT_CONTROL_PLANE_URL;
+    return getDefaultControlPlaneUrl();
   }
 
   try {

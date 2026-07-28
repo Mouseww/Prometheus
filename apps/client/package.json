@@ -1,17 +1,19 @@
 {
   "name": "@prometheus/client",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.node.json --noEmit && vite build",
     "dev": "vite --host 127.0.0.1",
-    "tauri": "tauri",
+    "tauri": "node ./scripts/stage-sidecar.mjs --build && tauri",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.app.json --noEmit --pretty false && tsc -p tsconfig.node.json --noEmit --pretty false",
-    "tauri:build": "tauri build",
+    "tauri:build": "node ./scripts/stage-sidecar.mjs --build && tauri build",
     "tauri:android:build": "tauri android build --apk --config src-tauri/tauri.mobile.conf.json",
-    "tauri:ios:build": "tauri ios build --config src-tauri/tauri.mobile.conf.json"
+    "tauri:ios:build": "tauri ios build --config src-tauri/tauri.mobile.conf.json",
+    "stage:sidecar": "node ./scripts/stage-sidecar.mjs --build",
+    "tauri:dev": "node ./scripts/stage-sidecar.mjs --build && tauri dev"
   },
   "dependencies": {
     "@fontsource-variable/source-sans-3": "5.2.6",
@@ -25,7 +27,8 @@
     "monaco-editor": "^0.56.0",
     "react": "19.1.1",
     "react-dom": "19.1.1",
-    "zod": "4.1.5"
+    "zod": "4.1.5",
+    "@tauri-apps/api": "2.8.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.8.4",
