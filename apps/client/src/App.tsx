@@ -26,10 +26,12 @@ import {
   CircleDot,
   Clock3,
   Command,
+  Ellipsis,
   FileCode2,
   Files,
   Folder,
   FolderOpen,
+  FolderPlus,
   GitBranch,
   Globe2,
   Menu,
@@ -37,6 +39,7 @@ import {
   MessageSquarePlus,
   Plug,
   Radio,
+  RefreshCw,
   Save,
   Search,
   Send,
@@ -81,6 +84,8 @@ export function App() {
   const prometheus = usePrometheus();
   const [activity, setActivity] = useState<ActivityId>("explorer");
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("connection");
+  const [projectSpaceOpen, setProjectSpaceOpen] = useState(false);
+  const [projectSpaceMode, setProjectSpaceMode] = useState<"open" | "create">("open");
   const [message, setMessage] = useState("");
   const [sendingMessage, setSendingMessage] = useState(false);
   const [pendingUserText, setPendingUserText] = useState<string | null>(null);
@@ -558,6 +563,9 @@ export function App() {
       id: "file",
       label: "File",
       items: [
+        { id: "m-file-new-project", label: "New Project…", run: () => { setProjectSpaceMode("create"); setProjectSpaceOpen(true); setActivity("explorer"); } },
+        { id: "m-file-open-folder", label: "Open Folder…", run: () => { setProjectSpaceMode("open"); setProjectSpaceOpen(true); setActivity("explorer"); } },
+        { id: "m-file-sep0", label: "", separator: true },
         { id: "m-file-new", label: "New Session…", run: () => runCommand("session.create") },
         { id: "m-file-open", label: "Open File…", detail: "Ctrl+P", run: () => runCommand("file.quickOpen") },
         { id: "m-file-sep1", label: "", separator: true },
@@ -659,6 +667,13 @@ export function App() {
     liveApprovals,
   );
 
+  const liveApprovalIds = new Set(
+    pendingApprovals.filter((item) => item.live).map((item) => item.approvalId),
+  );
+  const staleApprovalIds = new Set(
+    pendingApprovals.filter((item) => !item.live).map((item) => item.approvalId),
+  );
+
   const workspaceLabel =
     prometheus.runtime?.workspaceName
     ?? prometheus.health?.workspace?.split(/[\\/]/).filter(Boolean).at(-1)
@@ -702,40 +717,113 @@ export function App() {
       <aside className={`ide-sidebar context-panel ${mobilePanelOpen ? "is-open" : ""}`}>
         {activity === "explorer" && (
           <>
-            <div className="context-heading">
-              <div>
-                <span className="eyebrow">EXPLORER</span>
-                <h1>{prometheus.health?.workspace ?? (prometheus.controlPlane === "connecting" ? "Connecting…" : "Offline")}</h1>
+            <div className="explorer-toolbar">
+              <span className="explorer-title">EXPLORER</span>
+              <div className="explorer-actions">
+                <button
+                  type="button"
+                  className="icon-button"
+                  title="New Project"
+                  aria-label="New Project"
+                  onClick={() => { setProjectSpaceMode("create"); setProjectSpaceOpen(true); }}
+                >
+                  <FolderPlus size={15} />
+                </button>
+                <button
+                  type="button"
+                  className="icon-button"
+                  title="Open Folder"
+                  aria-label="Open Folder"
+                  onClick={() => { setProjectSpaceMode("open"); setProjectSpaceOpen(true); }}
+                >
+                  <FolderOpen size={15} />
+                </button>
+                <button
+                  type="button"
+                  className="icon-button"
+                  title="Refresh"
+                  aria-label="Refresh explorer"
+                  disabled={!prometheus.runtime?.activeProjectId}
+                  onClick={() => {
+                    const id = prometheus.runtime?.activeProjectId;
+                    if (id) void prometheus.openProject(id);
+                  }}
+                >
+                  <RefreshCw size={14} />
+                </button>
+                <button className="icon-button mobile-only" onClick={() => setMobilePanelOpen(false)}><X size={17} /></button>
               </div>
-              <button className="icon-button mobile-only" onClick={() => setMobilePanelOpen(false)}><X size={17} /></button>
             </div>
-            <section className="workspace-tree" aria-label="Workspace files">
-              {prometheus.rootNodes.map((node) => (
-                <TreeEntry
-                  key={node.path}
-                  node={node}
-                  depth={0}
-                  expandedPaths={prometheus.expandedPaths}
-                  childrenByPath={prometheus.childrenByPath}
-                  selectedPath={selectedFilePath}
-                  onToggle={prometheus.toggleDirectory}
-                  onOpenFile={(path) => { void openFile(path); }}
-                />
-              ))}
-              {!prometheus.loading && prometheus.rootNodes.length === 0 && (
-                <p className="muted-note">Workspace empty or control plane offline.</p>
-              )}
-            </section>
+            <div className="explorer-section">
+              <div className="explorer-section-header" title={prometheus.runtime?.workspaceRoot ?? workspaceLabel}>
+                <ChevronDown size={14} />
+                <strong>{(prometheus.health?.workspace ?? workspaceLabel).toUpperCase()}</strong>
+                <button
+                  type="button"
+                  className="icon-button"
+                  title="Switch or open space"
+                  aria-label="Switch or open space"
+                  onClick={() => { setProjectSpaceMode("open"); setProjectSpaceOpen(true); }}
+                >
+                  <Ellipsis size={14} />
+                </button>
+              </div>
+              <section className="workspace-tree" aria-label="Workspace files">
+                {prometheus.rootNodes.map((node) => (
+                  <TreeEntry
+                    key={node.path}
+                    node={node}
+                    depth={0}
+                    expandedPaths={prometheus.expandedPaths}
+                    childrenByPath={prometheus.childrenByPath}
+                    selectedPath={selectedFilePath}
+                    onToggle={prometheus.toggleDirectory}
+                    onOpenFile={(path) => { void openFile(path); }}
+                  />
+                ))}
+                {!prometheus.loading && prometheus.rootNodes.length === 0 && (
+                  <div className="explorer-empty">
+                    <p>{prometheus.controlPlane === "online" ? "No files in this space." : "Control plane offline."}</p>
+                    <button
+                      type="button"
+                      className="mini-button"
+                      onClick={() => { setProjectSpaceMode("open"); setProjectSpaceOpen(true); }}
+                    >
+                      <FolderOpen size={13} /> Open Folder
+                    </button>
+                  </div>
+                )}
+              </section>
+            </div>
+            {(prometheus.runtime?.projects.length ?? 0) > 0 && (
+              <div className="explorer-recents">
+                <div className="explorer-recents-title">SPACES</div>
+                {prometheus.runtime?.projects.slice(0, 8).map((project) => {
+                  const active = prometheus.runtime?.activeProjectId === project.id
+                    || prometheus.runtime?.workspaceRoot === project.path;
+                  return (
+                    <button
+                      key={project.id}
+                      type="button"
+                      className={active ? "explorer-recent active" : "explorer-recent"}
+                      title={project.path}
+                      disabled={Boolean(active)}
+                      onClick={() => { void prometheus.openProject(project.id); }}
+                    >
+                      <Folder size={13} />
+                      <span>{project.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </>
         )}
 
         {activity === "search" && (
           <>
-            <div className="context-heading">
-              <div>
-                <span className="eyebrow">SEARCH</span>
-                <h1>Workspace</h1>
-              </div>
+            <div className="side-panel-header">
+              <span className="explorer-title">SEARCH</span>
             </div>
             <form
               className="sidebar-search"
@@ -775,12 +863,9 @@ export function App() {
 
         {activity === "sessions" && (
           <>
-            <div className="context-heading">
-              <div>
-                <span className="eyebrow">SESSIONS</span>
-                <h1>Durable tasks</h1>
-              </div>
-              <button className="mini-button" onClick={() => setNewSessionOpen(true)}><MessageSquarePlus size={14} /> New</button>
+            <div className="side-panel-header">
+              <span className="explorer-title">SESSIONS</span>
+              <button className="icon-button" title="New session" onClick={() => setNewSessionOpen(true)}><MessageSquarePlus size={15} /></button>
             </div>
             <nav className="session-list" aria-label="Sessions">
               {prometheus.sessions.map((session) => (
@@ -808,7 +893,10 @@ export function App() {
 
         {activity === "agents" && (
           <>
-            <div className="context-heading"><div><span className="eyebrow">AGENTS</span><h1>{prometheus.agents.length} profiles</h1></div></div>
+            <div className="side-panel-header">
+              <span className="explorer-title">AGENTS</span>
+              <small>{prometheus.agents.length}</small>
+            </div>
             <div className="sidebar-stack">
               {prometheus.agents.map((agent) => (
                 <button key={agent.id} className={agent.id === prometheus.selectedAgentId ? "side-card active" : "side-card"} onClick={() => prometheus.setSelectedAgentId(agent.id)}>
@@ -824,7 +912,9 @@ export function App() {
 
         {activity === "extensions" && (
           <>
-            <div className="context-heading"><div><span className="eyebrow">EXTENSIONS</span><h1>Skills & MCP</h1></div></div>
+            <div className="side-panel-header">
+              <span className="explorer-title">EXTENSIONS</span>
+            </div>
             <div className="sidebar-stack">
               <div className="side-card static"><strong>Skills</strong><small>{prometheus.skills.length} discovered</small></div>
               <div className="side-card static"><strong>MCP servers</strong><small>{prometheus.mcpServers.length} configured</small></div>
@@ -835,7 +925,9 @@ export function App() {
 
         {activity === "settings" && (
           <>
-            <div className="context-heading"><div><span className="eyebrow">SETTINGS</span><h1>Configuration</h1></div></div>
+            <div className="side-panel-header">
+              <span className="explorer-title">SETTINGS</span>
+            </div>
             <nav className="settings-nav">
               {([
                 ["connection", "Connection"],
@@ -843,7 +935,7 @@ export function App() {
                 ["providers", "Providers"],
                 ["agents", "Agents"],
                 ["permissions", "Permissions"],
-                ["store", "Extension Store"],
+                ["store", "Extensions"],
                 ["mcp", "MCP"],
                 ["skills", "Skills"],
               ] as const).map(([id, label]) => (
@@ -864,7 +956,7 @@ export function App() {
                 <span className="eyebrow">SETTINGS</span>
                 <h2>{{
                   connection: "Connection",
-                  server: "Server & Projects",
+                  server: "Server",
                   providers: "Providers",
                   agents: "Agents",
                   permissions: "Permissions",
@@ -872,6 +964,16 @@ export function App() {
                   mcp: "MCP Servers",
                   skills: "Skills",
                 }[settingsSection]}</h2>
+                <p className="settings-subtitle">{{
+                  connection: "Choose local sidecar or a shared control plane.",
+                  server: "Listen address for this control plane. Spaces are managed from Explorer.",
+                  providers: "Connect LLM APIs. Keys stay on this node.",
+                  agents: "Named agent profiles bound to a provider and model.",
+                  permissions: "Allow / ask / deny rules for tools.",
+                  store: "Install skills and MCP packages.",
+                  mcp: "Stdio MCP servers available to agents.",
+                  skills: "Discovered SKILL.md entries in the active space.",
+                }[settingsSection]}</p>
               </div>
               <div className="telemetry-inline">
                 <Globe2 size={15} />
@@ -895,9 +997,6 @@ export function App() {
                 onRefreshEmbeddedRuntime={prometheus.refreshEmbeddedRuntime}
                 onRestartEmbeddedRuntime={prometheus.restartEmbeddedRuntime}
                 onSaveRuntime={prometheus.saveRuntime}
-                onAddProject={prometheus.addProject}
-                onOpenProject={prometheus.openProject}
-                onRemoveProject={prometheus.removeProject}
                 providers={prometheus.providers}
                 agents={prometheus.agents}
                 permissionRules={prometheus.permissionRules}
@@ -958,11 +1057,16 @@ export function App() {
                     />
                   </>
                 ) : (
-                  <div className="empty-state editor-empty">
-                    <div className="orbital-mark"><Files size={28} /></div>
-                    <span className="eyebrow">EDITOR</span>
-                    <h3>Open a file from Explorer</h3>
-                    <p>Click a file in the left tree to preview and edit. Save with the toolbar button.</p>
+                  <div className="empty-state editor-empty quiet">
+                    <p className="muted-note">Select a file in the explorer to open it.</p>
+                    <div className="editor-empty-actions">
+                      <button type="button" className="mini-button" onClick={() => { setProjectSpaceMode("open"); setProjectSpaceOpen(true); setActivity("explorer"); }}>
+                        <FolderOpen size={13} /> Open Folder
+                      </button>
+                      <button type="button" className="mini-button" onClick={() => setPaletteOpen(true)}>
+                        <Command size={13} /> Go to File
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -1001,6 +1105,7 @@ export function App() {
                 onApplyTeam={prometheus.applyTeamChanges}
                 onDiscardTeam={prometheus.discardTeamChanges}
                 onResolveApproval={prometheus.resolveApproval}
+                staleApprovalIds={staleApprovalIds}
                 onCancelRun={(runId) => { void prometheus.cancelRun(runId); }}
                 timelineEndRef={timelineEnd}
                 hasSession={Boolean(prometheus.selectedSession)}
@@ -1112,6 +1217,32 @@ export function App() {
             </div>
           </form>
         </div>
+      )}
+      {projectSpaceOpen && (
+        <ProjectSpaceModal
+          mode={projectSpaceMode}
+          onModeChange={setProjectSpaceMode}
+          runtime={prometheus.runtime}
+          onClose={() => setProjectSpaceOpen(false)}
+          onOpenExisting={async (folderPath) => {
+            await prometheus.addProject(folderPath, true, false);
+            setProjectSpaceOpen(false);
+            setActivity("explorer");
+          }}
+          onCreateSpace={async (folderPath) => {
+            await prometheus.addProject(folderPath, true, true);
+            setProjectSpaceOpen(false);
+            setActivity("explorer");
+          }}
+          onSwitch={async (projectId) => {
+            await prometheus.openProject(projectId);
+            setProjectSpaceOpen(false);
+            setActivity("explorer");
+          }}
+          onRemove={async (projectId) => {
+            await prometheus.removeProject(projectId);
+          }}
+        />
       )}
       {teamSetupOpen && (
         <TeamRunModal agents={prometheus.agents} onStart={prometheus.startTeam} onClose={() => setTeamSetupOpen(false)} />
@@ -1228,6 +1359,7 @@ function TeamRunSummary({
           teamRunId={team.id}
           teamTaskId={previewTask.id}
           agentLabel={previewTask.agentLabel}
+          canApply={["pending", "conflicted", "rejected"].includes(previewTask.changeStatus)}
           onClose={() => setPreviewTaskId(null)}
           onApply={async () => { await onApply(team.id, previewTask.id); }}
           onDiscard={async () => { await onDiscard(team.id, previewTask.id); }}
@@ -1435,9 +1567,6 @@ function RuntimeSetupModal({
   onRefreshEmbeddedRuntime,
   onRestartEmbeddedRuntime,
   onSaveRuntime,
-  onAddProject,
-  onOpenProject,
-  onRemoveProject,
   providers,
   agents,
   permissionRules,
@@ -1470,9 +1599,6 @@ function RuntimeSetupModal({
   onRefreshEmbeddedRuntime: () => Promise<import("./local-runtime").LocalRuntimeStatus | null>;
   onRestartEmbeddedRuntime: () => Promise<import("./local-runtime").LocalRuntimeStatus | null>;
   onSaveRuntime: (input: { host?: string; port?: number; workspaceRoot?: string }) => Promise<import("./api").RuntimeInfo>;
-  onAddProject: (path: string, open?: boolean) => Promise<unknown>;
-  onOpenProject: (projectId: string) => Promise<unknown>;
-  onRemoveProject: (projectId: string) => Promise<void>;
   providers: Provider[];
   agents: AgentProfile[];
   permissionRules: PermissionRule[];
@@ -1506,7 +1632,6 @@ function RuntimeSetupModal({
   const [accessTokenDraft, setAccessTokenDraft] = useState(() => getAccessToken(controlPlaneUrl));
   const [listenHost, setListenHost] = useState(runtime?.host ?? "127.0.0.1");
   const [listenPort, setListenPort] = useState(String(runtime?.port ?? 4310));
-  const [projectPath, setProjectPath] = useState("");
   const [restartHint, setRestartHint] = useState<string | null>(null);
 
   useEffect(() => {
@@ -1694,18 +1819,16 @@ function RuntimeSetupModal({
         >
           <div className="runtime-form-title">
             <Globe2 size={16} />
-            <strong>Client connection</strong>
+            <strong>How this client connects</strong>
             <small className={controlPlane === "online" ? "tone-good" : "tone-quiet"}>
               {controlPlane === "online" ? "online" : controlPlane}
             </small>
           </div>
           <p className="runtime-help">
-            {hostMode.desktop
-              ? "桌面客户端内置 control plane：Local 模式会自动拉起本机 sidecar，无需先手动启动 server。"
-              : hostMode.serverHosted
-                ? "当前页面已由 control plane 直接托管，属于同一进程内的 Server UI，默认即可使用。"
-                : "浏览器开发模式仍需本机 control plane。可用桌面客户端获得真正的一键本地独立运行。"}
-            {" "}Remote 模式才连接共享服务器。
+            <strong>Local</strong> uses this machine&apos;s control plane
+            {hostMode.desktop ? " (desktop starts a sidecar automatically)" : hostMode.serverHosted ? " (this page is already hosted by it)" : " (start server or use desktop app)"}.
+            {" "}
+            <strong>Remote</strong> joins a shared control plane that links spaces across clients — it does not force every client onto the server&apos;s own folder.
           </p>
           <div className="mode-toggle" role="group" aria-label="Connection mode">
             <button
@@ -1823,21 +1946,13 @@ function RuntimeSetupModal({
       )}
 
       {show("server") && (
-        <div className="settings-section-panel runtime-form">
-          <div className="runtime-form-title">
-            <ServerCog size={16} />
-            <strong>Server runtime</strong>
-            <small>{runtime ? runtime.workspaceName : "offline"}</small>
-          </div>
-          {!runtime || controlPlane !== "online" ? (
-            <p className="runtime-help">先在 Connection 连上 control plane，再管理监听地址与项目工作区。</p>
+        <div className="settings-section-panel settings-card-stack">
+          {!runtime ? (
+            <div className="panel-empty">Connect to a control plane first to edit server listen settings.</div>
           ) : (
             <>
-              <p className="runtime-help">
-                配置当前 control plane 的监听地址与项目。host/port 写入 runtime.json，重启 server 后生效；切换项目即时生效。
-              </p>
               <form
-                className="runtime-grid"
+                className="runtime-form"
                 onSubmit={(event) => {
                   event.preventDefault();
                   setBusy(true);
@@ -1846,8 +1961,12 @@ function RuntimeSetupModal({
                     port: Number(listenPort),
                   })
                     .then((next) => {
-                      setRestartHint(next.restartRequired ? next.listenHint : null);
                       setError(null);
+                      if (next.host !== runtime.host || next.port !== runtime.port) {
+                        setRestartHint("Listen IP/port saved. Restart the control plane process to apply the bind address.");
+                      } else {
+                        setRestartHint(null);
+                      }
                     })
                     .catch((reason) => {
                       setError(reason instanceof Error ? reason.message : "Unable to save runtime");
@@ -1855,19 +1974,30 @@ function RuntimeSetupModal({
                     .finally(() => setBusy(false));
                 }}
               >
-                <label>
-                  Listen IP
-                  <input value={listenHost} onChange={(event) => setListenHost(event.target.value)} placeholder="127.0.0.1" required />
-                </label>
-                <label>
-                  Listen port
-                  <input value={listenPort} onChange={(event) => setListenPort(event.target.value)} inputMode="numeric" required />
-                </label>
+                <div className="runtime-form-title">
+                  <ServerCog size={16} />
+                  <strong>Listen address</strong>
+                  <small>{runtime.host}:{runtime.port}</small>
+                </div>
+                <p className="runtime-help">
+                  These settings belong to <em>this</em> control plane process. They do not redefine client spaces.
+                  Manage spaces from Explorer → New Project / Open Folder.
+                </p>
+                <div className="runtime-grid">
+                  <label>
+                    Listen IP
+                    <input value={listenHost} onChange={(event) => setListenHost(event.target.value)} placeholder="127.0.0.1" required />
+                  </label>
+                  <label>
+                    Listen port
+                    <input value={listenPort} onChange={(event) => setListenPort(event.target.value)} inputMode="numeric" required />
+                  </label>
+                </div>
                 <label className="full-width">
-                  Active workspace
+                  Active space on this node
                   <input value={runtime.workspaceRoot} readOnly />
                 </label>
-                <div className="modal-actions full-width">
+                <div className="modal-actions">
                   <button className="primary-button" disabled={busy}>Save listen settings</button>
                 </div>
               </form>
@@ -1876,81 +2006,18 @@ function RuntimeSetupModal({
                 <span>Data: {runtime.dataFile}</span>
                 <span>Runtime file: {runtime.runtimeFile}</span>
               </div>
-              <form
-                className="runtime-form nested"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  if (!projectPath.trim()) return;
-                  setBusy(true);
-                  void onAddProject(projectPath.trim(), true)
-                    .then(() => {
-                      setProjectPath("");
-                      setError(null);
-                    })
-                    .catch((reason) => {
-                      setError(reason instanceof Error ? reason.message : "Unable to open project");
-                    })
-                    .finally(() => setBusy(false));
-                }}
-              >
-                <div className="runtime-form-title">
-                  <strong>Projects</strong>
-                  <small>{runtime.projects.length} saved</small>
+              <div className="settings-inline-callout">
+                <div>
+                  <strong>{runtime.projects.length} known spaces</strong>
+                  <small>Create, import, or switch from the Explorer activity — not here.</small>
                 </div>
-                <label>
-                  Open folder path
-                  <input
-                    value={projectPath}
-                    onChange={(event) => setProjectPath(event.target.value)}
-                    placeholder="E:/work/my-app"
-                    required
-                  />
-                </label>
-                <div className="modal-actions">
-                  <button className="primary-button" disabled={busy || !projectPath.trim()}>Open project</button>
-                </div>
-              </form>
-              <div className="project-list">
-                {runtime.projects.length === 0 && <div className="panel-empty">No saved projects yet.</div>}
-                {runtime.projects.map((project) => {
-                  const active = runtime.activeProjectId === project.id || runtime.workspaceRoot === project.path;
-                  return (
-                    <div className={active ? "project-row active" : "project-row"} key={project.id}>
-                      <div>
-                        <strong>{project.name}</strong>
-                        <small>{project.path}</small>
-                      </div>
-                      <div className="project-actions">
-                        <button
-                          type="button"
-                          className="mini-button"
-                          disabled={busy || active}
-                          onClick={() => {
-                            setBusy(true);
-                            void onOpenProject(project.id)
-                              .catch((reason) => setError(reason instanceof Error ? reason.message : "Unable to switch project"))
-                              .finally(() => setBusy(false));
-                          }}
-                        >
-                          {active ? "Active" : "Open"}
-                        </button>
-                        <button
-                          type="button"
-                          className="mini-button danger"
-                          disabled={busy}
-                          onClick={() => {
-                            setBusy(true);
-                            void onRemoveProject(project.id)
-                              .catch((reason) => setError(reason instanceof Error ? reason.message : "Unable to remove project"))
-                              .finally(() => setBusy(false));
-                          }}
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
+                <button
+                  type="button"
+                  className="mini-button"
+                  onClick={onClose}
+                >
+                  Open Explorer
+                </button>
               </div>
             </>
           )}
@@ -2299,6 +2366,147 @@ function RuntimeSetupModal({
   );
 }
 
+
+function ProjectSpaceModal({
+  mode,
+  onModeChange,
+  runtime,
+  onClose,
+  onOpenExisting,
+  onCreateSpace,
+  onSwitch,
+  onRemove,
+}: {
+  mode: "open" | "create";
+  onModeChange: (mode: "open" | "create") => void;
+  runtime: import("./api").RuntimeInfo | null;
+  onClose: () => void;
+  onOpenExisting: (path: string) => Promise<void>;
+  onCreateSpace: (path: string) => Promise<void>;
+  onSwitch: (projectId: string) => Promise<void>;
+  onRemove: (projectId: string) => Promise<void>;
+}) {
+  const [folderPath, setFolderPath] = useState("");
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    const path = folderPath.trim();
+    if (!path) return;
+    setWorking(true);
+    setError(null);
+    try {
+      if (mode === "create") {
+        await onCreateSpace(path);
+      } else {
+        await onOpenExisting(path);
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to open space");
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <div className="modal-card project-space-modal" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="runtime-modal-header compact">
+          <div>
+            <span className="eyebrow">SPACE</span>
+            <h3>{mode === "create" ? "New Project" : "Open Folder"}</h3>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close"><X size={16} /></button>
+        </div>
+        <p className="runtime-help project-space-help">
+          A space is a local working directory owned by an execution node.
+          Create an empty folder space, or import/open an existing project path.
+        </p>
+        <div className="mode-toggle" role="group" aria-label="Space action">
+          <button type="button" className={mode === "open" ? "mode-chip active" : "mode-chip"} onClick={() => onModeChange("open")}>
+            Open / Import
+          </button>
+          <button type="button" className={mode === "create" ? "mode-chip active" : "mode-chip"} onClick={() => onModeChange("create")}>
+            New space
+          </button>
+        </div>
+        {error && <div className="runtime-error">{error}</div>}
+        <form className="runtime-form" onSubmit={(event) => { void submit(event); }}>
+          <label>
+            {mode === "create" ? "New folder path" : "Existing folder path"}
+            <input
+              autoFocus
+              value={folderPath}
+              onChange={(event) => setFolderPath(event.target.value)}
+              placeholder={mode === "create" ? "E:/work/my-new-app" : "E:/work/existing-app"}
+              required
+            />
+          </label>
+          <p className="muted-note">
+            {mode === "create"
+              ? "Directory will be created if missing, then opened as the active space."
+              : "Import an existing project directory into this node and open it."}
+          </p>
+          <div className="modal-actions">
+            <button type="button" className="secondary-button" onClick={onClose}>Cancel</button>
+            <button type="submit" className="primary-button" disabled={working || !folderPath.trim()}>
+              {working ? "Working…" : mode === "create" ? "Create & Open" : "Open Folder"}
+            </button>
+          </div>
+        </form>
+        {runtime && runtime.projects.length > 0 && (
+          <div className="project-list dense">
+            <div className="runtime-form-title">
+              <strong>Recent spaces</strong>
+              <small>{runtime.projects.length}</small>
+            </div>
+            {runtime.projects.map((project) => {
+              const active = runtime.activeProjectId === project.id || runtime.workspaceRoot === project.path;
+              return (
+                <div className={active ? "project-row active" : "project-row"} key={project.id}>
+                  <div>
+                    <strong>{project.name}</strong>
+                    <small>{project.path}</small>
+                  </div>
+                  <div className="project-actions">
+                    <button
+                      type="button"
+                      className="mini-button"
+                      disabled={working || active}
+                      onClick={() => {
+                        setWorking(true);
+                        void onSwitch(project.id)
+                          .catch((reason) => setError(reason instanceof Error ? reason.message : "Unable to switch"))
+                          .finally(() => setWorking(false));
+                      }}
+                    >
+                      {active ? "Active" : "Open"}
+                    </button>
+                    <button
+                      type="button"
+                      className="mini-button danger"
+                      disabled={working}
+                      onClick={() => {
+                        setWorking(true);
+                        void onRemove(project.id)
+                          .catch((reason) => setError(reason instanceof Error ? reason.message : "Unable to remove"))
+                          .finally(() => setWorking(false));
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function NavigationRail({
   activity,
   onChange,
@@ -2316,7 +2524,6 @@ function NavigationRail({
   ];
   return (
     <nav className="navigation-rail activity-bar" aria-label="Primary activities">
-      <div className="brand-mark" title="Prometheus"><span>P</span></div>
       <div className="rail-actions">
         {items.map((item) => (
           <button
@@ -2407,6 +2614,7 @@ function ConversationPanel({
   onDiscardTeam,
   onResolveApproval,
   onCancelRun,
+  staleApprovalIds,
   timelineEndRef,
   hasSession,
 }: {
@@ -2427,6 +2635,7 @@ function ConversationPanel({
     decision: ApprovalDecision,
   ) => Promise<unknown>;
   onCancelRun: (runId?: string | null) => void;
+  staleApprovalIds: Set<string>;
   timelineEndRef: RefObject<HTMLDivElement | null>;
   hasSession: boolean;
 }) {
@@ -2545,6 +2754,7 @@ function ConversationPanel({
                 event={item.event}
                 events={events}
                 onResolveApproval={onResolveApproval}
+                staleApprovalIds={staleApprovalIds}
               />
             );
           })
@@ -2562,6 +2772,7 @@ function ActivityItem({
   event,
   events,
   onResolveApproval,
+  staleApprovalIds,
 }: {
   label: string;
   detail: string;
@@ -2573,6 +2784,7 @@ function ActivityItem({
     approvalId: string,
     decision: ApprovalDecision,
   ) => Promise<unknown>;
+  staleApprovalIds?: Set<string>;
 }) {
   const [open, setOpen] = useState(status === "approval" || status === "running" || status === "error");
   const showTool = event.type === "tool.call.started" || event.type === "tool.call.completed";
@@ -2602,7 +2814,7 @@ function ActivityItem({
             </div>
           )}
           {event.type === "approval.requested" && (
-            <TimelineEvent event={event} events={events} onResolveApproval={onResolveApproval} />
+            <TimelineEvent event={event} events={events} onResolveApproval={onResolveApproval} staleApprovalIds={staleApprovalIds} />
           )}
         </div>
       )}
@@ -2614,6 +2826,7 @@ function TimelineEvent({
   event,
   events,
   onResolveApproval,
+  staleApprovalIds,
 }: {
   event: SessionEvent;
   events: SessionEvent[];
@@ -2622,6 +2835,7 @@ function TimelineEvent({
     approvalId: string,
     decision: ApprovalDecision,
   ) => Promise<unknown>;
+  staleApprovalIds?: Set<string>;
 }) {
   const [resolving, setResolving] = useState<ApprovalDecision | null>(null);
   const text = describeEvent(event);
@@ -2680,6 +2894,7 @@ function TimelineEvent({
             event={event}
             decision={resolvedDecision}
             resolving={resolving}
+            stale={Boolean(approvalId && staleApprovalIds?.has(approvalId))}
             onResolve={resolve}
           />
         )}
@@ -2714,28 +2929,39 @@ function ApprovalRequest({
   event,
   decision,
   resolving,
+  stale = false,
   onResolve,
 }: {
   event: SessionEvent;
   decision: ApprovalDecision | null;
   resolving: ApprovalDecision | null;
+  stale?: boolean;
   onResolve: (decision: ApprovalDecision) => Promise<void>;
 }) {
   const presentation = describeApprovalRequest(event);
   const disabled = decision !== null || resolving !== null;
 
   return (
-    <div className={`approval-card ${decision ?? "pending"}`}>
+    <div className={`approval-card ${decision ?? "pending"}${stale && !decision ? " stale" : ""}`}>
       <div className="approval-summary">
         <ShieldCheck size={17} />
         <div>
           <strong>{presentation.title}</strong>
-          <small>{presentation.detail}</small>
+          <small>{presentation.detail}{stale && !decision ? " · stale after restart/abort" : ""}</small>
         </div>
       </div>
       {presentation.preview && <pre className="approval-preview">{presentation.preview}</pre>}
+      {stale && !decision && (
+        <div className="approval-stale-note">
+          The original run is no longer waiting. Approving/denying only clears this card — resend the message if the work must continue.
+        </div>
+      )}
       {decision ? (
-        <div className="approval-decision">{decision === "approved" ? "Approved on a connected terminal" : "Denied on a connected terminal"}</div>
+        <div className="approval-decision">
+          {decision === "approved"
+            ? (stale ? "Cleared as approved (run was no longer waiting)" : "Approved on a connected terminal")
+            : (stale ? "Cleared as denied (run was no longer waiting)" : "Denied on a connected terminal")}
+        </div>
       ) : (
         <div className="approval-actions">
           <button
@@ -2745,7 +2971,7 @@ function ApprovalRequest({
             aria-label={presentation.denyAriaLabel}
             onClick={() => void onResolve("denied")}
           >
-            {resolving === "denied" ? "Denying…" : presentation.denyLabel}
+            {resolving === "denied" ? (stale ? "Clearing…" : "Denying…") : (stale ? "Clear deny" : presentation.denyLabel)}
           </button>
           <button
             type="button"
@@ -2754,7 +2980,7 @@ function ApprovalRequest({
             aria-label={presentation.approveAriaLabel}
             onClick={() => void onResolve("approved")}
           >
-            {resolving === "approved" ? "Approving…" : presentation.approveLabel}
+            {resolving === "approved" ? (stale ? "Clearing…" : "Approving…") : (stale ? "Clear approve" : presentation.approveLabel)}
           </button>
         </div>
       )}

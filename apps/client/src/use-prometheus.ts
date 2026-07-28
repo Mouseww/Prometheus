@@ -665,8 +665,8 @@ export function usePrometheus() {
     return result;
   }, [refreshRuntime]);
 
-  const addProject = useCallback(async (path: string, open = true) => {
-    const result = await addRuntimeProject(path, open);
+  const addProject = useCallback(async (path: string, open = true, create = false) => {
+    const result = await addRuntimeProject(path, open, create);
     await refreshRuntime();
     setBootstrapNonce((value) => value + 1);
     return result;

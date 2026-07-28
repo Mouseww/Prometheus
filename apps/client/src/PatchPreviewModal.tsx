@@ -1,8 +1,10 @@
-import Editor from "@monaco-editor/react";
+import { DiffEditor, Editor } from "@monaco-editor/react";
 import { X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getTeamTaskPatch, type TeamTaskPatch } from "./api";
+import { languageFromPath } from "./language";
 import { ensureMonacoConfigured } from "./monaco-setup";
+import { parseUnifiedPatch, type FileDiffHunk } from "./patch-diff";
 
 ensureMonacoConfigured();
 
@@ -10,6 +12,7 @@ type PatchPreviewModalProps = {
   teamRunId: string;
   teamTaskId: string;
   agentLabel: string;
+  canApply?: boolean;
   onClose: () => void;
   onApply: () => Promise<void>;
   onDiscard: () => Promise<void>;
@@ -19,6 +22,7 @@ export function PatchPreviewModal({
   teamRunId,
   teamTaskId,
   agentLabel,
+  canApply = true,
   onClose,
   onApply,
   onDiscard,
@@ -27,6 +31,8 @@ export function PatchPreviewModal({
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<TeamTaskPatch | null>(null);
   const [busy, setBusy] = useState<"apply" | "discard" | null>(null);
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"split" | "unified">("split");
 
   useEffect(() => {
     let cancelled = false;
@@ -34,7 +40,10 @@ export function PatchPreviewModal({
     setError(null);
     void getTeamTaskPatch(teamRunId, teamTaskId)
       .then((next) => {
-        if (!cancelled) setPreview(next);
+        if (cancelled) return;
+        setPreview(next);
+        const files = parseUnifiedPatch(next.patch);
+        setSelectedPath(files[0]?.path ?? next.changedPaths[0] ?? null);
       })
       .catch((reason) => {
         if (!cancelled) {
@@ -48,6 +57,12 @@ export function PatchPreviewModal({
       cancelled = true;
     };
   }, [teamRunId, teamTaskId]);
+
+  const files = useMemo<FileDiffHunk[]>(
+    () => (preview ? parseUnifiedPatch(preview.patch) : []),
+    [preview],
+  );
+  const active = files.find((file) => file.path === selectedPath) ?? files[0] ?? null;
 
   const run = async (action: "apply" | "discard") => {
     if (busy) return;
@@ -86,18 +101,29 @@ export function PatchPreviewModal({
                 : "Loading worktree diff…"}
             </small>
           </div>
-          <button type="button" className="icon-button" aria-label="Close patch preview" onClick={onClose}>
-            <X size={16} />
-          </button>
+          <div className="patch-preview-header-actions">
+            <div className="patch-view-toggle" role="group" aria-label="Diff view mode">
+              <button
+                type="button"
+                className={viewMode === "split" ? "active" : undefined}
+                onClick={() => setViewMode("split")}
+              >
+                Split
+              </button>
+              <button
+                type="button"
+                className={viewMode === "unified" ? "active" : undefined}
+                onClick={() => setViewMode("unified")}
+              >
+                Unified
+              </button>
+            </div>
+            <button type="button" className="icon-button" aria-label="Close patch preview" onClick={onClose}>
+              <X size={16} />
+            </button>
+          </div>
         </header>
 
-        {preview && preview.changedPaths.length > 0 && (
-          <div className="patch-preview-paths" aria-label="Changed paths">
-            {preview.changedPaths.map((path) => (
-              <code key={path}>{path}</code>
-            ))}
-          </div>
-        )}
         {preview && preview.conflictPaths.length > 0 && (
           <div className="patch-preview-conflicts">Conflicts: {preview.conflictPaths.join(", ")}</div>
         )}
@@ -108,7 +134,7 @@ export function PatchPreviewModal({
         <div className="patch-preview-body">
           {loading && <div className="panel-empty">Generating unified diff…</div>}
           {error && <div className="error-banner">{error}</div>}
-          {!loading && preview && (
+          {!loading && preview && viewMode === "unified" && (
             <div className="monaco-host patch-monaco">
               <Editor
                 language="diff"
@@ -129,6 +155,63 @@ export function PatchPreviewModal({
               />
             </div>
           )}
+          {!loading && preview && viewMode === "split" && (
+            <div className="patch-split-layout">
+              <aside className="patch-file-list" aria-label="Changed files">
+                {(files.length > 0 ? files : preview.changedPaths.map((path) => ({
+                  path,
+                  original: "",
+                  modified: "",
+                  binary: false,
+                  added: 0,
+                  removed: 0,
+                }))).map((file) => (
+                  <button
+                    key={file.path}
+                    type="button"
+                    className={(active?.path ?? selectedPath) === file.path ? "active" : undefined}
+                    onClick={() => setSelectedPath(file.path)}
+                  >
+                    <strong>{file.path.split("/").pop()}</strong>
+                    <small>
+                      {file.binary
+                        ? "binary"
+                        : `+${file.added} -${file.removed}`}
+                    </small>
+                    <span>{file.path}</span>
+                  </button>
+                ))}
+              </aside>
+              <div className="patch-split-editor">
+                {active?.binary ? (
+                  <div className="panel-empty">Binary file — no text diff available.</div>
+                ) : active ? (
+                  <div className="monaco-host patch-monaco">
+                    <DiffEditor
+                      original={active.original}
+                      modified={active.modified}
+                      language={languageFromPath(active.path)}
+                      theme="vs-dark"
+                      options={{
+                        readOnly: true,
+                        renderSideBySide: true,
+                        fontFamily: '"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                        fontSize: 12,
+                        lineHeight: 18,
+                        minimap: { enabled: false },
+                        scrollBeyondLastLine: false,
+                        automaticLayout: true,
+                        renderWhitespace: "selection",
+                        originalEditable: false,
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <div className="panel-empty">No parseable file hunks in this patch.</div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         <footer className="patch-preview-footer">
@@ -146,10 +229,10 @@ export function PatchPreviewModal({
           <button
             type="button"
             className="primary-button"
-            disabled={busy !== null}
+            disabled={busy !== null || !canApply}
             onClick={() => { void run("apply"); }}
           >
-            {busy === "apply" ? "Applying…" : "Apply patch"}
+            {busy === "apply" ? "Applying…" : canApply ? "Apply patch" : "Not applyable yet"}
           </button>
         </footer>
       </div>

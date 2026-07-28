@@ -12,6 +12,7 @@ export type PendingApprovalItem = {
   preview: string;
   approveLabel: string;
   denyLabel: string;
+  live: boolean;
 };
 
 export function listPendingApprovals(events: SessionEvent[]): PendingApprovalItem[] {
@@ -37,6 +38,7 @@ export function listPendingApprovals(events: SessionEvent[]): PendingApprovalIte
       preview: presentation.preview,
       approveLabel: presentation.approveLabel,
       denyLabel: presentation.denyLabel,
+      live: false,
     });
   }
   return pending;
@@ -44,7 +46,7 @@ export function listPendingApprovals(events: SessionEvent[]): PendingApprovalIte
 
 export function pendingFromLiveApproval(item: LivePendingApproval): PendingApprovalItem {
   const event = {
-    eventId: item.eventId,
+    eventId: item.eventId || crypto.randomUUID(),
     sessionId: item.sessionId,
     sequence: 0,
     type: "approval.requested" as const,
@@ -67,16 +69,17 @@ export function pendingFromLiveApproval(item: LivePendingApproval): PendingAppro
     preview: presentation.preview,
     approveLabel: presentation.approveLabel,
     denyLabel: presentation.denyLabel,
+    live: item.live,
   };
 }
 
 export function mergePendingApprovals(
   local: PendingApprovalItem[],
-  live: PendingApprovalItem[],
+  remote: PendingApprovalItem[],
 ): PendingApprovalItem[] {
   const map = new Map<string, PendingApprovalItem>();
   for (const item of local) map.set(item.approvalId, item);
-  for (const item of live) {
+  for (const item of remote) {
     const existing = map.get(item.approvalId);
     map.set(
       item.approvalId,
@@ -84,6 +87,7 @@ export function mergePendingApprovals(
         ? {
             ...existing,
             sessionTitle: item.sessionTitle ?? existing.sessionTitle,
+            live: existing.live || item.live,
           }
         : item,
     );

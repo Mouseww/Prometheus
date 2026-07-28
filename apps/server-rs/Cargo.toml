@@ -1,6 +1,6 @@
 [package]
 name = "prometheus-server"
-version = "0.1.12"
+version = "0.1.13"
 edition = "2024"
 description = "Rust compatibility control plane for Prometheus"
 license = "MIT"

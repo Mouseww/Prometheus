@@ -235,9 +235,20 @@ export function TitleBar({
                   <article key={item.approvalId} className="title-inbox-card">
                     <header>
                       <strong>{item.title}</strong>
-                      <small>{item.sessionTitle ? `${item.sessionTitle} · ${item.detail}` : item.detail}</small>
+                      <small>
+                        {item.sessionTitle ? `${item.sessionTitle} · ${item.detail}` : item.detail}
+                        {" · "}
+                        <span className={item.live ? "tone-live" : "tone-stale"}>
+                          {item.live ? "live" : "stale"}
+                        </span>
+                      </small>
                     </header>
                     {item.preview && <pre>{item.preview}</pre>}
+                    {!item.live && (
+                      <p className="title-inbox-stale">
+                        Run waiter is gone (restart/abort). Resolving only clears this card — resend the task if work must continue.
+                      </p>
+                    )}
                     <div className="title-inbox-actions">
                       <button
                         type="button"

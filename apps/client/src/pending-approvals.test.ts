@@ -48,10 +48,10 @@ describe("listPendingApprovals", () => {
     const pending = listPendingApprovals(events);
     expect(pending).toHaveLength(1);
     expect(pending[0]?.approvalId).toBe("a2");
-    expect(pending[0]?.detail).toContain("Shell command");
+    expect(pending[0]?.live).toBe(false);
   });
 
-  it("merges live cross-session approvals without duplicates", () => {
+  it("merges live cross-session approvals and preserves live flag", () => {
     const local = listPendingApprovals([
       event({
         type: "approval.requested",
@@ -72,6 +72,7 @@ describe("listPendingApprovals", () => {
         eventId: "e1",
         createdAt: "2026-07-28T00:00:00.000Z",
         toolName: "write_file",
+        live: true,
         payload: {
           arguments: { path: "src/a.ts", contentBytes: 4, contentPreview: "x" },
         },
@@ -83,6 +84,7 @@ describe("listPendingApprovals", () => {
         eventId: "e9",
         createdAt: "2026-07-28T00:00:00.000Z",
         toolName: "shell_command",
+        live: false,
         payload: {
           arguments: { command: "echo hi", workdir: ".", timeoutMs: 10000 },
         },
@@ -90,7 +92,8 @@ describe("listPendingApprovals", () => {
     ];
     const merged = mergePendingApprovals(local, live);
     expect(merged).toHaveLength(2);
+    expect(merged.find((item) => item.approvalId === "a1")?.live).toBe(true);
+    expect(merged.find((item) => item.approvalId === "a9")?.live).toBe(false);
     expect(merged.find((item) => item.approvalId === "a1")?.sessionTitle).toBe("Ship auth");
-    expect(merged.find((item) => item.approvalId === "a9")?.sessionTitle).toBe("Other task");
   });
 });

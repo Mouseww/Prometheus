@@ -46,7 +46,7 @@ flowchart LR
 
 ## 核心领域
 
-- `Workspace`：一个可由某个 Execution Node 访问的代码工作区
+- `Workspace`：一个可由某个 Execution Node 访问的代码工作区（空间）。Control Plane 负责联通多个客户端/节点的空间与会话，而不是把所有客户端强制绑到 server 本机目录
 - `Session`：用户可跨端接续的工作单元
 - `Event`：会话中不可变、全序的事实
 - `Agent`：消费上下文、产生事件并请求工具的执行者

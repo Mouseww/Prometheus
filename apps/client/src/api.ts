@@ -409,36 +409,25 @@ export async function listRuntimeProjects(): Promise<{
 
 
 
-export async function addRuntimeProject(path: string, open = true): Promise<{
-
+export async function addRuntimeProject(
+  path: string,
+  open = true,
+  create = false,
+): Promise<{
   project: RuntimeProject;
-
   activeProjectId?: string | null;
-
 }> {
-
   return z
-
     .object({
-
       project: runtimeProjectSchema,
-
       activeProjectId: z.string().nullable().optional(),
-
     })
-
     .parse(
-
       await request("/api/runtime/projects", {
-
         method: "POST",
-
-        body: JSON.stringify({ path, open }),
-
+        body: JSON.stringify({ path, open, create }),
       }),
-
     );
-
 }
 
 
@@ -902,6 +891,7 @@ export const livePendingApprovalSchema = z.object({
   eventId: z.string(),
   createdAt: z.string(),
   toolName: z.string(),
+  live: z.boolean().default(true),
   payload: z.record(z.string(), z.unknown()),
 });
 

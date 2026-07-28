@@ -65,6 +65,26 @@ impl RuntimeSettings {
     }
 
     pub fn upsert_project(&mut self, path: &Path) -> Result<RuntimeProject, AppError> {
+        self.upsert_project_with_options(path, false)
+    }
+
+    /// Open an existing space, or create the directory first when `create` is true.
+    pub fn upsert_project_with_options(
+        &mut self,
+        path: &Path,
+        create: bool,
+    ) -> Result<RuntimeProject, AppError> {
+        if !path.exists() {
+            if !create {
+                return Err(AppError::invalid_request(format!(
+                    "Project path does not exist: {}",
+                    path.display()
+                )));
+            }
+            fs::create_dir_all(path).map_err(|error| {
+                AppError::invalid_request(format!("Unable to create project directory: {error}"))
+            })?;
+        }
         let absolute = path.canonicalize().map_err(|error| {
             AppError::invalid_request(format!("Invalid project path: {error}"))
         })?;
@@ -123,4 +143,47 @@ pub fn default_runtime_file(data_file: &Path) -> PathBuf {
         .parent()
         .map(|parent| parent.join("runtime.json"))
         .unwrap_or_else(|| PathBuf::from("runtime.json"))
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn create_space_makes_missing_directory() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_millis();
+        let root = std::env::temp_dir().join(format!("prometheus-space-{stamp}"));
+        let target = root.join("new-app");
+        assert!(!target.exists());
+
+        let mut settings = RuntimeSettings::default();
+        let project = settings
+            .upsert_project_with_options(&target, true)
+            .expect("create space");
+
+        assert!(target.is_dir());
+        assert_eq!(project.name, "new-app");
+        assert_eq!(settings.active_project_id.as_deref(), Some(project.id.as_str()));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn open_space_rejects_missing_without_create() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_millis();
+        let target = std::env::temp_dir().join(format!("prometheus-missing-{stamp}"));
+        let mut settings = RuntimeSettings::default();
+        let err = settings
+            .upsert_project_with_options(&target, false)
+            .expect_err("missing path should fail");
+        let message = err.to_string();
+        assert!(message.contains("does not exist"), "{message}");
+    }
 }

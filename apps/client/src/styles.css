@@ -49,8 +49,8 @@ button { color: inherit; }
 
 .context-panel, .telemetry-panel { min-width: 0; background: rgba(19, 22, 20, 0.94); border-right: 1px solid var(--line); }
 .context-panel { display: flex; flex-direction: column; overflow: hidden; }
-.context-heading { min-height: 92px; padding: 22px 20px 14px; display: flex; align-items: flex-start; justify-content: space-between; border-bottom: 1px solid var(--line); }
-.context-heading h1 { margin: 5px 0 0; font: 650 20px/1.1 "Syne Variable", sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.context-heading { min-height: 42px; padding: 10px 12px 8px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
+.context-heading h1 { margin: 2px 0 0; font: 650 14px/1.2 "Syne Variable", sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .eyebrow, .breadcrumb { font: 400 10px/1.2 "IBM Plex Mono", monospace; letter-spacing: .15em; color: var(--muted); }
 .workspace-tree { min-height: 180px; max-height: 44vh; overflow: auto; padding: 10px 8px; }
 .tree-row { width: 100%; height: 29px; display: flex; align-items: center; gap: 6px; color: #aeb2ac; border: 0; background: transparent; cursor: pointer; text-align: left; border-radius: 3px; }
@@ -2050,4 +2050,297 @@ button { color: inherit; }
 .patch-preview-footer .danger,
 .team-change-actions .danger {
   color: #f0a088;
+}
+
+.title-inbox-stale,
+.approval-stale-note {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: rgba(224, 179, 77, 0.1);
+  color: #e7c57a;
+  font: 400 11px/1.45 "IBM Plex Mono", monospace;
+}
+.approval-card.stale {
+  border-color: rgba(224, 179, 77, 0.35);
+}
+.tone-live { color: var(--signal); }
+.tone-stale { color: #e7c57a; }
+
+.patch-preview-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.patch-view-toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 6px;
+  background: rgba(0,0,0,0.2);
+}
+.patch-view-toggle button {
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #9aa39a;
+  cursor: pointer;
+  font-size: 11px;
+}
+.patch-view-toggle button.active {
+  background: rgba(242, 106, 61, 0.16);
+  color: var(--ink);
+}
+.patch-split-layout {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+  min-height: 360px;
+  height: 100%;
+}
+.patch-file-list {
+  border-right: 1px solid var(--line);
+  overflow: auto;
+  background: #101311;
+}
+.patch-file-list button {
+  width: 100%;
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.patch-file-list button:hover,
+.patch-file-list button.active {
+  background: rgba(242, 106, 61, 0.12);
+}
+.patch-file-list strong {
+  font-size: 12px;
+}
+.patch-file-list small {
+  color: var(--signal);
+  font: 400 10px "IBM Plex Mono", monospace;
+}
+.patch-file-list span {
+  color: var(--faint);
+  font: 400 10px "IBM Plex Mono", monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.patch-split-editor {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+
+/* ===== VS Code-like Explorer / side panels ===== */
+.explorer-toolbar,
+.side-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 35px;
+  padding: 10px 10px 6px 14px;
+  border-bottom: 1px solid transparent;
+}
+
+.explorer-title {
+  font: 600 11px/1 "IBM Plex Mono", monospace;
+  letter-spacing: 0.12em;
+  color: #9aa19a;
+  text-transform: uppercase;
+}
+
+.explorer-actions,
+.side-panel-header {
+  gap: 2px;
+}
+
+.explorer-actions {
+  display: flex;
+  align-items: center;
+}
+
+.explorer-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.explorer-section-header {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 4px 6px 4px 10px;
+  border: 0;
+  background: transparent;
+  color: #d7dbd4;
+  text-align: left;
+  cursor: default;
+}
+
+.explorer-section-header strong {
+  font: 700 11px/1.2 "IBM Plex Mono", monospace;
+  letter-spacing: 0.04em;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.explorer-section-meta {
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.explorer-empty {
+  display: grid;
+  gap: 10px;
+  padding: 16px 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.explorer-recents {
+  border-top: 1px solid var(--line);
+  padding: 8px 8px 12px;
+  max-height: 28vh;
+  overflow: auto;
+}
+
+.explorer-recents-title {
+  padding: 4px 8px 6px;
+  font: 600 10px/1 "IBM Plex Mono", monospace;
+  letter-spacing: 0.1em;
+  color: var(--faint);
+}
+
+.explorer-recent {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #b7bcb5;
+  text-align: left;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.explorer-recent:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ink);
+}
+
+.explorer-recent.active {
+  background: rgba(242, 106, 61, 0.12);
+  color: var(--ink);
+}
+
+.explorer-recent span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ide-sidebar .workspace-tree {
+  padding-top: 2px;
+}
+
+.activity-bar.navigation-rail {
+  padding-top: 8px;
+  justify-content: flex-start;
+}
+
+.settings-subtitle {
+  margin: 6px 0 0;
+  max-width: 52ch;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.settings-card-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-inline-callout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 4px 24px 20px;
+  padding: 12px 14px;
+  border: 1px solid rgba(213, 216, 209, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.settings-inline-callout strong {
+  display: block;
+}
+
+.settings-inline-callout small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.project-space-modal {
+  width: min(560px, 94vw);
+  max-height: 86vh;
+  overflow: auto;
+  padding-bottom: 8px;
+}
+
+.project-space-help {
+  padding: 0 24px;
+  margin: 0 0 8px;
+}
+
+.project-list.dense {
+  margin: 0 16px 16px;
+}
+
+.editor-empty.quiet {
+  gap: 14px;
+}
+
+.editor-empty-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.runtime-modal-header.compact {
+  padding: 16px 18px 10px;
+}
+
+.runtime-modal-header.compact h3 {
+  margin-top: 4px;
+  font-size: 18px;
+}
+
+.side-panel-header small {
+  color: var(--faint);
+  font: 500 11px "IBM Plex Mono", monospace;
+  padding-right: 8px;
 }

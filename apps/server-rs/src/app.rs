@@ -262,6 +262,7 @@ struct PendingApprovalView {
     event_id: String,
     created_at: String,
     tool_name: String,
+    live: bool,
     payload: serde_json::Value,
 }
 
@@ -286,9 +287,12 @@ async fn preview_team_task_patch(
 async fn list_pending_approvals(
     State(state): State<AppState>,
 ) -> Result<Json<PendingApprovalsResponse>, AppError> {
-    let pending = state.approvals.list_pending();
-    let mut approvals = Vec::with_capacity(pending.len());
-    for (approval_id, session_id) in pending {
+    let live_pairs = state.approvals.list_pending();
+    let mut seen = std::collections::HashSet::<String>::new();
+    let mut approvals = Vec::new();
+
+    for (approval_id, session_id) in live_pairs {
+        seen.insert(approval_id.clone());
         let session_title = state
             .sessions
             .get(&session_id)
@@ -300,6 +304,17 @@ async fn list_pending_approvals(
             Err(_) => continue,
         };
         let Some(request) = find_approval_request(&events, &approval_id) else {
+            // Live waiter exists but durable request missing — still expose a minimal card.
+            approvals.push(PendingApprovalView {
+                approval_id,
+                session_id,
+                session_title,
+                event_id: String::new(),
+                created_at: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+                tool_name: "protected_tool".into(),
+                live: true,
+                payload: serde_json::json!({}),
+            });
             continue;
         };
         let tool_name = request
@@ -315,9 +330,63 @@ async fn list_pending_approvals(
             event_id: request.event_id.clone(),
             created_at: request.created_at.clone(),
             tool_name,
+            live: true,
             payload: request.payload.clone(),
         });
     }
+
+    // Durable unresolved requests survive process restarts even when oneshot waiters are gone.
+    // Surface them so the inbox/timeline can clear dead cards instead of looking stuck.
+    let sessions = state.sessions.list().await.unwrap_or_default();
+    for session in sessions.into_iter().take(100) {
+        let events = match state.sessions.list_events(&session.id, 0).await {
+            Ok(events) => events,
+            Err(_) => continue,
+        };
+        let mut resolved = std::collections::HashSet::<String>::new();
+        for event in &events {
+            if event.event_type != "approval.resolved" {
+                continue;
+            }
+            if let Some(id) = event.payload.get("approvalId").and_then(|value| value.as_str()) {
+                resolved.insert(id.to_owned());
+            }
+        }
+        for event in &events {
+            if event.event_type != "approval.requested" {
+                continue;
+            }
+            let Some(approval_id) = event
+                .payload
+                .get("approvalId")
+                .and_then(|value| value.as_str())
+                .map(str::to_owned)
+            else {
+                continue;
+            };
+            if resolved.contains(&approval_id) || !seen.insert(approval_id.clone()) {
+                continue;
+            }
+            let tool_name = event
+                .payload
+                .get("toolName")
+                .and_then(|value| value.as_str())
+                .unwrap_or("protected_tool")
+                .to_owned();
+            approvals.push(PendingApprovalView {
+                approval_id,
+                session_id: session.id.clone(),
+                session_title: session.title.clone(),
+                event_id: event.event_id.clone(),
+                created_at: event.created_at.clone(),
+                tool_name,
+                live: false,
+                payload: event.payload.clone(),
+            });
+        }
+    }
+
+    approvals.sort_by(|left, right| right.created_at.cmp(&left.created_at));
     Ok(Json(PendingApprovalsResponse { approvals }))
 }
 
@@ -486,7 +555,10 @@ async fn add_runtime_project(
         return Err(AppError::invalid_request("path is required"));
     }
     let mut settings = state.load_runtime_settings()?;
-    let project = settings.upsert_project(std::path::Path::new(path))?;
+    let project = settings.upsert_project_with_options(
+        std::path::Path::new(path),
+        input.create.unwrap_or(false),
+    )?;
     if input.open.unwrap_or(true) {
         state.switch_workspace(std::path::Path::new(&project.path))?;
     }
@@ -1360,6 +1432,8 @@ struct RuntimeProjectsResponse {
 struct AddRuntimeProjectInput {
     path: String,
     open: Option<bool>,
+    /// When true, create the directory if it does not exist (new space).
+    create: Option<bool>,
 }
 
 #[derive(Serialize)]
