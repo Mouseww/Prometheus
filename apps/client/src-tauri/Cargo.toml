@@ -1,6 +1,6 @@
 [package]
 name = "prometheus"
-version = "0.1.8"
+version = "0.1.9"
 description = "Prometheus cross-platform AI development client"
 authors = ["Prometheus contributors"]
 edition = "2021"
