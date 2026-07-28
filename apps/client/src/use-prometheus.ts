@@ -323,13 +323,57 @@ export function usePrometheus() {
     [selectedSessionId],
   );
 
+  const ensureRunnableAgent = useCallback(async (): Promise<string | null> => {
+    if (selectedAgentId && agents.some((agent) => agent.id === selectedAgentId)) {
+      return selectedAgentId;
+    }
+    if (agents.length > 0) {
+      const fallback = agents[0]!.id;
+      setSelectedAgentId(fallback);
+      return fallback;
+    }
+    const provider = providers[0];
+    if (!provider) {
+      return null;
+    }
+    const agent = await createAgentRequest({
+      name: provider.name || "Default",
+      description: "Auto-created so Transmit can run against the configured provider.",
+      systemPrompt:
+        "You are Prometheus, a local-first coding agent. Prefer workspace tools (list_directory, read_file, search) before shell_command. Be concise and evidence-based. Reply in the user's language.",
+      providerId: provider.id,
+      model: provider.defaultModel,
+    });
+    setAgents((current) => (current.some((item) => item.id === agent.id) ? current : [...current, agent]));
+    setSelectedAgentId(agent.id);
+    return agent.id;
+  }, [agents, providers, selectedAgentId]);
+
   const submitTask = useCallback(async (text: string) => {
-    if (!selectedSessionId) return;
+    if (!selectedSessionId) {
+      throw new Error("Create or select a session before sending a message.");
+    }
     await sendMessage(text);
-    if (!selectedAgentId) return;
+
+    let agentId: string | null;
+    try {
+      agentId = await ensureRunnableAgent();
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : "Unable to prepare an agent";
+      setError(`${message}. Message was saved, but no model reply will run until an Agent is available.`);
+      throw reason instanceof Error ? reason : new Error(message);
+    }
+
+    if (!agentId) {
+      const message =
+        "Message saved, but no Agent/Provider is configured. Open Settings → Providers, add an LLM provider, then send again to get a reply.";
+      setError(message);
+      throw new Error(message);
+    }
+
     setRunning(true);
     try {
-      await runAgent(selectedSessionId, selectedAgentId);
+      await runAgent(selectedSessionId, agentId);
       setError(null);
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "Agent run failed";
@@ -338,10 +382,11 @@ export function usePrometheus() {
       } else {
         setError(message);
       }
+      throw reason instanceof Error ? reason : new Error(message);
     } finally {
       setRunning(false);
     }
-  }, [selectedAgentId, selectedSessionId, sendMessage]);
+  }, [ensureRunnableAgent, selectedSessionId, sendMessage]);
 
   const cancelRun = useCallback(async (runId?: string | null) => {
     if (!selectedSessionId) return null;

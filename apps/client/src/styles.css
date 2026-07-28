@@ -1191,6 +1191,16 @@ button { color: inherit; }
   cursor: not-allowed;
 }
 
+.agent-run-banner.approval-pending {
+  border-bottom-color: rgba(242, 180, 61, 0.35);
+  background: rgba(242, 180, 61, 0.08);
+  color: #f0d28a;
+}
+.agent-run-banner.approval-pending .dot {
+  background: #f0b43d;
+  box-shadow: 0 0 10px rgba(240,180,61,.55);
+}
+
 
 .terminal-panel.hidden-panel {
   display: none;

@@ -300,8 +300,17 @@ export function App() {
     if (agentRunning) return;
     const text = message.trim();
     if (!text) return;
+    if (!prometheus.selectedSession) {
+      setNewSessionOpen(true);
+      return;
+    }
     setMessage("");
-    await prometheus.submitTask(text);
+    try {
+      await prometheus.submitTask(text);
+    } catch {
+      // Keep the draft so the user can retry after fixing provider/agent/runtime issues.
+      setMessage(text);
+    }
   };
 
   const submitSession = async (event: FormEvent) => {
@@ -669,23 +678,40 @@ export function App() {
                 </div>
               </header>
 
-              {agentRunning && (
-                <div className="agent-run-banner" aria-live="polite">
-                  <span className="dot" />
-                  Agent running{prometheus.selectedAgentId ? " · " + (prometheus.agents.find((agent) => agent.id === prometheus.selectedAgentId)?.name ?? "selected") : ""}
-                  {prometheus.activeStreams[0] ? " · streaming turn " + prometheus.activeStreams[0].turn : ""}
-                  <button
-                    type="button"
-                    className="stop-button"
-                    onClick={() => {
-                      const runId = prometheus.activeStreams[0]?.runId ?? null;
-                      void prometheus.cancelRun(runId);
-                    }}
-                  >
-                    Stop
-                  </button>
-                </div>
-              )}
+              {(() => {
+                const pendingApproval = prometheus.events.find((event) => {
+                  if (event.type !== "approval.requested") return false;
+                  const approvalId = typeof event.payload.approvalId === "string" ? event.payload.approvalId : null;
+                  if (!approvalId) return false;
+                  return !prometheus.events.some(
+                    (candidate) =>
+                      candidate.type === "approval.resolved"
+                      && candidate.payload.approvalId === approvalId,
+                  );
+                });
+                if (!agentRunning && !pendingApproval) return null;
+                return (
+                  <div className={"agent-run-banner" + (pendingApproval ? " approval-pending" : "")} aria-live="polite">
+                    <span className="dot" />
+                    {pendingApproval
+                      ? `Approval required · ${String(pendingApproval.payload.toolName ?? "protected tool")} — scroll to the timeline card to Approve/Deny`
+                      : `Agent running${prometheus.selectedAgentId ? " · " + (prometheus.agents.find((agent) => agent.id === prometheus.selectedAgentId)?.name ?? "selected") : ""}${prometheus.activeStreams[0] ? " · streaming turn " + prometheus.activeStreams[0].turn : ""}`}
+                    {agentRunning && (
+                      <button
+                        type="button"
+                        className="stop-button"
+                        onClick={() => {
+                          const runId = prometheus.activeStreams[0]?.runId
+                            ?? (typeof pendingApproval?.payload.runId === "string" ? pendingApproval.payload.runId : null);
+                          void prometheus.cancelRun(runId);
+                        }}
+                      >
+                        Stop
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
               {prometheus.error && <div className="error-banner">{prometheus.error}</div>}
               {prometheus.teamRuns[0] && (
                 <TeamRunSummary
@@ -751,7 +777,7 @@ export function App() {
                     <label className="agent-selector">
                       <Bot size={13} />
                       <select value={prometheus.selectedAgentId ?? ""} onChange={(event) => prometheus.setSelectedAgentId(event.target.value || null)}>
-                        <option value="">Store message only</option>
+                        <option value="">{prometheus.agents.length > 0 ? "Auto-select agent" : (prometheus.providers.length > 0 ? "Auto-create agent from provider" : "No provider — configure in Settings")}</option>
                         {prometheus.agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
                       </select>
                     </label>
