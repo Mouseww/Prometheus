@@ -43,24 +43,30 @@ import {
   ServerCog,
   ShieldCheck,
   Sparkles,
+  Store,
   Settings2,
   TerminalSquare,
   Trash2,
   Users,
   X,
 } from "lucide-react";
-import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
 import { describeApprovalRequest, describeEvent } from "./event-description";
-import type { McpServer, SkillSummary } from "./api";
-import { execTerminal, getAccessToken, listWorkspaceFiles, readWorkspaceFile, searchWorkspace, setAccessToken, writeWorkspaceFile, type WorkspaceSearchHit } from "./api";
+import { buildConversationItems, deriveConversationPhase } from "./conversation-model";
+import type { ExtensionCatalogEntry, ExtensionStore, McpServer, SkillSummary } from "./api";
+import { execTerminal, getAccessToken, listLivePendingApprovals, listWorkspaceFiles, readWorkspaceFile, searchWorkspace, setAccessToken, writeWorkspaceFile, type WorkspaceSearchHit } from "./api";
 import { BottomPanel, type BottomPanelTab, type EditorProblem } from "./BottomPanel";
 import { CodeEditor } from "./CodeEditor";
 import { CommandPalette, type PaletteCommand, type PaletteMode } from "./CommandPalette";
+import { TitleBar, type LayoutMode, type TitleMenu } from "./TitleBar";
+import { runEditorAction } from "./editor-actions";
+import { listPendingApprovals, mergePendingApprovals, pendingFromLiveApproval } from "./pending-approvals";
+import { PatchPreviewModal } from "./PatchPreviewModal";
 import { agentShellLines, extractWritePathFromStarted, inputLine, resultLines, systemLine, type TerminalLine } from "./terminal-model";
 import { usePrometheus } from "./use-prometheus";
 
 type ActivityId = "explorer" | "search" | "sessions" | "agents" | "extensions" | "settings";
-type SettingsSection = "connection" | "server" | "providers" | "agents" | "permissions" | "mcp" | "skills";
+type SettingsSection = "connection" | "server" | "providers" | "agents" | "permissions" | "store" | "mcp" | "skills";
 type EditorTab = {
   path: string;
   content: string;
@@ -76,6 +82,8 @@ export function App() {
   const [activity, setActivity] = useState<ActivityId>("explorer");
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("connection");
   const [message, setMessage] = useState("");
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const [pendingUserText, setPendingUserText] = useState<string | null>(null);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [newSessionTitle, setNewSessionTitle] = useState("");
   const [mobilePanelOpen, setMobilePanelOpen] = useState(false);
@@ -88,6 +96,9 @@ export function App() {
   const [workspaceFiles, setWorkspaceFiles] = useState<string[]>([]);
   const [bottomOpen, setBottomOpen] = useState(true);
   const [bottomTab, setBottomTab] = useState<BottomPanelTab>("terminal");
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>("split");
+  const [queuedMessage, setQueuedMessage] = useState<string | null>(null);
+  const [liveApprovals, setLiveApprovals] = useState<ReturnType<typeof pendingFromLiveApproval>[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchHits, setSearchHits] = useState<WorkspaceSearchHit[]>([]);
   const [searchBusy, setSearchBusy] = useState(false);
@@ -101,7 +112,7 @@ export function App() {
   const seenTerminalEvents = useRef<Set<string>>(new Set());
   const pendingWritePaths = useRef<Map<string, string>>(new Map());
   const timelineEnd = useRef<HTMLDivElement>(null);
-  const agentRunning = prometheus.running || prometheus.teamRunning || prometheus.activeStreams.length > 0;
+  const agentRunning = sendingMessage || prometheus.running || prometheus.teamRunning || prometheus.activeStreams.length > 0;
   const activeTab = tabs.find((tab) => tab.path === activePath) ?? null;
 
   const openFile = async (path: string) => {
@@ -243,7 +254,7 @@ export function App() {
 
   useEffect(() => {
     timelineEnd.current?.scrollIntoView({ behavior: "smooth" });
-  }, [prometheus.events, prometheus.activeStreams]);
+  }, [prometheus.events, prometheus.activeStreams, pendingUserText, sendingMessage]);
 
   useEffect(() => {
     if (prometheus.controlPlane !== "online") {
@@ -295,21 +306,78 @@ export function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [activePath, tabs]);
 
+  useEffect(() => {
+    if (prometheus.controlPlane !== "online") {
+      setLiveApprovals([]);
+      return;
+    }
+    let cancelled = false;
+    const refresh = () => {
+      void listLivePendingApprovals()
+        .then((items) => {
+          if (!cancelled) setLiveApprovals(items.map(pendingFromLiveApproval));
+        })
+        .catch(() => {
+          if (!cancelled) setLiveApprovals([]);
+        });
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [prometheus.controlPlane, prometheus.events.length, prometheus.running, prometheus.teamRunning]);
+
+  useEffect(() => {
+    if (agentRunning || !queuedMessage || !prometheus.selectedSession || sendingMessage) return;
+    const text = queuedMessage;
+    setQueuedMessage(null);
+    setPendingUserText(text);
+    setSendingMessage(true);
+    void prometheus.submitTask(text).catch(() => {
+      setMessage(text);
+      setPendingUserText(null);
+      setSendingMessage(false);
+    });
+  }, [agentRunning, queuedMessage, prometheus.selectedSession, sendingMessage]);
+
+  // Flush queued composer message is handled above.
+  useEffect(() => {
+    if (!pendingUserText) return;
+    const accepted = prometheus.events.some(
+      (event) => event.type === "message.user" && String(event.payload.text ?? "") === pendingUserText,
+    );
+    if (accepted) {
+      setPendingUserText(null);
+      setSendingMessage(false);
+    }
+  }, [pendingUserText, prometheus.events]);
+
   const submitMessage = async (event: FormEvent) => {
     event.preventDefault();
-    if (agentRunning) return;
     const text = message.trim();
     if (!text) return;
     if (!prometheus.selectedSession) {
       setNewSessionOpen(true);
       return;
     }
+    if (agentRunning) {
+      setQueuedMessage(text);
+      setMessage("");
+      return;
+    }
     setMessage("");
+    setQueuedMessage(null);
+    setPendingUserText(text);
+    setSendingMessage(true);
     try {
       await prometheus.submitTask(text);
     } catch {
       // Keep the draft so the user can retry after fixing provider/agent/runtime issues.
       setMessage(text);
+      setPendingUserText(null);
+      setSendingMessage(false);
     }
   };
 
@@ -341,6 +409,63 @@ export function App() {
       run: () => { void saveActiveTab(); },
     },
     {
+      id: "edit.undo",
+      label: "Edit: Undo",
+      detail: "Ctrl+Z",
+      run: () => { runEditorAction("undo"); },
+    },
+    {
+      id: "edit.redo",
+      label: "Edit: Redo",
+      detail: "Ctrl+Y",
+      run: () => { runEditorAction("redo"); },
+    },
+    {
+      id: "edit.find",
+      label: "Edit: Find",
+      detail: "Ctrl+F",
+      run: () => { runEditorAction("find"); },
+    },
+    {
+      id: "edit.replace",
+      label: "Edit: Replace",
+      detail: "Ctrl+H",
+      run: () => { runEditorAction("replace"); },
+    },
+    {
+      id: "edit.selectAll",
+      label: "Edit: Select All",
+      detail: "Ctrl+A",
+      run: () => { runEditorAction("selectAll"); },
+    },
+    {
+      id: "workbench.action.approvals",
+      label: "View: Focus Approvals",
+      run: () => { setLayoutMode("agent"); },
+    },
+    {
+      id: "file.saveAll",
+      label: "File: Save All",
+      run: () => { void saveActiveTab(); },
+    },
+    {
+      id: "session.create",
+      label: "File: New Session",
+      run: () => {
+        if (prometheus.controlPlane !== "online") {
+          setActivity("settings");
+          setSettingsSection("connection");
+          return;
+        }
+        setNewSessionOpen(true);
+      },
+    },
+    {
+      id: "workbench.action.openSettings",
+      label: "File: Preferences / Settings",
+      run: () => { setActivity("settings"); setSettingsSection("connection"); },
+    },
+    {
       id: "workbench.view.explorer",
       label: "View: Show Explorer",
       run: () => setActivity("explorer"),
@@ -357,6 +482,11 @@ export function App() {
       run: () => setActivity("sessions"),
     },
     {
+      id: "workbench.view.agents",
+      label: "View: Show Agents",
+      run: () => setActivity("agents"),
+    },
+    {
       id: "workbench.action.terminal",
       label: "Terminal: Focus Terminal",
       run: () => { setBottomOpen(true); setBottomTab("terminal"); },
@@ -368,31 +498,205 @@ export function App() {
       run: () => setBottomOpen((open) => !open),
     },
     {
-      id: "workbench.action.openSettings",
-      label: "Preferences: Open Settings",
-      run: () => { setActivity("settings"); setSettingsSection("connection"); },
+      id: "workbench.layout.editor",
+      label: "View: Editor Only",
+      run: () => setLayoutMode("editor"),
+    },
+    {
+      id: "workbench.layout.split",
+      label: "View: Editor + Agent",
+      run: () => setLayoutMode("split"),
+    },
+    {
+      id: "workbench.layout.agent",
+      label: "View: Agent Only",
+      run: () => setLayoutMode("agent"),
+    },
+    {
+      id: "agent.team",
+      label: "Run: Team Run…",
+      run: () => {
+        if (!prometheus.selectedSession || prometheus.agents.length === 0 || agentRunning) return;
+        setTeamSetupOpen(true);
+      },
     },
     {
       id: "agent.cancel",
-      label: "Agent: Stop Running",
+      label: "Run: Stop Agent",
       run: () => { void prometheus.cancelRun(prometheus.activeStreams[0]?.runId ?? null); },
     },
     {
-      id: "session.create",
-      label: "Task: Create Session",
+      id: "terminal.clear",
+      label: "Terminal: Clear",
       run: () => {
-        if (prometheus.controlPlane !== "online") {
-          setActivity("settings");
-          setSettingsSection("connection");
-          return;
-        }
-        setNewSessionOpen(true);
+        setBottomOpen(true);
+        setBottomTab("terminal");
+        setTerminalLines([systemLine("Terminal cleared.")]);
+      },
+    },
+    {
+      id: "help.commandPalette",
+      label: "Help: Command Palette",
+      detail: "Ctrl+Shift+P",
+      run: () => { setPaletteMode("commands"); setPaletteOpen(true); },
+    },
+    {
+      id: "help.about",
+      label: "Help: About Prometheus",
+      run: () => {
+        window.alert("Prometheus IDE — local-first AI control plane with durable sessions, approvals, and multi-client sync.");
       },
     },
   ];
 
+  const runCommand = (id: string) => {
+    paletteCommands.find((command) => command.id === id)?.run();
+  };
+
+  const titleMenus: TitleMenu[] = [
+    {
+      id: "file",
+      label: "File",
+      items: [
+        { id: "m-file-new", label: "New Session…", run: () => runCommand("session.create") },
+        { id: "m-file-open", label: "Open File…", detail: "Ctrl+P", run: () => runCommand("file.quickOpen") },
+        { id: "m-file-sep1", label: "", separator: true },
+        { id: "m-file-save", label: "Save", detail: "Ctrl+S", run: () => runCommand("file.save"), disabled: !activePath },
+        { id: "m-file-sep2", label: "", separator: true },
+        { id: "m-file-settings", label: "Settings…", run: () => runCommand("workbench.action.openSettings") },
+      ],
+    },
+    {
+      id: "edit",
+      label: "Edit",
+      items: [
+        { id: "m-edit-undo", label: "Undo", detail: "Ctrl+Z", run: () => runCommand("edit.undo") },
+        { id: "m-edit-redo", label: "Redo", detail: "Ctrl+Y", run: () => runCommand("edit.redo") },
+        { id: "m-edit-sep1", label: "", separator: true },
+        { id: "m-edit-find", label: "Find", detail: "Ctrl+F", run: () => runCommand("edit.find") },
+        { id: "m-edit-replace", label: "Replace", detail: "Ctrl+H", run: () => runCommand("edit.replace") },
+        { id: "m-edit-sep2", label: "", separator: true },
+        { id: "m-edit-select-all", label: "Select All", detail: "Ctrl+A", run: () => runCommand("edit.selectAll") },
+        { id: "m-edit-find-files", label: "Find in Files", detail: "Ctrl+Shift+F", run: () => runCommand("workbench.view.search") },
+      ],
+    },
+    {
+      id: "view",
+      label: "View",
+      items: [
+        { id: "m-view-explorer", label: "Explorer", run: () => runCommand("workbench.view.explorer") },
+        { id: "m-view-search", label: "Search", detail: "Ctrl+Shift+F", run: () => runCommand("workbench.view.search") },
+        { id: "m-view-sessions", label: "Sessions", run: () => runCommand("workbench.view.sessions") },
+        { id: "m-view-agents", label: "Agents", run: () => runCommand("workbench.view.agents") },
+        { id: "m-view-sep1", label: "", separator: true },
+        { id: "m-view-editor", label: "Editor Only", run: () => runCommand("workbench.layout.editor") },
+        { id: "m-view-split", label: "Editor + Agent", run: () => runCommand("workbench.layout.split") },
+        { id: "m-view-agent", label: "Agent Only", run: () => runCommand("workbench.layout.agent") },
+        { id: "m-view-sep2", label: "", separator: true },
+        { id: "m-view-panel", label: "Toggle Bottom Panel", detail: "Ctrl+J", run: () => runCommand("workbench.action.togglePanel") },
+        { id: "m-view-approvals", label: "Approvals Inbox", run: () => runCommand("workbench.action.approvals") },
+      ],
+    },
+    {
+      id: "go",
+      label: "Go",
+      items: [
+        { id: "m-go-file", label: "Go to File…", detail: "Ctrl+P", run: () => runCommand("file.quickOpen") },
+        { id: "m-go-session", label: "Go to Sessions", run: () => runCommand("workbench.view.sessions") },
+        { id: "m-go-settings", label: "Go to Settings", run: () => runCommand("workbench.action.openSettings") },
+      ],
+    },
+    {
+      id: "run",
+      label: "Run",
+      items: [
+        { id: "m-run-team", label: "Team Run…", run: () => runCommand("agent.team"), disabled: !prometheus.selectedSession || prometheus.agents.length === 0 || agentRunning },
+        { id: "m-run-stop", label: "Stop Agent", run: () => runCommand("agent.cancel"), disabled: !agentRunning },
+      ],
+    },
+    {
+      id: "terminal",
+      label: "Terminal",
+      items: [
+        { id: "m-term-focus", label: "New / Focus Terminal", run: () => runCommand("workbench.action.terminal") },
+        { id: "m-term-toggle", label: "Toggle Terminal Panel", detail: "Ctrl+J", run: () => runCommand("workbench.action.togglePanel") },
+        { id: "m-term-clear", label: "Clear", run: () => runCommand("terminal.clear") },
+      ],
+    },
+    {
+      id: "help",
+      label: "Help",
+      items: [
+        { id: "m-help-palette", label: "Command Palette…", detail: "Ctrl+Shift+P", run: () => runCommand("help.commandPalette") },
+        { id: "m-help-about", label: "About Prometheus", run: () => runCommand("help.about") },
+      ],
+    },
+  ];
+
+  const connectionTone =
+    prometheus.controlPlane !== "online"
+      ? (prometheus.controlPlane === "connecting" ? "connecting" as const : "offline" as const)
+      : prometheus.connection === "live"
+        ? "live" as const
+        : prometheus.connection === "connecting"
+          ? "connecting" as const
+          : "idle" as const;
+  const connectionLabel =
+    connectionTone === "offline"
+      ? "Offline"
+      : connectionTone === "connecting"
+        ? "Connecting"
+        : connectionTone === "live"
+          ? "Live"
+          : "Online";
+  const pendingApprovals = mergePendingApprovals(
+    listPendingApprovals(prometheus.events).map((item) => ({
+      ...item,
+      sessionTitle: item.sessionId === prometheus.selectedSessionId
+        ? prometheus.selectedSession?.title
+        : item.sessionTitle,
+    })),
+    liveApprovals,
+  );
+
+  const workspaceLabel =
+    prometheus.runtime?.workspaceName
+    ?? prometheus.health?.workspace?.split(/[\\/]/).filter(Boolean).at(-1)
+    ?? "Prometheus";
+
   return (
     <div className="ide-shell">
+      <TitleBar
+        menus={titleMenus}
+        workspaceLabel={workspaceLabel}
+        sessions={prometheus.sessions.map((session) => ({ id: session.id, title: session.title }))}
+        selectedSessionId={prometheus.selectedSessionId}
+        onSelectSession={(id) => prometheus.setSelectedSessionId(id)}
+        onCreateSession={() => {
+          if (prometheus.controlPlane !== "online") {
+            setActivity("settings");
+            setSettingsSection("connection");
+            return;
+          }
+          setNewSessionOpen(true);
+        }}
+        layoutMode={layoutMode}
+        onLayoutModeChange={setLayoutMode}
+        connectionLabel={connectionLabel}
+        connectionTone={connectionTone}
+        pendingApprovals={pendingApprovals}
+        onResolveApproval={async (sessionId, approvalId, decision) => {
+          const result = await prometheus.resolveApproval(sessionId, approvalId, decision);
+          if (sessionId !== prometheus.selectedSessionId) {
+            prometheus.setSelectedSessionId(sessionId);
+          }
+          setLiveApprovals((current) => current.filter((item) => item.approvalId !== approvalId));
+          return result;
+        }}
+        onFocusApprovals={() => {
+          setLayoutMode("agent");
+        }}
+      />
       <NavigationRail activity={activity} onChange={setActivity} />
 
       <aside className={`ide-sidebar context-panel ${mobilePanelOpen ? "is-open" : ""}`}>
@@ -539,6 +843,7 @@ export function App() {
                 ["providers", "Providers"],
                 ["agents", "Agents"],
                 ["permissions", "Permissions"],
+                ["store", "Extension Store"],
                 ["mcp", "MCP"],
                 ["skills", "Skills"],
               ] as const).map(([id, label]) => (
@@ -563,6 +868,7 @@ export function App() {
                   providers: "Providers",
                   agents: "Agents",
                   permissions: "Permissions",
+                  store: "Extension Store",
                   mcp: "MCP Servers",
                   skills: "Skills",
                 }[settingsSection]}</h2>
@@ -604,13 +910,17 @@ export function App() {
                 onCreateMcpServer={prometheus.createMcpServer}
                 onDeleteMcpServer={prometheus.deleteMcpServer}
                 onRefreshSkills={prometheus.refreshSkills}
+                onListExtensionStores={prometheus.listExtensionStores}
+                onListExtensionCatalog={prometheus.listExtensionCatalog}
+                onInstallExtension={prometheus.installExtension}
+                onInstallGithubSkill={prometheus.installGithubSkill}
                 onClose={() => setActivity("explorer")}
               />
             </div>
           </div>
         ) : (
           <div className="workbench">
-            <div className="workbench-main">
+            <div className={`workbench-main layout-${layoutMode}`}>
             <div className="editor-column">
               <div className="editor-tabs" role="tablist" aria-label="Open editors">
                 {tabs.map((tab) => (
@@ -678,94 +988,44 @@ export function App() {
                 </div>
               </header>
 
-              {(() => {
-                const pendingApproval = prometheus.events.find((event) => {
-                  if (event.type !== "approval.requested") return false;
-                  const approvalId = typeof event.payload.approvalId === "string" ? event.payload.approvalId : null;
-                  if (!approvalId) return false;
-                  return !prometheus.events.some(
-                    (candidate) =>
-                      candidate.type === "approval.resolved"
-                      && candidate.payload.approvalId === approvalId,
-                  );
-                });
-                if (!agentRunning && !pendingApproval) return null;
-                return (
-                  <div className={"agent-run-banner" + (pendingApproval ? " approval-pending" : "")} aria-live="polite">
-                    <span className="dot" />
-                    {pendingApproval
-                      ? `Approval required · ${String(pendingApproval.payload.toolName ?? "protected tool")} — scroll to the timeline card to Approve/Deny`
-                      : `Agent running${prometheus.selectedAgentId ? " · " + (prometheus.agents.find((agent) => agent.id === prometheus.selectedAgentId)?.name ?? "selected") : ""}${prometheus.activeStreams[0] ? " · streaming turn " + prometheus.activeStreams[0].turn : ""}`}
-                    {agentRunning && (
-                      <button
-                        type="button"
-                        className="stop-button"
-                        onClick={() => {
-                          const runId = prometheus.activeStreams[0]?.runId
-                            ?? (typeof pendingApproval?.payload.runId === "string" ? pendingApproval.payload.runId : null);
-                          void prometheus.cancelRun(runId);
-                        }}
-                      >
-                        Stop
-                      </button>
-                    )}
-                  </div>
-                );
-              })()}
-              {prometheus.error && <div className="error-banner">{prometheus.error}</div>}
-              {prometheus.teamRuns[0] && (
-                <TeamRunSummary
-                  team={prometheus.teamRuns[0]}
-                  messages={prometheus.teamMessages}
-                  onApply={prometheus.applyTeamChanges}
-                  onDiscard={prometheus.discardTeamChanges}
-                />
-              )}
+              <ConversationPanel
+                events={prometheus.events}
+                streams={prometheus.activeStreams}
+                running={agentRunning}
+                sending={sendingMessage}
+                pendingUserText={pendingUserText}
+                selectedAgentName={prometheus.agents.find((agent) => agent.id === prometheus.selectedAgentId)?.name ?? null}
+                error={prometheus.error}
+                teamRuns={prometheus.teamRuns}
+                teamMessages={prometheus.teamMessages}
+                onApplyTeam={prometheus.applyTeamChanges}
+                onDiscardTeam={prometheus.discardTeamChanges}
+                onResolveApproval={prometheus.resolveApproval}
+                onCancelRun={(runId) => { void prometheus.cancelRun(runId); }}
+                timelineEndRef={timelineEnd}
+                hasSession={Boolean(prometheus.selectedSession)}
+              />
 
-              <div className="timeline">
-                {prometheus.selectedSession ? (
-                  prometheus.events.length > 0 || prometheus.activeStreams.length > 0 ? (
-                    <>
-                      {prometheus.events.map((event) => (
-                        <TimelineEvent key={event.eventId} event={event} events={prometheus.events} onResolveApproval={prometheus.resolveApproval} />
-                      ))}
-                      {prometheus.activeStreams.map((stream) => (
-                        <StreamingEvent key={stream.runId} stream={stream} />
-                      ))}
-                    </>
-                  ) : (
-                    <div className="empty-state">
-                      <div className="orbital-mark"><Sparkles size={27} /></div>
-                      <span className="eyebrow">DURABLE TASK READY</span>
-                      <h3>Start with an outcome.</h3>
-                      <p>Your message will be committed to the server event log and appear on every connected device.</p>
-                    </div>
-                  )
-                ) : (
-                  <div className="empty-state">
-                    <div className="orbital-mark"><Command size={27} /></div>
-                    <span className="eyebrow">NO ACTIVE TASK</span>
-                    <h3>Create a session to begin.</h3>
-                    <p>Use Sessions activity or create a task. Files stay in the editor while you chat.</p>
-                    <button className="primary-button" onClick={() => {
-                      if (prometheus.controlPlane !== "online") { setActivity("settings"); setSettingsSection("connection"); return; }
-                      setNewSessionOpen(true);
-                    }}>{prometheus.controlPlane === "online" ? "Create task" : "Connect server"}</button>
-                  </div>
-                )}
-                <div ref={timelineEnd} />
-              </div>
-
-              <form className="composer" onSubmit={submitMessage}>
+              <form className={"composer" + (agentRunning ? " is-busy" : "")} onSubmit={submitMessage}>
                 <div className="composer-meta">
-                  <span><TerminalSquare size={13} /> TASK INPUT</span>
-                  <span>{agentRunning ? "AGENT STREAMING" : `${message.length}/12000`}</span>
+                  <span><TerminalSquare size={13} /> {queuedMessage ? "QUEUED" : agentRunning ? "AGENT WORKING" : "MESSAGE"}</span>
+                  <span className={agentRunning ? "composer-status busy" : "composer-status"}>
+                    {queuedMessage
+                      ? `Queued · ${queuedMessage.slice(0, 42)}${queuedMessage.length > 42 ? "…" : ""}`
+                      : sendingMessage
+                        ? "Sending…"
+                        : prometheus.activeStreams[0]
+                          ? (prometheus.activeStreams[0].text ? "Streaming reply…" : "Model thinking…")
+                          : agentRunning
+                            ? "Processing… (you can still type)"
+                            : `${message.length}/12000`}
+                  </span>
                 </div>
                 <textarea
                   value={message}
                   onChange={(event) => setMessage(event.target.value.slice(0, 12000))}
-                  placeholder={prometheus.selectedSession ? "Describe the next outcome or ask the agent to edit code…" : "Create a task before sending input"}
-                  disabled={!prometheus.selectedSession || agentRunning}
+                  placeholder={prometheus.selectedSession ? (agentRunning ? "Type next message… (Ctrl+Enter queues it)" : "Message the agent… (Ctrl+Enter to send)") : "Create a task before sending input"}
+                  disabled={!prometheus.selectedSession}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
                       event.currentTarget.form?.requestSubmit();
@@ -776,7 +1036,7 @@ export function App() {
                   <div className="composer-runtime-actions">
                     <label className="agent-selector">
                       <Bot size={13} />
-                      <select value={prometheus.selectedAgentId ?? ""} onChange={(event) => prometheus.setSelectedAgentId(event.target.value || null)}>
+                      <select value={prometheus.selectedAgentId ?? ""} onChange={(event) => prometheus.setSelectedAgentId(event.target.value || null)} disabled={agentRunning}>
                         <option value="">{prometheus.agents.length > 0 ? "Auto-select agent" : (prometheus.providers.length > 0 ? "Auto-create agent from provider" : "No provider — configure in Settings")}</option>
                         {prometheus.agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
                       </select>
@@ -785,8 +1045,8 @@ export function App() {
                       <Users size={13} /> Team run
                     </button>
                   </div>
-                  <button className="send-button" type="submit" disabled={!prometheus.selectedSession || !message.trim() || agentRunning}>
-                    {agentRunning ? "Streaming" : "Transmit"} <Send size={15} />
+                  <button className="send-button" type="submit" disabled={!prometheus.selectedSession || !message.trim()}>
+                    {agentRunning ? "Queue" : "Send"} <Send size={15} />
                   </button>
                 </div>
               </form>
@@ -881,6 +1141,8 @@ function TeamRunSummary({
 }) {
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [previewTaskId, setPreviewTaskId] = useState<string | null>(null);
+  const previewTask = team.tasks.find((task) => task.id === previewTaskId) ?? null;
   const act = async (action: "apply" | "discard", taskId: string) => {
     if (action === "discard" && !globalThis.confirm("Discard this isolated worktree and all of its unapplied changes?")) return;
     setBusyAction(`${action}:${taskId}`);
@@ -923,23 +1185,37 @@ function TeamRunSummary({
                 <span className="team-conflicts">conflicts: {task.conflictPaths.join(", ")}</span>
               )}
               {task.patchBytes > 0 && <small>{task.patchBytes.toLocaleString()} patch bytes</small>}
-              {["pending", "conflicted", "rejected"].includes(task.changeStatus) && (
+              {((task.patchBytes > 0 && ["pending", "conflicted", "rejected", "isolated"].includes(task.changeStatus))
+                || ["pending", "conflicted", "rejected"].includes(task.changeStatus)) && (
                 <div className="team-change-actions">
-                  <button
-                    type="button"
-                    disabled={busyAction !== null}
-                    onClick={() => void act("apply", task.id)}
-                  >
-                    {busyAction === `apply:${task.id}` ? "Applying…" : "Apply"}
-                  </button>
-                  <button
-                    type="button"
-                    className="danger"
-                    disabled={busyAction !== null}
-                    onClick={() => void act("discard", task.id)}
-                  >
-                    {busyAction === `discard:${task.id}` ? "Discarding…" : "Discard"}
-                  </button>
+                  {task.patchBytes > 0 && (
+                    <button
+                      type="button"
+                      disabled={busyAction !== null}
+                      onClick={() => setPreviewTaskId(task.id)}
+                    >
+                      Preview
+                    </button>
+                  )}
+                  {["pending", "conflicted", "rejected"].includes(task.changeStatus) && (
+                    <>
+                      <button
+                        type="button"
+                        disabled={busyAction !== null}
+                        onClick={() => void act("apply", task.id)}
+                      >
+                        {busyAction === `apply:${task.id}` ? "Applying…" : "Apply"}
+                      </button>
+                      <button
+                        type="button"
+                        className="danger"
+                        disabled={busyAction !== null}
+                        onClick={() => void act("discard", task.id)}
+                      >
+                        {busyAction === `discard:${task.id}` ? "Discarding…" : "Discard"}
+                      </button>
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -947,6 +1223,16 @@ function TeamRunSummary({
         ))}
       </div>
       {messages.length > 0 && <TeamMessageBus messages={messages} />}
+      {previewTask && (
+        <PatchPreviewModal
+          teamRunId={team.id}
+          teamTaskId={previewTask.id}
+          agentLabel={previewTask.agentLabel}
+          onClose={() => setPreviewTaskId(null)}
+          onApply={async () => { await onApply(team.id, previewTask.id); }}
+          onDiscard={async () => { await onDiscard(team.id, previewTask.id); }}
+        />
+      )}
     </section>
   );
 }
@@ -1164,6 +1450,10 @@ function RuntimeSetupModal({
   onCreateMcpServer,
   onDeleteMcpServer,
   onRefreshSkills,
+  onListExtensionStores,
+  onListExtensionCatalog,
+  onInstallExtension,
+  onInstallGithubSkill,
   onClose,
 }: {
   embedded?: boolean;
@@ -1195,6 +1485,21 @@ function RuntimeSetupModal({
   onCreateMcpServer: (input: { name: string; command: string; args?: string[]; enabled?: boolean }) => Promise<McpServer>;
   onDeleteMcpServer: (serverId: string) => Promise<void>;
   onRefreshSkills: () => Promise<SkillSummary[]>;
+  onListExtensionStores: () => Promise<ExtensionStore[]>;
+  onListExtensionCatalog: (
+    storeId: string,
+    options?: { q?: string; refresh?: boolean },
+  ) => Promise<ExtensionCatalogEntry[]>;
+  onInstallExtension: (
+    storeId: string,
+    input: { entryId: string; env?: Record<string, string>; enabled?: boolean },
+  ) => Promise<{ kind: string; skill?: SkillSummary; server?: McpServer }>;
+  onInstallGithubSkill: (input: {
+    repo: string;
+    path: string;
+    ref?: string;
+    skillId?: string;
+  }) => Promise<SkillSummary>;
   onClose: () => void;
 }) {
   const [controlUrlDraft, setControlUrlDraft] = useState(controlPlaneUrl);
@@ -1771,7 +2076,22 @@ function RuntimeSetupModal({
         </form>
       )}
 
+      {show("store") && (
+        <ExtensionStorePanel
+          className="settings-section-panel"
+          defaultKind="all"
+          onListExtensionStores={onListExtensionStores}
+          onListExtensionCatalog={onListExtensionCatalog}
+          onInstallExtension={onInstallExtension}
+          onInstallGithubSkill={onInstallGithubSkill}
+          onInstalled={() => {
+            void onRefreshSkills();
+          }}
+        />
+      )}
+
       {show("skills") && (
+
         <section className="extensions-config settings-section-panel">
           <div className="permission-config-header">
             <div className="permission-config-title">
@@ -1788,7 +2108,7 @@ function RuntimeSetupModal({
           <div className="extension-list">
             {skillList.length === 0 ? (
               <div className="permission-empty">
-                No SKILL.md files discovered yet. Drop skills into <code>.prometheus/skills/&lt;id&gt;/SKILL.md</code>.
+                No SKILL.md files discovered yet. Install from the Extension Store or drop skills into <code>.prometheus/skills/&lt;id&gt;/SKILL.md</code>.
               </div>
             ) : skillList.map((skill) => (
               <div className="extension-row" key={skill.id}>
@@ -1800,6 +2120,24 @@ function RuntimeSetupModal({
               </div>
             ))}
           </div>
+          <ExtensionStorePanel
+            compact
+            defaultKind="skills"
+            onListExtensionStores={onListExtensionStores}
+            onListExtensionCatalog={onListExtensionCatalog}
+            onInstallExtension={async (storeId, input) => {
+              const result = await onInstallExtension(storeId, input);
+              const next = await onRefreshSkills();
+              setSkillList(next);
+              return result;
+            }}
+            onInstallGithubSkill={async (input) => {
+              const skill = await onInstallGithubSkill(input);
+              const next = await onRefreshSkills();
+              setSkillList(next);
+              return skill;
+            }}
+          />
         </section>
       )}
 
@@ -1829,7 +2167,7 @@ function RuntimeSetupModal({
           <button className="primary-button" disabled={busy || !mcpName.trim() || !mcpCommand.trim()}>Add MCP server</button>
           <div className="extension-list compact">
             {mcpServers.length === 0 ? (
-              <div className="permission-empty">No MCP servers configured.</div>
+              <div className="permission-empty">No MCP servers configured. Install from the open MCP catalog below.</div>
             ) : mcpServers.map((server) => (
               <div className="extension-row" key={server.id}>
                 <div>
@@ -1849,6 +2187,14 @@ function RuntimeSetupModal({
               </div>
             ))}
           </div>
+          <ExtensionStorePanel
+            compact
+            defaultKind="mcp"
+            onListExtensionStores={onListExtensionStores}
+            onListExtensionCatalog={onListExtensionCatalog}
+            onInstallExtension={onInstallExtension}
+            onInstallGithubSkill={onInstallGithubSkill}
+          />
         </form>
       )}
 
@@ -2047,6 +2393,223 @@ function TreeEntry({
   );
 }
 
+function ConversationPanel({
+  events,
+  streams,
+  running,
+  sending,
+  pendingUserText,
+  selectedAgentName,
+  error,
+  teamRuns,
+  teamMessages,
+  onApplyTeam,
+  onDiscardTeam,
+  onResolveApproval,
+  onCancelRun,
+  timelineEndRef,
+  hasSession,
+}: {
+  events: SessionEvent[];
+  streams: RunStreamSnapshot[];
+  running: boolean;
+  sending: boolean;
+  pendingUserText: string | null;
+  selectedAgentName: string | null;
+  error: string | null;
+  teamRuns: TeamRun[];
+  teamMessages: TeamMessage[];
+  onApplyTeam: (teamRunId: string, teamTaskId: string) => Promise<TeamRun>;
+  onDiscardTeam: (teamRunId: string, teamTaskId: string) => Promise<TeamRun>;
+  onResolveApproval: (
+    sessionId: string,
+    approvalId: string,
+    decision: ApprovalDecision,
+  ) => Promise<unknown>;
+  onCancelRun: (runId?: string | null) => void;
+  timelineEndRef: RefObject<HTMLDivElement | null>;
+  hasSession: boolean;
+}) {
+  const phase = deriveConversationPhase({
+    sending,
+    running,
+    events,
+    streams,
+  });
+  const items = buildConversationItems(events, streams, {
+    pendingUserText: sending ? pendingUserText : null,
+  });
+  const pendingApproval = events.find((event) => {
+    if (event.type !== "approval.requested") return false;
+    const approvalId = typeof event.payload.approvalId === "string" ? event.payload.approvalId : null;
+    if (!approvalId) return false;
+    return !events.some(
+      (candidate) =>
+        candidate.type === "approval.resolved"
+        && candidate.payload.approvalId === approvalId,
+    );
+  });
+
+  return (
+    <>
+      <div className={"conversation-status " + phase.phase} aria-live="polite">
+        <span className="conversation-status-dot" />
+        <div className="conversation-status-copy">
+          <strong>
+            {phase.phase === "sending" ? "Sending"
+              : phase.phase === "thinking" ? "Thinking"
+              : phase.phase === "tool" ? "Using tools"
+              : phase.phase === "streaming" ? "Writing reply"
+              : phase.phase === "awaiting_approval" ? "Needs approval"
+              : phase.phase === "failed" ? "Failed"
+              : phase.phase === "cancelled" ? "Cancelled"
+              : phase.phase === "completed" ? "Ready"
+              : "Idle"}
+          </strong>
+          <small>{phase.detail}{selectedAgentName && running ? ` · ${selectedAgentName}` : ""}</small>
+        </div>
+        {running && (
+          <button
+            type="button"
+            className="stop-button"
+            onClick={() => {
+              const runId = streams[0]?.runId
+                ?? (typeof pendingApproval?.payload.runId === "string" ? pendingApproval.payload.runId : null);
+              onCancelRun(runId);
+            }}
+          >
+            Stop
+          </button>
+        )}
+      </div>
+
+      {error && <div className="error-banner">{error}</div>}
+
+      {teamRuns[0] && (
+        <TeamRunSummary
+          team={teamRuns[0]}
+          messages={teamMessages}
+          onApply={onApplyTeam}
+          onDiscard={onDiscardTeam}
+        />
+      )}
+
+      <div className="timeline conversation-feed">
+        {!hasSession ? (
+          <div className="empty-state">
+            <div className="orbital-mark"><Command size={27} /></div>
+            <span className="eyebrow">NO ACTIVE TASK</span>
+            <h3>Create a session to begin.</h3>
+            <p>Chat stays beside the editor. Create a task, then send a message to the agent.</p>
+          </div>
+        ) : items.length === 0 ? (
+          <div className="empty-state">
+            <div className="orbital-mark"><Sparkles size={27} /></div>
+            <span className="eyebrow">CONVERSATION READY</span>
+            <h3>Send a message to start.</h3>
+            <p>You’ll see sending → thinking → tools → streaming reply here, so you always know what the agent is doing.</p>
+          </div>
+        ) : (
+          items.map((item) => {
+            if (item.kind === "user") {
+              return (
+                <article className={"chat-bubble user" + (item.pending ? " pending" : "")} key={item.id}>
+                  <div className="chat-bubble-meta">
+                    <strong>You</strong>
+                    <span>{item.pending ? "sending…" : new Date(item.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                  </div>
+                  <p>{item.text}</p>
+                </article>
+              );
+            }
+            if (item.kind === "agent") {
+              return (
+                <article className="chat-bubble agent" key={item.id}>
+                  <div className="chat-bubble-meta">
+                    <strong>{item.agentLabel}</strong>
+                    <span>{new Date(item.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                  </div>
+                  <p>{item.text}</p>
+                </article>
+              );
+            }
+            if (item.kind === "stream") {
+              return <StreamingEvent key={item.id} stream={item.stream} />;
+            }
+            return (
+              <ActivityItem
+                key={item.id}
+                label={item.label}
+                detail={item.detail}
+                status={item.status}
+                event={item.event}
+                events={events}
+                onResolveApproval={onResolveApproval}
+              />
+            );
+          })
+        )}
+        <div ref={timelineEndRef} />
+      </div>
+    </>
+  );
+}
+
+function ActivityItem({
+  label,
+  detail,
+  status,
+  event,
+  events,
+  onResolveApproval,
+}: {
+  label: string;
+  detail: string;
+  status: "running" | "done" | "error" | "info" | "approval";
+  event: SessionEvent;
+  events: SessionEvent[];
+  onResolveApproval: (
+    sessionId: string,
+    approvalId: string,
+    decision: ApprovalDecision,
+  ) => Promise<unknown>;
+}) {
+  const [open, setOpen] = useState(status === "approval" || status === "running" || status === "error");
+  const showTool = event.type === "tool.call.started" || event.type === "tool.call.completed";
+  return (
+    <article className={"activity-item " + status + (open ? " open" : "")}>
+      <button type="button" className="activity-summary" onClick={() => setOpen((value) => !value)}>
+        <span className={"activity-dot " + status} />
+        <strong>{label}</strong>
+        <span className="activity-status-text">{status}</span>
+        <span className="activity-time">{new Date(event.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+      </button>
+      {open && (
+        <div className="activity-body">
+          <p>{detail}</p>
+          {showTool && (
+            <div className={"tool-card" + (event.payload.isError === true ? " error" : "")}>
+              <div className="tool-card-header">
+                <strong>{String(event.payload.toolName ?? event.actor.label)}</strong>
+                <span>{event.type === "tool.call.started" ? "running" : event.payload.isError === true ? "failed" : "done"}</span>
+              </div>
+              {event.type === "tool.call.started" && event.payload.arguments != null && (
+                <pre>{JSON.stringify(event.payload.arguments, null, 2)}</pre>
+              )}
+              {event.type === "tool.call.completed" && typeof event.payload.output === "string" && event.payload.output && (
+                <pre>{event.payload.output}</pre>
+              )}
+            </div>
+          )}
+          {event.type === "approval.requested" && (
+            <TimelineEvent event={event} events={events} onResolveApproval={onResolveApproval} />
+          )}
+        </div>
+      )}
+    </article>
+  );
+}
+
 function TimelineEvent({
   event,
   events,
@@ -2221,3 +2784,290 @@ function Capability({ icon, label, status = "planned" }: {
 }) {
   return <div className={`capability-row ${status}`}>{icon}<span>{label}</span><small>{status}</small></div>;
 }
+
+function ExtensionStorePanel({
+  compact = false,
+  className,
+  defaultKind = "all",
+  onListExtensionStores,
+  onListExtensionCatalog,
+  onInstallExtension,
+  onInstallGithubSkill,
+  onInstalled,
+}: {
+  compact?: boolean;
+  className?: string;
+  defaultKind?: "all" | "skills" | "mcp";
+  onListExtensionStores: () => Promise<ExtensionStore[]>;
+  onListExtensionCatalog: (
+    storeId: string,
+    options?: { q?: string; refresh?: boolean },
+  ) => Promise<ExtensionCatalogEntry[]>;
+  onInstallExtension: (
+    storeId: string,
+    input: { entryId: string; env?: Record<string, string>; enabled?: boolean },
+  ) => Promise<{ kind: string; skill?: SkillSummary; server?: McpServer }>;
+  onInstallGithubSkill: (input: {
+    repo: string;
+    path: string;
+    ref?: string;
+    skillId?: string;
+  }) => Promise<SkillSummary>;
+  onInstalled?: () => void;
+}) {
+  const [stores, setStores] = useState<ExtensionStore[]>([]);
+  const [storeId, setStoreId] = useState("");
+  const [entries, setEntries] = useState<ExtensionCatalogEntry[]>([]);
+  const [query, setQuery] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [envDrafts, setEnvDrafts] = useState<Record<string, Record<string, string>>>({});
+  const [githubRepo, setGithubRepo] = useState("openai/skills");
+  const [githubPath, setGithubPath] = useState("skills/.system/skill-creator");
+  const [githubRef, setGithubRef] = useState("main");
+
+  const loadCatalog = async (nextStoreId: string, options?: { q?: string; refresh?: boolean }) => {
+    if (!nextStoreId) return;
+    setBusy(true);
+    try {
+      const nextEntries = await onListExtensionCatalog(nextStoreId, options);
+      setEntries(nextEntries);
+      setError(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Failed to load extension catalog");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const nextStores = await onListExtensionStores();
+        if (cancelled) return;
+        const filtered = nextStores.filter((store) => {
+          if (defaultKind === "all") return true;
+          if (defaultKind === "skills") return store.kind === "skills";
+          return store.kind === "mcp";
+        });
+        setStores(filtered);
+        const initial = filtered[0]?.id ?? "";
+        setStoreId(initial);
+        if (initial) {
+          const nextEntries = await onListExtensionCatalog(initial);
+          if (!cancelled) setEntries(nextEntries);
+        }
+      } catch (reason) {
+        if (!cancelled) {
+          setError(reason instanceof Error ? reason.message : "Failed to load extension stores");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [defaultKind, onListExtensionStores, onListExtensionCatalog]);
+
+  const activeStore = stores.find((store) => store.id === storeId) ?? null;
+
+  const installEntry = async (entry: ExtensionCatalogEntry) => {
+    setBusy(true);
+    try {
+      const requiredEnv = entry.config?.requiredEnv ?? [];
+      const env = envDrafts[entry.id] ?? {};
+      for (const key of requiredEnv) {
+        if (!env[key]?.trim()) {
+          throw new Error(`Missing required env: ${key}`);
+        }
+      }
+      await onInstallExtension(entry.storeId, {
+        entryId: entry.id,
+        env,
+        enabled: requiredEnv.length === 0 ? true : undefined,
+      });
+      await loadCatalog(entry.storeId, { q: query });
+      onInstalled?.();
+      setError(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Install failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const installFromGithub = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      await onInstallGithubSkill({
+        repo: githubRepo.trim(),
+        path: githubPath.trim(),
+        ref: githubRef.trim() || "main",
+      });
+      if (storeId) await loadCatalog(storeId, { q: query });
+      onInstalled?.();
+      setError(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "GitHub skill install failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className={`extension-store-panel ${compact ? "compact" : ""} ${className ?? ""}`.trim()}>
+      <div className="permission-config-header">
+        <div className="permission-config-title">
+          <Store size={17} />
+          <div>
+            <strong>{compact ? "Open catalog" : "Extension Store"}</strong>
+            <small>
+              {activeStore
+                ? `${activeStore.name} · ${activeStore.source}${activeStore.defaultConnected ? " · default connected" : ""}`
+                : "Curated open MCP/Skills sources"}
+            </small>
+          </div>
+        </div>
+        <div className="extension-store-actions">
+          {stores.length > 1 && (
+            <select
+              value={storeId}
+              disabled={busy}
+              onChange={(event) => {
+                const next = event.target.value;
+                setStoreId(next);
+                void loadCatalog(next, { q: query });
+              }}
+            >
+              {stores.map((store) => (
+                <option key={store.id} value={store.id}>
+                  {store.name}
+                </option>
+              ))}
+            </select>
+          )}
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={busy || !storeId}
+            onClick={() => void loadCatalog(storeId, { q: query, refresh: true })}
+          >
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      <div className="extension-store-search">
+        <input
+          value={query}
+          placeholder="Search catalog"
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              void loadCatalog(storeId, { q: query });
+            }
+          }}
+        />
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={busy || !storeId}
+          onClick={() => void loadCatalog(storeId, { q: query })}
+        >
+          Search
+        </button>
+      </div>
+
+      {error && <p className="form-error">{error}</p>}
+
+      <div className="extension-list">
+        {entries.length === 0 ? (
+          <div className="permission-empty">No catalog entries match the current filters.</div>
+        ) : entries.map((entry) => {
+          const requiredEnv = entry.config?.requiredEnv ?? [];
+          return (
+            <div className="extension-row store-entry" key={`${entry.storeId}:${entry.id}`}>
+              <div>
+                <strong>{entry.name}</strong>
+                <small>
+                  {entry.kind}
+                  {entry.installed ? " · installed" : ""}
+                  {entry.tags.length > 0 ? ` · ${entry.tags.slice(0, 3).join(", ")}` : ""}
+                </small>
+              </div>
+              <p>{entry.description}</p>
+              {requiredEnv.length > 0 && !entry.installed && (
+                <div className="store-env-grid">
+                  {requiredEnv.map((key) => (
+                    <label key={key}>
+                      {key}
+                      <input
+                        value={envDrafts[entry.id]?.[key] ?? ""}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          setEnvDrafts((current) => ({
+                            ...current,
+                            [entry.id]: {
+                              ...(current[entry.id] ?? {}),
+                              [key]: value,
+                            },
+                          }));
+                        }}
+                        placeholder={key}
+                        autoComplete="off"
+                      />
+                    </label>
+                  ))}
+                </div>
+              )}
+              <div className="store-entry-footer">
+                {entry.homepage ? (
+                  <a href={entry.homepage} target="_blank" rel="noreferrer">
+                    Source
+                  </a>
+                ) : <span />}
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={busy || entry.installed}
+                  onClick={() => void installEntry(entry)}
+                >
+                  {entry.installed ? "Installed" : "Install"}
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {(defaultKind === "all" || defaultKind === "skills") && (
+        <form className="runtime-form extension-form store-github-form" onSubmit={installFromGithub}>
+          <div className="runtime-form-title">
+            <Sparkles size={16} />
+            <strong>Install skill from GitHub</strong>
+            <small>public repo path</small>
+          </div>
+          <label>
+            Repo
+            <input value={githubRepo} onChange={(event) => setGithubRepo(event.target.value)} placeholder="owner/repo" required />
+          </label>
+          <label>
+            Path
+            <input value={githubPath} onChange={(event) => setGithubPath(event.target.value)} placeholder="skills/my-skill" required />
+          </label>
+          <label>
+            Ref
+            <input value={githubRef} onChange={(event) => setGithubRef(event.target.value)} placeholder="main" />
+          </label>
+          <button className="primary-button" disabled={busy || !githubRepo.trim() || !githubPath.trim()}>
+            Install from GitHub
+          </button>
+        </form>
+      )}
+    </section>
+  );
+}
+
+

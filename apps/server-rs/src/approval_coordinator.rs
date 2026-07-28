@@ -75,23 +75,23 @@ impl ApprovalCoordinator {
         Ok((approval_id, receiver))
     }
 
-    pub fn deny_all_for_session(&self, session_id: &str) -> usize {
+    pub fn deny_all_for_session(&self, session_id: &str) -> Vec<String> {
         let Ok(mut pending) = self.pending.lock() else {
-            return 0;
+            return Vec::new();
         };
         let keys: Vec<String> = pending
             .iter()
             .filter(|(_, value)| value.session_id == session_id)
             .map(|(key, _)| key.clone())
             .collect();
-        let mut count = 0;
+        let mut denied_ids = Vec::new();
         for key in keys {
             if let Some(item) = pending.remove(&key) {
                 let _ = item.sender.send(ApprovalDecision::Denied);
-                count += 1;
+                denied_ids.push(key);
             }
         }
-        count
+        denied_ids
     }
 
     pub fn resolve(
@@ -116,5 +116,46 @@ impl ApprovalCoordinator {
             decision: decision.as_str().to_owned(),
         })
     }
+
+    pub fn has_pending(&self, session_id: &str, approval_id: &str) -> bool {
+        self.pending
+            .lock()
+            .ok()
+            .and_then(|guard| {
+                guard
+                    .get(approval_id)
+                    .map(|item| item.session_id == session_id)
+            })
+            .unwrap_or(false)
+    }
+
+    /// Live in-memory waiters only. Durable timeline cards may still exist after restart.
+    pub fn list_pending(&self) -> Vec<(String, String)> {
+        let Ok(pending) = self.pending.lock() else {
+            return Vec::new();
+        };
+        let mut items = pending
+            .iter()
+            .map(|(approval_id, value)| (approval_id.clone(), value.session_id.clone()))
+            .collect::<Vec<_>>();
+        items.sort_by(|left, right| left.0.cmp(&right.0));
+        items
+    }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn list_pending_returns_sorted_pairs() {
+        let coordinator = ApprovalCoordinator::new();
+        let (first, _) = coordinator.create("session-b").expect("create");
+        let (second, _) = coordinator.create("session-a").expect("create");
+        let pending = coordinator.list_pending();
+        assert_eq!(pending.len(), 2);
+        assert!(pending.iter().any(|(id, session)| id == &first && session == "session-b"));
+        assert!(pending.iter().any(|(id, session)| id == &second && session == "session-a"));
+        assert!(pending[0].0 <= pending[1].0);
+    }
+}

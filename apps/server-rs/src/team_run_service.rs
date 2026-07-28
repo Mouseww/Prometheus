@@ -759,6 +759,50 @@ impl TeamRunService {
         }
     }
 
+
+    pub async fn preview_task_patch(
+        &self,
+        team_run_id: &str,
+        team_task_id: &str,
+    ) -> Result<TeamTaskPatchPreview, AppError> {
+        let (team, task, workspace) = self
+            .resolve_workspace_task(team_run_id, team_task_id)
+            .await?;
+        if !matches!(
+            workspace.change_status.as_str(),
+            "pending" | "conflicted" | "rejected" | "isolated"
+        ) {
+            return Err(AppError::team_run_conflict(format!(
+                "Task patch cannot be previewed from {}",
+                workspace.change_status
+            )));
+        }
+        let worktrees = self.worktrees.as_ref().ok_or_else(|| {
+            AppError::team_run_conflict("Task worktree is not available")
+        })?;
+        let worktree_root = workspace.worktree_root.as_deref().ok_or_else(|| {
+            AppError::team_run_conflict("Task worktree is not available")
+        })?;
+        let base_commit = workspace.base_commit.as_deref().ok_or_else(|| {
+            AppError::team_run_conflict("Task worktree is not available")
+        })?;
+        let preview = worktrees.preview_patch(
+            Path::new(worktree_root),
+            base_commit,
+            &workspace.allowed_paths,
+        )?;
+        Ok(TeamTaskPatchPreview {
+            team_run_id: team.id,
+            team_task_id: task.id,
+            agent_label: task.agent_label,
+            status: preview.status,
+            changed_paths: preview.changed_paths,
+            disallowed_paths: preview.disallowed_paths,
+            conflict_paths: workspace.conflict_paths.clone(),
+            patch_bytes: preview.patch_bytes as u64,
+            patch: preview.patch,
+        })
+    }
     async fn resolve_workspace_task(
         &self,
         team_run_id: &str,
@@ -795,6 +839,20 @@ impl TeamRunService {
         self.event_hub.publish(event.clone()).await;
         Ok(event)
     }
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamTaskPatchPreview {
+    pub team_run_id: String,
+    pub team_task_id: String,
+    pub agent_label: String,
+    pub status: String,
+    pub changed_paths: Vec<String>,
+    pub disallowed_paths: Vec<String>,
+    pub conflict_paths: Vec<String>,
+    pub patch_bytes: u64,
+    pub patch: String,
 }
 
 fn worktree_actor() -> Actor {
@@ -1047,3 +1105,5 @@ fn status_event(
         payload,
     }
 }
+
+

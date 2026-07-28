@@ -371,6 +371,66 @@ pub struct UpdateMcpServerInput {
     pub enabled: Option<bool>,
 }
 
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionStore {
+    pub id: String,
+    pub kind: String,
+    pub name: String,
+    pub description: String,
+    pub source: String,
+    pub default_connected: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub homepage: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionCatalogEntry {
+    pub id: String,
+    pub store_id: String,
+    pub kind: String,
+    pub name: String,
+    pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub homepage: Option<String>,
+    pub tags: Vec<String>,
+    pub installed: bool,
+    pub install: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallExtensionInput {
+    pub entry_id: String,
+    #[serde(default)]
+    pub env: std::collections::BTreeMap<String, String>,
+    pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallGithubSkillInput {
+    pub repo: String,
+    pub path: String,
+    #[serde(default)]
+    pub r#ref: Option<String>,
+    #[serde(default)]
+    pub skill_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ExtensionInstallResult {
+    #[serde(rename = "skill")]
+    Skill { skill: SkillSummary },
+    #[serde(rename = "mcp")]
+    Mcp { server: McpServer },
+}
+
 fn default_true() -> bool {
     true
 }

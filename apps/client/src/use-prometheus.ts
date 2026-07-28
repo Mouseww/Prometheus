@@ -45,6 +45,10 @@ import {
   listMcpServers as listMcpServersRequest,
   createMcpServer as createMcpServerRequest,
   deleteMcpServer as deleteMcpServerRequest,
+  listExtensionStores as listExtensionStoresRequest,
+  listExtensionCatalog as listExtensionCatalogRequest,
+  installExtension as installExtensionRequest,
+  installGithubSkill as installGithubSkillRequest,
   runAgent,
   cancelAgentRuns,
   setControlPlaneUrl,
@@ -353,33 +357,37 @@ export function usePrometheus() {
     if (!selectedSessionId) {
       throw new Error("Create or select a session before sending a message.");
     }
-    await sendMessage(text);
 
-    let agentId: string | null;
-    try {
-      agentId = await ensureRunnableAgent();
-    } catch (reason) {
-      const message = reason instanceof Error ? reason.message : "Unable to prepare an agent";
-      setError(`${message}. Message was saved, but no model reply will run until an Agent is available.`);
-      throw reason instanceof Error ? reason : new Error(message);
-    }
-
-    if (!agentId) {
-      const message =
-        "Message saved, but no Agent/Provider is configured. Open Settings → Providers, add an LLM provider, then send again to get a reply.";
-      setError(message);
-      throw new Error(message);
-    }
-
+    // Flip running immediately so the chat UI can show "processing" before network round-trips finish.
     setRunning(true);
+    setError(null);
     try {
+      await sendMessage(text);
+
+      let agentId: string | null;
+      try {
+        agentId = await ensureRunnableAgent();
+      } catch (reason) {
+        const message = reason instanceof Error ? reason.message : "Unable to prepare an agent";
+        setError(`${message}. Message was saved, but no model reply will run until an Agent is available.`);
+        throw reason instanceof Error ? reason : new Error(message);
+      }
+
+      if (!agentId) {
+        const message =
+          "Message saved, but no Agent/Provider is configured. Open Settings → Providers, add an LLM provider, then send again to get a reply.";
+        setError(message);
+        throw new Error(message);
+      }
+
       await runAgent(selectedSessionId, agentId);
       setError(null);
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "Agent run failed";
       if (message.toLowerCase().includes("cancelled")) {
         setError(null);
-      } else {
+      } else if (!String(message).includes("Message saved, but no Agent")) {
+        // keep more specific ensureRunnableAgent errors already set above
         setError(message);
       }
       throw reason instanceof Error ? reason : new Error(message);
@@ -434,10 +442,29 @@ export function usePrometheus() {
   ) => {
     try {
       const resolution = await resolveApprovalRequest(sessionId, approvalId, decision);
+      // Resolution is durable on the server; refresh in case WS delivery lags.
+      try {
+        const nextEvents = await listEvents(sessionId);
+        setEvents(nextEvents);
+      } catch {
+        // Keep the approval API success even if the follow-up refresh fails.
+      }
       setError(null);
       return resolution;
     } catch (reason) {
-      const error = reason instanceof Error ? reason : new Error("Approval resolution failed");
+      const raw = reason instanceof Error ? reason.message : "Approval resolution failed";
+      // Stale cards after aborted runs: refresh timeline so the UI can clear or show the truth.
+      try {
+        const nextEvents = await listEvents(sessionId);
+        setEvents(nextEvents);
+      } catch {
+        // ignore refresh errors
+      }
+      const error = new Error(
+        raw.toLowerCase().includes("approval not found")
+          ? "Approval not found or already finished. Timeline refreshed — resend the message if the run aborted."
+          : raw,
+      );
       setError(error.message);
       throw error;
     }
@@ -514,6 +541,55 @@ export function usePrometheus() {
     const nextSkills = await listSkillsRequest();
     setSkills(nextSkills);
     return nextSkills;
+  }, []);
+
+  const listExtensionStores = useCallback(async () => {
+    return listExtensionStoresRequest();
+  }, []);
+
+  const listExtensionCatalog = useCallback(async (
+    storeId: string,
+    options?: { q?: string; refresh?: boolean },
+  ) => {
+    return listExtensionCatalogRequest(storeId, options);
+  }, []);
+
+  const installExtension = useCallback(async (
+    storeId: string,
+    input: { entryId: string; env?: Record<string, string>; enabled?: boolean },
+  ) => {
+    const result = await installExtensionRequest(storeId, input);
+    if (result.kind === "skill") {
+      setSkills((current) => {
+        const next = current.filter((skill) => skill.id !== result.skill.id);
+        next.push(result.skill);
+        return next.sort((a, b) => a.id.localeCompare(b.id));
+      });
+    } else {
+      setMcpServers((current) => {
+        const next = current.filter((server) => server.id !== result.server.id && server.name !== result.server.name);
+        next.push(result.server);
+        return next.sort((a, b) => a.name.localeCompare(b.name));
+      });
+    }
+    setError(null);
+    return result;
+  }, []);
+
+  const installGithubSkill = useCallback(async (input: {
+    repo: string;
+    path: string;
+    ref?: string;
+    skillId?: string;
+  }) => {
+    const skill = await installGithubSkillRequest(input);
+    setSkills((current) => {
+      const next = current.filter((item) => item.id !== skill.id);
+      next.push(skill);
+      return next.sort((a, b) => a.id.localeCompare(b.id));
+    });
+    setError(null);
+    return skill;
   }, []);
 
   const toggleDirectory = useCallback(
@@ -666,6 +742,10 @@ export function usePrometheus() {
     providers,
     permissionRules,
     refreshSkills,
+    listExtensionStores,
+    listExtensionCatalog,
+    installExtension,
+    installGithubSkill,
     rootNodes,
     skills,
     resolveApproval,

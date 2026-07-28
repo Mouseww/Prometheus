@@ -4,6 +4,10 @@
 Ship a real Skills + MCP extension surface on the Rust control plane.
 
 ## Delivered
+- Default-connected Extension Store (open-skills / open-mcp)
+- Catalog browse/search + install APIs and Settings UI
+- Inline starter skills + GitHub skill path install
+- MCP catalog install with required env configuration
 - Workspace skill discovery from `.prometheus/skills/*/SKILL.md` and `skills/*/SKILL.md`
 - `GET /api/skills`
 - `read_skill` tool + system-prompt skill catalog injection
@@ -14,7 +18,7 @@ Ship a real Skills + MCP extension surface on the Rust control plane.
 
 ## Non-goals
 - MCP SSE/HTTP transports
-- Skill marketplace
+- Arbitrary third-party store protocol beyond builtin + GitHub
 - Long-lived MCP process pool across control-plane restarts
 
 ## Verification (2026-07-24)

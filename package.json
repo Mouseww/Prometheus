@@ -1,6 +1,6 @@
 {
   "name": "prometheus",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "private": true,
   "packageManager": "pnpm@10.24.0",
   "engines": {

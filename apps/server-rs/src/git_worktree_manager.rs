@@ -28,6 +28,15 @@ pub struct WorktreeReview {
 }
 
 #[derive(Clone, Debug)]
+pub struct WorktreePatchPreview {
+    pub status: String,
+    pub changed_paths: Vec<String>,
+    pub disallowed_paths: Vec<String>,
+    pub patch_bytes: usize,
+    pub patch: String,
+}
+
+#[derive(Clone, Debug)]
 pub struct WorktreeApplyResult {
     pub status: String,
     pub changed_paths: Vec<String>,
@@ -143,6 +152,22 @@ impl GitWorktreeManager {
             changed_paths: prepared.changed_paths,
             disallowed_paths: prepared.disallowed_paths,
             patch_bytes: prepared.patch_bytes,
+        })
+    }
+
+    pub fn preview_patch(
+        &self,
+        worktree_root: &Path,
+        base_commit: &str,
+        allowed_paths: &[String],
+    ) -> Result<WorktreePatchPreview, AppError> {
+        let prepared = self.prepare(worktree_root, base_commit, allowed_paths)?;
+        Ok(WorktreePatchPreview {
+            status: prepared.status,
+            changed_paths: prepared.changed_paths,
+            disallowed_paths: prepared.disallowed_paths,
+            patch_bytes: prepared.patch_bytes,
+            patch: String::from_utf8_lossy(&prepared.patch).into_owned(),
         })
     }
 
@@ -691,3 +716,4 @@ fn is_sha1(value: &str) -> bool {
 fn git_error(message: impl Into<String>) -> AppError {
     AppError::invalid_request(message.into())
 }
+

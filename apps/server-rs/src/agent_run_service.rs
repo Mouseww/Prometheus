@@ -623,28 +623,48 @@ impl AgentRunService {
             }
         };
         let cancelled = run_handle.is_cancelled();
-        let _ = self
-            .commit(
-                session_id,
-                AppendEventInput {
-                    event_id: Uuid::new_v4().to_string(),
-                    event_type: "approval.resolved".to_owned(),
-                    actor: Actor {
-                        kind: "system".into(),
-                        id: "approval-gate".into(),
-                        label: "Approval Gate".into(),
+        // Prefer a single durable writer: resolve/cancel endpoints persist approval.resolved.
+        // Only emit here when the waiter ends without an external resolution event (e.g. run cancel race).
+        let already_resolved = self
+            .sessions
+            .list_events(session_id, 0)
+            .await
+            .ok()
+            .map(|events| {
+                events.iter().any(|event| {
+                    event.event_type == "approval.resolved"
+                        && event
+                            .payload
+                            .get("approvalId")
+                            .and_then(|value| value.as_str())
+                            == Some(approval_id.as_str())
+                })
+            })
+            .unwrap_or(false);
+        if !already_resolved {
+            let _ = self
+                .commit(
+                    session_id,
+                    AppendEventInput {
+                        event_id: Uuid::new_v4().to_string(),
+                        event_type: "approval.resolved".to_owned(),
+                        actor: Actor {
+                            kind: "system".into(),
+                            id: "approval-gate".into(),
+                            label: "Approval Gate".into(),
+                        },
+                        payload: json!({
+                            "approvalId": approval_id,
+                            "runId": run_id,
+                            "toolCallId": tool_call.id,
+                            "toolName": tool_call.name,
+                            "decision": decision.as_str(),
+                            "cancelled": cancelled,
+                        }),
                     },
-                    payload: json!({
-                        "approvalId": approval_id,
-                        "runId": run_id,
-                        "toolCallId": tool_call.id,
-                        "toolName": tool_call.name,
-                        "decision": decision.as_str(),
-                        "cancelled": cancelled,
-                    }),
-                },
-            )
-            .await;
+                )
+                .await;
+        }
 
         if cancelled {
             return Ok(AuthorizationOutcome::Denied {

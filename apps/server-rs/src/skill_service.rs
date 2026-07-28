@@ -61,17 +61,54 @@ impl SkillService {
         Ok(skills)
     }
 
-    pub fn read(&self, skill_id: &str) -> Result<String, AppError> {
-        let skill_id = skill_id.trim();
-        if skill_id.is_empty()
-            || skill_id.contains('/')
-            || skill_id.contains('\\')
-            || skill_id.contains("..")
-        {
-            return Err(AppError::invalid_request("skill id is invalid"));
+    pub fn install_root(&self) -> &Path {
+        &self.roots[0]
+    }
+
+    pub fn is_installed(&self, skill_id: &str) -> bool {
+        let Ok(skill_id) = validate_skill_id(skill_id) else {
+            return false;
+        };
+        self.roots
+            .iter()
+            .any(|root| root.join(&skill_id).join("SKILL.md").is_file())
+    }
+
+    pub fn install(&self, skill_id: &str, skill_md: &str) -> Result<SkillSummary, AppError> {
+        let skill_id = validate_skill_id(skill_id)?;
+        let content = skill_md.trim();
+        if content.is_empty() {
+            return Err(AppError::invalid_request("SKILL.md content is empty"));
         }
+        if content.len() > 512 * 1024 {
+            return Err(AppError::invalid_request("SKILL.md content is too large"));
+        }
+        if self.is_installed(&skill_id) {
+            return Err(AppError::invalid_request(format!(
+                "Skill already installed: {skill_id}"
+            )));
+        }
+        let target_dir = self.install_root().join(&skill_id);
+        std::fs::create_dir_all(&target_dir).map_err(|error| {
+            AppError::invalid_request(format!("Unable to create skill directory: {error}"))
+        })?;
+        let skill_file = target_dir.join("SKILL.md");
+        std::fs::write(&skill_file, content).map_err(|error| {
+            AppError::invalid_request(format!("Unable to write skill: {error}"))
+        })?;
+        let (name, description) = parse_skill_frontmatter(content, &skill_id);
+        Ok(SkillSummary {
+            id: skill_id,
+            name,
+            description,
+            path: skill_file.display().to_string(),
+        })
+    }
+
+    pub fn read(&self, skill_id: &str) -> Result<String, AppError> {
+        let skill_id = validate_skill_id(skill_id)?;
         for root in &self.roots {
-            let skill_file = root.join(skill_id).join("SKILL.md");
+            let skill_file = root.join(&skill_id).join("SKILL.md");
             if skill_file.is_file() {
                 return std::fs::read_to_string(skill_file).map_err(|error| {
                     AppError::invalid_request(format!("Unable to read skill: {error}"))
@@ -100,6 +137,22 @@ impl SkillService {
         }
         Ok(lines.join("\n"))
     }
+}
+
+fn validate_skill_id(skill_id: &str) -> Result<String, AppError> {
+    let skill_id = skill_id.trim();
+    if skill_id.is_empty()
+        || skill_id.len() > 64
+        || skill_id.contains('/')
+        || skill_id.contains('\\')
+        || skill_id.contains("..")
+        || !skill_id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+    {
+        return Err(AppError::invalid_request("skill id is invalid"));
+    }
+    Ok(skill_id.to_owned())
 }
 
 fn parse_skill_frontmatter(content: &str, fallback_name: &str) -> (String, String) {

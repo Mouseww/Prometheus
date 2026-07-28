@@ -20,13 +20,15 @@ pub const PROTOCOL_VERSION: u32 = 1;
 
 use crate::{
     agent_run_service::AgentRunService,
-    approval_coordinator::ApprovalDecision,
+    approval_coordinator::{ApprovalDecision, ApprovalResolution},
     auth::auth_middleware,
     error::AppError,
+    extension_catalog::ExtensionCatalogService,
     models::{
-        AgentProfile, AgentRunResult, AppendEventInput, CreateAgentInput, CreateAgentRunInput,
-        CreateMcpServerInput, CreatePermissionRuleInput, CreateProviderInput, CreateSessionInput, CreateTeamRunInput, McpServer, SkillSummary, TeamMessage,
-        UpdateMcpServerInput,
+        Actor, AgentProfile, AgentRunResult, AppendEventInput, CreateAgentInput, CreateAgentRunInput,
+        CreateMcpServerInput, CreatePermissionRuleInput, CreateProviderInput, CreateSessionInput, CreateTeamRunInput,
+        ExtensionCatalogEntry, ExtensionInstallResult, ExtensionStore, InstallExtensionInput,
+        InstallGithubSkillInput, McpServer, SkillSummary, TeamMessage, UpdateMcpServerInput,
         PermissionRule, Provider, Session, SessionEvent, TeamRun, UpdateAgentInput,
         UpdateProviderInput,
     },
@@ -82,10 +84,20 @@ pub fn build_router(state: AppState) -> Router {
             delete(delete_permission_rule),
         )
         .route("/api/skills", get(list_skills))
+        .route("/api/skills/install-github", post(install_github_skill))
         .route("/api/mcp-servers", get(list_mcp_servers).post(create_mcp_server))
         .route(
             "/api/mcp-servers/{server_id}",
             patch(update_mcp_server).delete(delete_mcp_server),
+        )
+        .route("/api/extension-stores", get(list_extension_stores))
+        .route(
+            "/api/extension-stores/{store_id}/catalog",
+            get(list_extension_catalog),
+        )
+        .route(
+            "/api/extension-stores/{store_id}/install",
+            post(install_extension),
         )
         .route("/api/sessions/{session_id}/runs", post(create_agent_run))
         .route("/api/sessions/{session_id}/runs/cancel", post(cancel_agent_runs))
@@ -107,6 +119,11 @@ pub fn build_router(state: AppState) -> Router {
             "/api/team-runs/{team_run_id}/tasks/{team_task_id}/discard",
             post(discard_team_task_changes),
         )
+        .route(
+            "/api/team-runs/{team_run_id}/tasks/{team_task_id}/patch",
+            get(preview_team_task_patch),
+        )
+        .route("/api/approvals/pending", get(list_pending_approvals))
         .route(
             "/api/team-runs/{team_run_id}/messages",
             get(list_team_messages),
@@ -221,6 +238,87 @@ fn team_service(state: &AppState) -> Result<TeamRunService, AppError> {
         state.event_hub.clone(),
         worktrees,
     ))
+}
+
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TeamTaskPatchResponse {
+    patch: crate::team_run_service::TeamTaskPatchPreview,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PendingApprovalsResponse {
+    approvals: Vec<PendingApprovalView>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PendingApprovalView {
+    approval_id: String,
+    session_id: String,
+    session_title: String,
+    event_id: String,
+    created_at: String,
+    tool_name: String,
+    payload: serde_json::Value,
+}
+
+async fn preview_team_task_patch(
+    State(state): State<AppState>,
+    Path((team_run_id, team_task_id)): Path<(String, String)>,
+) -> Result<Json<TeamTaskPatchResponse>, AppError> {
+    if Uuid::parse_str(&team_run_id).is_err() {
+        return Err(AppError::invalid_request("teamRunId must be a UUID"));
+    }
+    if Uuid::parse_str(&team_task_id).is_err() {
+        return Err(AppError::invalid_request("teamTaskId must be a UUID"));
+    }
+    let service = team_service(&state)?;
+    Ok(Json(TeamTaskPatchResponse {
+        patch: service
+            .preview_task_patch(&team_run_id, &team_task_id)
+            .await?,
+    }))
+}
+
+async fn list_pending_approvals(
+    State(state): State<AppState>,
+) -> Result<Json<PendingApprovalsResponse>, AppError> {
+    let pending = state.approvals.list_pending();
+    let mut approvals = Vec::with_capacity(pending.len());
+    for (approval_id, session_id) in pending {
+        let session_title = state
+            .sessions
+            .get(&session_id)
+            .await?
+            .map(|session| session.title)
+            .unwrap_or_else(|| session_id.clone());
+        let events = match state.sessions.list_events(&session_id, 0).await {
+            Ok(events) => events,
+            Err(_) => continue,
+        };
+        let Some(request) = find_approval_request(&events, &approval_id) else {
+            continue;
+        };
+        let tool_name = request
+            .payload
+            .get("toolName")
+            .and_then(|value| value.as_str())
+            .unwrap_or("protected_tool")
+            .to_owned();
+        approvals.push(PendingApprovalView {
+            approval_id,
+            session_id,
+            session_title,
+            event_id: request.event_id.clone(),
+            created_at: request.created_at.clone(),
+            tool_name,
+            payload: request.payload.clone(),
+        });
+    }
+    Ok(Json(PendingApprovalsResponse { approvals }))
 }
 
 async fn apply_team_task_changes(
@@ -450,7 +548,7 @@ async fn health(State(state): State<AppState>) -> Result<Json<HealthResponse>, A
         "shared"
     };
     // capabilities 让客户端精确知道哪些通道可用，替代硬编码的 "planned" 标记。
-    let mut capabilities = vec!["worktree", "mcp", "skills", "team"];
+    let mut capabilities = vec!["worktree", "mcp", "skills", "team", "extension-store"];
     if terminal_mode.is_enabled() {
         capabilities.push("terminal");
     }
@@ -667,10 +765,21 @@ async fn cancel_agent_runs(
     let cancelled_run_ids = state
         .active_runs
         .cancel(&session_id, run_id.as_deref())?;
-    let denied_approvals = state.approvals.deny_all_for_session(&session_id);
+    let denied_ids = state.approvals.deny_all_for_session(&session_id);
+    for approval_id in &denied_ids {
+        let _ = persist_approval_resolution(
+            &state,
+            &session_id,
+            approval_id,
+            ApprovalDecision::Denied,
+            true,
+            false,
+        )
+        .await;
+    }
     Ok(Json(CancelRunsResponse {
         cancelled_run_ids,
-        denied_approvals,
+        denied_approvals: denied_ids.len(),
     }))
 }
 
@@ -734,10 +843,149 @@ async fn resolve_approval(
         return Err(AppError::invalid_request("approvalId must be a UUID"));
     }
     let decision = ApprovalDecision::parse(&input.decision)?;
-    let approval = state
+
+    // Live waiter path: wake the agent run, then always durable-write the resolution
+    // so the UI/multi-device timeline updates even if the run task already died.
+    let live = state
         .approvals
-        .resolve(&session_id, &approval_id, decision)?;
-    Ok(Json(ApprovalResponse { approval }))
+        .resolve(&session_id, &approval_id, decision.clone());
+
+    match live {
+        Ok(approval) => {
+            let _ = persist_approval_resolution(
+                &state,
+                &session_id,
+                &approval_id,
+                decision,
+                false,
+                false,
+            )
+            .await?;
+            Ok(Json(ApprovalResponse { approval }))
+        }
+        Err(_) => {
+            // Idempotent / stale recovery from the durable event log.
+            let events = state.sessions.list_events(&session_id, 0).await?;
+            if let Some(existing) = find_approval_resolution(&events, &approval_id) {
+                let existing_decision = existing
+                    .payload
+                    .get("decision")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("denied");
+                return Ok(Json(ApprovalResponse {
+                    approval: ApprovalResolution {
+                        approval_id: approval_id.clone(),
+                        session_id: session_id.clone(),
+                        decision: existing_decision.to_owned(),
+                    },
+                }));
+            }
+            if find_approval_request(&events, &approval_id).is_none() {
+                return Err(AppError::approval_not_found());
+            }
+            // Request exists in history but the in-memory waiter is gone (run aborted,
+            // process restart, etc). Persist the user's decision so the card clears.
+            let _ = persist_approval_resolution(
+                &state,
+                &session_id,
+                &approval_id,
+                decision.clone(),
+                false,
+                true,
+            )
+            .await?;
+            Ok(Json(ApprovalResponse {
+                approval: ApprovalResolution {
+                    approval_id,
+                    session_id,
+                    decision: decision.as_str().to_owned(),
+                },
+            }))
+        }
+    }
+}
+
+fn find_approval_request<'a>(
+    events: &'a [SessionEvent],
+    approval_id: &str,
+) -> Option<&'a SessionEvent> {
+    events.iter().rev().find(|event| {
+        event.event_type == "approval.requested"
+            && event
+                .payload
+                .get("approvalId")
+                .and_then(|value| value.as_str())
+                == Some(approval_id)
+    })
+}
+
+fn find_approval_resolution<'a>(
+    events: &'a [SessionEvent],
+    approval_id: &str,
+) -> Option<&'a SessionEvent> {
+    events.iter().rev().find(|event| {
+        event.event_type == "approval.resolved"
+            && event
+                .payload
+                .get("approvalId")
+                .and_then(|value| value.as_str())
+                == Some(approval_id)
+    })
+}
+
+async fn persist_approval_resolution(
+    state: &AppState,
+    session_id: &str,
+    approval_id: &str,
+    decision: ApprovalDecision,
+    cancelled: bool,
+    stale: bool,
+) -> Result<SessionEvent, AppError> {
+    let events = state.sessions.list_events(session_id, 0).await?;
+    if find_approval_resolution(&events, approval_id).is_some() {
+        return find_approval_resolution(&events, approval_id)
+            .cloned()
+            .ok_or_else(AppError::approval_not_found);
+    }
+    let request = find_approval_request(&events, approval_id);
+    let mut payload = serde_json::json!({
+        "approvalId": approval_id,
+        "decision": decision.as_str(),
+        "cancelled": cancelled,
+        "stale": stale,
+    });
+    if let Some(request) = request {
+        if let Some(value) = request.payload.get("runId").cloned() {
+            payload["runId"] = value;
+        }
+        if let Some(value) = request.payload.get("toolCallId").cloned() {
+            payload["toolCallId"] = value;
+        }
+        if let Some(value) = request.payload.get("toolName").cloned() {
+            payload["toolName"] = value;
+        }
+        if let Some(value) = request.payload.get("arguments").cloned() {
+            payload["arguments"] = value;
+        }
+    }
+    let event = state
+        .sessions
+        .append_event(
+            session_id,
+            AppendEventInput {
+                event_id: Uuid::new_v4().to_string(),
+                event_type: "approval.resolved".to_owned(),
+                actor: Actor {
+                    kind: "system".into(),
+                    id: "approval-gate".into(),
+                    label: "Approval Gate".into(),
+                },
+                payload,
+            },
+        )
+        .await?;
+    state.event_hub.publish(event.clone()).await;
+    Ok(event)
 }
 
 
@@ -745,6 +993,82 @@ async fn list_skills(State(state): State<AppState>) -> Result<Json<SkillsRespons
     Ok(Json(SkillsResponse {
         skills: state.with_live(|live| live.skills.list())??,
     }))
+}
+
+async fn list_extension_stores() -> Result<Json<ExtensionStoresResponse>, AppError> {
+    Ok(Json(ExtensionStoresResponse {
+        stores: ExtensionCatalogService::new().list_stores(),
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct ExtensionCatalogQuery {
+    q: Option<String>,
+    refresh: Option<bool>,
+}
+
+async fn list_extension_catalog(
+    State(state): State<AppState>,
+    Path(store_id): Path<String>,
+    Query(query): Query<ExtensionCatalogQuery>,
+) -> Result<Json<ExtensionCatalogResponse>, AppError> {
+    let skills = state.with_live(|live| live.skills.clone())?;
+    let workspace_root = state.with_live(|live| live.root.clone())?;
+    let entries = ExtensionCatalogService::new()
+        .list_catalog(
+            &store_id,
+            query.q.as_deref(),
+            query.refresh.unwrap_or(false),
+            &skills,
+            &state.mcp,
+            &workspace_root,
+        )
+        .await?;
+    Ok(Json(ExtensionCatalogResponse {
+        store_id,
+        entries,
+    }))
+}
+
+async fn install_extension(
+    State(state): State<AppState>,
+    Path(store_id): Path<String>,
+    Json(input): Json<InstallExtensionInput>,
+) -> Result<(StatusCode, Json<ExtensionInstallResponse>), AppError> {
+    let skills = state.with_live(|live| live.skills.clone())?;
+    let workspace_root = state.with_live(|live| live.root.clone())?;
+    let result = ExtensionCatalogService::new()
+        .install(
+            &store_id,
+            &input.entry_id,
+            input.env,
+            input.enabled,
+            &skills,
+            &state.mcp,
+            &workspace_root,
+        )
+        .await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(ExtensionInstallResponse { result }),
+    ))
+}
+
+async fn install_github_skill(
+    State(state): State<AppState>,
+    Json(input): Json<InstallGithubSkillInput>,
+) -> Result<(StatusCode, Json<SkillInstallResponse>), AppError> {
+    let skills = state.with_live(|live| live.skills.clone())?;
+    let skill = ExtensionCatalogService::new()
+        .install_skill_from_github(
+            &input.repo,
+            &input.path,
+            input.r#ref.as_deref(),
+            input.skill_id.as_deref(),
+            &skills,
+        )
+        .await?;
+    Ok((StatusCode::CREATED, Json(SkillInstallResponse { skill })))
 }
 
 async fn list_mcp_servers(
@@ -1151,6 +1475,31 @@ struct ApprovalResponse {
 #[serde(rename_all = "camelCase")]
 struct SkillsResponse {
     skills: Vec<SkillSummary>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExtensionStoresResponse {
+    stores: Vec<ExtensionStore>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExtensionCatalogResponse {
+    store_id: String,
+    entries: Vec<ExtensionCatalogEntry>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExtensionInstallResponse {
+    result: ExtensionInstallResult,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillInstallResponse {
+    skill: SkillSummary,
 }
 
 #[derive(Serialize)]

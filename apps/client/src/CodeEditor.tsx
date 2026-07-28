@@ -1,5 +1,6 @@
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { useEffect, useRef } from "react";
+import { registerActiveEditor } from "./editor-actions";
 import { languageFromPath } from "./language";
 import { ensureMonacoConfigured } from "./monaco-setup";
 
@@ -31,8 +32,20 @@ export function CodeEditor({ path, value, onChange, onSave, readOnly = false, re
     onRevealHandled?.();
   }, [revealLine, path, onRevealHandled]);
 
+  useEffect(() => {
+    return () => {
+      if (editorRef.current) {
+        registerActiveEditor(null);
+      }
+    };
+  }, []);
+
   const handleMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
+    registerActiveEditor(editor);
+    editor.onDidFocusEditorText(() => {
+      registerActiveEditor(editor);
+    });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       saveRef.current?.();
     });

@@ -7,6 +7,7 @@ pub mod config;
 pub mod config_repository;
 pub mod database;
 pub mod error;
+pub mod extension_catalog;
 pub mod event_hub;
 pub mod git_worktree_manager;
 pub mod models;

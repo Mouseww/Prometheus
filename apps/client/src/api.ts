@@ -875,6 +875,43 @@ export async function discardTeamTaskChanges(teamRunId: string, teamTaskId: stri
 
 
 
+
+export const teamTaskPatchSchema = z.object({
+  teamRunId: z.string(),
+  teamTaskId: z.string(),
+  agentLabel: z.string(),
+  status: z.string(),
+  changedPaths: z.array(z.string()).default([]),
+  disallowedPaths: z.array(z.string()).default([]),
+  conflictPaths: z.array(z.string()).default([]),
+  patchBytes: z.number().int().nonnegative(),
+  patch: z.string(),
+});
+
+export type TeamTaskPatch = z.infer<typeof teamTaskPatchSchema>;
+
+export async function getTeamTaskPatch(teamRunId: string, teamTaskId: string): Promise<TeamTaskPatch> {
+  const result = await request(`/api/team-runs/${teamRunId}/tasks/${teamTaskId}/patch`);
+  return z.object({ patch: teamTaskPatchSchema }).parse(result).patch;
+}
+
+export const livePendingApprovalSchema = z.object({
+  approvalId: z.string(),
+  sessionId: z.string(),
+  sessionTitle: z.string(),
+  eventId: z.string(),
+  createdAt: z.string(),
+  toolName: z.string(),
+  payload: z.record(z.string(), z.unknown()),
+});
+
+export type LivePendingApproval = z.infer<typeof livePendingApprovalSchema>;
+
+export async function listLivePendingApprovals(): Promise<LivePendingApproval[]> {
+  const result = await request("/api/approvals/pending");
+  return z.object({ approvals: z.array(livePendingApprovalSchema) }).parse(result).approvals;
+}
+
 export async function resolveApproval(
 
   sessionId: string,
@@ -1101,5 +1138,83 @@ export async function deleteMcpServer(serverId: string): Promise<void> {
 
   await request(`/api/mcp-servers/${serverId}`, { method: "DELETE" });
 
+}
+
+
+export type ExtensionStore = {
+  id: string;
+  kind: "skills" | "mcp" | string;
+  name: string;
+  description: string;
+  source: string;
+  defaultConnected: boolean;
+  homepage?: string | null;
+};
+
+export type ExtensionCatalogEntry = {
+  id: string;
+  storeId: string;
+  kind: "skill" | "mcp" | string;
+  name: string;
+  description: string;
+  homepage?: string | null;
+  tags: string[];
+  installed: boolean;
+  install: Record<string, unknown>;
+  config?: {
+    requiredEnv?: string[];
+    transport?: string;
+  } | null;
+};
+
+export type ExtensionInstallResult =
+  | { kind: "skill"; skill: SkillSummary }
+  | { kind: "mcp"; server: McpServer };
+
+export async function listExtensionStores(): Promise<ExtensionStore[]> {
+  const response = await request("/api/extension-stores") as { stores: ExtensionStore[] };
+  return response.stores;
+}
+
+export async function listExtensionCatalog(
+  storeId: string,
+  options?: { q?: string; refresh?: boolean },
+): Promise<ExtensionCatalogEntry[]> {
+  const params = new URLSearchParams();
+  if (options?.q?.trim()) params.set("q", options.q.trim());
+  if (options?.refresh) params.set("refresh", "true");
+  const query = params.toString();
+  const response = await request(
+    `/api/extension-stores/${encodeURIComponent(storeId)}/catalog${query ? `?${query}` : ""}`,
+  ) as { entries: ExtensionCatalogEntry[] };
+  return response.entries;
+}
+
+export async function installExtension(
+  storeId: string,
+  input: {
+    entryId: string;
+    env?: Record<string, string>;
+    enabled?: boolean;
+  },
+): Promise<ExtensionInstallResult> {
+  const response = await request(`/api/extension-stores/${encodeURIComponent(storeId)}/install`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  }) as { result: ExtensionInstallResult };
+  return response.result;
+}
+
+export async function installGithubSkill(input: {
+  repo: string;
+  path: string;
+  ref?: string;
+  skillId?: string;
+}): Promise<SkillSummary> {
+  const response = await request("/api/skills/install-github", {
+    method: "POST",
+    body: JSON.stringify(input),
+  }) as { skill: SkillSummary };
+  return response.skill;
 }
 
