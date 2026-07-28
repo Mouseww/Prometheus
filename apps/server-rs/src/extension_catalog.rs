@@ -56,6 +56,75 @@ struct BuiltinMcpEntry {
 
 const SKILL_STORE_ID: &str = "open-skills";
 const MCP_STORE_ID: &str = "open-mcp";
+const ANBEIME_SKILL_STORE_ID: &str = "anbeime-skill";
+const ANBEIME_REPO: &str = "anbeime/skill";
+const ANBEIME_REF: &str = "main";
+const ANBEIME_SKILLS_PATH: &str = "skills";
+const ANBEIME_INDEX_PATH: &str = "data/skills.json";
+
+const ANBEIME_PACKAGED_SKILLS: &[&str] = &[
+    "NanoBanana-PPT-Skills",
+    "agent-team",
+    "agentkit-multimedia-shopping",
+    "ai-drawio",
+    "article-illustrator",
+    "baoyu-format-markdown",
+    "baoyu-post-to-wechat",
+    "baoyu-post-to-x",
+    "baoyu-url-to-markdown",
+    "baoyu-xhs-images",
+    "content-creation-publisher",
+    "contract-review",
+    "creating-financial-models",
+    "digital-avatar-shopping-video",
+    "docx",
+    "dream-video-prompt-generator",
+    "ecommerce-copywriter",
+    "ecommerce-video-marketing",
+    "find-skill",
+    "frontend-design",
+    "historical-interview-scripts",
+    "historical-science-video-prod",
+    "infinitetalk",
+    "infinitetalk-shopping-avatar",
+    "intelligent-content-system",
+    "law-to-markdown",
+    "market-research-reports",
+    "multi-agent-meeting",
+    "nanobanana-ppt-visualizer",
+    "paper-analysis-assistant",
+    "pdf",
+    "peers-advisory-group",
+    "pet-commerce-creator",
+    "poetry-music-visual",
+    "pop-up-book-illustration",
+    "ppt-generator",
+    "ppt-roadshow-generator",
+    "pptx",
+    "pptx-generator",
+    "product-manager-toolkit",
+    "product-marketing-copywriter",
+    "product-video-creator",
+    "qwen3-asr-assistant",
+    "qwen3-tts-local",
+    "remotion-video-enhancer",
+    "sales-ai-assistant",
+    "skill-creator",
+    "stock-analysis",
+    "three-body-video-creator",
+    "tts-voice-synthesis",
+    "video-creation-collaborator",
+    "video-creation-pro",
+    "video-creation-suite",
+    "video-frame-extractor",
+    "video-recreation",
+    "viral-video-copywriting",
+    "web-to-app",
+    "wechat-hotspot-publisher",
+    "xiaohongshu-makeup",
+    "xlsx",
+];
+
 
 const BUILTIN_SKILLS: &[BuiltinSkillEntry] = &[
     BuiltinSkillEntry {
@@ -254,6 +323,15 @@ impl ExtensionCatalogService {
                 homepage: Some("https://skills.sh/".to_owned()),
             },
             ExtensionStore {
+                id: ANBEIME_SKILL_STORE_ID.to_owned(),
+                kind: "skills".to_owned(),
+                name: "Anbeime Skill Store".to_owned(),
+                description: "Community skill marketplace from anbeime/skill: packaged installable skills plus crawled GitHub skill index.".to_owned(),
+                source: "github:anbeime/skill".to_owned(),
+                default_connected: true,
+                homepage: Some("https://github.com/anbeime/skill".to_owned()),
+            },
+            ExtensionStore {
                 id: MCP_STORE_ID.to_owned(),
                 kind: "mcp".to_owned(),
                 name: "Open MCP Servers".to_owned(),
@@ -279,6 +357,7 @@ impl ExtensionCatalogService {
         let store_id = store_id.trim();
         let mut entries = match store_id {
             SKILL_STORE_ID => self.skill_catalog(skills, refresh_remote).await?,
+            ANBEIME_SKILL_STORE_ID => self.anbeime_skill_catalog(skills, refresh_remote).await?,
             MCP_STORE_ID => self.mcp_catalog(mcp, workspace_root).await?,
             _ => {
                 return Err(AppError::configuration_not_found(format!(
@@ -320,6 +399,10 @@ impl ExtensionCatalogService {
         match store_id {
             SKILL_STORE_ID => {
                 let skill = self.install_skill(entry_id, skills).await?;
+                Ok(ExtensionInstallResult::Skill { skill })
+            }
+            ANBEIME_SKILL_STORE_ID => {
+                let skill = self.install_anbeime_skill(entry_id, skills).await?;
                 Ok(ExtensionInstallResult::Skill { skill })
             }
             MCP_STORE_ID => {
@@ -460,6 +543,137 @@ impl ExtensionCatalogService {
             });
         }
         Ok(entries)
+    }
+
+
+    async fn anbeime_skill_catalog(
+        &self,
+        skills: &SkillService,
+        refresh_remote: bool,
+    ) -> Result<Vec<ExtensionCatalogEntry>, AppError> {
+        let installed = skills.list().unwrap_or_default();
+        let mut entries: Vec<ExtensionCatalogEntry> = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+
+        for id in ANBEIME_PACKAGED_SKILLS {
+            if !seen.insert((*id).to_owned()) {
+                continue;
+            }
+            let installed_flag = installed.iter().any(|skill| skill.id == *id);
+            entries.push(ExtensionCatalogEntry {
+                id: (*id).to_owned(),
+                store_id: ANBEIME_SKILL_STORE_ID.to_owned(),
+                kind: "skill".to_owned(),
+                name: humanize_skill_id(id),
+                description: format!(
+                    "Packaged skill from {ANBEIME_REPO}/{ANBEIME_SKILLS_PATH}/{id}"
+                ),
+                homepage: Some(format!(
+                    "https://github.com/{ANBEIME_REPO}/tree/{ANBEIME_REF}/{ANBEIME_SKILLS_PATH}/{id}"
+                )),
+                tags: vec!["anbeime".to_owned(), "packaged".to_owned()],
+                installed: installed_flag,
+                install: json_github_install(
+                    ANBEIME_REPO,
+                    &format!("{ANBEIME_SKILLS_PATH}/{id}"),
+                    ANBEIME_REF,
+                ),
+                config: None,
+            });
+        }
+
+        if let Ok(remote_dirs) =
+            list_github_skill_dirs(ANBEIME_REPO, ANBEIME_SKILLS_PATH, ANBEIME_REF).await
+        {
+            for remote in remote_dirs {
+                if !seen.insert(remote.id.clone()) {
+                    if let Some(entry) = entries.iter_mut().find(|item| item.id == remote.id) {
+                        entry.name = remote.name;
+                        entry.description = remote.description;
+                    }
+                    continue;
+                }
+                let installed_flag = installed.iter().any(|skill| skill.id == remote.id);
+                entries.push(ExtensionCatalogEntry {
+                    id: remote.id.clone(),
+                    store_id: ANBEIME_SKILL_STORE_ID.to_owned(),
+                    kind: "skill".to_owned(),
+                    name: remote.name,
+                    description: remote.description,
+                    homepage: Some(format!(
+                        "https://github.com/{ANBEIME_REPO}/tree/{ANBEIME_REF}/{ANBEIME_SKILLS_PATH}/{}",
+                        remote.id
+                    )),
+                    tags: vec!["anbeime".to_owned(), "packaged".to_owned()],
+                    installed: installed_flag,
+                    install: json_github_install(
+                        ANBEIME_REPO,
+                        &format!("{ANBEIME_SKILLS_PATH}/{}", remote.id),
+                        ANBEIME_REF,
+                    ),
+                    config: None,
+                });
+            }
+        }
+
+        if refresh_remote {
+            if let Ok(remote_skills) = fetch_anbeime_skill_index().await {
+                for remote in remote_skills {
+                    if !seen.insert(remote.id.clone()) {
+                        continue;
+                    }
+                    let installed_flag = installed.iter().any(|skill| skill.id == remote.id);
+                    let mut tags = vec!["anbeime".to_owned(), "crawled".to_owned()];
+                    if let Some(category) = remote.category.clone() {
+                        tags.push(category);
+                    }
+                    entries.push(ExtensionCatalogEntry {
+                        id: remote.id.clone(),
+                        store_id: ANBEIME_SKILL_STORE_ID.to_owned(),
+                        kind: "skill".to_owned(),
+                        name: remote.name,
+                        description: remote.description,
+                        homepage: remote.homepage,
+                        tags,
+                        installed: installed_flag,
+                        install: json_github_install(&remote.repo, &remote.path, &remote.git_ref),
+                        config: None,
+                    });
+                }
+            }
+        }
+
+        Ok(entries)
+    }
+
+    async fn install_anbeime_skill(
+        &self,
+        entry_id: &str,
+        skills: &SkillService,
+    ) -> Result<SkillSummary, AppError> {
+        validate_skill_id(entry_id)?;
+
+        let packaged_paths = [
+            format!("{ANBEIME_SKILLS_PATH}/{entry_id}"),
+            format!("{ANBEIME_SKILLS_PATH}/{entry_id}/{entry_id}"),
+        ];
+        for path in &packaged_paths {
+            if let Ok(content) = download_github_skill_md(ANBEIME_REPO, path, ANBEIME_REF).await {
+                return skills.install(entry_id, &content);
+            }
+        }
+
+        if let Ok(remote_skills) = fetch_anbeime_skill_index().await {
+            if let Some(remote) = remote_skills.into_iter().find(|item| item.id == entry_id) {
+                let content =
+                    download_github_skill_md(&remote.repo, &remote.path, &remote.git_ref).await?;
+                return skills.install(entry_id, &content);
+            }
+        }
+
+        Err(AppError::configuration_not_found(format!(
+            "Anbeime catalog entry not found or SKILL.md missing: {entry_id}"
+        )))
     }
 
     async fn install_skill(
@@ -734,6 +948,135 @@ async fn list_github_skill_dirs(
     Ok(skills)
 }
 
+
+#[derive(Debug)]
+struct AnbeimeRemoteSkill {
+    id: String,
+    name: String,
+    description: String,
+    homepage: Option<String>,
+    category: Option<String>,
+    repo: String,
+    path: String,
+    git_ref: String,
+}
+
+fn humanize_skill_id(skill_id: &str) -> String {
+    skill_id.replace('-', " ").replace('_', " ")
+}
+
+fn sanitize_catalog_id(raw: &str) -> Option<String> {
+    let cleaned = raw
+        .trim()
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else if ch == '/' || ch == '.' || ch == ' ' {
+                '-'
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_owned();
+    if validate_skill_id(&cleaned).is_ok() {
+        Some(cleaned)
+    } else {
+        None
+    }
+}
+
+fn parse_github_tree_url(link: &str) -> Option<(String, String, String)> {
+    let url = url::Url::parse(link).ok()?;
+    if url.host_str() != Some("github.com") {
+        return None;
+    }
+    let mut segments = url.path_segments()?.filter(|s| !s.is_empty());
+    let owner = segments.next()?.to_owned();
+    let repo_name = segments.next()?.to_owned();
+    if segments.next()? != "tree" {
+        return None;
+    }
+    let git_ref = segments.next()?.to_owned();
+    let path = segments.collect::<Vec<_>>().join("/");
+    if path.is_empty() {
+        return None;
+    }
+    let repo = format!("{owner}/{repo_name}");
+    validate_github_repo(&repo).ok()?;
+    validate_github_path(&path).ok()?;
+    if git_ref.contains("..") || git_ref.contains('\\') {
+        return None;
+    }
+    Some((repo, path, git_ref))
+}
+
+async fn fetch_anbeime_skill_index() -> Result<Vec<AnbeimeRemoteSkill>, AppError> {
+    let url = format!(
+        "https://raw.githubusercontent.com/{ANBEIME_REPO}/{ANBEIME_REF}/{ANBEIME_INDEX_PATH}"
+    );
+    ensure_allowed_url(&url)?;
+    let client = http_client()?;
+    let response = client.get(&url).send().await.map_err(|error| {
+        AppError::provider_request_failed(format!("Anbeime skill index download failed: {error}"))
+    })?;
+    if !response.status().is_success() {
+        return Err(AppError::provider_request_failed(format!(
+            "Anbeime skill index download failed with HTTP {}",
+            response.status()
+        )));
+    }
+    let payload: Value = response.json().await.map_err(|error| {
+        AppError::provider_request_failed(format!("Anbeime skill index parse failed: {error}"))
+    })?;
+    let items = payload
+        .get("skills")
+        .and_then(Value::as_array)
+        .ok_or_else(|| AppError::provider_request_failed("Anbeime skill index missing skills[]"))?;
+    let mut skills = Vec::new();
+    for item in items {
+        let name = item.get("name").and_then(Value::as_str).unwrap_or_default();
+        let description = item
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let link = item.get("link").and_then(Value::as_str).unwrap_or_default();
+        let category = item
+            .get("category")
+            .and_then(Value::as_str)
+            .map(|value| value.to_owned());
+        let Some(id) = sanitize_catalog_id(name) else {
+            continue;
+        };
+        let Some((repo, path, git_ref)) = parse_github_tree_url(link) else {
+            continue;
+        };
+        let display_name = if name.trim().is_empty() {
+            humanize_skill_id(&id)
+        } else {
+            name.to_owned()
+        };
+        skills.push(AnbeimeRemoteSkill {
+            id,
+            name: display_name,
+            description: if description.is_empty() {
+                format!("Crawled skill from {link}")
+            } else {
+                description
+            },
+            homepage: Some(link.to_owned()),
+            category,
+            repo,
+            path,
+            git_ref,
+        });
+    }
+    Ok(skills)
+}
+
 fn ensure_allowed_url(raw: &str) -> Result<(), AppError> {
     let parsed = url::Url::parse(raw)
         .map_err(|error| AppError::invalid_request(format!("Invalid URL: {error}")))?;
@@ -754,7 +1097,10 @@ fn ensure_allowed_url(raw: &str) -> Result<(), AppError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{render_mcp_args, validate_github_path, validate_github_repo, validate_skill_id};
+    use super::{
+        parse_github_tree_url, render_mcp_args, sanitize_catalog_id, validate_github_path,
+        validate_github_repo, validate_skill_id, ANBEIME_PACKAGED_SKILLS,
+    };
     use std::path::Path;
 
     #[test]
@@ -765,6 +1111,23 @@ mod tests {
         assert!(validate_github_repo("openai/skills/extra").is_err());
         assert!(validate_github_path("skills/.curated/demo").is_ok());
         assert!(validate_github_path("../etc/passwd").is_err());
+    }
+
+    #[test]
+    fn parses_github_tree_and_sanitizes_anbeime_ids() {
+        let parsed = parse_github_tree_url(
+            "https://github.com/anthropics/skills/tree/main/skills/docx",
+        )
+        .expect("tree url");
+        assert_eq!(parsed.0, "anthropics/skills");
+        assert_eq!(parsed.1, "skills/docx");
+        assert_eq!(parsed.2, "main");
+        assert_eq!(
+            sanitize_catalog_id("anthropics/docx").as_deref(),
+            Some("anthropics-docx")
+        );
+        assert!(ANBEIME_PACKAGED_SKILLS.contains(&"frontend-design"));
+        assert!(ANBEIME_PACKAGED_SKILLS.contains(&"content-creation-publisher"));
     }
 
     #[test]

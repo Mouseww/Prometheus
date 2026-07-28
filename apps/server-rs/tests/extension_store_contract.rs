@@ -40,6 +40,39 @@ async fn extension_stores_are_connected_by_default_and_support_install() {
     assert!(stores.iter().any(|store| {
         store["id"] == "open-mcp" && store["defaultConnected"] == true && store["kind"] == "mcp"
     }));
+    assert!(stores.iter().any(|store| {
+        store["id"] == "anbeime-skill"
+            && store["defaultConnected"] == true
+            && store["kind"] == "skills"
+            && store["homepage"] == "https://github.com/anbeime/skill"
+    }));
+
+    let anbeime_catalog_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/extension-stores/anbeime-skill/catalog")
+                .body(Body::empty())
+                .expect("anbeime catalog req"),
+        )
+        .await
+        .expect("anbeime catalog resp");
+    assert_eq!(anbeime_catalog_response.status(), StatusCode::OK);
+    let anbeime_catalog: Value = serde_json::from_slice(
+        &to_bytes(anbeime_catalog_response.into_body(), 1024 * 1024)
+            .await
+            .expect("anbeime catalog body"),
+    )
+    .expect("anbeime catalog json");
+    let anbeime_entries = anbeime_catalog["entries"].as_array().expect("anbeime entries");
+    assert!(
+        anbeime_entries.len() >= 20,
+        "expected packaged anbeime skills, got {}",
+        anbeime_entries.len()
+    );
+    assert!(anbeime_entries.iter().any(|entry| {
+        entry["id"] == "frontend-design" && entry["storeId"] == "anbeime-skill"
+    }));
 
     let skill_catalog_response = app
         .clone()

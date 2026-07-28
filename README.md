@@ -47,7 +47,7 @@ Prometheus 是一个本地优先、服务端可接续的 AI 开发环境。同�
 - 冲突不会执行 `--3way`、文件复制、自动 commit/merge/push，也不会覆盖父工作区；冲突 worktree 会保留供人工处理
 - Control Plane 重启后会重新审计已保存 worktree，但不会自动重放 Provider 请求或自动应用 patch
 
-PTY/交互式终端、后台命令 session、操作系统级 sandbox、容器隔离、managed policy 层级、SSH 与定时任务尚未接入，界面只将它们标为 planned，不会伪装成可用功能。Skills/MCP 已接入真实配置与执行路径。Settings 默认连接 Open Skills / Open MCP 开源目录，可在 UI 中浏览、搜索、安装与配置（含 GitHub skill 路径安装与 MCP 环境变量）。Git worktree 只提供版本库写入隔离，不是进程、网络或密钥 sandbox；Shell 仍经过现有审批与权限策略。当前 pending approval、运行中命令和 Provider stream 在 Control Plane 进程存活期间可真实处理；服务重启后的 run/approval/process/stream 恢复尚未实现。当前也不声称支持自动解决 Git 冲突、跨节点 worktree、用户取消、steering/follow-up queue 或 reasoning/thinking token 展示。
+PTY/交互式终端、后台命令 session、操作系统级 sandbox、容器隔离、managed policy 层级、SSH 与定时任务尚未接入，界面只将它们标为 planned，不会伪装成可用功能。Skills/MCP 已接入真实配置与执行路径。Settings 默认连接 Open Skills、Anbeime Skill Store（https://github.com/anbeime/skill）与 Open MCP 开源目录，可在 UI 中浏览、搜索、安装与配置（含 GitHub skill 路径安装与 MCP 环境变量）。Git worktree 只提供版本库写入隔离，不是进程、网络或密钥 sandbox；Shell 仍经过现有审批与权限策略。当前 pending approval、运行中命令和 Provider stream 在 Control Plane 进程存活期间可真实处理；服务重启后的 run/approval/process/stream 恢复尚未实现。当前也不声称支持自动解决 Git 冲突、跨节点 worktree、用户取消、steering/follow-up queue 或 reasoning/thinking token 展示。
 
 ## 本地开发
 
