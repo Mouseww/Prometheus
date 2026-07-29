@@ -2344,3 +2344,51 @@ button { color: inherit; }
   font: 500 11px "IBM Plex Mono", monospace;
   padding-right: 8px;
 }
+
+.store-source-list {
+  display: grid;
+  gap: 8px;
+}
+.store-source-card {
+  width: 100%;
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-soft);
+  background: #101311;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.store-source-card:hover {
+  border-color: rgba(242,106,61,.35);
+  background: #141816;
+}
+.store-source-card.active {
+  border-color: rgba(242,106,61,.55);
+  background: var(--ember-soft);
+}
+.store-source-card strong {
+  font-size: 13px;
+}
+.store-source-card small {
+  color: var(--faint);
+  font: 400 9px "IBM Plex Mono", monospace;
+}
+.store-source-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.store-source-card > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.form-error {
+  margin: 0;
+  color: #ff8e7a;
+  font-size: 12px;
+}

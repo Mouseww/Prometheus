@@ -916,9 +916,37 @@ export function App() {
               <span className="explorer-title">EXTENSIONS</span>
             </div>
             <div className="sidebar-stack">
-              <div className="side-card static"><strong>Skills</strong><small>{prometheus.skills.length} discovered</small></div>
-              <div className="side-card static"><strong>MCP servers</strong><small>{prometheus.mcpServers.length} configured</small></div>
-              <button className="secondary-button" onClick={() => { setActivity("settings"); setSettingsSection("mcp"); }}>Open extension settings</button>
+              <button
+                type="button"
+                className="side-card"
+                onClick={() => { setActivity("settings"); setSettingsSection("store"); }}
+              >
+                <strong>Skill Stores</strong>
+                <small>Open Skills · Anbeime · built-in</small>
+              </button>
+              <button
+                type="button"
+                className="side-card"
+                onClick={() => { setActivity("settings"); setSettingsSection("skills"); }}
+              >
+                <strong>Installed Skills</strong>
+                <small>{prometheus.skills.length} discovered</small>
+              </button>
+              <button
+                type="button"
+                className="side-card"
+                onClick={() => { setActivity("settings"); setSettingsSection("mcp"); }}
+              >
+                <strong>MCP servers</strong>
+                <small>{prometheus.mcpServers.length} configured</small>
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => { setActivity("settings"); setSettingsSection("store"); }}
+              >
+                Browse built-in stores
+              </button>
             </div>
           </>
         )}
@@ -935,7 +963,7 @@ export function App() {
                 ["providers", "Providers"],
                 ["agents", "Agents"],
                 ["permissions", "Permissions"],
-                ["store", "Extensions"],
+                ["store", "Skill Stores"],
                 ["mcp", "MCP"],
                 ["skills", "Skills"],
               ] as const).map(([id, label]) => (
@@ -960,7 +988,7 @@ export function App() {
                   providers: "Providers",
                   agents: "Agents",
                   permissions: "Permissions",
-                  store: "Extension Store",
+                  store: "Skill Stores",
                   mcp: "MCP Servers",
                   skills: "Skills",
                 }[settingsSection]}</h2>
@@ -970,7 +998,7 @@ export function App() {
                   providers: "Connect LLM APIs. Keys stay on this node.",
                   agents: "Named agent profiles bound to a provider and model.",
                   permissions: "Allow / ask / deny rules for tools.",
-                  store: "Install skills and MCP packages.",
+                  store: "Built-in Open Skills, Anbeime, and Open MCP catalogs.",
                   mcp: "Stdio MCP servers available to agents.",
                   skills: "Discovered SKILL.md entries in the active space.",
                 }[settingsSection]}</p>
@@ -2158,34 +2186,18 @@ function RuntimeSetupModal({
       )}
 
       {show("skills") && (
-
         <section className="extensions-config settings-section-panel">
           <div className="permission-config-header">
             <div className="permission-config-title">
               <Sparkles size={17} />
               <div>
                 <strong>Skills</strong>
-                <small>{skillList.length} discovered</small>
+                <small>{skillList.length} installed locally</small>
               </div>
             </div>
             <button type="button" className="secondary-button" disabled={busy} onClick={() => void reloadSkills()}>
-              Refresh skills
+              Refresh installed
             </button>
-          </div>
-          <div className="extension-list">
-            {skillList.length === 0 ? (
-              <div className="permission-empty">
-                No SKILL.md files discovered yet. Install from the Extension Store or drop skills into <code>.prometheus/skills/&lt;id&gt;/SKILL.md</code>.
-              </div>
-            ) : skillList.map((skill) => (
-              <div className="extension-row" key={skill.id}>
-                <div>
-                  <strong>{skill.name}</strong>
-                  <small>{skill.id}</small>
-                </div>
-                <p>{skill.description || "No description"}</p>
-              </div>
-            ))}
           </div>
           <ExtensionStorePanel
             compact
@@ -2205,6 +2217,27 @@ function RuntimeSetupModal({
               return skill;
             }}
           />
+          <div className="extension-list">
+            <div className="permission-config-title" style={{ marginBottom: 8 }}>
+              <div>
+                <strong>Installed in workspace</strong>
+                <small>{skillList.length} SKILL.md</small>
+              </div>
+            </div>
+            {skillList.length === 0 ? (
+              <div className="permission-empty">
+                No local skills yet. Install from the built-in stores above, or drop files into <code>.prometheus/skills/&lt;id&gt;/SKILL.md</code>.
+              </div>
+            ) : skillList.map((skill) => (
+              <div className="extension-row" key={skill.id}>
+                <div>
+                  <strong>{skill.name}</strong>
+                  <small>{skill.id}</small>
+                </div>
+                <p>{skill.description || "No description"}</p>
+              </div>
+            ))}
+          </div>
         </section>
       )}
 
@@ -3011,6 +3044,36 @@ function Capability({ icon, label, status = "planned" }: {
   return <div className={`capability-row ${status}`}>{icon}<span>{label}</span><small>{status}</small></div>;
 }
 
+const BUILTIN_EXTENSION_STORES: ExtensionStore[] = [
+  {
+    id: "open-skills",
+    kind: "skills",
+    name: "Open Skills",
+    description: "Bundled starter skills plus GitHub-backed community skills.",
+    source: "builtin+github",
+    defaultConnected: true,
+    homepage: "https://skills.sh/",
+  },
+  {
+    id: "anbeime-skill",
+    kind: "skills",
+    name: "Anbeime Skill Store",
+    description: "Community marketplace from anbeime/skill with packaged installable skills.",
+    source: "github:anbeime/skill",
+    defaultConnected: true,
+    homepage: "https://github.com/anbeime/skill",
+  },
+  {
+    id: "open-mcp",
+    kind: "mcp",
+    name: "Open MCP Servers",
+    description: "Curated stdio MCP servers from the Model Context Protocol ecosystem.",
+    source: "builtin",
+    defaultConnected: true,
+    homepage: "https://github.com/modelcontextprotocol/servers",
+  },
+];
+
 function ExtensionStorePanel({
   compact = false,
   className,
@@ -3046,11 +3109,28 @@ function ExtensionStorePanel({
   const [entries, setEntries] = useState<ExtensionCatalogEntry[]>([]);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loadingStores, setLoadingStores] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [envDrafts, setEnvDrafts] = useState<Record<string, Record<string, string>>>({});
   const [githubRepo, setGithubRepo] = useState("openai/skills");
   const [githubPath, setGithubPath] = useState("skills/.system/skill-creator");
   const [githubRef, setGithubRef] = useState("main");
+
+  const pickDefaultStoreId = (list: ExtensionStore[]) => {
+    if (defaultKind === "skills") {
+      return list.find((store) => store.id === "anbeime-skill")?.id
+        ?? list.find((store) => store.id === "open-skills")?.id
+        ?? list[0]?.id
+        ?? "";
+    }
+    if (defaultKind === "mcp") {
+      return list.find((store) => store.id === "open-mcp")?.id ?? list[0]?.id ?? "";
+    }
+    return list.find((store) => store.id === "anbeime-skill")?.id
+      ?? list.find((store) => store.id === "open-skills")?.id
+      ?? list[0]?.id
+      ?? "";
+  };
 
   const loadCatalog = async (nextStoreId: string, options?: { q?: string; refresh?: boolean }) => {
     if (!nextStoreId) return;
@@ -3060,6 +3140,7 @@ function ExtensionStorePanel({
       setEntries(nextEntries);
       setError(null);
     } catch (reason) {
+      setEntries([]);
       setError(reason instanceof Error ? reason.message : "Failed to load extension catalog");
     } finally {
       setBusy(false);
@@ -3069,6 +3150,7 @@ function ExtensionStorePanel({
   useEffect(() => {
     let cancelled = false;
     void (async () => {
+      setLoadingStores(true);
       try {
         const nextStores = await onListExtensionStores();
         if (cancelled) return;
@@ -3078,16 +3160,36 @@ function ExtensionStorePanel({
           return store.kind === "mcp";
         });
         setStores(filtered);
-        const initial = filtered[0]?.id ?? "";
+        const initial = pickDefaultStoreId(filtered);
         setStoreId(initial);
         if (initial) {
           const nextEntries = await onListExtensionCatalog(initial);
-          if (!cancelled) setEntries(nextEntries);
+          if (!cancelled) {
+            setEntries(nextEntries);
+            setError(null);
+          }
+        } else if (!cancelled) {
+          setEntries([]);
+          setError("No built-in stores were returned by the control plane.");
         }
       } catch (reason) {
         if (!cancelled) {
-          setError(reason instanceof Error ? reason.message : "Failed to load extension stores");
+          const fallback = BUILTIN_EXTENSION_STORES.filter((store) => {
+            if (defaultKind === "all") return true;
+            if (defaultKind === "skills") return store.kind === "skills";
+            return store.kind === "mcp";
+          });
+          setStores(fallback);
+          setStoreId(pickDefaultStoreId(fallback));
+          setEntries([]);
+          setError(
+            reason instanceof Error
+              ? `${reason.message} (showing built-in store list offline)`
+              : "Failed to load extension stores (showing built-in store list offline)",
+          );
         }
+      } finally {
+        if (!cancelled) setLoadingStores(false);
       }
     })();
     return () => {
@@ -3096,6 +3198,12 @@ function ExtensionStorePanel({
   }, [defaultKind, onListExtensionStores, onListExtensionCatalog]);
 
   const activeStore = stores.find((store) => store.id === storeId) ?? null;
+
+  const selectStore = (nextId: string) => {
+    setStoreId(nextId);
+    setQuery("");
+    void loadCatalog(nextId);
+  };
 
   const installEntry = async (entry: ExtensionCatalogEntry) => {
     setBusy(true);
@@ -3147,36 +3255,21 @@ function ExtensionStorePanel({
         <div className="permission-config-title">
           <Store size={17} />
           <div>
-            <strong>{compact ? "Open catalog" : "Extension Store"}</strong>
+            <strong>{compact ? "Built-in catalogs" : "Skill & MCP Stores"}</strong>
             <small>
-              {activeStore
-                ? `${activeStore.name} · ${activeStore.source}${activeStore.defaultConnected ? " · default connected" : ""}`
-                : "Curated open MCP/Skills sources"}
+              {loadingStores
+                ? "Loading built-in stores…"
+                : activeStore
+                  ? `${activeStore.name} · ${activeStore.defaultConnected ? "built-in connected" : activeStore.source}`
+                  : `${stores.length} store${stores.length === 1 ? "" : "s"} available`}
             </small>
           </div>
         </div>
         <div className="extension-store-actions">
-          {stores.length > 1 && (
-            <select
-              value={storeId}
-              disabled={busy}
-              onChange={(event) => {
-                const next = event.target.value;
-                setStoreId(next);
-                void loadCatalog(next, { q: query });
-              }}
-            >
-              {stores.map((store) => (
-                <option key={store.id} value={store.id}>
-                  {store.name}
-                </option>
-              ))}
-            </select>
-          )}
           <button
             type="button"
             className="secondary-button"
-            disabled={busy || !storeId}
+            disabled={busy || loadingStores || !storeId}
             onClick={() => void loadCatalog(storeId, { q: query, refresh: true })}
           >
             Refresh
@@ -3184,10 +3277,38 @@ function ExtensionStorePanel({
         </div>
       </div>
 
+      <div className="store-source-list" role="list" aria-label="Built-in extension stores">
+        {loadingStores && stores.length === 0 ? (
+          <div className="permission-empty">Connecting to built-in Open Skills / Anbeime / Open MCP catalogs…</div>
+        ) : stores.length === 0 ? (
+          <div className="permission-empty">
+            No stores loaded. Check control plane health and that capability <code>extension-store</code> is present.
+          </div>
+        ) : stores.map((store) => (
+          <button
+            key={store.id}
+            type="button"
+            role="listitem"
+            className={storeId === store.id ? "store-source-card active" : "store-source-card"}
+            onClick={() => selectStore(store.id)}
+            disabled={busy}
+          >
+            <div>
+              <strong>{store.name}</strong>
+              <small>
+                {store.defaultConnected ? "built-in · connected" : store.source}
+                {store.kind ? ` · ${store.kind}` : ""}
+              </small>
+            </div>
+            <p>{store.description}</p>
+          </button>
+        ))}
+      </div>
+
       <div className="extension-store-search">
         <input
           value={query}
-          placeholder="Search catalog"
+          placeholder={activeStore ? `Search ${activeStore.name}` : "Search catalog"}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter") {
@@ -3209,8 +3330,14 @@ function ExtensionStorePanel({
       {error && <p className="form-error">{error}</p>}
 
       <div className="extension-list">
-        {entries.length === 0 ? (
-          <div className="permission-empty">No catalog entries match the current filters.</div>
+        {busy && entries.length === 0 ? (
+          <div className="permission-empty">Loading catalog entries…</div>
+        ) : entries.length === 0 ? (
+          <div className="permission-empty">
+            {storeId
+              ? "No catalog entries match the current filters."
+              : "Select a built-in store above to browse installable skills or MCP servers."}
+          </div>
         ) : entries.map((entry) => {
           const requiredEnv = entry.config?.requiredEnv ?? [];
           return (
