@@ -54,7 +54,7 @@ import {
   X,
 } from "lucide-react";
 import { type FormEvent, type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
-import { describeApprovalRequest, describeEvent } from "./event-description";
+import { describeApprovalRequest, describeEvent, deriveSessionTitle } from "./event-description";
 import { buildConversationItems, deriveConversationPhase } from "./conversation-model";
 import type { ExtensionCatalogEntry, ExtensionStore, McpServer, SkillSummary } from "./api";
 import { execTerminal, getAccessToken, listLivePendingApprovals, listWorkspaceFiles, readWorkspaceFile, searchWorkspace, setAccessToken, writeWorkspaceFile, type WorkspaceSearchHit } from "./api";
@@ -363,11 +363,16 @@ export function App() {
     event.preventDefault();
     const text = message.trim();
     if (!text) return;
-    if (!prometheus.selectedSession) {
-      setNewSessionOpen(true);
+    if (prometheus.controlPlane !== "online") {
+      setActivity("settings");
+      setSettingsSection("connection");
       return;
     }
     if (agentRunning) {
+      if (!prometheus.selectedSession) {
+        setNewSessionOpen(true);
+        return;
+      }
       setQueuedMessage(text);
       setMessage("");
       return;
@@ -377,7 +382,17 @@ export function App() {
     setPendingUserText(text);
     setSendingMessage(true);
     try {
-      await prometheus.submitTask(text);
+      let sessionId = prometheus.selectedSession?.id;
+      if (!sessionId) {
+        // First message creates the durable task and names it from that message.
+        // Defer selection until after send so session bootstrap does not race the append.
+        const session = await prometheus.createSession(deriveSessionTitle(text), { select: false });
+        sessionId = session.id;
+        await prometheus.submitTask(text, sessionId);
+        prometheus.setSelectedSessionId(sessionId);
+      } else {
+        await prometheus.submitTask(text, sessionId);
+      }
     } catch {
       // Keep the draft so the user can retry after fixing provider/agent/runtime issues.
       setMessage(text);
@@ -693,7 +708,14 @@ export function App() {
             setSettingsSection("connection");
             return;
           }
-          setNewSessionOpen(true);
+          // Start a draft conversation from the top-right action.
+          // Session is created on the first message and named from that sentence.
+          prometheus.setSelectedSessionId(null);
+          setMessage("");
+          setQueuedMessage(null);
+          setPendingUserText(null);
+          setLayoutMode((mode) => (mode === "editor" ? "split" : mode));
+          setActivity("sessions");
         }}
         layoutMode={layoutMode}
         onLayoutModeChange={setLayoutMode}
@@ -1157,8 +1179,14 @@ export function App() {
                 <textarea
                   value={message}
                   onChange={(event) => setMessage(event.target.value.slice(0, 12000))}
-                  placeholder={prometheus.selectedSession ? (agentRunning ? "Type next message… (Ctrl+Enter queues it)" : "Message the agent… (Ctrl+Enter to send)") : "Create a task before sending input"}
-                  disabled={!prometheus.selectedSession}
+                  placeholder={
+                    !prometheus.selectedSession
+                      ? "First message starts a conversation and becomes the session name… (Ctrl+Enter)"
+                      : agentRunning
+                        ? "Type next message… (Ctrl+Enter queues it)"
+                        : "Message the agent… (Ctrl+Enter to send)"
+                  }
+                  disabled={prometheus.controlPlane !== "online"}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
                       event.currentTarget.form?.requestSubmit();
@@ -1178,7 +1206,7 @@ export function App() {
                       <Users size={13} /> Team run
                     </button>
                   </div>
-                  <button className="send-button" type="submit" disabled={!prometheus.selectedSession || !message.trim()}>
+                  <button className="send-button" type="submit" disabled={prometheus.controlPlane !== "online" || !message.trim() || sendingMessage}>
                     {agentRunning ? "Queue" : "Send"} <Send size={15} />
                   </button>
                 </div>
@@ -2740,9 +2768,9 @@ function ConversationPanel({
         {!hasSession ? (
           <div className="empty-state">
             <div className="orbital-mark"><Command size={27} /></div>
-            <span className="eyebrow">NO ACTIVE TASK</span>
-            <h3>Create a session to begin.</h3>
-            <p>Chat stays beside the editor. Create a task, then send a message to the agent.</p>
+            <span className="eyebrow">NEW CONVERSATION</span>
+            <h3>Type the first message to begin.</h3>
+            <p>Session name is filled automatically from your first sentence. No title modal required.</p>
           </div>
         ) : items.length === 0 ? (
           <div className="empty-state">

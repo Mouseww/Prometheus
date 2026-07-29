@@ -1,5 +1,5 @@
 import type { ApprovalDecision } from "@prometheus/protocol";
-import { Columns2, Minus, PanelLeft, PanelRight, ShieldAlert, Square, X } from "lucide-react";
+import { Columns2, MessageSquarePlus, Minus, PanelLeft, PanelRight, ShieldAlert, Square, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { isTauriDesktop } from "./local-runtime";
 import type { PendingApprovalItem } from "./pending-approvals";
@@ -210,6 +210,20 @@ export function TitleBar({
       </div>
 
       <div className="title-bar-right">
+        <button
+          type="button"
+          className="title-new-conversation"
+          title="New conversation"
+          aria-label="New conversation"
+          onClick={() => {
+            setOpenMenu(null);
+            setInboxOpen(false);
+            onCreateSession();
+          }}
+        >
+          <MessageSquarePlus size={14} />
+          <span>New</span>
+        </button>
         <div className="title-inbox">
           <button
             type="button"

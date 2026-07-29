@@ -110,12 +110,13 @@ button { color: inherit; }
 @keyframes stream-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(183,226,90,.05); } 50% { box-shadow: 0 0 0 5px rgba(183,226,90,.09); } }
 @keyframes stream-cursor { 0%,48% { opacity: 1; } 49%,100% { opacity: 0; } }
 .approval-card { margin-top: 14px; padding: 13px; border: 1px solid rgba(242,106,61,.35); background: rgba(242,106,61,.07); }
-.approval-summary { display: grid; grid-template-columns: 22px 1fr; gap: 9px; align-items: center; color: var(--ember); }
-.approval-summary > div { min-width: 0; display: grid; gap: 2px; }
-.approval-summary strong { color: var(--ink); font: 560 12px "IBM Plex Mono", monospace; overflow-wrap: anywhere; }
-.approval-summary small { color: var(--muted); font-size: 10px; }
+.approval-summary { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 9px; color: var(--ember); }
+.approval-summary > div { flex: 1 1 180px; min-width: 0; display: grid; gap: 2px; }
+.approval-summary strong { color: var(--ink); font: 560 12px "IBM Plex Mono", monospace; overflow-wrap: anywhere; word-break: break-word; white-space: normal; }
+.approval-summary small { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; word-break: break-word; white-space: normal; }
 .approval-preview { max-height: 126px; margin: 12px 0 0; padding: 10px; overflow: auto; border: 1px solid var(--line); background: #0d0f0e; color: #bfc4bc; font: 400 10px/1.55 "IBM Plex Mono", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
-.approval-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.approval-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.approval-button, .approval-actions .secondary-button { white-space: nowrap; }
 .approval-button { padding: 8px 12px; border: 0; background: var(--ember); color: #111311; cursor: pointer; font-size: 12px; font-weight: 680; }
 .approval-button:hover { background: #ff7b4d; }
 .approval-button:disabled, .approval-actions .secondary-button:disabled { opacity: .45; cursor: not-allowed; }
@@ -286,10 +287,60 @@ button { color: inherit; }
   line-height: 1.5;
 }
 .activity-body .timeline-event {
+  display: block;
   margin-top: 8px;
-  grid-template-columns: 0 1fr;
+  max-width: none;
+  width: 100%;
 }
 .activity-body .event-rail { display: none; }
+.activity-body .event-body {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.activity-body .event-meta {
+  display: none;
+}
+.activity-body .event-body > p {
+  display: none;
+}
+.approval-card {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+.approval-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 9px;
+  color: var(--ember);
+}
+.approval-summary > div {
+  flex: 1 1 180px;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.approval-summary strong,
+.approval-summary small {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+.approval-button,
+.approval-actions .secondary-button {
+  white-space: nowrap;
+}
 .composer.is-busy {
   border-color: rgba(183,226,90,.35);
   box-shadow: 0 0 0 1px rgba(183,226,90,.08), 0 24px 60px rgba(0,0,0,.28);
@@ -1855,6 +1906,28 @@ button { color: inherit; }
   margin-top: 8px;
   border: 1px solid var(--line-soft);
   border-radius: 0;
+}
+
+
+/* ===== Top-right new conversation ===== */
+.title-new-conversation {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1px solid rgba(242, 106, 61, 0.35);
+  border-radius: 4px;
+  background: rgba(242, 106, 61, 0.12);
+  color: #f2b59a;
+  cursor: pointer;
+  font: 600 11px "IBM Plex Mono", monospace;
+  letter-spacing: 0.02em;
+}
+.title-new-conversation:hover {
+  background: rgba(242, 106, 61, 0.2);
+  color: #ffd2c0;
+  border-color: rgba(242, 106, 61, 0.55);
 }
 
 /* ===== Approval inbox in title bar ===== */

@@ -298,17 +298,21 @@ export function usePrometheus() {
     };
   }, [selectedSessionId]);
 
-  const createSession = useCallback(async (title: string) => {
+  const createSession = useCallback(async (title: string, options?: { select?: boolean }) => {
     const session = await createSessionRequest(title);
     setSessions((current) => [session, ...current]);
-    setSelectedSessionId(session.id);
+    if (options?.select !== false) {
+      setSelectedSessionId(session.id);
+    }
     setError(null);
+    return session;
   }, []);
 
   const sendMessage = useCallback(
-    async (text: string) => {
-      if (!selectedSessionId) return;
-      const event = await appendEvent(selectedSessionId, {
+    async (text: string, sessionId?: string) => {
+      const targetSessionId = sessionId ?? selectedSessionId;
+      if (!targetSessionId) return;
+      const event = await appendEvent(targetSessionId, {
         eventId: crypto.randomUUID(),
         type: "message.user",
         actor: { kind: "user", id: "local-user", label: "You" },
@@ -317,7 +321,7 @@ export function usePrometheus() {
       setEvents((current) => mergeEvents(current, [event]));
       setSessions((current) =>
         current.map((session) =>
-          session.id === selectedSessionId
+          session.id === targetSessionId
             ? { ...session, lastSequence: event.sequence, updatedAt: event.createdAt }
             : session,
         ),
@@ -353,8 +357,9 @@ export function usePrometheus() {
     return agent.id;
   }, [agents, providers, selectedAgentId]);
 
-  const submitTask = useCallback(async (text: string) => {
-    if (!selectedSessionId) {
+  const submitTask = useCallback(async (text: string, sessionId?: string) => {
+    const targetSessionId = sessionId ?? selectedSessionId;
+    if (!targetSessionId) {
       throw new Error("Create or select a session before sending a message.");
     }
 
@@ -362,7 +367,7 @@ export function usePrometheus() {
     setRunning(true);
     setError(null);
     try {
-      await sendMessage(text);
+      await sendMessage(text, targetSessionId);
 
       let agentId: string | null;
       try {
@@ -380,7 +385,7 @@ export function usePrometheus() {
         throw new Error(message);
       }
 
-      await runAgent(selectedSessionId, agentId);
+      await runAgent(targetSessionId, agentId);
       setError(null);
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "Agent run failed";

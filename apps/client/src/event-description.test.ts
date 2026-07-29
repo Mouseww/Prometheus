@@ -1,6 +1,6 @@
 import type { SessionEvent } from "@prometheus/protocol";
 import { expect, it } from "vitest";
-import { describeApprovalRequest, describeEvent } from "./event-description";
+import { describeApprovalRequest, describeEvent, deriveSessionTitle } from "./event-description";
 
 const base: SessionEvent = {
   sequence: 1,
@@ -125,4 +125,12 @@ it("describes durable Agent bus messages without dumping payload JSON", () => {
       text: "Use the durable event log.",
     },
   })).toBe("Decision to All agents · Use the durable event log.");
+});
+
+it("derives a short session title from the first sentence", () => {
+  expect(deriveSessionTitle("Fix the approval card layout. Then ship it.")).toBe(
+    "Fix the approval card layout.",
+  );
+  expect(deriveSessionTitle("   hello world   ")).toBe("hello world");
+  expect(deriveSessionTitle("")).toBe("New conversation");
 });

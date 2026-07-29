@@ -126,3 +126,13 @@ export function describeApprovalRequest(event: SessionEvent): ApprovalPresentati
     denyAriaLabel: `Deny write to ${path}`,
   };
 }
+
+export function deriveSessionTitle(text: string, fallback = "New conversation"): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) return fallback;
+
+  // Prefer the first sentence-ish chunk so titles stay short and readable.
+  const sentence = normalized.split(/(?<=[.!?])\s+/)[0] ?? normalized;
+  const title = sentence.length > 160 ? `${sentence.slice(0, 157).trimEnd()}...` : sentence;
+  return title || fallback;
+}
