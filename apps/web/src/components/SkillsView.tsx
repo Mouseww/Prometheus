@@ -8,6 +8,7 @@ import { Badge, Button, Empty, Field, Input, PageHeader, Textarea } from "./ui.t
 
 const M = defineMessages({
 	zh: {
+		scopeBuiltin: "Prometheus 内置",
 		scopePrometheus: "Prometheus 技能库",
 		scopeUser: "用户（~/.pi/agent/skills）",
 		scopeProject: "项目（.pi/skills）",
@@ -20,10 +21,12 @@ const M = defineMessages({
 		emptyTitle: "还没有技能",
 		emptyBody: "技能是一份 SKILL.md 说明书，模型会在需要时依据描述自动加载。",
 		user: "用户",
+		builtin: "内置",
 		project: "项目",
 		noDescription: "（无描述）",
 		path: "路径",
 		readOnlyHint: "该技能由 PI 的技能文件管理，请直接编辑上述文件。",
+		builtinHint: "Prometheus 自带的技能，让模型了解这个应用本身。平时只有描述会进入上下文，正文在相关时才被读取。每次启动会恢复为随版本内容，不可编辑，可停用。",
 		saved: "已保存技能 {name}",
 		confirmDelete: "删除技能「{name}」？",
 		deleted: "已删除技能 {name}",
@@ -48,6 +51,7 @@ const M = defineMessages({
 		create: "创建",
 	},
 	en: {
+		scopeBuiltin: "Built in",
 		scopePrometheus: "Prometheus skills",
 		scopeUser: "User (~/.pi/agent/skills)",
 		scopeProject: "Project (.pi/skills)",
@@ -60,10 +64,12 @@ const M = defineMessages({
 		emptyTitle: "No skills yet",
 		emptyBody: "A skill is a SKILL.md guide the model loads automatically when its description matches the task.",
 		user: "User",
+		builtin: "Built in",
 		project: "Project",
 		noDescription: "(No description)",
 		path: "Path",
 		readOnlyHint: "This skill is managed by PI's skill files. Edit the file above directly.",
+		builtinHint: "Ships with Prometheus so the model knows about the app itself. Only the description sits in context; the body is read when relevant. Restored to the shipped text on every start, so it is read-only, but you can disable it.",
 		saved: "Saved skill {name}",
 		confirmDelete: "Delete skill \"{name}\"?",
 		deleted: "Deleted skill {name}",
@@ -91,6 +97,7 @@ const M = defineMessages({
 
 const NAME_RE = /^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,63}$/;
 const SCOPES: { scope: SkillInfo["scope"]; title: keyof typeof M.zh }[] = [
+	{ scope: "builtin", title: "scopeBuiltin" },
 	{ scope: "prometheus", title: "scopePrometheus" },
 	{ scope: "user", title: "scopeUser" },
 	{ scope: "project", title: "scopeProject" },
@@ -172,7 +179,7 @@ export function SkillsView() {
 						current.editable && current.scope === "prometheus" ? (
 							<SkillEditor key={keyOf(current)} skill={current} onChanged={load} />
 						) : (
-							<ReadOnlySkill skill={current} />
+							<ReadOnlySkill skill={current} onChanged={load} />
 						)
 					) : (
 						<Empty icon={<Sparkles className="size-5" />} title={t("emptyTitle")}>
@@ -185,20 +192,36 @@ export function SkillsView() {
 	);
 }
 
-function ReadOnlySkill({ skill }: { skill: SkillInfo }) {
+function ReadOnlySkill({ skill, onChanged }: { skill: SkillInfo; onChanged: () => Promise<void> }) {
 	const t = useT(M);
+	const [busy, setBusy] = useState(false);
+	const builtin = skill.scope === "builtin";
+	const toggle = async () => {
+		setBusy(true);
+		const res = await pluginCall<null>("skills", "toggle", { name: skill.name, enabled: !skill.enabled });
+		setBusy(false);
+		if (res === undefined) return;
+		toast(skill.enabled ? t("disabledToast", { name: skill.name }) : t("enabledToast", { name: skill.name }));
+		await onChanged();
+	};
 	return (
 		<div className="mx-auto max-w-2xl animate-rise space-y-5 p-8">
 			<div className="flex items-center gap-2">
 				<h2 className="font-mono text-xl font-semibold">{skill.name}</h2>
-				<Badge tone="sky">{skill.scope === "user" ? t("user") : t("project")}</Badge>
+				<Badge tone="sky">{skill.scope === "builtin" ? t("builtin") : skill.scope === "user" ? t("user") : t("project")}</Badge>
+				{!skill.enabled && <Badge tone="rose">{t("disabled")}</Badge>}
 				{!skill.modelInvocation && <Badge>{t("manualOnly")}</Badge>}
+				{builtin && (
+					<Button variant="outline" className="ml-auto" disabled={busy} onClick={() => void toggle()}>
+						<Power className="size-4" /> {skill.enabled ? t("disable") : t("enable")}
+					</Button>
+				)}
 			</div>
 			<p className="text-sm whitespace-pre-wrap text-ink-300">{skill.description || t("noDescription")}</p>
 			<Field label={t("path")}>
 				<div className="rounded-lg border border-ink-800 bg-ink-900/60 px-3 py-2 font-mono text-xs break-all text-ink-400">{skill.path}</div>
 			</Field>
-			<p className="text-xs text-ink-500">{t("readOnlyHint")}</p>
+			<p className="text-xs text-ink-500">{t(builtin ? "builtinHint" : "readOnlyHint")}</p>
 		</div>
 	);
 }

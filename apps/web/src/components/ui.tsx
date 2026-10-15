@@ -1,5 +1,36 @@
 import clsx from "clsx";
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
+import { X } from "lucide-react";
+import { createContext, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes, useContext, useEffect } from "react";
+import { useStore } from "../lib/store.ts";
+
+const ModalClose = createContext<(() => void) | null>(null);
+
+/** Floating window over the chat; Esc, the backdrop and the header close button all dismiss it. */
+export function Modal({ onClose, children, floatingClose }: { onClose: () => void; children: ReactNode; floatingClose?: boolean }) {
+	const dialogOpen = useStore((s) => s.uiQueue.length > 0);
+	useEffect(() => {
+		const onKey = (e: KeyboardEvent) => e.key === "Escape" && !dialogOpen && onClose();
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, [onClose, dialogOpen]);
+
+	return (
+		<div className="absolute inset-0 z-20 grid place-items-center bg-ink-950/60 p-3 backdrop-blur-sm sm:p-6" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+			<div role="dialog" aria-modal className="relative flex h-full max-h-[52rem] w-full max-w-6xl animate-rise flex-col overflow-hidden rounded-2xl border border-ink-700 bg-ink-900 shadow-2xl shadow-black/60">
+				{floatingClose && <CloseButton onClose={onClose} className="absolute top-2.5 right-2.5 z-10" />}
+				<ModalClose.Provider value={onClose}>{children}</ModalClose.Provider>
+			</div>
+		</div>
+	);
+}
+
+function CloseButton({ onClose, className }: { onClose: () => void; className?: string }) {
+	return (
+		<button type="button" onClick={onClose} aria-label="Close" className={clsx("shrink-0 rounded-lg p-1.5 text-ink-400 transition-colors hover:bg-ink-800 hover:text-ink-100", className)}>
+			<X className="size-4" />
+		</button>
+	);
+}
 
 export function Button({ variant = "ghost", className, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "ghost" | "danger" | "outline" }) {
 	return (
@@ -45,13 +76,17 @@ export function Field({ label, hint, children }: { label: string; hint?: ReactNo
 }
 
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: ReactNode }) {
+	const onClose = useContext(ModalClose);
 	return (
-		<header className="flex items-end justify-between gap-4 border-b hairline px-8 pt-8 pb-5">
+		<header className="flex items-end justify-between gap-4 border-b hairline px-8 pt-6 pb-4">
 			<div>
 				<h1 className="font-display text-2xl font-semibold tracking-tight">{title}</h1>
 				{subtitle && <p className="mt-1 text-sm text-ink-400">{subtitle}</p>}
 			</div>
-			{actions}
+			<div className="flex items-center gap-2">
+				{actions}
+				{onClose && <CloseButton onClose={onClose} className="-mr-3 self-start" />}
+			</div>
 		</header>
 	);
 }

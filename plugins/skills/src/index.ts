@@ -5,6 +5,7 @@ import { loadSkillsFromDir, type Skill } from "@earendil-works/pi-coding-agent";
 import { createJsonStore, definePlugin } from "@prometheus/plugin-sdk";
 import type { SkillDocument, SkillInfo } from "@prometheus/protocol";
 import { checkSkillDocument, renderSkill, requireSkillName } from "./skill-file.ts";
+import { BUILTIN_SKILLS, installBuiltinSkills } from "./builtin-skills.ts";
 
 interface State {
 	disabled: string[];
@@ -16,16 +17,21 @@ export default definePlugin({
 	async setup(ctx) {
 		const library = join(ctx.dataDir, "library");
 		await mkdir(library, { recursive: true });
+		// Shipped skills live apart from the user's library and are rewritten on every start.
+		const builtinDir = join(ctx.dataDir, "builtin");
+		await installBuiltinSkills(builtinDir).catch((err: unknown) => ctx.log.warn(`内置技能写入失败：${err instanceof Error ? err.message : err}`));
+		const builtinNames = new Set(BUILTIN_SKILLS.map((s) => s.name));
 		const state = createJsonStore<State>(join(ctx.dataDir, "state.json"), () => ({ disabled: [] }));
 
-		const ownSkills = (): Skill[] => loadSkillsFromDir({ dir: library, source: "prometheus" }).skills;
+		const ownSkills = (): Skill[] => loadSkillsFromDir({ dir: library, source: "prometheus" }).skills.filter((s) => !builtinNames.has(s.name));
+		const shippedSkills = (): Skill[] => loadSkillsFromDir({ dir: builtinDir, source: "prometheus" }).skills.filter((s) => builtinNames.has(s.name));
 		const skillDir = (name: string) => join(library, requireSkillName(name));
 
 		// Enabled library skills join PI's own discovery (~/.pi/agent/skills, <project>/.pi/skills).
 		ctx.extension((pi) => {
 			pi.on("resources_discover", async () => {
 				const disabled = new Set((await state.read()).disabled);
-				return { skillPaths: ownSkills().filter((s) => !disabled.has(s.name)).map((s) => s.baseDir) };
+				return { skillPaths: [...shippedSkills(), ...ownSkills()].filter((s) => !disabled.has(s.name)).map((s) => s.baseDir) };
 			});
 		});
 
@@ -36,11 +42,12 @@ export default definePlugin({
 				description: s.description,
 				path: s.filePath,
 				scope,
-				enabled: scope !== "prometheus" || !disabled.has(s.name),
+				enabled: scope !== "prometheus" && scope !== "builtin" ? true : !disabled.has(s.name),
 				editable: scope === "prometheus",
 				modelInvocation: !s.disableModelInvocation,
 			});
 			return [
+				...shippedSkills().map((s) => toInfo(s, "builtin")),
 				...ownSkills().map((s) => toInfo(s, "prometheus")),
 				...loadSkillsFromDir({ dir: join(ctx.agentDir, "skills"), source: "user" }).skills.map((s) => toInfo(s, "user")),
 				...loadSkillsFromDir({ dir: resolve(ctx.cwd, ".pi", "skills"), source: "project" }).skills.map((s) => toInfo(s, "project")),
@@ -54,6 +61,7 @@ export default definePlugin({
 
 		ctx.rpc("create", async (params) => {
 			const name = requireSkillName(params.name);
+			if (builtinNames.has(name)) throw new Error(`${name} 是内置技能名，请换一个名称`);
 			const description = typeof params.description === "string" ? params.description.trim() : "";
 			if (!description) throw new Error("请填写技能描述：模型依据它决定何时使用该技能");
 			const dir = skillDir(name);
@@ -92,6 +100,7 @@ export default definePlugin({
 
 		ctx.rpc("delete", async (params) => {
 			const name = requireSkillName(params.name);
+			if (builtinNames.has(name)) throw new Error("内置技能不能删除，可以在列表中停用");
 			await rm(skillDir(name), { recursive: true, force: true });
 			await state.update((s) => ({ disabled: s.disabled.filter((n) => n !== name) }));
 			await ctx.reloadSessions();

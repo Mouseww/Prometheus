@@ -8,12 +8,15 @@ import { SettingsView } from "./components/SettingsView.tsx";
 import { Sidebar } from "./components/Sidebar.tsx";
 import { TitleBar } from "./components/TitleBar.tsx";
 import { Toasts } from "./components/Toasts.tsx";
+import { Modal } from "./components/ui.tsx";
 import { UpdateDialog } from "./components/UpdateDialog.tsx";
 import type { BackendTarget } from "./lib/client.ts";
 import { PrometheusClient } from "./lib/client.ts";
 import { discoverBackend, establishCookie, isTauri, saveMode } from "./lib/backend.ts";
-import { bindClient, useStore } from "./lib/store.ts";
+import { bindClient, setView, useStore } from "./lib/store.ts";
 import { checkForUpdate } from "./lib/updater.ts";
+
+const closeView = () => setView("chat");
 
 export function App() {
 	const [target, setTarget] = useState<BackendTarget | null | undefined>(undefined);
@@ -69,11 +72,15 @@ export function App() {
 			<div className="flex min-h-0 flex-1">
 				{sidebar && <Sidebar target={target} onDisconnect={() => setTarget(null)} />}
 				<main className="relative flex min-w-0 flex-1 flex-col">
-					{view === "chat" && <ChatView />}
-					{view === "knowledge" && <KnowledgeView />}
-					{view === "memory" && <MemoryView />}
-					{view === "settings" && <SettingsView />}
-					{typeof view === "object" && <PanelFrame target={target} url={view.panel} />}
+					<ChatView />
+					{view !== "chat" && (
+						<Modal key={typeof view === "object" ? view.panel : view} onClose={closeView} floatingClose={typeof view === "object"}>
+							{view === "knowledge" && <KnowledgeView />}
+							{view === "memory" && <MemoryView />}
+							{view === "settings" && <SettingsView />}
+							{typeof view === "object" && <PanelFrame target={target} url={view.panel} />}
+						</Modal>
+					)}
 				</main>
 			</div>
 			<DialogHost />

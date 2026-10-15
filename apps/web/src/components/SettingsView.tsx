@@ -1,12 +1,13 @@
 import clsx from "clsx";
-import { Blocks, Cable, Check, Laptop, Moon, Network, Sparkles, Sun, SlidersHorizontal } from "lucide-react";
+import { Blocks, Cable, Check, Copy, Laptop, Moon, Network, Package, Sparkles, Sun, SlidersHorizontal } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { type Lang, SKINS, type Skin, setPrefs, type ThemeMode, usePrefs } from "../lib/prefs.ts";
-import { openSettings, type SettingsTab, updateHostSettings, useStore } from "../lib/store.ts";
+import { openSettings, type SettingsTab, toast, updateHostSettings, useStore } from "../lib/store.ts";
 import { checkForUpdate, showUpdate, updaterSupported, useUpdater } from "../lib/updater.ts";
 import { GatewaysView } from "./GatewaysView.tsx";
+import { MarketView } from "./MarketView.tsx";
 import { McpView } from "./McpView.tsx";
 import { PluginsView } from "./PluginsView.tsx";
 import { SkillsView } from "./SkillsView.tsx";
@@ -18,6 +19,7 @@ const M = defineMessages({
 		gateways: "AI 网关",
 		mcp: "MCP",
 		skills: "技能",
+		market: "插件市场",
 		plugins: "插件",
 		title: "通用设置",
 		subtitle: "外观、语言与会话行为",
@@ -44,12 +46,20 @@ const M = defineMessages({
 		viewUpdate: "查看并更新",
 		updateHint: "桌面版的本机服务端随应用一同更新。",
 		updateFailed: "检查失败：{e}",
+		about: "关于",
+		appVersion: "客户端版本",
+		serverVersion: "服务端版本",
+		piVersion: "PI Agent 版本",
+		mismatch: "与客户端版本不一致",
+		copyVersion: "复制版本信息",
+		copied: "已复制",
 	},
 	en: {
 		general: "General",
 		gateways: "AI Gateways",
 		mcp: "MCP",
 		skills: "Skills",
+		market: "Marketplace",
 		plugins: "Plugins",
 		title: "General",
 		subtitle: "Appearance, language and session behaviour",
@@ -76,6 +86,13 @@ const M = defineMessages({
 		viewUpdate: "View and update",
 		updateHint: "The desktop app's local server is updated together with the app.",
 		updateFailed: "Check failed: {e}",
+		about: "About",
+		appVersion: "Client version",
+		serverVersion: "Server version",
+		piVersion: "PI Agent version",
+		mismatch: "Differs from the client version",
+		copyVersion: "Copy version info",
+		copied: "Copied",
 	},
 });
 
@@ -157,6 +174,41 @@ function UpdateRow() {
 	);
 }
 
+function AboutRow() {
+	const t = useT(M);
+	const info = useStore((s) => s.hostInfo);
+	const client = __APP_VERSION__;
+	const server = info?.version;
+	const differs = Boolean(server) && server !== client;
+	const summary = `Prometheus ${client}${server ? ` (server ${server}, PI ${info?.piVersion})` : ""} · ${info?.platform ?? navigator.platform}`;
+	return (
+		<>
+			<Row label={t("appVersion")}>
+				<span className="font-mono text-sm text-ink-200">v{client}</span>
+			</Row>
+			<Row label={t("serverVersion")} hint={differs ? t("mismatch") : undefined}>
+				<span className={clsx("font-mono text-sm", differs ? "text-ember-300" : "text-ink-200")}>{server ? `v${server}` : "—"}</span>
+			</Row>
+			<Row label={t("piVersion")}>
+				<span className="font-mono text-sm text-ink-200">{info?.piVersion ? `v${info.piVersion}` : "—"}</span>
+			</Row>
+			<Row label={t("copyVersion")}>
+				<Button
+					variant="outline"
+					onClick={() =>
+						void navigator.clipboard.writeText(summary).then(
+							() => toast(t("copied")),
+							() => toast(summary),
+						)
+					}
+				>
+					<Copy className="size-4" /> {t("copyVersion")}
+				</Button>
+			</Row>
+		</>
+	);
+}
+
 function GeneralSettings() {
 	const t = useT(M);
 	const prefs = usePrefs();
@@ -226,6 +278,10 @@ function GeneralSettings() {
 							<UpdateRow />
 						</Section>
 					)}
+
+					<Section title={t("about")}>
+						<AboutRow />
+					</Section>
 				</div>
 			</div>
 		</div>
@@ -237,6 +293,7 @@ const TABS: { id: SettingsTab; icon: typeof Network }[] = [
 	{ id: "gateways", icon: Network },
 	{ id: "mcp", icon: Cable },
 	{ id: "skills", icon: Sparkles },
+	{ id: "market", icon: Package },
 	{ id: "plugins", icon: Blocks },
 ];
 
@@ -266,6 +323,7 @@ export function SettingsView() {
 				{tab === "gateways" && <GatewaysView />}
 				{tab === "mcp" && <McpView />}
 				{tab === "skills" && <SkillsView />}
+				{tab === "market" && <MarketView />}
 				{tab === "plugins" && <PluginsView />}
 			</div>
 		</div>

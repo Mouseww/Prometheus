@@ -132,17 +132,20 @@ function WindowControls() {
 
 export function TitleBar({ onToggleSidebar, bare }: { onToggleSidebar?: () => void; bare?: boolean }) {
 	const t = useT(M);
-	const view = useStore((s) => s.view);
 	const session = useStore((s) => s.session);
 	const workspaces = useStore((s) => s.workspaces);
 	const title = useStore((s) => s.title);
+	const summary = useStore((s) => s.sessions.find((x) => x.id === s.session?.id));
 	const desktop = isTauri();
 	const ws = workspaces.find((w) => w.id === session?.workspaceId);
+	const firstUser = session?.messages.find((m) => m.role === "user");
+	const firstText = firstUser ? (typeof firstUser.content === "string" ? firstUser.content : firstUser.content.map((c) => (c.type === "text" ? c.text : "")).join("")) : "";
+	const name = title || session?.name || summary?.name || firstText.trim() || summary?.firstMessage || t("newChat");
 
 	let heading: React.ReactNode = null;
 	if (bare) {
 		heading = null;
-	} else if (view === "chat") {
+	} else {
 		heading = (
 			<span className="flex min-w-0 items-center gap-2" data-tauri-drag-region>
 				{ws && (
@@ -151,16 +154,9 @@ export function TitleBar({ onToggleSidebar, bare }: { onToggleSidebar?: () => vo
 						{ws.name}
 					</span>
 				)}
-				<span className="truncate text-sm text-ink-200" data-tauri-drag-region>
-					{title ?? session?.name ?? t("newChat")}
+				<span className="truncate text-sm text-ink-200" title={name} data-tauri-drag-region>
+					{name}
 				</span>
-			</span>
-		);
-	} else {
-		const label = view === "settings" ? t("settings") : view === "knowledge" ? t("knowledge") : view === "memory" ? t("memory") : "";
-		heading = (
-			<span className="truncate text-sm text-ink-200" data-tauri-drag-region>
-				{label}
 			</span>
 		);
 	}
@@ -180,7 +176,7 @@ export function TitleBar({ onToggleSidebar, bare }: { onToggleSidebar?: () => vo
 			<div className="flex min-w-0 flex-1 items-center gap-2 self-stretch px-1" data-tauri-drag-region>
 				{heading}
 			</div>
-			{!bare && view === "chat" && <SessionTools />}
+			{!bare && <SessionTools />}
 			{desktop ? <WindowControls /> : <span className="w-2" />}
 		</header>
 	);

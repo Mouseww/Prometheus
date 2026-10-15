@@ -61,6 +61,7 @@ const M = defineMessages({
 		disconnect: "断开连接",
 		local: "本机",
 		noWorkspace: "打开一个项目目录开始对话",
+		about: "关于 / 版本",
 	},
 	en: {
 		knowledge: "Knowledge",
@@ -84,6 +85,7 @@ const M = defineMessages({
 		disconnect: "Disconnect",
 		local: "Local",
 		noWorkspace: "Open a project folder to start",
+		about: "About / version",
 	},
 });
 
@@ -361,6 +363,9 @@ export function Sidebar({ target, onDisconnect }: { target: BackendTarget; onDis
 				<span className="flex min-w-0 items-center gap-1.5" title={target.httpBase}>
 					<span className={clsx("size-1.5 shrink-0 rounded-full", conn === "open" ? "bg-moss-400" : "animate-breathe bg-ember-400")} />
 					<span className="truncate">{target.label === "local" ? t("local") : target.label}</span>
+					<button type="button" onClick={() => openSettings("general")} className="shrink-0 font-mono text-[11px] text-ink-600 hover:text-ink-300" title={t("about")}>
+						v{__APP_VERSION__}
+					</button>
 				</span>
 				<button
 					type="button"

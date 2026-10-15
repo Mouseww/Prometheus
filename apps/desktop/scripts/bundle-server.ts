@@ -21,6 +21,7 @@ const sources = [
 	"plugins/mcp",
 	"plugins/skills",
 	"plugins/memory",
+	"plugins/packages",
 ];
 const dependencies: Record<string, string> = {};
 for (const dir of sources) {

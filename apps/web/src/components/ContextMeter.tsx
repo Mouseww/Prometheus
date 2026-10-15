@@ -18,7 +18,7 @@ const M = defineMessages({
 		unattributed: "未归因",
 		free: "剩余空间",
 		estimate: "各项为估算值（约 4 字符 ≈ 1 token），与模型上报总量的差额计入「未归因」",
-		unknown: "压缩后首轮回复前，用量暂不可知",
+		unknown: "模型未返回用量（或刚压缩完），以下均为本地估算值",
 		compact: "压缩上下文",
 		compacting: "开始压缩上下文…",
 		busy: "对话进行中，无法压缩",
@@ -35,7 +35,7 @@ const M = defineMessages({
 		unattributed: "Unattributed",
 		free: "Free space",
 		estimate: "Per-item sizes are estimates (~4 chars per token); the gap to the model-reported total is shown as \"Unattributed\"",
-		unknown: "Usage is unknown until the first reply after compaction",
+		unknown: "The model reported no usage (or the chat was just compacted); all figures are local estimates",
 		compact: "Compact context",
 		compacting: "Compacting context…",
 		busy: "Cannot compact while a run is in progress",
@@ -80,11 +80,9 @@ export function ContextMeter() {
 	const used = stats.contextTokens;
 	const parts = PARTS.map((p) => ({ ...p, tokens: p.key === "unattributed" ? 0 : (stats.breakdown?.[p.key] ?? 0) }));
 	const sum = parts.reduce((a, p) => a + p.tokens, 0);
-	// Right after compaction the reported total is unknown/zero; fall back to the estimates alone.
-	const reported = used != null && used > 0 ? used : null;
-	const gap = reported != null ? Math.max(reported - sum, 0) : 0;
+	const gap = stats.contextEstimated ? 0 : Math.max(used - sum, 0);
 	const shown = parts.map((p) => (p.key === "unattributed" ? { ...p, tokens: gap } : p)).filter((p) => p.tokens > 0);
-	const total = reported ?? sum;
+	const total = used;
 	const width = (tokens: number) => (window_ > 0 ? Math.min(100, (tokens / window_) * 100) : 0);
 
 	const compact = async () => {
@@ -108,7 +106,7 @@ export function ContextMeter() {
 			>
 				<Ring percent={stats.contextPercent} />
 				<span>
-					{used != null ? fmt(used) : "—"} / {fmt(window_)}
+					{stats.contextEstimated ? "~" : ""}{fmt(used)} / {fmt(window_)}
 				</span>
 			</button>
 			{open && (
@@ -132,16 +130,14 @@ export function ContextMeter() {
 								<span className="font-mono text-ink-400">{fmt(p.tokens)}</span>
 							</li>
 						))}
-						{used != null && (
-							<li className="flex items-center gap-2">
-								<span className="size-2 shrink-0 rounded-full border border-ink-600" />
-								<span className="flex-1 text-ink-300">{t("free")}</span>
-								<span className="font-mono text-ink-400">{fmt(Math.max(window_ - total, 0))}</span>
-							</li>
-						)}
+						<li className="flex items-center gap-2">
+							<span className="size-2 shrink-0 rounded-full border border-ink-600" />
+							<span className="flex-1 text-ink-300">{t("free")}</span>
+							<span className="font-mono text-ink-400">{fmt(Math.max(window_ - total, 0))}</span>
+						</li>
 					</ul>
 
-					<p className="mt-3 text-[11px] leading-snug text-ink-500">{used == null ? t("unknown") : t("estimate")}</p>
+					<p className="mt-3 text-[11px] leading-snug text-ink-500">{stats.contextEstimated ? t("unknown") : t("estimate")}</p>
 					<p className="mt-1 font-mono text-[11px] text-ink-500">
 						{t("io", { i: stats.inputTokens, o: stats.outputTokens })}
 						{stats.totalCost > 0 && ` · $${stats.totalCost.toFixed(4)}`}
