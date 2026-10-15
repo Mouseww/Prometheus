@@ -32,9 +32,10 @@ You can tell GUI from TUI by whether extension UI (dialogs, panels) is available
 
 ## Where things live in the UI
 
-- **Sidebar**: a "New chat" button at the top opens the new-chat page (an input box with a workspace chooser; picking a workspace enables sending, and the first message opens the conversation); below it, workspaces (project folders) and the sessions in each; Knowledge; Memory; Settings. Sessions can be renamed, archived, forked, retried, or have single messages deleted.
-- **Composer footer**: model picker (grouped by provider), thinking level, context-usage ring. Clicking the ring shows what fills the context and offers "compact".
-- **Settings** tabs: General (theme, language, auto-compaction, updates), AI Gateways, MCP, Skills, PI Marketplace, Prometheus Plugins, Usage (tokens and cost by day and model across all sessions). A knowledge base's embedding model is set when creating it and can be changed from its settings button until it has documents.
+- **Sidebar**: a "New chat" button at the top opens the new-chat page (an input box with a workspace chooser; picking a workspace enables sending, and the first message opens the conversation). Right under it are **Automations** and **Git** (each appears only while its plugin is switched on); then workspaces (project folders) and the sessions in each; Knowledge; Memory; Settings. Sessions can be renamed, archived, forked, retried, or have single messages deleted.
+- **Composer footer**: model picker (grouped by provider), thinking level, permission mode (default / accept edits / plan / bypass; Shift+Tab cycles), context-usage ring, and a microphone button for voice input when that plugin is on. Clicking the ring shows what fills the context and offers "compact".
+- **Task list**: when you call \`todo_write\`, the user sees your checklist above the input box and follows progress live.
+- **Settings** tabs: General (theme, language, auto-compaction, updates), AI Gateways, MCP, Skills, PI Marketplace, Prometheus Plugins (switch on/off, reload, remove, scan, build one with AI), Voice, Usage (tokens and cost by day and model across all sessions). A knowledge base's embedding model is set when creating it and can be changed from its settings button until it has documents.
 
 Tell the user which tab to open rather than editing files when a UI exists for the job: the UI validates input, keeps secrets masked, and reloads live sessions.
 
@@ -51,7 +52,11 @@ Tell the user which tab to open rather than editing files when a UI exists for t
 | MCP servers | stdio or HTTP servers managed in Settings → MCP and handed to PI's built-in MCP extension; tools appear as \`mcp__<server>__<tool>\`. PI's own \`mcp.json\` is shown read-only | \`<home>/plugin-data/mcp/servers.json\`, \`<pi>/mcp.json\` |
 | Skills | SKILL.md guides loaded on demand. Prometheus' library plus PI's \`<pi>/skills\` and the project's \`.pi/skills\` | \`<home>/plugin-data/skills/library/<name>/SKILL.md\` |
 | PI Marketplace | Installs PI packages (extensions, skills, prompts, themes) from npm packages tagged \`pi-package\` or from git, using PI's package manager. Shared with the PI TUI | declarations in \`<pi>/settings.json\` |
-| Plugins | Prometheus plugins (see \`plugin-development.md\`). Loaded from built-ins, \`config.json\` → \`plugins\`, and \`<home>/plugins/*/\`. Restart to load changes | \`<home>/plugins/\` |
+| Plugins | Prometheus plugins (see \`plugin-development.md\`). Built-ins, \`config.json\` → \`plugins\`, and \`<home>/plugins/*/\`. Folder plugins can be installed, updated, switched off, reloaded and removed while the app runs; only \`config.json\` edits and the terminal (TUI) build need a restart | \`<home>/plugins/\` |
+| Task list | \`todo_write\` plugin: plan work with three or more steps, keep exactly one item in progress, mark items done as you finish them | in the session |
+| Git | Sidebar page for status, diff, stage, commit, branches, pull/push. Operates only on workspaces the user added | the repository |
+| Automations | Scheduled background runs of the agent in a workspace, each saved as a chat. Access is read-only / edits / full; unattended runs never ask, they refuse what the access level does not cover. Run only while the app is open | \`<home>/plugin-data/automations/automations.json\` |
+| Voice input | Dictation through a gateway that can transcribe audio; audio is sent to that gateway and not stored | \`<home>/plugin-data/voice/voice.json\` |
 | Workspaces | Project folders grouping sessions | \`<home>/workspaces.json\` |
 | Sessions | PI session files | \`<pi>/sessions/\` |
 
@@ -61,7 +66,7 @@ The ring in the composer shows context usage; when the provider reports no usage
 
 ## Working with the user's setup
 
-- Gateway, MCP, skill and package changes made in the UI take effect in running sessions after they finish the current turn. Hand-edited files (\`config.json\`, plugin directories) need a restart, and the app may overwrite \`config.json\`.
+- Gateway, MCP, skill and package changes made in the UI take effect in running sessions after they finish the current turn. Hand-edited \`config.json\` needs a restart, and the app may overwrite it.
 - Prometheus tools run with the host process's permissions, and anyone authenticated to a server effectively has a shell there. Treat third-party plugins, MCP servers and packages as trusted code, and say so when recommending them.
 - Never reveal API keys or tokens, and do not read \`config.json\` or \`auth.json\` just to answer a question; the UI shows masked values.
 
@@ -101,14 +106,49 @@ export default definePlugin({
 });
 \`\`\`
 
-Name pattern: \`^[a-z0-9][a-z0-9-_.]{0,63}$\`. \`Type\` (TypeBox) is exported by \`@earendil-works/pi-ai\`, not by the coding agent.
+Name pattern: \`^[a-z0-9][a-z0-9-_.]{0,63}$\`, and not a Windows-reserved name such as \`con\` or \`nul\`. \`Type\` (TypeBox) is exported by \`@earendil-works/pi-ai\`, not by the coding agent.
+
+## Two ways to write one
+
+**Built into the repository** (a workspace package): the TypeScript example above, importing \`definePlugin\` and \`Type\`.
+
+**A folder plugin the user installs in the running app**: plain ES-module JavaScript with **no imports of Prometheus or npm packages**, because nothing is resolvable from \`<home>/plugins/\`. Only Node built-ins (\`node:fs\`, \`node:path\`, \`node:child_process\`...) and the plugin's own relative files can be imported. Export a plain object, and describe tool parameters as ordinary JSON Schema instead of TypeBox:
+
+\`\`\`js
+export default {
+  name: "hello",
+  version: "0.1.0",
+  setup(ctx) {
+    ctx.extension((pi) => {
+      pi.registerTool({
+        name: "greet",
+        label: "Greet",
+        description: "Greet someone by name",
+        parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
+        async execute(_id, { name }) {
+          return { content: [{ type: "text", text: \`Hello, \${name}!\` }], details: {} };
+        },
+      });
+    });
+  },
+};
+\`\`\`
 
 ## Where to put it
 
-- A folder with a \`package.json\` under \`<home>/plugins/<name>/\` (\`<home>\` = \`$PROMETHEUS_HOME\`, default \`~/.prometheus\`), or
-- an npm package name or a path (relative to \`<home>\`) listed in \`config.json\` → \`plugins\`.
+- **From inside a chat (preferred)**: call the \`prometheus_plugin_install\` tool with \`name\` and \`files\` (\`[{ path: "index.js", content }]\`; \`index.js\` is required, paths are relative with \`/\`, up to 40 files). The user is shown every file and must approve, even in bypass mode; the answer is never remembered. It is installed and live straight away: the plugin's tools reach open chats from the next message, a sidebar panel appears at once, and no restart is needed. Calling it again with the same name updates the plugin; if the new code fails to load, the previous version is restored and you get the error. You cannot call it in plan mode or from an unattended run.
+- **By hand**: a folder with a \`package.json\` (\`main\`: \`index.js\`) under \`<home>/plugins/<name>/\` (\`<home>\` = \`$PROMETHEUS_HOME\`, default \`~/.prometheus\`). The user presses *Scan for new plugins* in Settings → Prometheus Plugins; after editing the code, *Reload*.
+- An npm package name or a path (relative to \`<home>\`) listed in \`config.json\` → \`plugins\`; this one needs an app restart.
 
-Restart the host to load it.
+### What still needs a restart (tell the user plainly)
+
+- The terminal (TUI) build cannot hot-load anything.
+- Updating a **multi-file** plugin reloads \`index.js\` only; files it imports stay cached by Node until restart. Keep plugins to one file when they will be edited.
+- Edits to \`config.json\`.
+
+The install result lists these in \`restartReasons\`; relay them to the user instead of saying it simply works.
+
+A plugin can be switched off (its tools, panels and RPCs vanish at once) from the same page. Release timers, sockets and watchers in \`ctx.onDispose(fn)\`: a plugin can be unloaded and loaded again at any time.
 
 ## \`ctx\`
 
@@ -121,6 +161,9 @@ Restart the host to load it.
 | \`settings\` | \`config.json\` → \`pluginSettings[<name>]\` |
 | \`log\` | \`info / warn / error\` |
 | \`gateways()\` | Read-only gateway configs (contain API keys: never log them) |
+| \`workspaces()\` | Project folders the user has added |
+| \`runAgent({ cwd, prompt, access, ... })\` | Run the agent to completion with nobody present, in a new saved chat (server only). \`access\` is \`readonly\`, \`edits\` or \`full\`; whatever it does not cover is refused, never asked |
+| \`notifyChanged()\` | Tell open views of this plugin to refetch (server only) |
 | \`extension(factory)\` | Contribute a PI extension: tools, commands, providers, event hooks |
 | \`knowledgeStore(id, factory)\` | Register a vector store backend selectable when creating a knowledge base |
 | \`route(method, path, handler)\` | HTTP route at \`/plugins/<name><path>\` (server only) |

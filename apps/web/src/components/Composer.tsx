@@ -3,8 +3,10 @@ import { ArrowUp, Brain, Check, ChevronDown, Cpu, Search, Square } from "lucide-
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ThinkingLevel } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { abortRun, openSettings, sendPrompt, setModel, setThinking, toast, useStore } from "../lib/store.ts";
+import { abortRun, openSettings, sendPrompt, setModel, setPermissionMode, setThinking, toast, useStore } from "../lib/store.ts";
 import { ContextMeter } from "./ContextMeter.tsx";
+import { nextPermissionMode, PermissionPicker } from "./PermissionPicker.tsx";
+import { VoiceButton } from "./VoiceButton.tsx";
 import { usePopover } from "./TitleBar.tsx";
 import { WorkspacePicker } from "./WorkspacePicker.tsx";
 
@@ -279,6 +281,12 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 	};
 
 	const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+		if (e.key === "Tab" && e.shiftKey) {
+			e.preventDefault();
+			const { session: s, draftPermission } = useStore.getState();
+			void setPermissionMode(nextPermissionMode(s?.permissionMode ?? draftPermission));
+			return;
+		}
 		if (matches.length) {
 			if (e.key === "ArrowDown" || e.key === "ArrowUp") {
 				e.preventDefault();
@@ -305,6 +313,18 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 	};
 
 	const queued = [...(session?.queue.steering ?? []), ...(session?.queue.followUp ?? [])];
+
+	// Dictation lands where the cursor was, spaced from what is already typed.
+	const insertDictation = (spoken: string) => {
+		const el = ref.current;
+		setText((current) => {
+			const at = Math.min(el?.selectionStart ?? current.length, current.length);
+			const before = current.slice(0, at);
+			const glue = before && !/\s$/.test(before) && !/^[\u3000-\u9fff\uff00-\uffef]/.test(spoken) ? " " : "";
+			return `${before}${glue}${spoken}${current.slice(at)}`;
+		});
+		el?.focus();
+	};
 
 	return (
 		<div className="relative mx-auto w-full max-w-3xl px-5 pb-5">
@@ -359,8 +379,10 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 					{newChat && <WorkspacePicker />}
 					<ModelPicker />
 					<EffortPicker />
+					<PermissionPicker />
 					<div className="flex-1" />
 					<ContextMeter />
+					<VoiceButton onText={insertDictation} />
 					{streaming && (
 						<div className="mr-1 flex rounded-lg bg-ink-950 p-0.5 text-xs">
 							{(["steer", "followUp"] as const).map((d) => (

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ExtensionUIContext, ExtensionUIDialogOptions } from "@earendil-works/pi-coding-agent";
-import type { UIRequest, UIResponse } from "@prometheus/protocol";
+import type { PermissionPrompt, UIRequest, UIResponse } from "@prometheus/protocol";
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 type RequestBody = DistributiveOmit<UIRequest, "id">;
@@ -22,6 +22,8 @@ export interface UIBridgeListener {
  */
 export class UIBridge {
 	private readonly pending = new Map<string, Pending>();
+	/** No user is present (automation runs): dialogs resolve at once with their cancel value instead of waiting forever. */
+	headless = false;
 	readonly statuses = new Map<string, string>();
 	readonly widgets = new Map<string, { lines: string[]; placement: string }>();
 	title: string | undefined;
@@ -53,7 +55,7 @@ export class UIBridge {
 	}
 
 	private dialog<T>(body: RequestBody, opts: ExtensionUIDialogOptions | undefined, fallback: T, map: (r: UIResponse) => T): Promise<T> {
-		if (opts?.signal?.aborted) return Promise.resolve(fallback);
+		if (opts?.signal?.aborted || this.headless) return Promise.resolve(fallback);
 		const request = { id: randomUUID(), ...body } as UIRequest;
 		return new Promise<T>((resolve) => {
 			let timer: ReturnType<typeof setTimeout> | undefined;
@@ -68,6 +70,11 @@ export class UIBridge {
 			this.pending.set(request.id, { request, resolve: finish });
 			this.listener.request(request);
 		});
+	}
+
+	/** Blocks until the user answers a permission prompt; closing the session or an abort counts as a refusal. */
+	async askPermission(prompt: PermissionPrompt, signal?: AbortSignal): Promise<string | undefined> {
+		return this.dialog({ method: "permission", ...prompt }, signal ? { signal } : undefined, undefined, (r) => ("value" in r ? r.value : undefined));
 	}
 
 	context(): ExtensionUIContext {

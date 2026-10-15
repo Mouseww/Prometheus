@@ -22,6 +22,10 @@ const sources = [
 	"plugins/skills",
 	"plugins/memory",
 	"plugins/packages",
+	"plugins/todos",
+	"plugins/git",
+	"plugins/automations",
+	"plugins/voice",
 ];
 const dependencies: Record<string, string> = {};
 for (const dir of sources) {

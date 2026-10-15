@@ -193,6 +193,63 @@ export async function embed(g: GatewayConfig, model: string, inputs: string[], o
 	return [...json.data].sort((a, b) => a.index - b.index).map((d) => d.embedding);
 }
 
+// ---------- Speech to text ----------
+
+export interface TranscribeOptions extends EmbedOptions {
+	/** ISO-639-1 hint such as "zh"; omitted lets the model detect the language. */
+	language?: string;
+}
+
+const AUDIO_EXTENSIONS: Record<string, string> = { "audio/webm": "webm", "audio/ogg": "ogg", "audio/mp4": "m4a", "audio/mpeg": "mp3", "audio/wav": "wav", "audio/x-wav": "wav", "audio/flac": "flac" };
+
+/** Strips codec parameters: "audio/webm;codecs=opus" -> "audio/webm". */
+export function baseMime(mime: string): string {
+	return (mime.split(";")[0] ?? "").trim().toLowerCase();
+}
+
+/**
+ * Turns recorded audio into text through a gateway. OpenAI-compatible endpoints use
+ * `/audio/transcriptions` (Whisper and friends); Gemini transcribes through `generateContent`.
+ * Anthropic has no audio input.
+ */
+export async function transcribe(g: GatewayConfig, model: string, audio: Uint8Array, mimeType: string, options: TranscribeOptions = {}): Promise<string> {
+	const doFetch = options.fetchImpl ?? fetch;
+	const base = g.baseUrl.replace(/\/+$/, "");
+	const mime = baseMime(mimeType) || "audio/webm";
+
+	if (g.format === "anthropic-messages") {
+		throw new Error("Anthropic 协议不支持语音转文字，请选择 OpenAI 或 Gemini 格式的网关");
+	}
+
+	if (g.format === "google-generative-ai") {
+		const modelPath = model.startsWith("models/") ? model : `models/${model}`;
+		const hint = options.language ? ` The language is ${options.language}.` : "";
+		const res = await doFetch(`${base}/${modelPath}:generateContent`, {
+			method: "POST",
+			headers: { "content-type": "application/json", ...authHeaders(g) },
+			body: JSON.stringify({
+				contents: [{ parts: [{ text: `Transcribe this audio verbatim.${hint} Reply with the transcript only, no commentary.` }, { inlineData: { mimeType: mime, data: Buffer.from(audio).toString("base64") } }] }],
+			}),
+			signal: options.signal,
+		});
+		if (!res.ok) throw new Error(`语音转写失败：HTTP ${res.status} ${await safeText(res)}`);
+		const json = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+		return (json.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("").trim();
+	}
+
+	const form = new FormData();
+	form.set("model", model);
+	form.set("response_format", "json");
+	if (options.language) form.set("language", options.language);
+	form.set("file", new Blob([Buffer.from(audio)], { type: mime }), `speech.${AUDIO_EXTENSIONS[mime] ?? "webm"}`);
+	// No content-type header: fetch adds the multipart boundary itself.
+	const { "content-type": _ignored, ...headers } = authHeaders(g);
+	const res = await doFetch(`${base}/audio/transcriptions`, { method: "POST", headers, body: form, signal: options.signal });
+	if (!res.ok) throw new Error(`语音转写失败：HTTP ${res.status} ${await safeText(res)}`);
+	const json = (await res.json()) as { text?: string };
+	return (json.text ?? "").trim();
+}
+
 // ---------- Model catalogue ----------
 
 function catalogueHeaders(g: GatewayConfig): Record<string, string> {

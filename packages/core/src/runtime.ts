@@ -22,6 +22,8 @@ export interface Runtime {
 	knowledge: KnowledgeService;
 	/** PI extensions contributed by built-ins and plugins, ready for DefaultResourceLoader or main(). */
 	extensions(): InlineExtension[];
+	/** One extension that replays whichever plugins are active when a session (re)loads; lets installs reach live chats. */
+	dynamicExtension(): InlineExtension;
 	dispose(): Promise<void>;
 }
 
@@ -38,6 +40,8 @@ export async function bootstrap(options: BootstrapOptions): Promise<Runtime> {
 		cwd: options.cwd ?? process.cwd(),
 		settings: (name) => config.get().pluginSettings[name] ?? {},
 		gateways: () => config.gateways(),
+		isDisabled: (id) => config.get().disabledPlugins.includes(id),
+		setDisabled: (id, disabled) => config.setPluginDisabled(id, disabled),
 	});
 
 	const knowledge = new KnowledgeService({
@@ -53,7 +57,7 @@ export async function bootstrap(options: BootstrapOptions): Promise<Runtime> {
 	);
 	for (const plugin of options.builtinPlugins ?? []) await plugins.load(plugin, "builtin");
 	for (const spec of config.get().plugins) await plugins.loadSpecifier(spec, "config");
-	await plugins.loadDirectory(join(dataDir, "plugins"));
+	await plugins.loadDirectory();
 
 	for (const p of plugins.list()) {
 		if (p.status === "error") console.warn(`[prometheus] 插件加载失败 ${p.name}: ${p.error}`);
@@ -64,7 +68,8 @@ export async function bootstrap(options: BootstrapOptions): Promise<Runtime> {
 		config,
 		plugins,
 		knowledge,
-		extensions: () => [...plugins.extensions],
+		extensions: () => plugins.extensions,
+		dynamicExtension: () => plugins.dynamicExtension(),
 		dispose: () => plugins.dispose(),
 	};
 }

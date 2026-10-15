@@ -4,6 +4,7 @@ import { defineMessages, useT } from "../lib/i18n.ts";
 import { useStore } from "../lib/store.ts";
 import { Composer } from "./Composer.tsx";
 import { MessageList } from "./MessageList.tsx";
+import { TaskPanel } from "./TaskPanel.tsx";
 import { Flame } from "./ui.tsx";
 
 const M = defineMessages({
@@ -84,6 +85,7 @@ export function ChatView() {
 				<MessageList messages={session.messages} tools={session.tools} streaming={session.isStreaming} pending={session.pending} />
 			</div>
 			<Widgets placement="aboveEditor" />
+			<TaskPanel />
 			<Composer />
 			<Widgets placement="belowEditor" />
 		</>

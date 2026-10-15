@@ -11,10 +11,14 @@
   },
   "dependencies": {
     "@prometheus/knowledge-lancedb": "workspace:*",
+    "@prometheus/plugin-automations": "workspace:*",
+    "@prometheus/plugin-git": "workspace:*",
     "@prometheus/plugin-mcp": "workspace:*",
     "@prometheus/plugin-memory": "workspace:*",
     "@prometheus/plugin-packages": "workspace:*",
     "@prometheus/plugin-sdk": "workspace:*",
-    "@prometheus/plugin-skills": "workspace:*"
+    "@prometheus/plugin-skills": "workspace:*",
+    "@prometheus/plugin-todos": "workspace:*",
+    "@prometheus/plugin-voice": "workspace:*"
   }
 }

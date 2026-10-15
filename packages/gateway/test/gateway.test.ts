@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { GatewayConfig } from "@prometheus/protocol";
-import { embed, escapePiValue, maskSecret, mergeGatewayUpdate, redactGateway, toProviderConfig, validateGateway } from "../src/index.ts";
+import { embed, escapePiValue, maskSecret, mergeGatewayUpdate, redactGateway, toProviderConfig, transcribe, validateGateway } from "../src/index.ts";
 
 const SECRET = ["sk", "test", "1234567890"].join("-");
 const NEW_SECRET = ["new", "secret", "value"].join("-");
@@ -111,5 +111,49 @@ describe("embed", () => {
 	});
 	it("rejects anthropic", async () => {
 		await expect(embed(gw({ format: "anthropic-messages" }), "x", ["a"])).rejects.toThrow(/Anthropic/);
+	});
+});
+
+describe("transcribe", () => {
+	const audio = new Uint8Array([1, 2, 3]);
+
+	it("posts multipart audio to /audio/transcriptions without a forced content-type", async () => {
+		let captured: { url: string; init: RequestInit } | undefined;
+		const fetchImpl = (async (url: string, init: RequestInit) => {
+			captured = { url, init };
+			return new Response(JSON.stringify({ text: "  \u4f60\u597d\u4e16\u754c  " }));
+		}) as unknown as typeof fetch;
+		const text = await transcribe(gw(), "whisper-1", audio, "audio/webm;codecs=opus", { fetchImpl, language: "zh" });
+		expect(text).toBe("\u4f60\u597d\u4e16\u754c");
+		expect(captured?.url).toBe("https://llm.example.com/v1/audio/transcriptions");
+		const headers = captured?.init.headers as Record<string, string>;
+		expect(headers.Authorization).toBe(`Bearer ${SECRET}`);
+		expect(Object.keys(headers).map((h) => h.toLowerCase())).not.toContain("content-type");
+		const form = captured?.init.body as FormData;
+		expect(form.get("model")).toBe("whisper-1");
+		expect(form.get("language")).toBe("zh");
+		const file = form.get("file") as File;
+		expect(file.name).toBe("speech.webm");
+		expect(file.type).toBe("audio/webm");
+	});
+
+	it("sends Gemini audio inline through generateContent", async () => {
+		let body: { contents: { parts: Record<string, unknown>[] }[] } | undefined;
+		let url = "";
+		const fetchImpl = (async (u: string, init: RequestInit) => {
+			url = u;
+			body = JSON.parse(String(init.body));
+			return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "hello " }, { text: "there" }] } }] }));
+		}) as unknown as typeof fetch;
+		const text = await transcribe(gw({ format: "google-generative-ai", baseUrl: "https://g.example.com/v1beta" }), "gemini-2.0-flash", audio, "audio/webm", { fetchImpl });
+		expect(text).toBe("hello there");
+		expect(url).toBe("https://g.example.com/v1beta/models/gemini-2.0-flash:generateContent");
+		expect(body?.contents[0]?.parts[1]).toEqual({ inlineData: { mimeType: "audio/webm", data: "AQID" } });
+	});
+
+	it("surfaces HTTP errors and rejects anthropic", async () => {
+		const fetchImpl = (async () => new Response("no such model", { status: 404 })) as unknown as typeof fetch;
+		await expect(transcribe(gw(), "x", audio, "audio/webm", { fetchImpl })).rejects.toThrow(/404 no such model/);
+		await expect(transcribe(gw({ format: "anthropic-messages" }), "x", audio, "audio/webm")).rejects.toThrow(/Anthropic/);
 	});
 });

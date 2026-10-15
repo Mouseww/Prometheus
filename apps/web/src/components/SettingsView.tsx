@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { BarChart3, Blocks, Cable, Check, Copy, Laptop, Moon, Network, Package, Sparkles, Sun, SlidersHorizontal } from "lucide-react";
+import { BarChart3, Blocks, Cable, Check, Copy, Laptop, Mic, Moon, Network, Package, Sparkles, Sun, SlidersHorizontal } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { isTauri } from "../lib/backend.ts";
@@ -14,6 +14,7 @@ import { PluginsView } from "./PluginsView.tsx";
 import { SkillsView } from "./SkillsView.tsx";
 import { Button, PageHeader } from "./ui.tsx";
 import { UsageView } from "./UsageView.tsx";
+import { VoiceSettings } from "./VoiceSettings.tsx";
 
 const M = defineMessages({
 	zh: {
@@ -23,6 +24,7 @@ const M = defineMessages({
 		skills: "技能",
 		market: "PI 插件市场",
 		plugins: "Prometheus 插件",
+		voice: "语音输入",
 		usage: "用量统计",
 		title: "通用设置",
 		subtitle: "外观、语言与会话行为",
@@ -67,6 +69,7 @@ const M = defineMessages({
 		skills: "Skills",
 		market: "PI Marketplace",
 		plugins: "Prometheus Plugins",
+		voice: "Voice",
 		usage: "Usage",
 		title: "General",
 		subtitle: "Appearance, language and session behaviour",
@@ -313,6 +316,7 @@ const TABS: { id: SettingsTab; icon: typeof Network }[] = [
 	{ id: "skills", icon: Sparkles },
 	{ id: "market", icon: Package },
 	{ id: "plugins", icon: Blocks },
+	{ id: "voice", icon: Mic },
 	{ id: "usage", icon: BarChart3 },
 ];
 
@@ -343,6 +347,7 @@ export function SettingsView() {
 				{tab === "mcp" && <McpView />}
 				{tab === "skills" && <SkillsView />}
 				{tab === "market" && <MarketView />}
+				{tab === "voice" && <VoiceSettings />}
 				{tab === "plugins" && <PluginsView />}
 				{tab === "usage" && <UsageView />}
 			</div>
