@@ -114,6 +114,10 @@ fn spawn_backend(app: &tauri::AppHandle, backend: &Backend) -> Result<(), String
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
+    // `tauri dev` serves the UI from the Vite dev server, whose origin the server would otherwise reject.
+    if cfg!(debug_assertions) && std::env::var_os("PROMETHEUS_ALLOWED_ORIGINS").is_none() {
+        cmd.env("PROMETHEUS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173");
+    }
     if std::env::var_os("PROMETHEUS_CWD").is_none() {
         if let Ok(home) = app.path().home_dir() {
             cmd.current_dir(home);
