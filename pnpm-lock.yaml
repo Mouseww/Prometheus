@@ -178,11 +178,26 @@ importers:
 
   packages/protocol: {}
 
+  plugins/automations:
+    dependencies:
+      '@prometheus/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      '@prometheus/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+
   plugins/builtin:
     dependencies:
       '@prometheus/knowledge-lancedb':
         specifier: workspace:*
         version: link:../knowledge-lancedb
+      '@prometheus/plugin-automations':
+        specifier: workspace:*
+        version: link:../automations
+      '@prometheus/plugin-git':
+        specifier: workspace:*
+        version: link:../git
       '@prometheus/plugin-mcp':
         specifier: workspace:*
         version: link:../mcp
@@ -198,6 +213,21 @@ importers:
       '@prometheus/plugin-skills':
         specifier: workspace:*
         version: link:../skills
+      '@prometheus/plugin-todos':
+        specifier: workspace:*
+        version: link:../todos
+      '@prometheus/plugin-voice':
+        specifier: workspace:*
+        version: link:../voice
+
+  plugins/git:
+    dependencies:
+      '@prometheus/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      '@prometheus/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
 
   plugins/knowledge-lancedb:
     dependencies:
@@ -255,6 +285,30 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: 1.2.0
         version: 1.2.0(@aws-sdk/credential-provider-node@3.972.86)(@smithy/signature-v4@5.7.4)(ws@8.22.0)
+      '@prometheus/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      '@prometheus/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+
+  plugins/todos:
+    dependencies:
+      '@earendil-works/pi-ai':
+        specifier: 1.2.0
+        version: 1.2.0(@aws-sdk/credential-provider-node@3.972.86)(@smithy/signature-v4@5.7.4)(undici@8.10.2)(ws@8.22.0)
+      '@prometheus/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      '@prometheus/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+
+  plugins/voice:
+    dependencies:
+      '@prometheus/gateway':
+        specifier: workspace:*
+        version: link:../../packages/gateway
       '@prometheus/plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk

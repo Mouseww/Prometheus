@@ -8,6 +8,8 @@ import type {
 	ModelInfo,
 	ModelRef,
 	PackageJob,
+	PermissionMode,
+	PluginInfo,
 	ServerFrame,
 	SessionEvent,
 	SessionSnapshot,
@@ -89,6 +91,7 @@ export interface ActiveSession {
 	model: ModelRef | null;
 	thinkingLevel: ThinkingLevel;
 	availableThinkingLevels: ThinkingLevel[];
+	permissionMode: PermissionMode;
 	isStreaming: boolean;
 	queue: { steering: string[]; followUp: string[] };
 	statuses: Record<string, string>;
@@ -99,8 +102,8 @@ export interface ActiveSession {
 	pending: { text: string; timestamp: number } | null;
 }
 
-export type SettingsTab = "general" | "gateways" | "mcp" | "skills" | "market" | "plugins" | "usage";
-export type View = "chat" | "knowledge" | "memory" | "settings" | { panel: string };
+export type SettingsTab = "general" | "gateways" | "mcp" | "skills" | "market" | "plugins" | "voice" | "usage";
+export type View = "chat" | "knowledge" | "memory" | "automations" | "git" | "settings" | { panel: string };
 
 interface State {
 	client: PrometheusClient | null;
@@ -109,6 +112,8 @@ interface State {
 	settingsTab: SettingsTab;
 	sessions: SessionSummary[];
 	workspaces: WorkspaceInfo[];
+	/** Every plugin the host knows, loaded or not; views use it to show or hide plugin-backed features. */
+	plugins: PluginInfo[];
 	hostSettings: HostSettings | null;
 	hostInfo: HostInfo | null;
 	session: ActiveSession | null;
@@ -122,6 +127,8 @@ interface State {
 	booted: boolean;
 	/** Model picked on the new-chat page before any workspace (and so any session) exists. */
 	draftModel: ModelRef | null;
+	/** Permission mode picked on the new-chat page before a session exists. */
+	draftPermission: PermissionMode;
 	/** Background marketplace operations (newest first); kept here so they survive switching Settings tabs. */
 	packageJobs: PackageJob[];
 	/** Bumped whenever a package operation succeeds, so views can reload the installed list. */
@@ -135,6 +142,7 @@ export const useStore = create<State>(() => ({
 	settingsTab: "general",
 	sessions: [],
 	workspaces: [],
+	plugins: [],
 	hostSettings: null,
 	hostInfo: null,
 	session: null,
@@ -146,6 +154,7 @@ export const useStore = create<State>(() => ({
 	editorText: null,
 	booted: false,
 	draftModel: null,
+	draftPermission: "default",
 	packageJobs: [],
 	packageRevision: 0,
 }));
@@ -286,6 +295,8 @@ function reduce(session: ActiveSession, e: SessionEvent): ActiveSession {
 			return { ...session, thinkingLevel: e.level };
 		case "model_changed":
 			return { ...session, model: e.model };
+		case "permission_mode_changed":
+			return { ...session, permissionMode: e.mode };
 		default:
 			return session;
 	}
@@ -334,6 +345,12 @@ export function handleFrame(frame: ServerFrame): void {
 			return;
 		case "gateways.changed":
 			void refreshModels();
+			return;
+		case "plugins.changed":
+			void refreshPlugins();
+			return;
+		case "plugin.notify":
+			for (const fn of pluginListeners.get(frame.plugin) ?? []) fn();
 			return;
 		case "error":
 			toast(frame.message, "error");
@@ -386,6 +403,7 @@ function fromSnapshot(s: SessionSnapshot): ActiveSession {
 		model: s.model,
 		thinkingLevel: s.thinkingLevel,
 		availableThinkingLevels: s.availableThinkingLevels,
+		permissionMode: s.permissionMode,
 		isStreaming: s.isStreaming,
 		queue: s.queue,
 		statuses: s.statuses,
@@ -410,7 +428,11 @@ function activate(snapshot: SessionSnapshot): void {
 		session: fromSnapshot(snapshot),
 		view: "chat",
 		draftModel: null,
-		uiQueue: snapshot.pendingUI.filter((r) => !["notify", "setStatus", "setWidget", "setTitle", "setEditorText"].includes(r.method)).map((request) => ({ sessionId: snapshot.id, request })),
+		uiQueue: [
+			// Prompts of other sessions stay pending on the server; only this session's are refreshed from its snapshot.
+			...get().uiQueue.filter((q) => q.sessionId !== snapshot.id),
+			...snapshot.pendingUI.filter((r) => !["notify", "setStatus", "setWidget", "setTitle", "setEditorText"].includes(r.method)).map((request) => ({ sessionId: snapshot.id, request })),
+		],
 	});
 	localStorage.setItem("prometheus.lastSession", snapshot.id);
 	void refreshCommands();
@@ -425,6 +447,26 @@ export async function refreshSessions(): Promise<void> {
 export async function refreshWorkspaces(): Promise<void> {
 	const workspaces = await call((c) => c.rpc("workspace.list", {}));
 	if (workspaces) set({ workspaces });
+}
+
+export async function refreshPlugins(): Promise<void> {
+	const plugins = await get().client?.rpc("plugin.list", {}).catch(() => undefined);
+	if (plugins) set({ plugins });
+}
+
+/** A plugin that is installed, enabled and running; its sidebar entry and chat features appear only then. */
+export function pluginActive(plugins: PluginInfo[], name: string): boolean {
+	return plugins.some((p) => p.name === name && p.status === "loaded");
+}
+
+const pluginListeners = new Map<string, Set<() => void>>();
+
+/** Runs `fn` whenever the named plugin reports a data change; returns the unsubscribe. */
+export function onPluginChange(plugin: string, fn: () => void): () => void {
+	const set_ = pluginListeners.get(plugin) ?? new Set();
+	set_.add(fn);
+	pluginListeners.set(plugin, set_);
+	return () => void set_.delete(fn);
 }
 
 export async function refreshHostSettings(): Promise<void> {
@@ -480,7 +522,7 @@ export function startNewChat(): void {
 	if (!current || current.messages.length === 0) return;
 	get().client?.unsubscribe(current.id);
 	buffer = [];
-	set({ session: null, commands: [], draftModel: current.model });
+	set({ session: null, commands: [], draftModel: current.model, draftPermission: "default" });
 }
 
 /** Pick the workspace of the new-chat page, carrying over any model and thinking level chosen so far. */
@@ -489,13 +531,26 @@ export async function chooseWorkspace(path: string): Promise<void> {
 	if (prev && (prev.messages.length > 0 || prev.isStreaming)) return;
 	const model = prev?.model ?? get().draftModel;
 	const thinking = prev?.thinkingLevel;
+	const permission = prev?.permissionMode ?? get().draftPermission;
 	await createSession(path);
 	const created = get().session;
 	if (!created || created.id === prev?.id) return;
-	set({ draftModel: null });
+	set({ draftModel: null, draftPermission: "default" });
+	if (permission !== created.permissionMode) await setPermissionMode(permission);
 	if (model && (created.model?.provider !== model.provider || created.model.id !== model.id)) await setModel(model);
 	const ready = get().session;
 	if (thinking && ready && thinking !== ready.thinkingLevel && ready.availableThinkingLevels.includes(thinking)) await setThinking(thinking);
+}
+
+/** New-chat page with `workspace` already chosen; keeps the current model and thinking level like the picker does. */
+export async function newChatIn(workspace: WorkspaceInfo): Promise<void> {
+	const current = get().session;
+	if (current && current.messages.length === 0 && !current.pending && current.workspaceId === workspace.id) {
+		set({ view: "chat" });
+		return;
+	}
+	startNewChat();
+	await chooseWorkspace(workspace.path);
 }
 
 /** After the active session disappears, fall back to the newest one in the same workspace, else the new-chat page. */
@@ -598,6 +653,18 @@ export async function setThinking(level: ThinkingLevel): Promise<void> {
 	if (session) await call((c) => c.rpc("thinking.set", { sessionId: session.id, level }));
 }
 
+export async function setPermissionMode(mode: PermissionMode): Promise<void> {
+	const session = get().session;
+	if (!session) {
+		set({ draftPermission: mode });
+		return;
+	}
+	const ok = await call((c) => c.rpc("permission.set", { sessionId: session.id, mode }));
+	// The server echoes a permission_mode_changed event; setting it here too keeps the picker instant.
+	const current = get().session;
+	if (ok !== undefined && current?.id === session.id) set({ session: { ...current, permissionMode: mode } });
+}
+
 export async function respondUI(sessionId: string, requestId: string, response: { value: string } | { confirmed: boolean } | { cancelled: true }): Promise<void> {
 	set((s) => ({ uiQueue: s.uiQueue.filter((q) => q.request.id !== requestId) }));
 	await call((c) => c.rpc("ui.respond", { sessionId, requestId, response }));
@@ -682,7 +749,7 @@ export function bindClient(client: PrometheusClient): () => void {
 }
 
 async function onConnected(): Promise<void> {
-	await Promise.all([refreshSessions(), refreshModels(), refreshWorkspaces(), refreshHostSettings(), refreshHostInfo(), refreshPackageJobs()]);
+	await Promise.all([refreshSessions(), refreshModels(), refreshWorkspaces(), refreshPlugins(), refreshHostSettings(), refreshHostInfo(), refreshPackageJobs()]);
 	const current = get().session;
 	const target = current?.id ?? (get().booted ? null : localStorage.getItem("prometheus.lastSession"));
 	const exists = target && get().sessions.some((s) => s.id === target && !s.archived);

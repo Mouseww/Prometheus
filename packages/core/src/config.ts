@@ -8,6 +8,8 @@ export interface PrometheusConfig {
 	gateways: GatewayConfig[];
 	/** npm package names or paths (relative to dataDir) of extra plugins. */
 	plugins: string[];
+	/** Plugin ids the user switched off. */
+	disabledPlugins: string[];
 	pluginSettings: Record<string, Record<string, unknown>>;
 }
 
@@ -15,7 +17,7 @@ export function defaultDataDir(): string {
 	return process.env.PROMETHEUS_HOME || join(homedir(), ".prometheus");
 }
 
-const EMPTY: PrometheusConfig = { gateways: [], plugins: [], pluginSettings: {} };
+const EMPTY: PrometheusConfig = { gateways: [], plugins: [], disabledPlugins: [], pluginSettings: {} };
 
 /** config.json holds API keys, so it is always written owner-only. */
 export class ConfigStore {
@@ -36,6 +38,7 @@ export class ConfigStore {
 			this.config = {
 				gateways: Array.isArray(raw.gateways) ? raw.gateways : [],
 				plugins: Array.isArray(raw.plugins) ? raw.plugins : [],
+				disabledPlugins: Array.isArray(raw.disabledPlugins) ? raw.disabledPlugins : [],
 				pluginSettings: raw.pluginSettings ?? {},
 			};
 		} catch (err) {
@@ -66,6 +69,12 @@ export class ConfigStore {
 
 	async deleteGateway(id: string): Promise<void> {
 		this.config.gateways = this.config.gateways.filter((g) => g.id !== id);
+		await this.persist();
+	}
+
+	async setPluginDisabled(id: string, disabled: boolean): Promise<void> {
+		const rest = this.config.disabledPlugins.filter((p) => p !== id);
+		this.config.disabledPlugins = disabled ? [...rest, id] : rest;
 		await this.persist();
 	}
 

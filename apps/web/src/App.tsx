@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
+import { AutomationsView } from "./components/AutomationsView.tsx";
 import { ChatView } from "./components/ChatView.tsx";
 import { ConnectScreen } from "./components/ConnectScreen.tsx";
 import { DialogHost } from "./components/DialogHost.tsx";
+import { GitView } from "./components/GitView.tsx";
 import { KnowledgeView } from "./components/KnowledgeView.tsx";
 import { MemoryView } from "./components/MemoryView.tsx";
 import { SettingsView } from "./components/SettingsView.tsx";
@@ -13,7 +15,7 @@ import { UpdateDialog } from "./components/UpdateDialog.tsx";
 import type { BackendTarget } from "./lib/client.ts";
 import { PrometheusClient } from "./lib/client.ts";
 import { discoverBackend, establishCookie, isTauri, saveMode } from "./lib/backend.ts";
-import { bindClient, openSession, setView, useStore } from "./lib/store.ts";
+import { bindClient, openSession, pluginActive, setView, useStore } from "./lib/store.ts";
 import { usePrefs } from "./lib/prefs.ts";
 import { checkForUpdate } from "./lib/updater.ts";
 
@@ -26,6 +28,13 @@ export function App() {
 	const conn = useStore((s) => s.conn);
 	const view = useStore((s) => s.view);
 	const title = useStore((s) => s.title);
+	const plugins = useStore((s) => s.plugins);
+
+	// A view whose plugin was just switched off would render against RPCs that no longer exist.
+	useEffect(() => {
+		if (!plugins.length) return;
+		if ((view === "automations" && !pluginActive(plugins, "automations")) || (view === "git" && !pluginActive(plugins, "git"))) setView("chat");
+	}, [view, plugins]);
 
 	useEffect(() => {
 		discoverBackend().then(setTarget, (err: unknown) => {
@@ -100,6 +109,8 @@ export function App() {
 						<Modal key={typeof view === "object" ? view.panel : view} onClose={closeView} floatingClose={typeof view === "object"}>
 							{view === "knowledge" && <KnowledgeView />}
 							{view === "memory" && <MemoryView />}
+							{view === "automations" && <AutomationsView />}
+							{view === "git" && <GitView />}
 							{view === "settings" && <SettingsView />}
 							{typeof view === "object" && <PanelFrame target={target} url={view.panel} />}
 						</Modal>

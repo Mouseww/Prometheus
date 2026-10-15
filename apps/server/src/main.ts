@@ -55,10 +55,12 @@ const host = await PrometheusHost.create({
 	builtinPlugins,
 	listener: {
 		event: (sessionId, event) => broadcast({ type: "event", sessionId, event }, sessionId),
-		uiRequest: (sessionId, request) => broadcast({ type: "ui.request", sessionId, request }, sessionId),
-		uiResolved: (sessionId, requestId) => broadcast({ type: "ui.resolved", sessionId, requestId }, sessionId),
+		uiRequest: (sessionId, request) => broadcast({ type: "ui.request", sessionId, request }, request.method === "permission" ? undefined : sessionId),
+		uiResolved: (sessionId, requestId) => broadcast({ type: "ui.resolved", sessionId, requestId }),
 		sessionsChanged: () => broadcast({ type: "sessions.changed" }),
 		gatewaysChanged: () => broadcast({ type: "gateways.changed" }),
+		pluginsChanged: () => broadcast({ type: "plugins.changed" }),
+		pluginNotify: (plugin) => broadcast({ type: "plugin.notify", plugin }),
 	},
 });
 

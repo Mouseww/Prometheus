@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
-import type { GatewayConfig } from "@prometheus/protocol";
+import type { GatewayConfig, ModelRef, RunAccess } from "@prometheus/protocol";
 
 export type { ExtensionAPI, ExtensionFactory, ToolDefinition } from "@earendil-works/pi-coding-agent";
 export { createJsonStore, type JsonStore } from "./json-store.ts";
@@ -67,6 +67,36 @@ export interface PluginLogger {
 
 export type HostKind = "server" | "tui";
 
+/** A project folder the user has added to the app. */
+export interface WorkspaceRef {
+	id: string;
+	path: string;
+	name: string;
+}
+
+export interface AgentRunOptions {
+	/** Working directory; must exist. It is added to the workspace list. */
+	cwd: string;
+	prompt: string;
+	/** Session title shown in the sidebar. */
+	name?: string;
+	/** What the run may do. Nobody is there to answer questions, so anything beyond this is refused. */
+	access: RunAccess;
+	model?: ModelRef;
+	/** Default 30 minutes. */
+	timeoutMs?: number;
+	signal?: AbortSignal;
+}
+
+export interface AgentRunResult {
+	/** The saved session, openable from the sidebar. */
+	sessionId: string;
+	status: "success" | "error" | "aborted";
+	/** The agent's final reply. */
+	text: string;
+	error?: string;
+}
+
 export interface PluginContext {
 	readonly host: HostKind;
 	/** Directory owned by this plugin for persistent data. */
@@ -80,6 +110,10 @@ export interface PluginContext {
 	readonly settings: Record<string, unknown>;
 	/** Read-only view of configured AI gateways (API keys included; never log them). */
 	gateways(): GatewayConfig[];
+	/** Project folders known to the app, newest first. */
+	workspaces(): Promise<WorkspaceRef[]>;
+	/** Run the agent to completion without a user present, in a new saved session. Server host only. */
+	runAgent(options: AgentRunOptions): Promise<AgentRunResult>;
 
 	/** Contribute a PI extension: tools, commands, providers, lifecycle hooks. */
 	extension(factory: ExtensionFactory): void;
@@ -93,6 +127,8 @@ export interface PluginContext {
 	rpc(method: string, handler: RpcHandler): void;
 	/** Reload resources (skills, MCP, extensions) of live sessions; idle ones now, busy ones when they settle. */
 	reloadSessions(): Promise<void>;
+	/** Tell connected clients this plugin's data changed, so open views refetch. Server host only. */
+	notifyChanged(): void;
 	/** Run on host shutdown. */
 	onDispose(fn: () => void | Promise<void>): void;
 }
@@ -100,6 +136,8 @@ export interface PluginContext {
 export interface PrometheusPlugin {
 	name: string;
 	version?: string;
+	/** Built-in plugins only: the user may switch it off in Settings. Without this a built-in cannot be disabled, because the app UI relies on it. */
+	optional?: boolean;
 	setup(ctx: PluginContext): void | Promise<void>;
 }
 

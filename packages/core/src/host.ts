@@ -19,7 +19,7 @@ import {
 	VERSION as PI_VERSION,
 } from "@earendil-works/pi-coding-agent";
 import { listModels, mergeGatewayUpdate, redactGateway, toProviderConfig } from "@prometheus/gateway";
-import type { PrometheusPlugin } from "@prometheus/plugin-sdk";
+import type { AgentRunOptions, AgentRunResult, PrometheusPlugin } from "@prometheus/plugin-sdk";
 import {
 	type CommandInfo,
 	type ContextBreakdown,
@@ -28,6 +28,7 @@ import {
 	type MessageRef,
 	type ModelInfo,
 	PROTOCOL_VERSION,
+	PERMISSION_MODES,
 	type PromptDisposition,
 	type RpcMethod,
 	type RpcParams,
@@ -40,6 +41,9 @@ import {
 	type ChatMessage,
 } from "@prometheus/protocol";
 import { slimEvent, toModelRef } from "./events.ts";
+import { PermissionGate } from "./permission-gate.ts";
+import { EXIT_PLAN_MODE } from "./permissions.ts";
+import { pluginBuilderExtension } from "./plugin-tool.ts";
 import { bootstrap, type Runtime } from "./runtime.ts";
 import { UIBridge } from "./ui-bridge.ts";
 import { collectUsage } from "./usage.ts";
@@ -131,6 +135,8 @@ export interface HostListener {
 	uiResolved(sessionId: string, requestId: string): void;
 	sessionsChanged(): void;
 	gatewaysChanged(): void;
+	pluginsChanged(): void;
+	pluginNotify(plugin: string): void;
 }
 
 export interface PrometheusHostOptions {
@@ -144,6 +150,7 @@ export interface PrometheusHostOptions {
 interface LiveSession {
 	session: AgentSession;
 	bridge: UIBridge;
+	gate: PermissionGate;
 	unsubscribe: () => void;
 }
 
@@ -158,7 +165,6 @@ export class PrometheusHost {
 	private readonly live = new Map<string, LiveSession>();
 	private readonly opening = new Map<string, Promise<LiveSession>>();
 	private readonly paths = new Map<string, string>();
-	private readonly loaders = new Map<string, Promise<DefaultResourceLoader>>();
 	private registered = new Set<string>();
 	private readonly pendingReload = new Set<string>();
 	private readonly listener: HostListener;
@@ -172,6 +178,10 @@ export class PrometheusHost {
 		this.listener = options.listener;
 		this.workspaces = new WorkspaceStore(join(runtime.dataDir, "workspaces.json"));
 		runtime.plugins.reloadSessions = () => this.reloadSessions();
+		runtime.plugins.workspaces = async () => (await this.workspaces.list()).map((w) => ({ id: w.id, path: w.path, name: w.name }));
+		runtime.plugins.runAgent = (opts) => this.runAgent(opts);
+		runtime.plugins.onChanged = () => this.listener.pluginsChanged();
+		runtime.plugins.notifyPlugin = (name) => this.listener.pluginNotify(name);
 	}
 
 	static async create(options: PrometheusHostOptions): Promise<PrometheusHost> {
@@ -235,39 +245,40 @@ export class PrometheusHost {
 		}
 	}
 
-	private loader(cwd: string): Promise<DefaultResourceLoader> {
-		let pending = this.loaders.get(cwd);
-		if (!pending) {
-			pending = (async () => {
-				const loader = new DefaultResourceLoader({
-					cwd,
-					agentDir: this.agentDir,
-					// PI's own built-ins (MCP client, codemode, tool search) come first, as in the TUI.
-					extensionFactories: [...builtInExtensions, ...this.runtime.extensions()],
-				});
-				await loader.reload();
-				return loader;
-			})();
-			pending.catch(() => this.loaders.delete(cwd));
-			this.loaders.set(cwd, pending);
-		}
-		return pending;
+	/** One loader per session: its extension runtime is invalidated when that session is disposed or reloaded, so sharing it would break sibling sessions. */
+	private async loader(cwd: string, gate: PermissionGate): Promise<DefaultResourceLoader> {
+		const loader = new DefaultResourceLoader({
+			cwd,
+			agentDir: this.agentDir,
+			// PI's own built-ins (MCP client, codemode, tool search) come first, as in the TUI.
+			extensionFactories: [...builtInExtensions, this.runtime.dynamicExtension(), pluginBuilderExtension(this.runtime.plugins), gate.extension()],
+		});
+		await loader.reload();
+		return loader;
 	}
 
 	private async attach(sessionManager: SessionManager): Promise<LiveSession> {
 		const cwd = sessionManager.getCwd();
+		const gate = new PermissionGate();
 		const { session } = await createAgentSession({
 			cwd,
 			agentDir: this.agentDir,
 			modelRuntime: this.modelRuntime,
 			sessionManager,
-			resourceLoader: await this.loader(cwd),
+			resourceLoader: await this.loader(cwd, gate),
 		});
 		const id = session.sessionId;
 		const bridge = new UIBridge({
 			request: (r) => this.listener.uiRequest(id, r),
 			resolved: (rid) => this.listener.uiResolved(id, rid),
 		});
+		gate.ask = (prompt, signal) => bridge.askPermission(prompt, signal);
+		gate.onModeChange = (mode) => {
+			// The plan-submission tool exists only while planning.
+			const active = session.getActiveToolNames().filter((n) => n !== EXIT_PLAN_MODE);
+			session.setActiveToolsByName(mode === "plan" ? [...active, EXIT_PLAN_MODE] : active);
+			this.listener.event(id, { type: "permission_mode_changed", mode });
+		};
 		const unsubscribe = session.subscribe((e) => {
 			const slim = slimEvent(e);
 			if (slim) this.listener.event(id, slim);
@@ -287,7 +298,7 @@ export class PrometheusHost {
 			mode: "rpc",
 			onError: (err) => bridge.context().notify(`扩展错误：${err.error}`, "error"),
 		});
-		const live = { session, bridge, unsubscribe };
+		const live = { session, bridge, gate, unsubscribe };
 		this.live.set(id, live);
 		const file = session.sessionFile;
 		if (file) this.paths.set(id, file);
@@ -387,12 +398,67 @@ export class PrometheusHost {
 			model: toModelRef(s.model),
 			thinkingLevel: s.thinkingLevel as ThinkingLevel,
 			availableThinkingLevels: s.getAvailableThinkingLevels() as ThinkingLevel[],
+			permissionMode: live.gate.mode,
 			isStreaming: s.isStreaming,
 			queue: { steering: [...s.getSteeringMessages()], followUp: [...s.getFollowUpMessages()] },
 			pendingUI: live.bridge.pendingRequests(),
 			statuses: Object.fromEntries(live.bridge.statuses),
 			widgets: Object.fromEntries(live.bridge.widgets),
 		};
+	}
+
+	/** The reply text of the last assistant message. */
+	private lastReply(session: AgentSession): string {
+		for (let i = session.messages.length - 1; i >= 0; i--) {
+			const m = session.messages[i] as unknown as { role: string; content?: Block[] | string };
+			if (m.role !== "assistant") continue;
+			if (typeof m.content === "string") return m.content;
+			return (m.content ?? []).map((b) => (b.type === "text" ? (b.text ?? "") : "")).join("").trim();
+		}
+		return "";
+	}
+
+	/**
+	 * Runs the agent to completion in a new saved session with no user present (automations).
+	 * Nothing is ever asked: whatever `access` does not cover is refused, so the run cannot hang.
+	 */
+	private async runAgent(options: AgentRunOptions): Promise<AgentRunResult> {
+		const dir = options.cwd?.trim();
+		if (!dir || !existsSync(dir) || !statSync(dir).isDirectory()) throw new Error(`工作目录不存在：${dir}`);
+		await this.workspaces.add(dir);
+		const live = await this.attach(SessionManager.create(normalizeDir(dir)));
+		const { session, bridge, gate } = live;
+		const id = session.sessionId;
+		gate.unattended = options.access;
+		bridge.headless = true;
+		if (options.name?.trim()) session.setSessionName(options.name.trim());
+		this.listener.sessionsChanged();
+
+		const stop = () => void session.abort().catch(() => {});
+		const timeout = setTimeout(stop, options.timeoutMs ?? 30 * 60_000);
+		options.signal?.addEventListener("abort", stop, { once: true });
+		try {
+			if (options.model) {
+				const target = this.modelRuntime.getModel(options.model.provider, options.model.id);
+				if (!target) throw new Error(`模型不存在：${options.model.provider}/${options.model.id}`);
+				await session.setModel(target);
+			}
+			await session.prompt(options.prompt);
+			await session.waitForIdle();
+			const aborted = options.signal?.aborted || session.messages.some((m) => (m as unknown as { stopReason?: string }).stopReason === "aborted");
+			const last = session.messages[session.messages.length - 1] as unknown as { stopReason?: string; errorMessage?: string } | undefined;
+			if (aborted) return { sessionId: id, status: "aborted", text: this.lastReply(session), error: "已中止或超时" };
+			if (last?.stopReason === "error") return { sessionId: id, status: "error", text: this.lastReply(session), error: last.errorMessage ?? "模型返回错误" };
+			return { sessionId: id, status: "success", text: this.lastReply(session) };
+		} catch (err) {
+			return { sessionId: id, status: "error", text: this.lastReply(session), error: err instanceof Error ? err.message : String(err) };
+		} finally {
+			clearTimeout(timeout);
+			options.signal?.removeEventListener("abort", stop);
+			// Nobody is subscribed to this session; release it once saved. It stays in the sidebar from disk.
+			await this.closeSession(id).catch(() => {});
+			this.listener.sessionsChanged();
+		}
 	}
 
 	private async prompt(sessionId: string, text: string, images: ImageContent[] | undefined, delivery: "steer" | "followUp" | undefined): Promise<PromptDisposition> {
@@ -714,6 +780,11 @@ export class PrometheusHost {
 			this.require(sessionId).session.setThinkingLevel(level);
 			return null;
 		},
+		"permission.set": ({ sessionId, mode }) => {
+			if (!PERMISSION_MODES.includes(mode)) throw new Error(`未知权限模式：${String(mode)}`);
+			this.require(sessionId).gate.setMode(mode);
+			return null;
+		},
 
 		"commands.list": ({ sessionId }) => {
 			const s = this.require(sessionId).session;
@@ -726,10 +797,11 @@ export class PrometheusHost {
 		"tools.list": ({ sessionId }) => {
 			const s = this.require(sessionId).session;
 			const active = new Set(s.getActiveToolNames());
-			return s.getAllTools().map((t) => ({ name: t.name, description: t.description ?? "", active: active.has(t.name) }));
+			return s.getAllTools().filter((t) => t.name !== EXIT_PLAN_MODE).map((t) => ({ name: t.name, description: t.description ?? "", active: active.has(t.name) }));
 		},
 		"tools.set": ({ sessionId, active }) => {
-			this.require(sessionId).session.setActiveToolsByName(active);
+			const live = this.require(sessionId);
+			live.session.setActiveToolsByName(live.gate.mode === "plan" ? [...active, EXIT_PLAN_MODE] : active);
 			return null;
 		},
 
@@ -797,6 +869,14 @@ export class PrometheusHost {
 		"kb.stores": () => [...this.runtime.plugins.stores.keys()],
 
 		"plugin.list": () => this.runtime.plugins.list(),
+		"plugin.install": (params) => this.runtime.plugins.install(params),
+		"plugin.setEnabled": ({ id, enabled }) => this.runtime.plugins.setEnabled(id, enabled),
+		"plugin.reload": ({ id }) => this.runtime.plugins.reload(id),
+		"plugin.scan": () => this.runtime.plugins.scan(),
+		"plugin.remove": async ({ id }) => {
+			await this.runtime.plugins.remove(id);
+			return null;
+		},
 		"plugin.call": async ({ plugin, method, params }) => {
 			const handler = this.runtime.plugins.rpcs.get(`${plugin}/${method}`);
 			if (!handler) throw new Error(`插件方法不存在：${plugin}/${method}`);

@@ -2,6 +2,7 @@ import clsx from "clsx";
 import {
 	Archive,
 	ArchiveRestore,
+	AlarmClock,
 	BookOpen,
 	Brain,
 	ChevronDown,
@@ -9,6 +10,7 @@ import {
 	FolderOpen,
 	FolderSearch,
 	FolderPlus,
+	GitBranch,
 	LogOut,
 	MoreHorizontal,
 	Pencil,
@@ -28,10 +30,11 @@ import {
 	addWorkspace,
 	archiveSession,
 	call,
-	createSession,
 	deleteSession,
+	newChatIn,
 	openSession,
 	openSettings,
+	pluginActive,
 	renameSession,
 	setView,
 	startNewChat,
@@ -44,6 +47,8 @@ const M = defineMessages({
 	zh: {
 		knowledge: "知识库",
 		memory: "记忆",
+		automations: "自动化",
+		git: "Git",
 		settings: "设置",
 		workspaces: "工作区",
 		openFolder: "打开项目目录",
@@ -70,6 +75,8 @@ const M = defineMessages({
 	en: {
 		knowledge: "Knowledge",
 		memory: "Memory",
+		automations: "Automations",
+		git: "Git",
 		settings: "Settings",
 		workspaces: "Workspaces",
 		openFolder: "Open project folder",
@@ -276,7 +283,7 @@ function WorkspaceGroup({ w, sessions, activeId, current }: { w: WorkspaceInfo; 
 						</div>
 					)}
 				</div>
-				<button type="button" onClick={() => void createSession(w.path)} className="rounded p-0.5 text-ink-500 hover:bg-ink-700 hover:text-ember-300" title={t("newChat")}>
+				<button type="button" onClick={() => void newChatIn(w)} className="rounded p-0.5 text-ink-500 hover:bg-ink-700 hover:text-ember-300" title={t("newChat")}>
 					<Plus className="size-4" />
 				</button>
 			</div>
@@ -308,13 +315,14 @@ export function Sidebar({ target, onDisconnect }: { target: BackendTarget; onDis
 	const active = useStore((s) => s.session);
 	const view = useStore((s) => s.view);
 	const conn = useStore((s) => s.conn);
+	const plugins = useStore((s) => s.plugins);
 	const [panels, setPanels] = useState<PanelInfo[]>([]);
 	const [picking, setPicking] = useState(false);
 
 	useEffect(() => {
 		if (conn !== "open") return;
-		void call((c) => c.rpc("plugin.list", {})).then((list) => list && setPanels(list.flatMap((p) => p.panels)));
-	}, [conn]);
+		void call((c) => c.rpc("plugin.list", {})).then((list) => list && setPanels(list.flatMap((p) => (p.status === "loaded" ? p.panels : []))));
+	}, [conn, plugins]);
 
 	const grouped = useMemo(() => {
 		const map = new Map<string, SessionSummary[]>();
@@ -328,6 +336,11 @@ export function Sidebar({ target, onDisconnect }: { target: BackendTarget; onDis
 	];
 	const navClass = (on: boolean) =>
 		clsx("flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm transition-colors", on ? "bg-ink-800 text-ink-100" : "text-ink-400 hover:bg-ink-850 hover:text-ink-100");
+	// Plugin-backed entries come and go as plugins are switched on and off, with no restart.
+	const tools = [
+		...(pluginActive(plugins, "automations") ? [{ view: "automations" as const, label: t("automations"), icon: AlarmClock }] : []),
+		...(pluginActive(plugins, "git") ? [{ view: "git" as const, label: t("git"), icon: GitBranch }] : []),
+	];
 
 	return (
 		<aside className="flex w-72 shrink-0 flex-col border-r hairline bg-ink-950/60 backdrop-blur">
@@ -339,6 +352,16 @@ export function Sidebar({ target, onDisconnect }: { target: BackendTarget; onDis
 				>
 					<Plus className="size-4 text-ember-400" /> {t("startChat")}
 				</button>
+				{tools.length > 0 && (
+					<div className="mt-1 space-y-0.5">
+						{tools.map((n) => (
+							<button key={n.view} type="button" onClick={() => setView(n.view)} className={navClass(view === n.view)}>
+								<n.icon className={clsx("size-4", view === n.view && "text-ember-400")} />
+								{n.label}
+							</button>
+						))}
+					</div>
+				)}
 			</div>
 			<div className="flex items-center justify-between px-3 pt-3 pb-1.5">
 				<span className="px-1 font-mono text-[10.5px] tracking-[0.18em] text-ink-500 uppercase">{t("workspaces")}</span>
@@ -412,7 +435,7 @@ export function Sidebar({ target, onDisconnect }: { target: BackendTarget; onDis
 					onPick={async (path) => {
 						setPicking(false);
 						const w = await addWorkspace(path);
-						if (w) await createSession(w.path);
+						if (w) await newChatIn(w);
 					}}
 				/>
 			)}

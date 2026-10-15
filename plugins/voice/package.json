@@ -1,0 +1,17 @@
+{
+  "name": "@prometheus/plugin-voice",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@prometheus/gateway": "workspace:*",
+    "@prometheus/plugin-sdk": "workspace:*",
+    "@prometheus/protocol": "workspace:*"
+  }
+}

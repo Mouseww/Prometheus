@@ -84,6 +84,7 @@ export type SessionEvent =
 	| { type: "session_info_changed"; name?: string }
 	| { type: "thinking_level_changed"; level: ThinkingLevel }
 	| { type: "model_changed"; model: ModelRef | null }
+	| { type: "permission_mode_changed"; mode: PermissionMode }
 	/** History rewritten (delete / retry / tree navigation): replace the client's message list. */
 	| { type: "messages_reset"; messages: ChatMessage[] }
 	| { type: "bash_execution_update"; delta: string };
@@ -92,6 +93,8 @@ export type SessionEvent =
 
 export type UIRequest =
 	| { id: string; method: "select"; title: string; options: string[] }
+	/** Tool-permission or plan approval; answered with `{ value }` (see PermissionPrompt for the values). */
+	| ({ id: string; method: "permission" } & PermissionPrompt)
 	| { id: string; method: "confirm"; title: string; message: string }
 	| { id: string; method: "input"; title: string; placeholder?: string }
 	| { id: string; method: "editor"; title: string; prefill?: string }
@@ -102,7 +105,24 @@ export type UIRequest =
 	| { id: string; method: "setEditorText"; text: string };
 
 export type UIResponse = { value: string } | { confirmed: boolean } | { cancelled: true };
-export const BLOCKING_UI_METHODS = new Set<UIRequest["method"]>(["select", "confirm", "input", "editor"]);
+export const BLOCKING_UI_METHODS = new Set<UIRequest["method"]>(["select", "confirm", "input", "editor", "permission"]);
+
+/**
+ * How tool calls are gated, after Claude Code:
+ * default (ask before edits and commands), acceptEdits (file edits pass, commands still ask),
+ * plan (read-only until the plan is approved), bypassPermissions (nothing is asked).
+ */
+export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
+export const PERMISSION_MODES: readonly PermissionMode[] = ["default", "acceptEdits", "plan", "bypassPermissions"];
+
+/**
+ * Asked of the user before a tool runs (`kind: "tool"`) or when the model proposes a plan (`kind: "plan"`).
+ * Answers: tool -> "allow" | "always" | "deny"; plan -> "acceptEdits" | "default" | "keep".
+ * `always` is only offered when `alwaysLabel` is set (the remembered rule, e.g. "git").
+ */
+export type PermissionPrompt =
+	| { kind: "tool"; toolName: string; summary: string; detail?: string; alwaysLabel?: string }
+	| { kind: "plan"; plan: string };
 
 // ---------- Domain DTOs ----------
 
@@ -173,6 +193,7 @@ export interface SessionSnapshot {
 	model: ModelRef | null;
 	thinkingLevel: ThinkingLevel;
 	availableThinkingLevels: ThinkingLevel[];
+	permissionMode: PermissionMode;
 	isStreaming: boolean;
 	queue: { steering: string[]; followUp: string[] };
 	pendingUI: UIRequest[];
@@ -266,12 +287,20 @@ export interface KnowledgeDocumentInfo { id: string; title: string; chunks: numb
 export interface KnowledgeHit { documentId: string; title: string; text: string; score: number }
 
 export interface PluginInfo {
+	/** Stable key: the name for built-ins, the folder name for folder plugins, the specifier for config ones. */
+	id: string;
 	name: string;
 	version?: string;
 	source: "builtin" | "config" | "directory";
-	status: "loaded" | "error";
+	status: "loaded" | "error" | "disabled";
 	error?: string;
 	panels: PanelInfo[];
+	/** Can be switched off and on without a restart. */
+	toggleable: boolean;
+	/** Folder plugins can be deleted from inside the app. */
+	removable: boolean;
+	/** Manual steps still needed for this plugin to be fully in effect (e.g. restart the app); empty when none. */
+	notes: string[];
 }
 export interface PanelInfo { plugin: string; id: string; title: string; icon?: string; url: string }
 
@@ -406,6 +435,165 @@ export interface MemoryEntry {
 
 // ---------- RPC surface ----------
 
+/** What an unattended run (automation) may do; anything beyond it is refused rather than asked. */
+export type RunAccess = "readonly" | "edits" | "full";
+
+export interface PluginFile {
+	/** Relative path inside the plugin folder, forward slashes. */
+	path: string;
+	content: string;
+}
+
+export interface PluginInstallResult {
+	plugin: PluginInfo;
+	/** An older version was replaced. */
+	updated: boolean;
+	/** Live in the running app: open chats pick up its tools once they finish the current turn. */
+	hot: boolean;
+	/** Why part of the change still needs an app restart; empty when none. */
+	restartReasons: string[];
+}
+
+// ---------- Task tracking (todos plugin) ----------
+
+export const TODO_TOOL = "todo_write";
+export type TodoStatus = "pending" | "in_progress" | "completed";
+export interface TodoItem {
+	content: string;
+	status: TodoStatus;
+	/** Present-tense wording shown while the item is in progress. */
+	activeForm?: string;
+}
+
+/** Lenient reader for `todo_write` arguments, shared by the tool and the chat panel. */
+export function parseTodos(input: unknown): TodoItem[] {
+	const list = Array.isArray(input) ? input : input && typeof input === "object" ? (input as { todos?: unknown }).todos : undefined;
+	if (!Array.isArray(list)) return [];
+	const out: TodoItem[] = [];
+	for (const raw of list) {
+		if (!raw || typeof raw !== "object") continue;
+		const r = raw as Record<string, unknown>;
+		const content = typeof r.content === "string" ? r.content.trim() : "";
+		if (!content) continue;
+		const status: TodoStatus = r.status === "in_progress" || r.status === "completed" ? r.status : "pending";
+		const active = typeof r.activeForm === "string" ? r.activeForm.trim() : "";
+		out.push({ content: content.slice(0, 300), status, ...(active ? { activeForm: active.slice(0, 300) } : {}) });
+		if (out.length >= 50) break;
+	}
+	return out;
+}
+
+/**
+ * The current task list of a conversation: the newest `todo_write` call that the tool accepted.
+ * A call still waiting for its result counts, so a new list shows the moment the model sends it.
+ */
+export function latestTodos(messages: readonly ChatMessage[]): TodoItem[] {
+	const failed = new Set<string>();
+	for (const m of messages) if (m.role === "toolResult" && m.isError) failed.add(m.toolCallId);
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const m = messages[i];
+		if (m?.role !== "assistant") continue;
+		for (let j = m.content.length - 1; j >= 0; j--) {
+			const block = m.content[j];
+			if (block?.type !== "toolCall" || block.name !== TODO_TOOL || failed.has(block.id)) continue;
+			const todos = parseTodos(block.arguments);
+			if (todos.length) return todos;
+		}
+	}
+	return [];
+}
+
+// ---------- Git plugin ----------
+
+/** One-letter porcelain codes: M modified, A added, D deleted, R renamed, C copied, U unmerged, ? untracked, space unchanged. */
+export interface GitFileChange {
+	path: string;
+	origPath?: string;
+	index: string;
+	worktree: string;
+}
+
+export interface GitStatus {
+	isRepo: boolean;
+	root?: string;
+	branch?: string;
+	detached?: boolean;
+	upstream?: string;
+	ahead: number;
+	behind: number;
+	files: GitFileChange[];
+}
+
+export interface GitCommit {
+	hash: string;
+	short: string;
+	author: string;
+	date: string;
+	refs: string;
+	subject: string;
+}
+
+export interface GitBranch {
+	name: string;
+	current: boolean;
+	remote: boolean;
+	upstream?: string;
+}
+
+export interface GitDiff {
+	text: string;
+	truncated: boolean;
+}
+
+// ---------- Automations plugin ----------
+
+export type AutomationSchedule =
+	| { type: "interval"; minutes: number }
+	/** `time` is local "HH:MM"; `days` are weekdays 0 (Sunday) to 6, every day when omitted. */
+	| { type: "daily"; time: string; days?: number[] }
+	| { type: "once"; at: string };
+
+export interface AutomationTask {
+	id: string;
+	name: string;
+	prompt: string;
+	workspaceId: string;
+	schedule: AutomationSchedule;
+	access: RunAccess;
+	enabled: boolean;
+	model?: ModelRef;
+	createdAt: string;
+	nextRunAt?: string;
+	lastRunAt?: string;
+}
+
+export type AutomationInput = Pick<AutomationTask, "name" | "prompt" | "workspaceId" | "schedule" | "access" | "enabled" | "model">;
+
+export interface AutomationRun {
+	id: string;
+	taskId: string;
+	taskName: string;
+	startedAt: string;
+	finishedAt?: string;
+	status: "running" | "success" | "error" | "skipped";
+	sessionId?: string;
+	summary?: string;
+	error?: string;
+}
+
+// ---------- Voice plugin ----------
+
+export interface VoiceSettings {
+	gatewayId: string;
+	model: string;
+	/** ISO-639-1 hint such as "zh" or "en"; empty lets the model detect it. */
+	language: string;
+}
+
+export interface VoiceState extends VoiceSettings {
+	configured: boolean;
+}
+
 export interface RpcMethods {
 	"host.info": { params: Record<string, never>; result: HostInfo };
 
@@ -441,6 +629,7 @@ export interface RpcMethods {
 	"model.list": { params: Record<string, never>; result: ModelInfo[] };
 	"model.set": { params: { sessionId: string; model: ModelRef }; result: null };
 	"thinking.set": { params: { sessionId: string; level: ThinkingLevel }; result: null };
+	"permission.set": { params: { sessionId: string; mode: PermissionMode }; result: null };
 
 	"commands.list": { params: { sessionId: string }; result: CommandInfo[] };
 	"tools.list": { params: { sessionId: string }; result: ToolInfo[] };
@@ -468,6 +657,13 @@ export interface RpcMethods {
 
 	"plugin.list": { params: Record<string, never>; result: PluginInfo[] };
 	"plugin.call": { params: { plugin: string; method: string; params?: Record<string, unknown> }; result: unknown };
+	/** Write a folder plugin (single-file ESM, no imports needed) under the data dir and load it without a restart. */
+	"plugin.install": { params: { name: string; files: PluginFile[]; version?: string }; result: PluginInstallResult };
+	/** Pick up plugin folders that appeared under the data dir since startup. */
+	"plugin.scan": { params: Record<string, never>; result: PluginInfo[] };
+	"plugin.setEnabled": { params: { id: string; enabled: boolean }; result: PluginInfo };
+	"plugin.reload": { params: { id: string }; result: PluginInfo };
+	"plugin.remove": { params: { id: string }; result: null };
 }
 
 export type RpcMethod = keyof RpcMethods;
@@ -491,5 +687,8 @@ export type ServerFrame =
 	| { type: "ui.request"; sessionId: string; request: UIRequest }
 	| { type: "ui.resolved"; sessionId: string; requestId: string }
 	| { type: "sessions.changed" }
+	| { type: "plugins.changed" }
+	/** One plugin's data changed (see PluginContext.notifyChanged). */
+	| { type: "plugin.notify"; plugin: string }
 	| { type: "gateways.changed" }
 	| { type: "error"; message: string };
