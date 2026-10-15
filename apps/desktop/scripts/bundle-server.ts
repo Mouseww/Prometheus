@@ -58,5 +58,10 @@ writeFileSync(
 	join(out, "package.json"),
 	JSON.stringify({ name: "prometheus-server-bundle", private: true, type: "module", dependencies }, null, 2),
 );
-execSync("npm install --omit=dev --no-audit --no-fund", { cwd: out, stdio: "inherit" });
+// onnxruntime-node would otherwise fetch CUDA/TensorRT libs on Linux, which AppImage bundling cannot resolve.
+execSync("npm install --omit=dev --no-audit --no-fund", {
+	cwd: out,
+	stdio: "inherit",
+	env: { ...process.env, ONNXRUNTIME_NODE_INSTALL_CUDA: "skip" },
+});
 console.log(`server bundle -> ${out}`);
