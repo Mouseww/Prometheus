@@ -8,10 +8,12 @@ import { SettingsView } from "./components/SettingsView.tsx";
 import { Sidebar } from "./components/Sidebar.tsx";
 import { TitleBar } from "./components/TitleBar.tsx";
 import { Toasts } from "./components/Toasts.tsx";
+import { UpdateDialog } from "./components/UpdateDialog.tsx";
 import type { BackendTarget } from "./lib/client.ts";
 import { PrometheusClient } from "./lib/client.ts";
 import { discoverBackend, establishCookie, isTauri, saveMode } from "./lib/backend.ts";
 import { bindClient, useStore } from "./lib/store.ts";
+import { checkForUpdate } from "./lib/updater.ts";
 
 export function App() {
 	const [target, setTarget] = useState<BackendTarget | null | undefined>(undefined);
@@ -44,6 +46,10 @@ export function App() {
 	}, [target]);
 
 	useEffect(() => {
+		void checkForUpdate(true);
+	}, []);
+
+	useEffect(() => {
 		document.title = title ? `${title} · Prometheus` : "Prometheus";
 	}, [title]);
 
@@ -70,6 +76,7 @@ export function App() {
 				</main>
 			</div>
 			<DialogHost />
+			<UpdateDialog />
 			<Toasts />
 		</div>
 	);

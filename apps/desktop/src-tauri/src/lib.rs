@@ -174,6 +174,19 @@ async fn start_local_backend(app: tauri::AppHandle, state: tauri::State<'_, Back
         .map(Some)
 }
 
+/// Stops the bundled server so an installer can replace its files (Windows locks them while running).
+#[tauri::command]
+fn stop_local_backend(state: tauri::State<'_, Backend>) {
+    state.kill();
+    state.set(Status::Idle);
+}
+
+#[tauri::command]
+fn relaunch_app(app: tauri::AppHandle, state: tauri::State<'_, Backend>) {
+    state.kill();
+    app.restart();
+}
+
 /// Whether this build can host a local server (desktop) or is a thin client (mobile).
 #[tauri::command]
 fn local_supported() -> bool {
@@ -183,9 +196,12 @@ fn local_supported() -> bool {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let backend = Backend::new();
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    let app = builder
         .manage(backend.clone())
-        .invoke_handler(tauri::generate_handler![start_local_backend, local_supported])
+        .invoke_handler(tauri::generate_handler![start_local_backend, stop_local_backend, relaunch_app, local_supported])
         .build(tauri::generate_context!())
         .expect("failed to build Prometheus desktop");
 

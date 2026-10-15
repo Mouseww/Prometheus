@@ -1,24 +1,21 @@
 import clsx from "clsx";
-import { FolderOpen, Minimize2, Minus, PanelLeft, Square, Wrench, X } from "lucide-react";
+import { FolderOpen, Minus, PanelLeft, Square, Wrench, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ToolInfo } from "@prometheus/protocol";
 import { isTauri } from "../lib/backend.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { call, toast, useStore } from "../lib/store.ts";
+import { call, useStore } from "../lib/store.ts";
 import { Flame } from "./ui.tsx";
 
 const M = defineMessages({
 	zh: {
 		tools: "工具",
 		toolSwitch: "工具开关",
-		compact: "压缩上下文",
-		compacting: "开始压缩上下文…",
 		toggleSidebar: "切换侧栏",
 		minimize: "最小化",
 		maximize: "最大化",
 		close: "关闭",
 		newChat: "新会话",
-		input: "输入 {i} · 输出 {o}",
 		knowledge: "知识库",
 		memory: "记忆",
 		settings: "设置",
@@ -26,14 +23,11 @@ const M = defineMessages({
 	en: {
 		tools: "Tools",
 		toolSwitch: "Tool switches",
-		compact: "Compact context",
-		compacting: "Compacting context…",
 		toggleSidebar: "Toggle sidebar",
 		minimize: "Minimize",
 		maximize: "Maximize",
 		close: "Close",
 		newChat: "New chat",
-		input: "Input {i} · Output {o}",
 		knowledge: "Knowledge",
 		memory: "Memory",
 		settings: "Settings",
@@ -99,28 +93,9 @@ function ToolsPopover() {
 	);
 }
 
-function ContextRing({ percent }: { percent: number | null }) {
-	const p = Math.min(Math.max(percent ?? 0, 0), 100);
-	const r = 8;
-	const c = 2 * Math.PI * r;
-	const color = p > 85 ? "var(--color-rose-400)" : p > 60 ? "var(--color-ember-300)" : "var(--color-moss-400)";
-	return (
-		<svg viewBox="0 0 20 20" className="size-4 -rotate-90">
-			<circle cx="10" cy="10" r={r} fill="none" stroke="var(--color-ink-700)" strokeWidth="2.5" />
-			<circle cx="10" cy="10" r={r} fill="none" stroke={color} strokeWidth="2.5" strokeDasharray={c} strokeDashoffset={c * (1 - p / 100)} strokeLinecap="round" />
-		</svg>
-	);
-}
-
 function SessionTools() {
-	const t = useT(M);
 	const session = useStore((s) => s.session);
 	if (!session) return null;
-	const stats = session.stats;
-	const compact = async () => {
-		const ok = await call((c) => c.rpc("chat.compact", { sessionId: session.id }));
-		if (ok !== undefined) toast(t("compacting"));
-	};
 	return (
 		<div className="flex items-center gap-1">
 			{Object.entries(session.statuses).map(([k, v]) => (
@@ -128,18 +103,6 @@ function SessionTools() {
 					{v}
 				</span>
 			))}
-			{stats && (
-				<div className="flex items-center gap-1.5 rounded-md px-2 py-1 font-mono text-[11px] text-ink-400" title={t("input", { i: stats.inputTokens, o: stats.outputTokens })}>
-					<ContextRing percent={stats.contextPercent} />
-					<span className="hidden sm:inline">
-						{stats.contextTokens != null ? `${(stats.contextTokens / 1000).toFixed(1)}k` : "—"} / {Math.round(stats.contextWindow / 1000)}k
-					</span>
-					{stats.totalCost > 0 && <span className="hidden text-ink-500 lg:inline">${stats.totalCost.toFixed(4)}</span>}
-				</div>
-			)}
-			<button type="button" onClick={() => void compact()} disabled={session.isStreaming} className="rounded-md p-1.5 text-ink-400 hover:bg-ink-800 hover:text-ink-100 disabled:opacity-30" title={t("compact")}>
-				<Minimize2 className="size-4" />
-			</button>
 			<ToolsPopover />
 		</div>
 	);

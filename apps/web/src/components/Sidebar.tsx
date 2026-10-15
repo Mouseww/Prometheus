@@ -359,7 +359,7 @@ export function Sidebar({ target, onDisconnect }: { target: BackendTarget; onDis
 
 			<div className="flex items-center justify-between border-t hairline px-4 py-2.5 text-xs text-ink-500">
 				<span className="flex min-w-0 items-center gap-1.5" title={target.httpBase}>
-					<span className={clsx("size-1.5 shrink-0 rounded-full", conn === "open" ? "bg-moss-400" : "animate-pulse bg-ember-400")} />
+					<span className={clsx("size-1.5 shrink-0 rounded-full", conn === "open" ? "bg-moss-400" : "animate-breathe bg-ember-400")} />
 					<span className="truncate">{target.label === "local" ? t("local") : target.label}</span>
 				</span>
 				<button
@@ -378,7 +378,6 @@ export function Sidebar({ target, onDisconnect }: { target: BackendTarget; onDis
 
 			{picking && (
 				<FolderPicker
-					initial={active?.cwd}
 					onClose={() => setPicking(false)}
 					onPick={async (path) => {
 						setPicking(false);

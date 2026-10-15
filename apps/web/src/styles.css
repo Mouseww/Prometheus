@@ -6,6 +6,15 @@
 @import "@fontsource/ibm-plex-sans/600.css";
 @import "highlight.js/styles/github-dark.css";
 
+/* Reduced motion: decorative loops stop; spinners keep turning (essential feedback). */
+@media (prefers-reduced-motion: reduce) {
+	:root {
+		--animate-flicker: none;
+		--animate-breathe: none;
+		--animate-pulse: none;
+	}
+}
+
 /* Brand tokens: fork these to re-skin Prometheus. */
 @theme {
 	--font-display: "Bricolage Grotesque Variable", "IBM Plex Sans", sans-serif;
@@ -35,7 +44,11 @@
 	--color-rose-400: #f0767a;
 
 	--animate-rise: rise 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
-	--animate-flicker: flicker 2.4s ease-in-out infinite;
+	/* Slow, subtle life signs: the flame and the connection dot should never nag for attention. */
+	--animate-flicker: flicker 7s ease-in-out infinite;
+	--animate-breathe: breathe 3.2s ease-in-out infinite;
+	--animate-spin: spin 2.4s linear infinite;
+	--animate-pulse: pulse 3.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 
 	@keyframes rise {
 		from { opacity: 0; transform: translateY(8px); }
@@ -43,8 +56,11 @@
 	}
 	@keyframes flicker {
 		0%, 100% { opacity: 1; transform: scaleY(1); }
-		45% { opacity: 0.75; transform: scaleY(0.92); }
-		70% { opacity: 0.95; transform: scaleY(1.04); }
+		50% { opacity: 0.88; transform: scaleY(0.97); }
+	}
+	@keyframes breathe {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0.4; }
 	}
 }
 
@@ -191,9 +207,10 @@ body { margin: 0; overflow: hidden; }
 	vertical-align: -0.15em;
 	background: var(--color-ember-400);
 	border-radius: 1px;
-	animation: flicker 1s steps(2) infinite;
+	animation: caret-blink 1.4s steps(2) infinite;
 }
 
-@media (prefers-reduced-motion: reduce) {
-	*, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+@keyframes caret-blink {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0; }
 }
