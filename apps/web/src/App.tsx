@@ -58,6 +58,7 @@ export function App() {
 		return (
 			<Shell>
 				<ConnectScreen unauthorized={conn === "unauthorized"} error={bootError} onConnect={setTarget} />
+				<UpdateDialog />
 			</Shell>
 		);
 	}
@@ -76,7 +77,7 @@ export function App() {
 				</main>
 			</div>
 			<DialogHost />
-			<UpdateDialog />
+			<UpdateDialog remote={target.label !== "local"} />
 			<Toasts />
 		</div>
 	);
