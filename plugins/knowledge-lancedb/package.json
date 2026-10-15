@@ -1,0 +1,16 @@
+{
+  "name": "@prometheus/knowledge-lancedb",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@lancedb/lancedb": "0.40.0",
+    "@prometheus/plugin-sdk": "workspace:*"
+  }
+}

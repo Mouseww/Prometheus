@@ -1,0 +1,23 @@
+{
+  "name": "@prometheus/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "prometheus-server": "./src/main.ts"
+  },
+  "scripts": {
+    "dev": "node --watch src/main.ts",
+    "start": "node src/main.ts",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@prometheus/builtin-plugins": "workspace:*",
+    "@prometheus/core": "workspace:*",
+    "@prometheus/protocol": "workspace:*",
+    "ws": "8.22.0"
+  },
+  "devDependencies": {
+    "@types/ws": "8.18.2"
+  }
+}

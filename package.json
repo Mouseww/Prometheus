@@ -1,0 +1,23 @@
+{
+  "name": "prometheus",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.24.0",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "dev:server": "pnpm --filter @prometheus/server dev",
+    "dev:web": "pnpm --filter @prometheus/web dev",
+    "dev:desktop": "pnpm --filter @prometheus/desktop tauri dev",
+    "tui": "pnpm --filter @prometheus/cli start",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "typescript": "7.0.2",
+    "vitest": "5.0.4"
+  }
+}

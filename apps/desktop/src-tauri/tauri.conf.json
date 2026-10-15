@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Prometheus",
+  "version": "0.1.0",
+  "identifier": "dev.prometheus.desktop",
+  "build": {
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../../web/dist",
+    "beforeDevCommand": "pnpm --filter @prometheus/web dev",
+    "beforeBuildCommand": "pnpm --filter @prometheus/web build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Prometheus",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 880,
+        "minHeight": 560,
+        "backgroundColor": "#0d0b09",
+        "decorations": false,
+        "shadow": true,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws: wss: http: https:; img-src 'self' data: blob: http: https:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-src http: https:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

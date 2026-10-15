@@ -1,0 +1,19 @@
+{
+  "name": "@prometheus/builtin-plugins",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@prometheus/knowledge-lancedb": "workspace:*",
+    "@prometheus/plugin-mcp": "workspace:*",
+    "@prometheus/plugin-memory": "workspace:*",
+    "@prometheus/plugin-sdk": "workspace:*",
+    "@prometheus/plugin-skills": "workspace:*"
+  }
+}
