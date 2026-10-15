@@ -1,0 +1,10 @@
+{
+  "build": {
+    "beforeBuildCommand": "pnpm --filter @prometheus/web build && pnpm --filter @prometheus/desktop bundle-server"
+  },
+  "bundle": {
+    "resources": {
+      "../../../dist/server-bundle/": "server/"
+    }
+  }
+}

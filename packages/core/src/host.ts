@@ -1,0 +1,665 @@
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { rm } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import {
+	type AgentSession,
+	createAgentSession,
+	createCodemodeExtension,
+	createMcpExtension,
+	createToolSearchExtension,
+	DefaultResourceLoader,
+	getAgentDir,
+	type InlineExtension,
+	ModelRuntime,
+	SessionManager,
+	SettingsManager,
+	VERSION as PI_VERSION,
+} from "@earendil-works/pi-coding-agent";
+import { listModels, mergeGatewayUpdate, redactGateway, toProviderConfig } from "@prometheus/gateway";
+import type { PrometheusPlugin } from "@prometheus/plugin-sdk";
+import {
+	type CommandInfo,
+	type DirListing,
+	type ImageContent,
+	type MessageRef,
+	type ModelInfo,
+	PROTOCOL_VERSION,
+	type RpcMethod,
+	type RpcParams,
+	type RpcResult,
+	type SessionEvent,
+	type SessionSnapshot,
+	type SessionSummary,
+	type ThinkingLevel,
+	type UIRequest,
+	type ChatMessage,
+} from "@prometheus/protocol";
+import { slimEvent, toModelRef } from "./events.ts";
+import { bootstrap, type Runtime } from "./runtime.ts";
+import { UIBridge } from "./ui-bridge.ts";
+import { normalizeDir, WorkspaceStore, workspaceId } from "./workspaces.ts";
+
+export const PROMETHEUS_VERSION = "0.1.0";
+
+// Mirrors PI's CLI built-ins (main() adds them for the TUI); names keep `builtin:<name>` settings working.
+const builtInExtensions: InlineExtension[] = [
+	{ name: "codemode", factory: createCodemodeExtension(), replaceable: true, builtin: true },
+	{ name: "tool-search", factory: createToolSearchExtension(), replaceable: true, builtin: true },
+	{ name: "mcp", factory: createMcpExtension(), replaceable: true, builtin: true },
+];
+
+export interface HostListener {
+	event(sessionId: string, event: SessionEvent): void;
+	uiRequest(sessionId: string, request: UIRequest): void;
+	uiResolved(sessionId: string, requestId: string): void;
+	sessionsChanged(): void;
+	gatewaysChanged(): void;
+}
+
+export interface PrometheusHostOptions {
+	dataDir?: string;
+	/** Default working directory for new sessions. */
+	cwd?: string;
+	builtinPlugins?: PrometheusPlugin[];
+	listener: HostListener;
+}
+
+interface LiveSession {
+	session: AgentSession;
+	bridge: UIBridge;
+	unsubscribe: () => void;
+}
+
+type Handlers = { [M in RpcMethod]: (params: RpcParams<M>) => Promise<RpcResult<M>> | RpcResult<M> };
+
+/** Embeddable Prometheus host: one ModelRuntime, many PI sessions, all exposed through the RPC surface. */
+export class PrometheusHost {
+	readonly runtime: Runtime;
+	readonly modelRuntime: ModelRuntime;
+	private readonly cwd: string;
+	private readonly agentDir = getAgentDir();
+	private readonly live = new Map<string, LiveSession>();
+	private readonly opening = new Map<string, Promise<LiveSession>>();
+	private readonly paths = new Map<string, string>();
+	private readonly loaders = new Map<string, Promise<DefaultResourceLoader>>();
+	private registered = new Set<string>();
+	private readonly pendingReload = new Set<string>();
+	private readonly listener: HostListener;
+	private readonly workspaces: WorkspaceStore;
+	private settingsManager: SettingsManager | undefined;
+
+	private constructor(runtime: Runtime, modelRuntime: ModelRuntime, options: PrometheusHostOptions) {
+		this.runtime = runtime;
+		this.modelRuntime = modelRuntime;
+		this.cwd = options.cwd ?? process.cwd();
+		this.listener = options.listener;
+		this.workspaces = new WorkspaceStore(join(runtime.dataDir, "workspaces.json"));
+		runtime.plugins.reloadSessions = () => this.reloadSessions();
+	}
+
+	static async create(options: PrometheusHostOptions): Promise<PrometheusHost> {
+		const runtime = await bootstrap({ host: "server", dataDir: options.dataDir, cwd: options.cwd, builtinPlugins: options.builtinPlugins });
+		const agentDir = getAgentDir();
+		// Shares PI's auth.json/models.json so `/login` credentials from the TUI work here too.
+		const modelRuntime = await ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath: join(agentDir, "models.json") });
+		const host = new PrometheusHost(runtime, modelRuntime, options);
+		host.syncGateways();
+		return host;
+	}
+
+	async call<M extends RpcMethod>(method: M, params: RpcParams<M>): Promise<RpcResult<M>> {
+		const handler = this.handlers[method] as ((p: RpcParams<M>) => Promise<RpcResult<M>> | RpcResult<M>) | undefined;
+		if (!handler) throw new Error(`未知方法：${method}`);
+		return handler(params ?? ({} as RpcParams<M>));
+	}
+
+	async dispose(): Promise<void> {
+		for (const [id] of this.live) await this.closeSession(id);
+		await this.runtime.dispose();
+	}
+
+	// ---------- gateways ----------
+
+	private syncGateways(): void {
+		const next = new Set<string>();
+		for (const g of this.runtime.config.gateways()) {
+			if (g.enabled === false) continue;
+			try {
+				this.modelRuntime.registerProvider(g.id, toProviderConfig(g) as Parameters<ModelRuntime["registerProvider"]>[1]);
+				next.add(g.id);
+			} catch (err) {
+				console.warn(`[prometheus] 网关注册失败 ${g.id}: ${err instanceof Error ? err.message : err}`);
+			}
+		}
+		for (const id of this.registered) if (!next.has(id)) this.modelRuntime.unregisterProvider(id);
+		this.registered = next;
+	}
+
+	// ---------- sessions ----------
+
+	private async reloadSessions(): Promise<void> {
+		await Promise.all(
+			[...this.live.entries()].map(async ([id, live]) => {
+				if (live.session.isStreaming) {
+					this.pendingReload.add(id);
+					return;
+				}
+				await this.reloadOne(id, live);
+			}),
+		);
+	}
+
+	private async reloadOne(id: string, live: LiveSession): Promise<void> {
+		this.pendingReload.delete(id);
+		try {
+			await live.session.reload();
+		} catch (err) {
+			live.bridge.context().notify(`重新加载失败：${err instanceof Error ? err.message : err}`, "error");
+		}
+	}
+
+	private loader(cwd: string): Promise<DefaultResourceLoader> {
+		let pending = this.loaders.get(cwd);
+		if (!pending) {
+			pending = (async () => {
+				const loader = new DefaultResourceLoader({
+					cwd,
+					agentDir: this.agentDir,
+					// PI's own built-ins (MCP client, codemode, tool search) come first, as in the TUI.
+					extensionFactories: [...builtInExtensions, ...this.runtime.extensions()],
+				});
+				await loader.reload();
+				return loader;
+			})();
+			pending.catch(() => this.loaders.delete(cwd));
+			this.loaders.set(cwd, pending);
+		}
+		return pending;
+	}
+
+	private async attach(sessionManager: SessionManager): Promise<LiveSession> {
+		const cwd = sessionManager.getCwd();
+		const { session } = await createAgentSession({
+			cwd,
+			agentDir: this.agentDir,
+			modelRuntime: this.modelRuntime,
+			sessionManager,
+			resourceLoader: await this.loader(cwd),
+		});
+		const id = session.sessionId;
+		const bridge = new UIBridge({
+			request: (r) => this.listener.uiRequest(id, r),
+			resolved: (rid) => this.listener.uiResolved(id, rid),
+		});
+		const unsubscribe = session.subscribe((e) => {
+			const slim = slimEvent(e);
+			if (slim) this.listener.event(id, slim);
+			if (e.type === "agent_settled" || e.type === "session_info_changed") this.listener.sessionsChanged();
+			if (e.type === "agent_settled" && this.pendingReload.has(id)) {
+				const current = this.live.get(id);
+				if (current) void this.reloadOne(id, current);
+			}
+		});
+		await session.bindExtensions({
+			uiContext: bridge.context(),
+			mode: "rpc",
+			onError: (err) => bridge.context().notify(`扩展错误：${err.error}`, "error"),
+		});
+		const live = { session, bridge, unsubscribe };
+		this.live.set(id, live);
+		const file = session.sessionFile;
+		if (file) this.paths.set(id, file);
+		return live;
+	}
+
+	private async resolvePath(sessionId: string): Promise<string> {
+		let path = this.paths.get(sessionId);
+		if (!path) {
+			await this.listSessions();
+			path = this.paths.get(sessionId);
+		}
+		if (!path) throw new Error(`会话不存在：${sessionId}`);
+		return path;
+	}
+
+	private async open(sessionId: string): Promise<LiveSession> {
+		const existing = this.live.get(sessionId);
+		if (existing) return existing;
+		let pending = this.opening.get(sessionId);
+		if (!pending) {
+			pending = (async () => this.attach(SessionManager.open(await this.resolvePath(sessionId))))();
+			pending.finally(() => this.opening.delete(sessionId)).catch(() => {});
+			this.opening.set(sessionId, pending);
+		}
+		return pending;
+	}
+
+	private require(sessionId: string): LiveSession {
+		const live = this.live.get(sessionId);
+		if (!live) throw new Error("会话未打开，请先调用 session.open");
+		return live;
+	}
+
+	private async closeSession(sessionId: string): Promise<void> {
+		const live = this.live.get(sessionId);
+		if (!live) return;
+		live.bridge.cancelAll();
+		if (live.session.isStreaming) await live.session.abort().catch(() => {});
+		live.unsubscribe();
+		live.session.dispose();
+		this.live.delete(sessionId);
+	}
+
+	private async listSessions(): Promise<SessionSummary[]> {
+		const infos = await SessionManager.listAll();
+		for (const info of infos) this.paths.set(info.id, info.path);
+		await this.workspaces.ensure(infos.map((i) => ({ path: i.cwd, modified: i.modified.toISOString() })));
+		const archived = await this.workspaces.archived();
+		return infos
+			.map((info) => ({
+				id: info.id,
+				name: info.name,
+				cwd: info.cwd,
+				created: info.created.toISOString(),
+				modified: info.modified.toISOString(),
+				messageCount: info.messageCount,
+				firstMessage: info.firstMessage.slice(0, 200),
+				live: this.live.has(info.id),
+				archived: archived.has(info.id),
+				workspaceId: info.cwd ? workspaceId(info.cwd) : "",
+			}))
+			.sort((a, b) => b.modified.localeCompare(a.modified));
+	}
+
+	private snapshot(live: LiveSession): SessionSnapshot {
+		const s = live.session;
+		const cwd = s.sessionManager.getCwd();
+		return {
+			id: s.sessionId,
+			name: s.sessionName,
+			cwd,
+			workspaceId: workspaceId(cwd),
+			messages: s.messages as unknown as ChatMessage[],
+			model: toModelRef(s.model),
+			thinkingLevel: s.thinkingLevel as ThinkingLevel,
+			availableThinkingLevels: s.getAvailableThinkingLevels() as ThinkingLevel[],
+			isStreaming: s.isStreaming,
+			queue: { steering: [...s.getSteeringMessages()], followUp: [...s.getFollowUpMessages()] },
+			pendingUI: live.bridge.pendingRequests(),
+			statuses: Object.fromEntries(live.bridge.statuses),
+			widgets: Object.fromEntries(live.bridge.widgets),
+		};
+	}
+
+	private async prompt(sessionId: string, text: string, images: ImageContent[] | undefined, delivery: "steer" | "followUp" | undefined) {
+		const { session, bridge } = this.require(sessionId);
+		// Resolve as soon as PI accepts the prompt; the run itself streams through events.
+		await new Promise<void>((resolve, reject) => {
+			session
+				.prompt(text, {
+					images,
+					streamingBehavior: session.isStreaming ? (delivery ?? "followUp") : undefined,
+					preflightResult: () => resolve(),
+				})
+				.then(
+					() => resolve(),
+					(err: unknown) => {
+						reject(err);
+						bridge.context().notify(err instanceof Error ? err.message : String(err), "error");
+					},
+				);
+		});
+	}
+
+	// ---------- message operations ----------
+
+	/** Map a client-side message position to the session entry that produced it. */
+	private locate(live: LiveSession, ref: MessageRef): { entryId: string; flat: { entryId: string; message: ChatMessage }[]; pos: number } {
+		const s = live.session;
+		if (s.isStreaming) throw new Error("请等待当前回复结束");
+		const projection = s.sessionManager.buildSessionProjection();
+		const flat = projection.entries.flatMap((e) => e.messages.map((m) => ({ entryId: e.sourceEntry.id, message: m as unknown as ChatMessage })));
+		const hit = flat[ref.index];
+		if (!hit || hit.message.role !== ref.role || hit.message.timestamp !== ref.timestamp) throw new Error("消息已变化，请刷新后重试");
+		return { entryId: hit.entryId, flat, pos: ref.index };
+	}
+
+	private resetMessages(id: string, live: LiveSession): void {
+		this.listener.event(id, { type: "messages_reset", messages: live.session.messages as unknown as ChatMessage[] });
+		this.listener.sessionsChanged();
+	}
+
+	/** Nearest user message at or before `pos`. */
+	private userAt(flat: { entryId: string; message: ChatMessage }[], pos: number) {
+		for (let i = pos; i >= 0; i--) {
+			const item = flat[i];
+			if (item?.message.role === "user") return item;
+		}
+		throw new Error("找不到对应的用户消息");
+	}
+
+	private async deleteMessage(sessionId: string, ref: MessageRef): Promise<void> {
+		const live = this.require(sessionId);
+		const { entryId, flat, pos } = this.locate(live, ref);
+		const targets = new Set([entryId]);
+		const message = flat[pos]?.message;
+		// Dropping a tool call without its results (or vice versa) would make the context invalid for providers.
+		if (message?.role === "assistant") {
+			const calls = new Set(message.content.flatMap((c) => (c?.type === "toolCall" ? [c.id] : [])));
+			for (const item of flat) if (item.message.role === "toolResult" && calls.has(item.message.toolCallId)) targets.add(item.entryId);
+		}
+		const sm = live.session.sessionManager;
+		for (const target of targets) sm.appendContextEdit(target, null);
+		live.session.refreshContext();
+		this.resetMessages(sessionId, live);
+	}
+
+	private async retryMessage(sessionId: string, ref: MessageRef): Promise<void> {
+		const live = this.require(sessionId);
+		const { flat, pos } = this.locate(live, ref);
+		const user = this.userAt(flat, pos);
+		const m = user.message as Extract<ChatMessage, { role: "user" }>;
+		const text = typeof m.content === "string" ? m.content : m.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+		const images = typeof m.content === "string" ? [] : m.content.filter((c): c is ImageContent => c.type === "image");
+		// Branch from before the user message; the old reply stays in the session tree.
+		const result = await live.session.navigateTree(user.entryId);
+		if (result.cancelled) throw new Error("操作已取消");
+		this.resetMessages(sessionId, live);
+		await this.prompt(sessionId, text, images.length ? images : undefined, undefined);
+	}
+
+	private async forkMessage(sessionId: string, ref: MessageRef): Promise<{ snapshot: SessionSnapshot; editorText?: string }> {
+		const live = this.require(sessionId);
+		const { entryId, flat, pos } = this.locate(live, ref);
+		const sm = live.session.sessionManager;
+		const message = flat[pos]?.message;
+		let leaf: string | null = entryId;
+		let editorText: string | undefined;
+		// Forking at a user message starts the new session just before it, with the text ready to edit.
+		if (message?.role === "user") {
+			leaf = sm.getEntry(entryId)?.parentId ?? null;
+			editorText = typeof message.content === "string" ? message.content : message.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+		}
+		const source = live.session.sessionFile;
+		let next: SessionManager;
+		if (leaf && source) {
+			next = SessionManager.open(source);
+			next.createBranchedSession(leaf);
+		} else {
+			next = SessionManager.create(sm.getCwd(), undefined, source ? { parentSession: source } : undefined);
+		}
+		const forked = await this.attach(next);
+		const baseName = live.session.sessionName;
+		if (baseName) forked.session.setSessionName(`${baseName} (fork)`);
+		this.listener.sessionsChanged();
+		return { snapshot: this.snapshot(forked), editorText };
+	}
+
+	// ---------- settings & filesystem ----------
+
+	private settings(): SettingsManager {
+		this.settingsManager ??= SettingsManager.create(this.cwd, this.agentDir);
+		return this.settingsManager;
+	}
+
+	private listDirs(path: string | undefined): DirListing {
+		const home = homedir();
+		const dir = normalizeDir(path?.trim() || home);
+		if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new Error(`目录不存在：${dir}`);
+		const dirs = readdirSync(dir, { withFileTypes: true })
+			.filter((d) => {
+				if (d.name.startsWith(".") || d.name.startsWith("$")) return false;
+				if (d.isDirectory()) return true;
+				if (!d.isSymbolicLink()) return false;
+				try {
+					return statSync(join(dir, d.name)).isDirectory();
+				} catch {
+					return false;
+				}
+			})
+			.map((d) => ({ name: d.name, path: join(dir, d.name) }))
+			.sort((a, b) => a.name.localeCompare(b.name));
+		const parent = dirname(dir);
+		const roots =
+			process.platform === "win32"
+				? [..."CDEFGHIJKLMNOPQRSTUVWXYZ"].map((l) => `${l}:\\`).filter((r) => existsSync(r))
+				: ["/"];
+		return { path: dir, parent: parent === dir ? null : parent, dirs, roots, home };
+	}
+
+	// ---------- RPC handlers ----------
+
+	private readonly handlers: Handlers = {
+		"host.info": () => ({
+			version: PROMETHEUS_VERSION,
+			piVersion: PI_VERSION,
+			protocol: PROTOCOL_VERSION,
+			cwd: this.cwd,
+			platform: process.platform,
+		}),
+
+		"session.list": () => this.listSessions(),
+		"session.create": async ({ cwd, name }) => {
+			const dir = cwd?.trim() || this.cwd;
+			if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new Error(`工作目录不存在：${dir}`);
+			await this.workspaces.add(dir);
+			const live = await this.attach(SessionManager.create(normalizeDir(dir)));
+			if (name?.trim()) live.session.setSessionName(name.trim());
+			this.listener.sessionsChanged();
+			return this.snapshot(live);
+		},
+		"session.open": async ({ sessionId }) => this.snapshot(await this.open(sessionId)),
+		"session.rename": async ({ sessionId, name }) => {
+			(await this.open(sessionId)).session.setSessionName(name.trim());
+			this.listener.sessionsChanged();
+			return null;
+		},
+		"session.close": async ({ sessionId }) => {
+			await this.closeSession(sessionId);
+			this.listener.sessionsChanged();
+			return null;
+		},
+		"session.archive": async ({ sessionId, archived }) => {
+			await this.workspaces.setArchived(sessionId, archived);
+			if (archived) await this.closeSession(sessionId);
+			this.listener.sessionsChanged();
+			return null;
+		},
+		"session.delete": async ({ sessionId }) => {
+			const live = this.live.get(sessionId);
+			const path = live?.session.sessionFile ?? (await this.resolvePath(sessionId).catch(() => undefined));
+			await this.closeSession(sessionId);
+			if (path?.endsWith(".jsonl")) await rm(path, { force: true });
+			this.paths.delete(sessionId);
+			await this.workspaces.setArchived(sessionId, false);
+			this.listener.sessionsChanged();
+			return null;
+		},
+
+		"message.delete": async ({ sessionId, ref }) => {
+			await this.deleteMessage(sessionId, ref);
+			return null;
+		},
+		"message.retry": async ({ sessionId, ref }) => {
+			await this.retryMessage(sessionId, ref);
+			return null;
+		},
+		"message.fork": ({ sessionId, ref }) => this.forkMessage(sessionId, ref),
+
+		"workspace.list": async () => {
+			await this.listSessions();
+			return this.workspaces.list();
+		},
+		"workspace.add": async ({ path, name }) => {
+			const w = await this.workspaces.add(path, name);
+			this.listener.sessionsChanged();
+			return w;
+		},
+		"workspace.rename": async ({ id, name }) => {
+			const w = await this.workspaces.rename(id, name);
+			this.listener.sessionsChanged();
+			return w;
+		},
+		"workspace.remove": async ({ id }) => {
+			await this.workspaces.remove(id);
+			this.listener.sessionsChanged();
+			return null;
+		},
+		"fs.dirs": ({ path }) => this.listDirs(path),
+
+		"settings.get": () => ({ autoCompaction: this.settings().getCompactionEnabled() }),
+		"settings.set": async ({ autoCompaction }) => {
+			if (typeof autoCompaction === "boolean") {
+				this.settings().setCompactionEnabled(autoCompaction);
+				await this.settings().flush();
+				// Live sessions cache their own SettingsManager.
+				for (const { session } of this.live.values()) session.setAutoCompactionEnabled(autoCompaction);
+			}
+			return { autoCompaction: this.settings().getCompactionEnabled() };
+		},
+		"session.stats": ({ sessionId }) => {
+			const s = this.require(sessionId).session;
+			const stats = s.getSessionStats();
+			const usage = s.getContextUsage();
+			return {
+				contextTokens: usage?.tokens ?? null,
+				contextWindow: usage?.contextWindow ?? s.model?.contextWindow ?? 0,
+				contextPercent: usage?.percent ?? null,
+				totalCost: stats.cost,
+				inputTokens: stats.tokens.input,
+				outputTokens: stats.tokens.output,
+			};
+		},
+
+		"chat.prompt": async ({ sessionId, text, images, delivery }) => {
+			if (!text.trim() && !images?.length) throw new Error("消息不能为空");
+			await this.prompt(sessionId, text, images, delivery);
+			return null;
+		},
+		"chat.abort": async ({ sessionId }) => {
+			await this.require(sessionId).session.abort();
+			return null;
+		},
+		"chat.compact": ({ sessionId, instructions }) => {
+			const { session, bridge } = this.require(sessionId);
+			session.compact(instructions).catch((err: unknown) => bridge.context().notify(`压缩失败：${err instanceof Error ? err.message : err}`, "error"));
+			return null;
+		},
+
+		"model.list": async () => {
+			const models = await this.modelRuntime.getAvailable();
+			return models.map(
+				(m): ModelInfo => ({
+					provider: m.provider,
+					id: m.id,
+					name: m.name,
+					reasoning: Boolean(m.reasoning),
+					vision: Array.isArray(m.input) && m.input.includes("image"),
+					contextWindow: m.contextWindow,
+				}),
+			);
+		},
+		"model.set": async ({ sessionId, model }) => {
+			const target = this.modelRuntime.getModel(model.provider, model.id);
+			if (!target) throw new Error(`模型不存在：${model.provider}/${model.id}`);
+			const { session } = this.require(sessionId);
+			await session.setModel(target);
+			this.listener.event(sessionId, { type: "model_changed", model: toModelRef(target) });
+			this.listener.event(sessionId, { type: "thinking_level_changed", level: session.thinkingLevel as ThinkingLevel });
+			return null;
+		},
+		"thinking.set": ({ sessionId, level }) => {
+			this.require(sessionId).session.setThinkingLevel(level);
+			return null;
+		},
+
+		"commands.list": ({ sessionId }) => {
+			const s = this.require(sessionId).session;
+			const out: CommandInfo[] = [];
+			for (const c of s.extensionRunner.getRegisteredCommands()) out.push({ name: c.invocationName, description: c.description, source: "extension" });
+			for (const t of s.promptTemplates) out.push({ name: t.name, description: t.description, source: "prompt" });
+			for (const k of s.resourceLoader.getSkills().skills) out.push({ name: `skill:${k.name}`, description: k.description, source: "skill" });
+			return out;
+		},
+		"tools.list": ({ sessionId }) => {
+			const s = this.require(sessionId).session;
+			const active = new Set(s.getActiveToolNames());
+			return s.getAllTools().map((t) => ({ name: t.name, description: t.description ?? "", active: active.has(t.name) }));
+		},
+		"tools.set": ({ sessionId, active }) => {
+			this.require(sessionId).session.setActiveToolsByName(active);
+			return null;
+		},
+
+		"ui.respond": ({ sessionId, requestId, response }) => {
+			this.require(sessionId).bridge.respond(requestId, response);
+			return null;
+		},
+
+		"gateway.list": () => this.runtime.config.gateways().map(redactGateway),
+		"gateway.save": async ({ gateway }) => {
+			const saved = await this.runtime.config.saveGateway(gateway);
+			this.syncGateways();
+			this.listener.gatewaysChanged();
+			return redactGateway(saved);
+		},
+		"gateway.delete": async ({ id }) => {
+			await this.runtime.config.deleteGateway(id);
+			this.syncGateways();
+			this.listener.gatewaysChanged();
+			return null;
+		},
+		"gateway.test": async ({ id, model }) => {
+			const g = this.runtime.config.gateways().find((x) => x.id === id);
+			if (!g) throw new Error(`网关不存在：${id}`);
+			const modelId = model ?? g.models[0]?.id;
+			const target = modelId && this.modelRuntime.getModel(id, modelId);
+			if (!target) throw new Error("网关未注册或模型不存在");
+			const started = performance.now();
+			try {
+				const reply = await this.modelRuntime.completeSimple(
+					target,
+					{ messages: [{ role: "user", content: "Reply with the single word: OK", timestamp: Date.now() }] },
+					{ signal: AbortSignal.timeout(30_000) },
+				);
+				const latencyMs = Math.round(performance.now() - started);
+				if (reply.stopReason === "error") return { ok: false, latencyMs, message: reply.errorMessage ?? "请求失败" };
+				const text = reply.content.map((c) => (c.type === "text" ? c.text : "")).join("").trim();
+				return { ok: true, latencyMs, message: text.slice(0, 200) || "（空回复）" };
+			} catch (err) {
+				return { ok: false, latencyMs: Math.round(performance.now() - started), message: err instanceof Error ? err.message : String(err) };
+			}
+		},
+
+		"gateway.models": async ({ gateway }) => {
+			const existing = this.runtime.config.gateways().find((x) => x.id === gateway.id);
+			const merged = mergeGatewayUpdate(gateway, existing);
+			if (!/^https?:\/\//.test(merged.baseUrl ?? "")) throw new Error("Base URL 必须是 http(s) 地址");
+			return listModels(merged, { signal: AbortSignal.timeout(20_000) });
+		},
+
+		"kb.list": () => this.runtime.knowledge.list(),
+		"kb.create": (p) => this.runtime.knowledge.create(p),
+		"kb.delete": async ({ id }) => {
+			await this.runtime.knowledge.delete(id);
+			return null;
+		},
+		"kb.documents": ({ id }) => this.runtime.knowledge.documents(id),
+		"kb.ingest": ({ id, title, text }) => this.runtime.knowledge.ingest(id, title.trim() || "未命名文档", text),
+		"kb.removeDocument": async ({ id, documentId }) => {
+			await this.runtime.knowledge.removeDocument(id, documentId);
+			return null;
+		},
+		"kb.search": ({ id, query, topK }) => this.runtime.knowledge.search(id, query, topK),
+		"kb.stores": () => [...this.runtime.plugins.stores.keys()],
+
+		"plugin.list": () => this.runtime.plugins.list(),
+		"plugin.call": async ({ plugin, method, params }) => {
+			const handler = this.runtime.plugins.rpcs.get(`${plugin}/${method}`);
+			if (!handler) throw new Error(`插件方法不存在：${plugin}/${method}`);
+			const isObject = params !== null && typeof params === "object" && !Array.isArray(params);
+			return (await handler(isObject ? (params as Record<string, unknown>) : {})) ?? null;
+		},
+	};
+}

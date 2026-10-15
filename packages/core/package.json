@@ -1,0 +1,20 @@
+{
+  "name": "@prometheus/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "1.2.0",
+    "@earendil-works/pi-coding-agent": "1.2.0",
+    "@prometheus/gateway": "workspace:*",
+    "@prometheus/knowledge": "workspace:*",
+    "@prometheus/plugin-sdk": "workspace:*",
+    "@prometheus/protocol": "workspace:*"
+  }
+}

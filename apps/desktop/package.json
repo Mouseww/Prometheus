@@ -1,0 +1,17 @@
+{
+  "name": "@prometheus/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build --config src-tauri/tauri.bundle.json",
+    "icons": "tauri icon app-icon.svg",
+    "bundle-server": "node scripts/bundle-server.ts"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.3",
+    "esbuild": "0.28.2"
+  }
+}

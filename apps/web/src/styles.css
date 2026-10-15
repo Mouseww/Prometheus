@@ -1,0 +1,199 @@
+@import "tailwindcss";
+@import "@fontsource-variable/bricolage-grotesque";
+@import "@fontsource-variable/jetbrains-mono";
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "highlight.js/styles/github-dark.css";
+
+/* Brand tokens: fork these to re-skin Prometheus. */
+@theme {
+	--font-display: "Bricolage Grotesque Variable", "IBM Plex Sans", sans-serif;
+	--font-sans: "IBM Plex Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+	--font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+
+	--color-ink-950: #0d0b09;
+	--color-ink-900: #15120f;
+	--color-ink-850: #1b1714;
+	--color-ink-800: #221d19;
+	--color-ink-700: #2e2722;
+	--color-ink-600: #3f362f;
+	--color-ink-500: #5c5048;
+	--color-ink-400: #8a7d72;
+	--color-ink-300: #b4a698;
+	--color-ink-200: #d9cdbf;
+	--color-ink-100: #f2e9df;
+
+	--color-ember-600: #e0420f;
+	--color-ember-500: #ff5a1f;
+	--color-ember-400: #ff7a2f;
+	--color-ember-300: #ffa055;
+	--color-ember-200: #ffc061;
+
+	--color-moss-400: #9bc77a;
+	--color-sky-400: #7fb2d9;
+	--color-rose-400: #f0767a;
+
+	--animate-rise: rise 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+	--animate-flicker: flicker 2.4s ease-in-out infinite;
+
+	@keyframes rise {
+		from { opacity: 0; transform: translateY(8px); }
+		to { opacity: 1; transform: none; }
+	}
+	@keyframes flicker {
+		0%, 100% { opacity: 1; transform: scaleY(1); }
+		45% { opacity: 0.75; transform: scaleY(0.92); }
+		70% { opacity: 0.95; transform: scaleY(1.04); }
+	}
+}
+
+:root {
+	color-scheme: dark;
+	--glow: 255 90 31;
+	--hair: 242 233 223;
+	background: var(--color-ink-950);
+	color: var(--color-ink-100);
+	font-family: var(--font-sans);
+	-webkit-font-smoothing: antialiased;
+}
+
+/* Light theme: invert the ink ramp; utilities read the variables so every view follows. */
+:root[data-theme="light"] {
+	--hair: 30 24 20;
+	--color-ink-950: #faf8f5;
+	--color-ink-900: #ffffff;
+	--color-ink-850: #f3efea;
+	--color-ink-800: #ebe5de;
+	--color-ink-700: #ddd5cc;
+	--color-ink-600: #c4b9ad;
+	--color-ink-500: #8e8278;
+	--color-ink-400: #6b6058;
+	--color-ink-300: #4d443d;
+	--color-ink-200: #2f2924;
+	--color-ink-100: #1a1613;
+	--color-moss-400: #3f8a2b;
+	--color-sky-400: #2c6fa3;
+	--color-rose-400: #d23a42;
+}
+
+/* Skins: swap the accent ramp. */
+:root[data-skin="ocean"] {
+	--glow: 47 140 255;
+	--color-ember-600: #1f6fe0;
+	--color-ember-500: #2f8cff;
+	--color-ember-400: #4fa0ff;
+	--color-ember-300: #7cb8ff;
+	--color-ember-200: #a9d0ff;
+}
+:root[data-skin="forest"] {
+	--glow: 47 179 107;
+	--color-ember-600: #1f9457;
+	--color-ember-500: #2fb36b;
+	--color-ember-400: #45c47e;
+	--color-ember-300: #72d69c;
+	--color-ember-200: #a3e6be;
+}
+:root[data-skin="violet"] {
+	--glow: 139 92 246;
+	--color-ember-600: #7444e0;
+	--color-ember-500: #8b5cf6;
+	--color-ember-400: #9d74f8;
+	--color-ember-300: #b89afa;
+	--color-ember-200: #d4c2fc;
+}
+:root[data-skin="rose"] {
+	--glow: 244 63 110;
+	--color-ember-600: #d92a58;
+	--color-ember-500: #f43f6e;
+	--color-ember-400: #f65c86;
+	--color-ember-300: #f88aa7;
+	--color-ember-200: #fbb6c8;
+}
+:root[data-theme="light"][data-skin] {
+	--color-ember-200: var(--color-ember-600);
+	--color-ember-300: var(--color-ember-600);
+}
+
+html, body, #root { height: 100%; }
+body { margin: 0; overflow: hidden; }
+
+/* Accent glow + film grain: the signature backdrop. */
+.forge-bg {
+	background:
+		radial-gradient(1200px 500px at 70% 115%, rgb(var(--glow) / 0.13), transparent 60%),
+		radial-gradient(700px 400px at -10% -10%, rgb(var(--glow) / 0.05), transparent 60%),
+		var(--color-ink-950);
+	position: relative;
+	isolation: isolate;
+}
+:root[data-theme="light"] .forge-bg::after { opacity: 0.025; }
+.forge-bg::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	z-index: -1;
+	opacity: 0.06;
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+.ember-text {
+	background: linear-gradient(180deg, var(--color-ember-200), var(--color-ember-500));
+	-webkit-background-clip: text;
+	background-clip: text;
+	color: transparent;
+}
+
+.hairline { border-color: rgb(var(--hair) / 0.08); }
+
+::selection { background: rgb(var(--glow) / 0.35); }
+
+/* Desktop title bar: draggable chrome, interactive children opt out. */
+.titlebar { -webkit-user-select: none; user-select: none; }
+.titlebar button, .titlebar input, .titlebar a, .titlebar [data-no-drag] { -webkit-app-region: no-drag; }
+
+/* Thinking-effort slider */
+.effort-track {
+	background: linear-gradient(90deg, rgb(var(--glow) / 0.15), rgb(var(--glow) / 0.9));
+}
+
+* { scrollbar-width: thin; scrollbar-color: var(--color-ink-600) transparent; }
+
+/* Markdown */
+.prose-forge { line-height: 1.7; font-size: 0.95rem; overflow-wrap: anywhere; }
+.prose-forge > * + * { margin-top: 0.75em; }
+.prose-forge h1, .prose-forge h2, .prose-forge h3 { font-family: var(--font-display); font-weight: 650; letter-spacing: -0.01em; margin-top: 1.2em; }
+.prose-forge h1 { font-size: 1.4rem; }
+.prose-forge h2 { font-size: 1.2rem; }
+.prose-forge h3 { font-size: 1.05rem; }
+.prose-forge a { color: var(--color-ember-300); text-decoration: underline; text-underline-offset: 3px; }
+.prose-forge ul { list-style: disc; padding-left: 1.4em; }
+.prose-forge ol { list-style: decimal; padding-left: 1.4em; }
+.prose-forge li + li { margin-top: 0.25em; }
+.prose-forge blockquote { border-left: 2px solid var(--color-ember-500); padding-left: 1em; color: var(--color-ink-300); }
+.prose-forge :not(pre) > code { font-family: var(--font-mono); font-size: 0.85em; background: var(--color-ink-800); padding: 0.1em 0.4em; border-radius: 5px; color: var(--color-ember-200); }
+.prose-forge pre { font-family: var(--font-mono); font-size: 0.82rem; background: var(--color-ink-900) !important; border: 1px solid rgb(var(--hair) / 0.08); border-radius: 12px; padding: 1em 1.1em; overflow-x: auto; }
+.prose-forge pre code.hljs { background: transparent; padding: 0; }
+/* highlight.js theme is dark-only; keep code blocks dark in the light theme. */
+:root[data-theme="light"] .prose-forge pre { background: #1f1b18 !important; color: #f2e9df; border-color: transparent; }
+.prose-forge table { border-collapse: collapse; font-size: 0.88rem; display: block; overflow-x: auto; }
+.prose-forge th, .prose-forge td { border: 1px solid var(--color-ink-700); padding: 0.4em 0.8em; }
+.prose-forge th { background: var(--color-ink-850); font-weight: 600; }
+.prose-forge hr { border-color: var(--color-ink-700); }
+
+.caret::after {
+	content: "";
+	display: inline-block;
+	width: 0.5em;
+	height: 1.05em;
+	margin-left: 2px;
+	vertical-align: -0.15em;
+	background: var(--color-ember-400);
+	border-radius: 1px;
+	animation: flicker 1s steps(2) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
