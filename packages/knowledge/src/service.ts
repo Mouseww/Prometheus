@@ -77,6 +77,33 @@ export class KnowledgeService {
 		return this.info(record);
 	}
 
+	async update(id: string, patch: { name?: string; description?: string; embedding?: { gatewayId: string; model: string } }): Promise<KnowledgeBaseInfo> {
+		const record = this.require(id);
+		if (patch.embedding) {
+			const { gatewayId, model } = patch.embedding;
+			const changed = gatewayId !== record.embedding.gatewayId || model !== record.embedding.model;
+			// Vectors from different models are not comparable, so the model is locked once documents exist.
+			if (changed && record.documents.length > 0) throw new Error("知识库已有文档，无法更换向量模型；请先删除全部文档或新建知识库");
+			if (!model.trim()) throw new Error("向量模型不能为空");
+			this.gateway(gatewayId);
+			if (changed && record.dimensions) {
+				// Emptied base: discard the old-dimension table so the next ingest recreates it.
+				await (await this.store(record)).drop();
+				this.open.delete(id);
+				await rm(join(this.options.dataDir, "stores", id), { recursive: true, force: true });
+			}
+			if (changed) record.dimensions = undefined;
+			record.embedding = { gatewayId, model: model.trim() };
+		}
+		if (patch.name !== undefined) {
+			if (!patch.name.trim()) throw new Error("知识库名称不能为空");
+			record.name = patch.name.trim();
+		}
+		if (patch.description !== undefined) record.description = patch.description.trim() || undefined;
+		await this.persist();
+		return this.info(record);
+	}
+
 	async delete(id: string): Promise<void> {
 		const record = this.require(id);
 		if (record.dimensions) await (await this.store(record)).drop();

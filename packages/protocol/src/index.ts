@@ -238,6 +238,25 @@ export interface KnowledgeBaseInfo {
 	chunkCount: number;
 }
 
+export interface UsageTotals {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	cost: number;
+	requests: number;
+}
+
+/** Token and cost totals across all sessions on disk. `days` of 0 means all time. */
+export interface UsageStats {
+	days: number;
+	sessions: number;
+	totals: UsageTotals;
+	byModel: (UsageTotals & { provider: string; model: string })[];
+	/** Local-time calendar days, ascending. */
+	byDay: (UsageTotals & { date: string })[];
+}
+
 export interface KnowledgeDocumentInfo { id: string; title: string; chunks: number; addedAt: string }
 export interface KnowledgeHit { documentId: string; title: string; text: string; score: number }
 
@@ -377,6 +396,7 @@ export interface RpcMethods {
 	"session.archive": { params: { sessionId: string; archived: boolean }; result: null };
 	"session.delete": { params: { sessionId: string }; result: null };
 	"session.stats": { params: { sessionId: string }; result: SessionStats };
+	"usage.stats": { params: { days?: number }; result: UsageStats };
 
 	"message.delete": { params: { sessionId: string; ref: MessageRef }; result: null };
 	"message.retry": { params: { sessionId: string; ref: MessageRef }; result: null };
@@ -414,6 +434,8 @@ export interface RpcMethods {
 
 	"kb.list": { params: Record<string, never>; result: KnowledgeBaseInfo[] };
 	"kb.create": { params: { name: string; description?: string; store?: string; embedding: { gatewayId: string; model: string } }; result: KnowledgeBaseInfo };
+	/** Only allowed while the base has no documents, since vectors from different models are incompatible. */
+	"kb.update": { params: { id: string; name?: string; description?: string; embedding?: { gatewayId: string; model: string } }; result: KnowledgeBaseInfo };
 	"kb.delete": { params: { id: string }; result: null };
 	"kb.documents": { params: { id: string }; result: KnowledgeDocumentInfo[] };
 	"kb.ingest": { params: { id: string; title: string; text: string }; result: KnowledgeDocumentInfo };

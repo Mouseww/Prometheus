@@ -24,6 +24,31 @@ export function Modal({ onClose, children, floatingClose }: { onClose: () => voi
 	);
 }
 
+/** Small centred dialog inside the nearest positioned ancestor (e.g. a Modal); Esc closes only this layer. */
+export function Dialog({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+	useEffect(() => {
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key !== "Escape") return;
+			e.stopImmediatePropagation();
+			onClose();
+		};
+		window.addEventListener("keydown", onKey, true);
+		return () => window.removeEventListener("keydown", onKey, true);
+	}, [onClose]);
+
+	return (
+		<div className="absolute inset-0 z-30 m-0 grid place-items-center bg-ink-950/60 p-4 backdrop-blur-[2px]" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+			<div role="dialog" aria-modal aria-label={title} className="w-full max-w-lg animate-rise space-y-4 rounded-2xl border border-ink-700 bg-ink-900 p-5 shadow-2xl shadow-black/60">
+				<div className="flex items-center justify-between gap-3">
+					<h2 className="font-display text-lg font-semibold">{title}</h2>
+					<CloseButton onClose={onClose} className="-mr-1.5" />
+				</div>
+				{children}
+			</div>
+		</div>
+	);
+}
+
 function CloseButton({ onClose, className }: { onClose: () => void; className?: string }) {
 	return (
 		<button type="button" onClick={onClose} aria-label="Close" className={clsx("shrink-0 rounded-lg p-1.5 text-ink-400 transition-colors hover:bg-ink-800 hover:text-ink-100", className)}>

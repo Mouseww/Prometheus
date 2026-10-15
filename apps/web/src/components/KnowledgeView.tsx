@@ -1,9 +1,9 @@
-import { BookOpen, FileText, Plus, Search, Trash2, Upload } from "lucide-react";
+import { BookOpen, FileText, Plus, RefreshCw, Search, Settings2, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { GatewayConfig, KnowledgeBaseInfo, KnowledgeDocumentInfo, KnowledgeHit } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { call, toast } from "../lib/store.ts";
-import { Badge, Button, Empty, Field, Input, PageHeader, Select, Textarea } from "./ui.tsx";
+import { Badge, Button, Dialog, Empty, Field, Input, PageHeader, Select, Textarea } from "./ui.tsx";
 
 const M = defineMessages({
 	zh: {
@@ -22,6 +22,13 @@ const M = defineMessages({
 		embeddingGateway: "Embedding 网关",
 		noGateway: "请先添加 OpenAI/Gemini 网关",
 		embeddingModel: "Embedding 模型",
+		embeddingModelHint: "需选择向量模型（如 text-embedding-3-small），而非对话模型",
+		fetchModels: "从网关获取模型列表",
+		fetched: "获取到 {n} 个模型",
+		embeddingSettings: "向量模型设置",
+		embeddingLocked: "已有文档，向量模型已锁定。如需更换，请先删除全部文档。",
+		save: "保存",
+		saved: "已保存向量模型设置",
 		vectorStore: "向量存储",
 		vectorStoreHint: "插件可注册更多存储后端",
 		cancel: "取消",
@@ -63,6 +70,13 @@ const M = defineMessages({
 		embeddingGateway: "Embedding gateway",
 		noGateway: "Add an OpenAI/Gemini gateway first",
 		embeddingModel: "Embedding model",
+		embeddingModelHint: "Pick an embedding model (e.g. text-embedding-3-small), not a chat model",
+		fetchModels: "Fetch models from gateway",
+		fetched: "Found {n} models",
+		embeddingSettings: "Embedding settings",
+		embeddingLocked: "This base already has documents, so its embedding model is locked. Delete all documents to change it.",
+		save: "Save",
+		saved: "Embedding settings saved",
 		vectorStore: "Vector store",
 		vectorStoreHint: "Plugins can register more storage backends",
 		cancel: "Cancel",
@@ -165,6 +179,65 @@ export function KnowledgeView() {
 	);
 }
 
+function EmbeddingFields({
+	gateways,
+	value,
+	onChange,
+	disabled,
+}: {
+	gateways: GatewayConfig[];
+	value: { gatewayId: string; model: string };
+	onChange: (v: { gatewayId: string; model: string }) => void;
+	disabled?: boolean;
+}) {
+	const t = useT(M);
+	const [fetched, setFetched] = useState<{ gatewayId: string; ids: string[] } | null>(null);
+	const [loading, setLoading] = useState(false);
+	const gateway = gateways.find((g) => g.id === value.gatewayId);
+	const suggestions = [...new Set([...(gateway?.models.map((m) => m.id) ?? []), ...(fetched?.gatewayId === value.gatewayId ? fetched.ids : [])])];
+	const listId = `embed-models-${value.gatewayId}`;
+
+	const fetchModels = async () => {
+		if (!gateway) return;
+		setLoading(true);
+		const list = await call((c) => c.rpc("gateway.models", { gateway }));
+		setLoading(false);
+		if (list) {
+			setFetched({ gatewayId: gateway.id, ids: list.map((m) => m.id) });
+			toast(t("fetched", { n: list.length }));
+		}
+	};
+
+	return (
+		<div className="grid gap-4 sm:grid-cols-2">
+			<Field label={t("embeddingGateway")}>
+				<Select required disabled={disabled} value={value.gatewayId} onChange={(e) => onChange({ ...value, gatewayId: e.target.value })}>
+					{gateways.length === 0 && <option value="">{t("noGateway")}</option>}
+					{gateways.map((g) => (
+						<option key={g.id} value={g.id}>
+							{g.name}
+						</option>
+					))}
+				</Select>
+			</Field>
+			<Field label={t("embeddingModel")}>
+				<div className="flex gap-1.5">
+					<Input required disabled={disabled} list={listId} value={value.model} onChange={(e) => onChange({ ...value, model: e.target.value })} className="font-mono" />
+					<Button variant="outline" disabled={disabled || loading || !gateway} onClick={() => void fetchModels()} aria-label={t("fetchModels")} title={t("fetchModels")}>
+						<RefreshCw className={loading ? "size-4 animate-spin" : "size-4"} />
+					</Button>
+				</div>
+				<datalist id={listId}>
+					{suggestions.map((id) => (
+						<option key={id} value={id} />
+					))}
+				</datalist>
+			</Field>
+			<p className="text-xs text-ink-500 sm:col-span-2">{t("embeddingModelHint")}</p>
+		</div>
+	);
+}
+
 function CreateBase({ onDone }: { onDone: (id?: string) => void }) {
 	const t = useT(M);
 	const [gateways, setGateways] = useState<GatewayConfig[]>([]);
@@ -197,21 +270,7 @@ function CreateBase({ onDone }: { onDone: (id?: string) => void }) {
 			<Field label={t("description")} hint={t("descriptionHint")}>
 				<Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder={t("descriptionPlaceholder")} />
 			</Field>
-			<div className="grid gap-4 sm:grid-cols-2">
-				<Field label={t("embeddingGateway")}>
-					<Select required value={form.gatewayId} onChange={(e) => setForm({ ...form, gatewayId: e.target.value })}>
-						{gateways.length === 0 && <option value="">{t("noGateway")}</option>}
-						{gateways.map((g) => (
-							<option key={g.id} value={g.id}>
-								{g.name}
-							</option>
-						))}
-					</Select>
-				</Field>
-				<Field label={t("embeddingModel")}>
-					<Input required value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} className="font-mono" />
-				</Field>
-			</div>
+			<EmbeddingFields gateways={gateways} value={{ gatewayId: form.gatewayId, model: form.model }} onChange={(v) => setForm({ ...form, ...v })} />
 			<Field label={t("vectorStore")} hint={t("vectorStoreHint")}>
 				<Select value={form.store} onChange={(e) => setForm({ ...form, store: e.target.value })}>
 					{stores.map((s) => (
@@ -233,6 +292,40 @@ function CreateBase({ onDone }: { onDone: (id?: string) => void }) {
 	);
 }
 
+function EmbeddingDialog({ base, locked, onClose, onSaved }: { base: KnowledgeBaseInfo; locked: boolean; onClose: () => void; onSaved: () => Promise<void> }) {
+	const t = useT(M);
+	const [gateways, setGateways] = useState<GatewayConfig[]>([]);
+	const [value, setValue] = useState(base.embedding);
+
+	useEffect(() => {
+		void call((c) => c.rpc("gateway.list", {})).then((list) => setGateways((list ?? []).filter((g) => g.format !== "anthropic-messages")));
+	}, []);
+
+	const save = async (e: React.FormEvent) => {
+		e.preventDefault();
+		const info = await call((c) => c.rpc("kb.update", { id: base.id, embedding: { gatewayId: value.gatewayId, model: value.model.trim() } }));
+		if (info) {
+			toast(t("saved"));
+			await onSaved();
+		}
+	};
+
+	return (
+		<Dialog title={t("embeddingSettings")} onClose={onClose}>
+			<form onSubmit={save} className="space-y-4">
+				{locked && <p className="rounded-lg border border-ink-700 bg-ink-850 px-3 py-2 text-xs text-ink-300">{t("embeddingLocked")}</p>}
+				<EmbeddingFields gateways={gateways} value={value} onChange={setValue} disabled={locked} />
+				<div className="flex justify-end gap-2">
+					<Button onClick={onClose}>{t("cancel")}</Button>
+					<Button type="submit" variant="primary" disabled={locked || !value.gatewayId || !value.model.trim()}>
+						{t("save")}
+					</Button>
+				</div>
+			</form>
+		</Dialog>
+	);
+}
+
 function BaseDetail({ base, onChanged }: { base: KnowledgeBaseInfo; onChanged: () => Promise<void> }) {
 	const t = useT(M);
 	const [docs, setDocs] = useState<KnowledgeDocumentInfo[]>([]);
@@ -240,6 +333,7 @@ function BaseDetail({ base, onChanged }: { base: KnowledgeBaseInfo; onChanged: (
 	const [paste, setPaste] = useState({ title: "", text: "" });
 	const [query, setQuery] = useState("");
 	const [hits, setHits] = useState<KnowledgeHit[] | null>(null);
+	const [configuring, setConfiguring] = useState(false);
 	const fileInput = useRef<HTMLInputElement>(null);
 
 	const loadDocs = async () => {
@@ -303,10 +397,27 @@ function BaseDetail({ base, onChanged }: { base: KnowledgeBaseInfo; onChanged: (
 						<Badge>{base.id}</Badge>
 					</div>
 				</div>
-				<Button variant="danger" onClick={() => void removeBase()}>
-					<Trash2 className="size-4" />
-				</Button>
+				<div className="flex gap-1.5">
+					<Button variant="outline" onClick={() => setConfiguring(true)} aria-label={t("embeddingSettings")} title={t("embeddingSettings")}>
+						<Settings2 className="size-4" />
+					</Button>
+					<Button variant="danger" onClick={() => void removeBase()}>
+						<Trash2 className="size-4" />
+					</Button>
+				</div>
 			</div>
+
+			{configuring && (
+				<EmbeddingDialog
+					base={base}
+					locked={docs.length > 0}
+					onClose={() => setConfiguring(false)}
+					onSaved={async () => {
+						setConfiguring(false);
+						await onChanged();
+					}}
+				/>
+			)}
 
 			<section
 				onDragOver={(e) => e.preventDefault()}
