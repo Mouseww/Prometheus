@@ -33,6 +33,7 @@ import {
 	openSettings,
 	renameSession,
 	setView,
+	startNewChat,
 	useStore,
 } from "../lib/store.ts";
 import { FolderPicker } from "./FolderPicker.tsx";
@@ -47,6 +48,7 @@ const M = defineMessages({
 		openFolder: "打开项目目录",
 		newChat: "在此工作区新建对话",
 		newSession: "新会话",
+		startChat: "新对话",
 		messages: "{n} 条",
 		archived: "已归档 ({n})",
 		rename: "重命名",
@@ -71,6 +73,7 @@ const M = defineMessages({
 		openFolder: "Open project folder",
 		newChat: "New chat in this workspace",
 		newSession: "New chat",
+		startChat: "New chat",
 		messages: "{n} msgs",
 		archived: "Archived ({n})",
 		rename: "Rename",
@@ -315,6 +318,15 @@ export function Sidebar({ target, onDisconnect }: { target: BackendTarget; onDis
 
 	return (
 		<aside className="flex w-72 shrink-0 flex-col border-r hairline bg-ink-950/60 backdrop-blur">
+			<div className="px-2 pt-3">
+				<button
+					type="button"
+					onClick={startNewChat}
+					className="flex w-full items-center gap-2 rounded-lg border border-ink-700 px-3 py-2 text-sm font-medium text-ink-100 transition-colors hover:border-ember-500/50 hover:bg-ink-850"
+				>
+					<Plus className="size-4 text-ember-400" /> {t("startChat")}
+				</button>
+			</div>
 			<div className="flex items-center justify-between px-3 pt-3 pb-1.5">
 				<span className="px-1 font-mono text-[10.5px] tracking-[0.18em] text-ink-500 uppercase">{t("workspaces")}</span>
 				<button type="button" onClick={() => setPicking(true)} className="rounded-md p-1 text-ink-400 hover:bg-ink-800 hover:text-ember-300" title={t("openFolder")}>

@@ -154,6 +154,9 @@ export interface MessageRef {
 	timestamp: number;
 }
 
+/** What PI did with a submitted prompt: ran it, queued it behind the current run, or consumed it (e.g. an extension command). */
+export type PromptDisposition = "started" | "queued" | "handled";
+
 export interface HostSettings {
 	/** PI auto-compaction (shared with the TUI through PI's settings.json). */
 	autoCompaction: boolean;
@@ -369,6 +372,22 @@ export interface PackageUpdateInfo {
 	type: "npm" | "git";
 }
 
+/** A background install/remove/update; finished jobs stay listed (with the npm output) until dismissed. */
+export interface PackageJob {
+	id: string;
+	action: "install" | "remove" | "update";
+	/** Normalised package source; `*` for "update everything". */
+	source: string;
+	label: string;
+	status: "queued" | "running" | "success" | "error";
+	startedAt: number;
+	finishedAt?: number;
+	/** Human-readable reason when `status` is `error`. */
+	error?: string;
+	/** Captured npm/git output, most recent lines last. */
+	log: string[];
+}
+
 export type MemoryScope = "user" | "project";
 export interface MemoryEntry {
 	id: string;
@@ -411,7 +430,7 @@ export interface RpcMethods {
 	"settings.get": { params: Record<string, never>; result: HostSettings };
 	"settings.set": { params: Partial<HostSettings>; result: HostSettings };
 
-	"chat.prompt": { params: { sessionId: string; text: string; images?: ImageContent[]; delivery?: "steer" | "followUp" }; result: null };
+	"chat.prompt": { params: { sessionId: string; text: string; images?: ImageContent[]; delivery?: "steer" | "followUp" }; result: { disposition: PromptDisposition } };
 	"chat.abort": { params: { sessionId: string }; result: null };
 	"chat.compact": { params: { sessionId: string; instructions?: string }; result: null };
 

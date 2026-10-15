@@ -7,6 +7,7 @@ import type {
 	MessageRef,
 	ModelInfo,
 	ModelRef,
+	PackageJob,
 	ServerFrame,
 	SessionEvent,
 	SessionSnapshot,
@@ -30,6 +31,13 @@ const M = defineMessages({
 		retrying: "请求失败，{s} 秒后重试（{a}/{m}）：{e}",
 		retryFailed: "重试失败：{e}",
 		forked: "已 Fork 为新会话",
+		pkgInstalled: "已安装 {name}，会话已重新加载",
+		pkgRemoved: "已卸载 {name}",
+		pkgUpdated: "更新完成，会话已重新加载",
+		pkgFailed: "{action} {name} 失败：{reason}",
+		pkgInstall: "安装",
+		pkgRemove: "卸载",
+		pkgUpdate: "更新",
 	},
 	en: {
 		compacting: "Compacting context…",
@@ -40,6 +48,13 @@ const M = defineMessages({
 		retrying: "Request failed, retrying in {s}s ({a}/{m}): {e}",
 		retryFailed: "Retry failed: {e}",
 		forked: "Forked into a new session",
+		pkgInstalled: "Installed {name}; sessions reloaded",
+		pkgRemoved: "Removed {name}",
+		pkgUpdated: "Update complete; sessions reloaded",
+		pkgFailed: "{action} {name} failed: {reason}",
+		pkgInstall: "Install",
+		pkgRemove: "Remove",
+		pkgUpdate: "Update",
 	},
 });
 
@@ -80,6 +95,8 @@ export interface ActiveSession {
 	widgets: Record<string, { lines: string[]; placement: string }>;
 	banner: Banner | null;
 	stats: SessionStats | null;
+	/** Prompt just sent and not yet echoed by the server; shown at once so the UI reacts before the upstream does. */
+	pending: { text: string; timestamp: number } | null;
 }
 
 export type SettingsTab = "general" | "gateways" | "mcp" | "skills" | "market" | "plugins" | "usage";
@@ -101,6 +118,14 @@ interface State {
 	toasts: Toast[];
 	title: string | null;
 	editorText: { text: string; nonce: number } | null;
+	/** True once the first connection has restored (or decided not to restore) a session. */
+	booted: boolean;
+	/** Model picked on the new-chat page before any workspace (and so any session) exists. */
+	draftModel: ModelRef | null;
+	/** Background marketplace operations (newest first); kept here so they survive switching Settings tabs. */
+	packageJobs: PackageJob[];
+	/** Bumped whenever a package operation succeeds, so views can reload the installed list. */
+	packageRevision: number;
 }
 
 export const useStore = create<State>(() => ({
@@ -119,6 +144,10 @@ export const useStore = create<State>(() => ({
 	toasts: [],
 	title: null,
 	editorText: null,
+	booted: false,
+	draftModel: null,
+	packageJobs: [],
+	packageRevision: 0,
 }));
 
 const set = useStore.setState;
@@ -197,10 +226,10 @@ function reduce(session: ActiveSession, e: SessionEvent): ActiveSession {
 		case "agent_start":
 			return { ...session, isStreaming: true };
 		case "agent_settled":
-			return { ...session, isStreaming: false, banner: null };
+			return { ...session, isStreaming: false, banner: null, pending: null };
 		case "message_start": {
 			const message = e.message.role === "assistant" ? { ...emptyAssistant(), ...(e.message as AssistantMessage), content: [] } : e.message;
-			return { ...session, messages: [...session.messages, message] };
+			return { ...session, messages: [...session.messages, message], pending: e.message.role === "user" ? null : session.pending };
 		}
 		case "message_update": {
 			const messages = session.messages;
@@ -363,18 +392,24 @@ function fromSnapshot(s: SessionSnapshot): ActiveSession {
 		widgets: s.widgets,
 		banner: null,
 		stats: null,
+		pending: null,
 	};
 }
 
 function activate(snapshot: SessionSnapshot): void {
 	const client = get().client;
 	const previous = get().session;
-	if (previous && previous.id !== snapshot.id) client?.unsubscribe(previous.id);
+	if (previous && previous.id !== snapshot.id) {
+		client?.unsubscribe(previous.id);
+		// An untouched new-chat session is never listed, so nothing else would ever release it.
+		if (previous.messages.length === 0 && !previous.isStreaming) void client?.rpc("session.close", { sessionId: previous.id }).catch(() => undefined);
+	}
 	client?.subscribe(snapshot.id);
 	buffer = [];
 	set({
 		session: fromSnapshot(snapshot),
 		view: "chat",
+		draftModel: null,
 		uiQueue: snapshot.pendingUI.filter((r) => !["notify", "setStatus", "setWidget", "setTitle", "setEditorText"].includes(r.method)).map((request) => ({ sessionId: snapshot.id, request })),
 	});
 	localStorage.setItem("prometheus.lastSession", snapshot.id);
@@ -437,7 +472,33 @@ export async function openSession(sessionId: string): Promise<void> {
 	if (snap) activate(snap);
 }
 
-/** After the active session disappears, fall back to the newest one in the same workspace (or a fresh one). */
+/** Show the new-chat page: leave the current conversation (it keeps running) until a workspace is chosen. */
+export function startNewChat(): void {
+	const current = get().session;
+	set({ view: "chat" });
+	// Already on the new-chat page: keep the workspace chosen so far.
+	if (!current || current.messages.length === 0) return;
+	get().client?.unsubscribe(current.id);
+	buffer = [];
+	set({ session: null, commands: [], draftModel: current.model });
+}
+
+/** Pick the workspace of the new-chat page, carrying over any model and thinking level chosen so far. */
+export async function chooseWorkspace(path: string): Promise<void> {
+	const prev = get().session;
+	if (prev && (prev.messages.length > 0 || prev.isStreaming)) return;
+	const model = prev?.model ?? get().draftModel;
+	const thinking = prev?.thinkingLevel;
+	await createSession(path);
+	const created = get().session;
+	if (!created || created.id === prev?.id) return;
+	set({ draftModel: null });
+	if (model && (created.model?.provider !== model.provider || created.model.id !== model.id)) await setModel(model);
+	const ready = get().session;
+	if (thinking && ready && thinking !== ready.thinkingLevel && ready.availableThinkingLevels.includes(thinking)) await setThinking(thinking);
+}
+
+/** After the active session disappears, fall back to the newest one in the same workspace, else the new-chat page. */
 async function leaveSession(sessionId: string): Promise<void> {
 	const current = get().session;
 	if (current?.id !== sessionId) return;
@@ -446,7 +507,6 @@ async function leaveSession(sessionId: string): Promise<void> {
 	await refreshSessions();
 	const next = get().sessions.find((s) => !s.archived && s.id !== sessionId && s.workspaceId === current.workspaceId);
 	if (next) await openSession(next.id);
-	else await createSession(current.cwd);
 }
 
 export async function archiveSession(sessionId: string, archived: boolean): Promise<void> {
@@ -499,8 +559,19 @@ export async function addWorkspace(path: string): Promise<WorkspaceInfo | undefi
 
 export async function sendPrompt(text: string, delivery?: "steer" | "followUp"): Promise<boolean> {
 	const session = get().session;
-	if (!session) return false;
+	if (!session || session.pending) return false;
+
+	// Queued/steered messages ride on a run that is already visible; only a fresh run needs the instant echo.
+	const mark = session.isStreaming ? null : { text, timestamp: Date.now() };
+	if (mark) set({ session: { ...session, pending: mark } });
+
 	const result = await call((c) => c.rpc("chat.prompt", { sessionId: session.id, text, delivery }));
+
+	// Only a started run echoes the user message later; anything else must drop the placeholder now.
+	if (mark && result?.disposition !== "started") {
+		const current = get().session;
+		if (current?.id === session.id && current.pending === mark) set({ session: { ...current, pending: null } });
+	}
 	return result !== undefined;
 }
 
@@ -511,7 +582,10 @@ export async function abortRun(): Promise<void> {
 
 export async function setModel(model: ModelRef): Promise<void> {
 	const session = get().session;
-	if (!session) return;
+	if (!session) {
+		set({ draftModel: model });
+		return;
+	}
 	await call((c) => c.rpc("model.set", { sessionId: session.id, model }));
 	const snap = await call((c) => c.rpc("session.open", { sessionId: session.id }));
 	const current = get().session;
@@ -542,6 +616,58 @@ export function pluginCall<T>(plugin: string, method: string, params: Record<str
 	return call(async (c) => (await c.rpc("plugin.call", { plugin, method, params })) as T);
 }
 
+// ---------- marketplace jobs ----------
+
+const isActive = (j: PackageJob) => j.status === "queued" || j.status === "running";
+const JOB_POLL_MS = 1000;
+let jobTimer: ReturnType<typeof setInterval> | undefined;
+/** Jobs this client has seen running, so only those produce a result toast (not old history after a reload). */
+const watched = new Set<string>();
+
+function announce(job: PackageJob): void {
+	const action = tr(M, job.action === "install" ? "pkgInstall" : job.action === "remove" ? "pkgRemove" : "pkgUpdate");
+	if (job.status === "error") {
+		toast(tr(M, "pkgFailed", { action, name: job.label, reason: job.error ?? "" }), "error");
+		return;
+	}
+	toast(tr(M, job.action === "install" ? "pkgInstalled" : job.action === "remove" ? "pkgRemoved" : "pkgUpdated", { name: job.label }));
+	set((s) => ({ packageRevision: s.packageRevision + 1 }));
+}
+
+function applyJobs(jobs: PackageJob[]): void {
+	for (const j of jobs) {
+		if (isActive(j)) watched.add(j.id);
+		else if (watched.delete(j.id)) announce(j);
+	}
+	set({ packageJobs: jobs });
+	if (jobs.some(isActive)) {
+		jobTimer ??= setInterval(() => void refreshPackageJobs(), JOB_POLL_MS);
+	} else if (jobTimer) {
+		clearInterval(jobTimer);
+		jobTimer = undefined;
+	}
+}
+
+export async function refreshPackageJobs(): Promise<void> {
+	const jobs = await get().client?.rpc("plugin.call", { plugin: "packages", method: "jobs", params: {} }).catch(() => undefined);
+	if (Array.isArray(jobs)) applyJobs(jobs as PackageJob[]);
+}
+
+/** Start an install/remove/update in the background; progress and the result arrive through `packageJobs` and toasts. */
+export async function startPackageJob(method: "install" | "remove" | "update", params: Record<string, unknown>): Promise<boolean> {
+	const job = await pluginCall<PackageJob>("packages", method, params);
+	if (!job) return false;
+	watched.add(job.id);
+	await refreshPackageJobs();
+	return true;
+}
+
+export async function dismissPackageJob(id: string): Promise<void> {
+	set((s) => ({ packageJobs: s.packageJobs.filter((j) => j.id !== id) }));
+	await pluginCall("packages", "dismiss", { id });
+}
+
+
 export function bindClient(client: PrometheusClient): () => void {
 	set({ client, conn: client.state });
 	const offFrame = client.onFrame(handleFrame);
@@ -556,13 +682,10 @@ export function bindClient(client: PrometheusClient): () => void {
 }
 
 async function onConnected(): Promise<void> {
-	await Promise.all([refreshSessions(), refreshModels(), refreshWorkspaces(), refreshHostSettings(), refreshHostInfo()]);
+	await Promise.all([refreshSessions(), refreshModels(), refreshWorkspaces(), refreshHostSettings(), refreshHostInfo(), refreshPackageJobs()]);
 	const current = get().session;
-	const target = current?.id ?? localStorage.getItem("prometheus.lastSession");
+	const target = current?.id ?? (get().booted ? null : localStorage.getItem("prometheus.lastSession"));
 	const exists = target && get().sessions.some((s) => s.id === target && !s.archived);
 	if (exists) await openSession(target);
-	else if (!current) {
-		const ws = get().workspaces[0];
-		await createSession(ws?.path);
-	}
+	set({ booted: true });
 }

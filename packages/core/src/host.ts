@@ -27,6 +27,7 @@ import {
 	type MessageRef,
 	type ModelInfo,
 	PROTOCOL_VERSION,
+	type PromptDisposition,
 	type RpcMethod,
 	type RpcParams,
 	type RpcResult,
@@ -357,18 +358,19 @@ export class PrometheusHost {
 		};
 	}
 
-	private async prompt(sessionId: string, text: string, images: ImageContent[] | undefined, delivery: "steer" | "followUp" | undefined) {
+	private async prompt(sessionId: string, text: string, images: ImageContent[] | undefined, delivery: "steer" | "followUp" | undefined): Promise<PromptDisposition> {
 		const { session, bridge } = this.require(sessionId);
 		// Resolve as soon as PI accepts the prompt; the run itself streams through events.
-		await new Promise<void>((resolve, reject) => {
+		return new Promise<PromptDisposition>((resolve, reject) => {
 			session
 				.prompt(text, {
 					images,
 					streamingBehavior: session.isStreaming ? (delivery ?? "followUp") : undefined,
-					preflightResult: () => resolve(),
+					preflightResult: (disposition) => resolve(disposition),
 				})
 				.then(
-					() => resolve(),
+					// PI defers a prompt submitted while it settles without reporting a disposition; it still runs.
+					() => resolve("started"),
 					(err: unknown) => {
 						reject(err);
 						bridge.context().notify(err instanceof Error ? err.message : String(err), "error");
@@ -615,8 +617,8 @@ export class PrometheusHost {
 
 		"chat.prompt": async ({ sessionId, text, images, delivery }) => {
 			if (!text.trim() && !images?.length) throw new Error("消息不能为空");
-			await this.prompt(sessionId, text, images, delivery);
-			return null;
+			const disposition = await this.prompt(sessionId, text, images, delivery);
+			return { disposition };
 		},
 		"chat.abort": async ({ sessionId }) => {
 			await this.require(sessionId).session.abort();

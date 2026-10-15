@@ -44,7 +44,7 @@ export function App() {
 		return () => {
 			unbind();
 			client.close();
-			useStore.setState({ client: null, session: null, conn: "idle" });
+			useStore.setState({ client: null, session: null, conn: "idle", booted: false });
 		};
 	}, [target]);
 

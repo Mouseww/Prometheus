@@ -3,9 +3,10 @@ import { ArrowUp, Brain, Check, ChevronDown, Cpu, Search, Square } from "lucide-
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ThinkingLevel } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { abortRun, openSettings, sendPrompt, setModel, setThinking, useStore } from "../lib/store.ts";
+import { abortRun, openSettings, sendPrompt, setModel, setThinking, toast, useStore } from "../lib/store.ts";
 import { ContextMeter } from "./ContextMeter.tsx";
 import { usePopover } from "./TitleBar.tsx";
+import { WorkspacePicker } from "./WorkspacePicker.tsx";
 
 const M = defineMessages({
 	zh: {
@@ -18,6 +19,7 @@ const M = defineMessages({
 		queued: "排队中 · {q}",
 		abort: "中断",
 		send: "发送",
+		needWorkspace: "请先选择工作区",
 		pickModel: "选择模型",
 		searchModel: "搜索模型…",
 		noModels: "没有可用模型",
@@ -44,6 +46,7 @@ const M = defineMessages({
 		queued: "Queued · {q}",
 		abort: "Stop",
 		send: "Send",
+		needWorkspace: "Choose a workspace first",
 		pickModel: "Choose model",
 		searchModel: "Search models…",
 		noModels: "No models available",
@@ -65,7 +68,7 @@ const M = defineMessages({
 function ModelPicker() {
 	const t = useT(M);
 	const models = useStore((s) => s.models);
-	const current = useStore((s) => s.session?.model);
+	const current = useStore((s) => s.session?.model ?? s.draftModel);
 	const { open, setOpen, ref } = usePopover();
 	const [q, setQ] = useState("");
 	const groups = useMemo(() => {
@@ -226,7 +229,7 @@ function EffortPicker() {
 	);
 }
 
-export function Composer() {
+export function Composer({ newChat = false }: { newChat?: boolean }) {
 	const t = useT(M);
 	const session = useStore((s) => s.session);
 	const commands = useStore((s) => s.commands);
@@ -262,7 +265,11 @@ export function Composer() {
 
 	const submit = async () => {
 		const value = text.trim();
-		if (!value || !session) return;
+		if (!value) return;
+		if (!session) {
+			toast(t("needWorkspace"), "warning");
+			return;
+		}
 		setText("");
 		const ok = await sendPrompt(value, streaming ? delivery : undefined);
 		if (!ok) setText(value);
@@ -337,6 +344,7 @@ export function Composer() {
 			>
 				<textarea
 					ref={ref}
+					autoFocus
 					value={text}
 					onChange={(e) => setText(e.target.value)}
 					onKeyDown={onKeyDown}
@@ -345,6 +353,7 @@ export function Composer() {
 					className="block max-h-64 w-full resize-none bg-transparent px-4 pt-3.5 pb-2 text-[15px] text-ink-100 placeholder:text-ink-500 focus:outline-none"
 				/>
 				<div className="flex items-center gap-1 px-2 pb-2">
+					{newChat && <WorkspacePicker />}
 					<ModelPicker />
 					<EffortPicker />
 					<div className="flex-1" />
@@ -372,7 +381,8 @@ export function Composer() {
 					<button
 						type="button"
 						onClick={() => void submit()}
-						disabled={!text.trim()}
+						disabled={!text.trim() || !session}
+						title={session ? undefined : t("needWorkspace")}
 						className="grid size-8 place-items-center rounded-lg bg-ember-500 text-white transition hover:bg-ember-400 disabled:bg-ink-800 disabled:text-ink-600"
 						aria-label={t("send")}
 					>
