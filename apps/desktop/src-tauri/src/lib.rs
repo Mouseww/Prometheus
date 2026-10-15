@@ -80,6 +80,18 @@ fn random_token() -> String {
     buf.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Node cannot resolve Windows verbatim paths (`\\?\D:\...`), which Tauri's resource_dir returns.
+fn strip_verbatim(p: PathBuf) -> PathBuf {
+    let s = p.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{rest}"))
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        PathBuf::from(rest)
+    } else {
+        p
+    }
+}
+
 /// Resolution order: PROMETHEUS_SERVER_ENTRY, bundled resource, then the repo source in debug builds.
 fn server_entry(app: &tauri::AppHandle) -> Option<PathBuf> {
     if let Ok(p) = std::env::var("PROMETHEUS_SERVER_ENTRY") {
@@ -88,7 +100,7 @@ fn server_entry(app: &tauri::AppHandle) -> Option<PathBuf> {
     if let Ok(dir) = app.path().resource_dir() {
         let bundled = dir.join("server").join("main.js");
         if bundled.exists() {
-            return Some(bundled);
+            return Some(strip_verbatim(bundled));
         }
     }
     if cfg!(debug_assertions) {
@@ -113,7 +125,7 @@ fn spawn_backend(app: &tauri::AppHandle, backend: &Backend) -> Result<(), String
         .env("PROMETHEUS_PARENT_WATCH", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit());
+        .stderr(Stdio::piped());
     // `tauri dev` serves the UI from the Vite dev server, whose origin the server would otherwise reject.
     if cfg!(debug_assertions) && std::env::var_os("PROMETHEUS_ALLOWED_ORIGINS").is_none() {
         cmd.env("PROMETHEUS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173");
@@ -134,7 +146,24 @@ fn spawn_backend(app: &tauri::AppHandle, backend: &Backend) -> Result<(), String
         .spawn()
         .map_err(|e| format!("无法启动 Node（{node}）：{e}。请安装 Node ≥ 22.19 或设置 PROMETHEUS_NODE"))?;
     let stdout = child.stdout.take().ok_or("无法读取后端输出")?;
+    let stderr = child.stderr.take().ok_or("无法读取后端输出")?;
     *backend.child.lock().unwrap() = Some(child);
+
+    let stderr_tail = Arc::new(Mutex::new(Vec::<String>::new()));
+    let stderr_thread = {
+        let tail = stderr_tail.clone();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stderr).lines() {
+                let Ok(line) = line else { break };
+                eprintln!("[server] {line}");
+                let mut t = tail.lock().unwrap();
+                t.push(line);
+                if t.len() > 12 {
+                    t.remove(0);
+                }
+            }
+        })
+    };
 
     let backend = backend.clone();
     std::thread::spawn(move || {
@@ -152,7 +181,14 @@ fn spawn_backend(app: &tauri::AppHandle, backend: &Backend) -> Result<(), String
             println!("[server] {line}");
         }
         if !ready {
-            backend.set(Status::Failed("本地后端在就绪前退出".into()));
+            let _ = stderr_thread.join();
+            let tail = stderr_tail.lock().unwrap().join("\n");
+            let msg = if tail.trim().is_empty() {
+                "本地后端在就绪前退出".to_string()
+            } else {
+                format!("本地后端在就绪前退出：\n{tail}")
+            };
+            backend.set(Status::Failed(msg));
         }
     });
     Ok(())
