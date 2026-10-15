@@ -52,10 +52,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          NO_STRIP: "true"
         with:
           projectPath: apps/desktop
           tauriScript: pnpm tauri
-          args: --config src-tauri/tauri.bundle.json
+          args: --config src-tauri/tauri.bundle.json --verbose
           tagName: ${{ github.ref_name }}
           releaseName: Prometheus ${{ github.ref_name }}
           releaseBody: See the assets below to download and install.
