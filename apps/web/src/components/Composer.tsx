@@ -161,9 +161,12 @@ function EffortBars({ value, total }: { value: number; total: number }) {
 	);
 }
 
+// Selectors must return a stable reference: a fresh [] per call makes zustand re-render forever.
+const NO_LEVELS: ThinkingLevel[] = [];
+
 function EffortPicker() {
 	const t = useT(M);
-	const levels = useStore((s) => s.session?.availableThinkingLevels ?? []);
+	const levels = useStore((s) => s.session?.availableThinkingLevels ?? NO_LEVELS);
 	const level = useStore((s) => s.session?.thinkingLevel ?? "off");
 	const { open, setOpen, ref } = usePopover();
 	if (levels.length <= 1) return null;

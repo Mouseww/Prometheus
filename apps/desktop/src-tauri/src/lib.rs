@@ -7,6 +7,9 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::{Manager, RunEvent};
 
+#[cfg(desktop)]
+mod tray;
+
 #[derive(Clone, Serialize)]
 struct BackendInfo {
     port: u16,
@@ -237,11 +240,30 @@ fn local_supported() -> bool {
 pub fn run() {
     let backend = Backend::new();
     let builder = tauri::Builder::default();
+    // Single-instance must be registered first so a second launch just surfaces the hidden window.
     #[cfg(desktop)]
-    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    let builder = builder
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| tray::show_main(app)))
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(tray::TrayState::new())
+        .on_window_event(tray::on_window_event)
+        .setup(|app| {
+            tray::init(app.handle())?;
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            start_local_backend,
+            stop_local_backend,
+            relaunch_app,
+            local_supported,
+            tray::set_close_to_tray,
+            tray::show_main_window,
+            tray::open_session_in_main
+        ]);
+    #[cfg(mobile)]
+    let builder = builder.invoke_handler(tauri::generate_handler![start_local_backend, stop_local_backend, relaunch_app, local_supported]);
     let app = builder
         .manage(backend.clone())
-        .invoke_handler(tauri::generate_handler![start_local_backend, stop_local_backend, relaunch_app, local_supported])
         .build(tauri::generate_context!())
         .expect("failed to build Prometheus desktop");
 

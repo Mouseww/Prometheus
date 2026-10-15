@@ -2,6 +2,7 @@ import clsx from "clsx";
 import { BarChart3, Blocks, Cable, Check, Copy, Laptop, Moon, Network, Package, Sparkles, Sun, SlidersHorizontal } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
+import { isTauri } from "../lib/backend.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { type Lang, SKINS, type Skin, setPrefs, type ThemeMode, usePrefs } from "../lib/prefs.ts";
 import { openSettings, type SettingsTab, toast, updateHostSettings, useStore } from "../lib/store.ts";
@@ -38,6 +39,9 @@ const M = defineMessages({
 		rose: "玫瑰",
 		language: "语言",
 		session: "会话",
+		window: "窗口",
+		closeToTray: "关闭时最小化到托盘",
+		closeToTrayHint: "关闭窗口后 Prometheus 继续在后台运行，会话不会中断；点击托盘图标查看运行中的会话，右键可显示、隐藏或退出。",
 		autoCompact: "自动压缩上下文",
 		autoCompactHint: "上下文接近模型窗口上限时自动生成摘要并压缩。与 PI TUI 共享此设置。",
 		updates: "更新",
@@ -79,6 +83,9 @@ const M = defineMessages({
 		rose: "Rose",
 		language: "Language",
 		session: "Session",
+		window: "Window",
+		closeToTray: "Minimize to tray on close",
+		closeToTrayHint: "Closing the window keeps Prometheus running in the background so sessions are not interrupted. Click the tray icon to see running sessions; right-click to show, hide or quit.",
 		autoCompact: "Auto-compact context",
 		autoCompactHint: "Summarise and compact automatically when the context nears the model's window. Shared with the PI TUI.",
 		updates: "Updates",
@@ -275,6 +282,14 @@ function GeneralSettings() {
 							<Toggle checked={host?.autoCompaction ?? false} disabled={!host} onChange={(v) => void updateHostSettings({ autoCompaction: v })} />
 						</Row>
 					</Section>
+
+					{isTauri() && (
+						<Section title={t("window")}>
+							<Row label={t("closeToTray")} hint={t("closeToTrayHint")}>
+								<Toggle checked={prefs.closeToTray} onChange={(closeToTray) => setPrefs({ closeToTray })} />
+							</Row>
+						</Section>
+					)}
 
 					{canUpdate && (
 						<Section title={t("updates")}>

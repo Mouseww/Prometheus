@@ -13,7 +13,8 @@ import { UpdateDialog } from "./components/UpdateDialog.tsx";
 import type { BackendTarget } from "./lib/client.ts";
 import { PrometheusClient } from "./lib/client.ts";
 import { discoverBackend, establishCookie, isTauri, saveMode } from "./lib/backend.ts";
-import { bindClient, setView, useStore } from "./lib/store.ts";
+import { bindClient, openSession, setView, useStore } from "./lib/store.ts";
+import { usePrefs } from "./lib/prefs.ts";
 import { checkForUpdate } from "./lib/updater.ts";
 
 const closeView = () => setView("chat");
@@ -50,6 +51,28 @@ export function App() {
 
 	useEffect(() => {
 		void checkForUpdate(true);
+	}, []);
+
+	const closeToTray = usePrefs((p) => p.closeToTray);
+	useEffect(() => {
+		if (!isTauri()) return;
+		void import("@tauri-apps/api/core").then(({ invoke }) => invoke("set_close_to_tray", { enabled: closeToTray })).catch(() => undefined);
+	}, [closeToTray]);
+
+	// The tray panel asks the main window to jump to a running session.
+	useEffect(() => {
+		if (!isTauri()) return;
+		let off: (() => void) | undefined;
+		let dead = false;
+		void import("@tauri-apps/api/event").then(async ({ listen }) => {
+			const un = await listen<string>("open-session", (e) => void openSession(e.payload));
+			if (dead) un();
+			else off = un;
+		});
+		return () => {
+			dead = true;
+			off?.();
+		};
 	}, []);
 
 	useEffect(() => {

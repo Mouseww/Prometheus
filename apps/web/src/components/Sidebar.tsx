@@ -7,6 +7,7 @@ import {
 	ChevronDown,
 	ChevronRight,
 	FolderOpen,
+	FolderSearch,
 	FolderPlus,
 	LogOut,
 	MoreHorizontal,
@@ -59,6 +60,7 @@ const M = defineMessages({
 		removeWorkspace: "从列表移除",
 		confirmRemove: "从列表移除工作区「{name}」？会话文件不会被删除。",
 		renameWorkspace: "重命名工作区",
+		revealWorkspace: "在文件管理器中打开",
 		empty: "暂无对话",
 		disconnect: "断开连接",
 		local: "本机",
@@ -84,6 +86,7 @@ const M = defineMessages({
 		removeWorkspace: "Remove from list",
 		confirmRemove: "Remove workspace \"{name}\" from the list? Session files are kept.",
 		renameWorkspace: "Rename workspace",
+		revealWorkspace: "Open in file manager",
 		empty: "No chats yet",
 		disconnect: "Disconnect",
 		local: "Local",
@@ -238,7 +241,17 @@ function WorkspaceGroup({ w, sessions, activeId, current }: { w: WorkspaceInfo; 
 						<MoreHorizontal className="size-4" />
 					</button>
 					{menu.open && (
-						<div className="absolute top-full right-0 z-40 mt-1 w-44 animate-rise rounded-lg border border-ink-700 bg-ink-900 p-1 shadow-xl shadow-black/40">
+						<div className="absolute top-full right-0 z-40 mt-1 w-52 animate-rise rounded-lg border border-ink-700 bg-ink-900 p-1 shadow-xl shadow-black/40">
+							<button
+								type="button"
+								className={clsx(menuItem, "text-ink-200 hover:bg-ink-800")}
+								onClick={() => {
+									menu.setOpen(false);
+									void call((c) => c.rpc("workspace.open", { id: w.id }));
+								}}
+							>
+								<FolderSearch className="size-3.5" /> {t("revealWorkspace")}
+							</button>
 							<button
 								type="button"
 								className={clsx(menuItem, "text-ink-200 hover:bg-ink-800")}

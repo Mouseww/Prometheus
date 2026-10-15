@@ -16,12 +16,14 @@ interface Prefs {
 	theme: ThemeMode;
 	skin: Skin;
 	lang: Lang;
+	/** Desktop: closing the window hides it to the tray instead of quitting. */
+	closeToTray: boolean;
 }
 
 const KEY = "prometheus.prefs";
 
 function load(): Prefs {
-	const fallback: Prefs = { theme: "dark", skin: "ember", lang: navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en" };
+	const fallback: Prefs = { theme: "dark", skin: "ember", lang: navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en", closeToTray: true };
 	try {
 		return { ...fallback, ...(JSON.parse(localStorage.getItem(KEY) ?? "{}") as Partial<Prefs>) };
 	} catch {
