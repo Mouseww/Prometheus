@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Blocks, Cable, Check, Copy, Laptop, Moon, Network, Package, Sparkles, Sun, SlidersHorizontal } from "lucide-react";
+import { BarChart3, Blocks, Cable, Check, Copy, Laptop, Moon, Network, Package, Sparkles, Sun, SlidersHorizontal } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { defineMessages, useT } from "../lib/i18n.ts";
@@ -12,6 +12,7 @@ import { McpView } from "./McpView.tsx";
 import { PluginsView } from "./PluginsView.tsx";
 import { SkillsView } from "./SkillsView.tsx";
 import { Button, PageHeader } from "./ui.tsx";
+import { UsageView } from "./UsageView.tsx";
 
 const M = defineMessages({
 	zh: {
@@ -21,6 +22,7 @@ const M = defineMessages({
 		skills: "技能",
 		market: "插件市场",
 		plugins: "插件",
+		usage: "用量统计",
 		title: "通用设置",
 		subtitle: "外观、语言与会话行为",
 		appearance: "外观",
@@ -61,6 +63,7 @@ const M = defineMessages({
 		skills: "Skills",
 		market: "Marketplace",
 		plugins: "Plugins",
+		usage: "Usage",
 		title: "General",
 		subtitle: "Appearance, language and session behaviour",
 		appearance: "Appearance",
@@ -295,6 +298,7 @@ const TABS: { id: SettingsTab; icon: typeof Network }[] = [
 	{ id: "skills", icon: Sparkles },
 	{ id: "market", icon: Package },
 	{ id: "plugins", icon: Blocks },
+	{ id: "usage", icon: BarChart3 },
 ];
 
 export function SettingsView() {
@@ -325,6 +329,7 @@ export function SettingsView() {
 				{tab === "skills" && <SkillsView />}
 				{tab === "market" && <MarketView />}
 				{tab === "plugins" && <PluginsView />}
+				{tab === "usage" && <UsageView />}
 			</div>
 		</div>
 	);

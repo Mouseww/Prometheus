@@ -34,7 +34,7 @@ You can tell GUI from TUI by whether extension UI (dialogs, panels) is available
 
 - **Sidebar**: workspaces (project folders) and the sessions in each; Knowledge; Memory; Settings. Sessions can be renamed, archived, forked, retried, or have single messages deleted.
 - **Composer footer**: model picker (grouped by provider), thinking level, context-usage ring. Clicking the ring shows what fills the context and offers "compact".
-- **Settings** tabs: General (theme, language, auto-compaction, updates), AI Gateways, MCP, Skills, Marketplace, Plugins.
+- **Settings** tabs: General (theme, language, auto-compaction, updates), AI Gateways, MCP, Skills, Marketplace, Plugins, Usage (tokens and cost by day and model across all sessions). A knowledge base's embedding model is set when creating it and can be changed from its settings button until it has documents.
 
 Tell the user which tab to open rather than editing files when a UI exists for the job: the UI validates input, keeps secrets masked, and reloads live sessions.
 

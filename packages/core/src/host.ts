@@ -40,6 +40,7 @@ import {
 import { slimEvent, toModelRef } from "./events.ts";
 import { bootstrap, type Runtime } from "./runtime.ts";
 import { UIBridge } from "./ui-bridge.ts";
+import { collectUsage } from "./usage.ts";
 import { normalizeDir, WorkspaceStore, workspaceId } from "./workspaces.ts";
 import tauriConf from "../../../apps/desktop/src-tauri/tauri.conf.json" with { type: "json" };
 
@@ -607,6 +608,11 @@ export class PrometheusHost {
 			};
 		},
 
+		"usage.stats": async ({ days }) => {
+			const infos = await SessionManager.listAll();
+			return collectUsage(infos.map((i) => i.path), Number.isInteger(days) && (days as number) > 0 ? (days as number) : 0);
+		},
+
 		"chat.prompt": async ({ sessionId, text, images, delivery }) => {
 			if (!text.trim() && !images?.length) throw new Error("消息不能为空");
 			await this.prompt(sessionId, text, images, delivery);
@@ -730,6 +736,7 @@ export class PrometheusHost {
 
 		"kb.list": () => this.runtime.knowledge.list(),
 		"kb.create": (p) => this.runtime.knowledge.create(p),
+		"kb.update": ({ id, ...patch }) => this.runtime.knowledge.update(id, patch),
 		"kb.delete": async ({ id }) => {
 			await this.runtime.knowledge.delete(id);
 			return null;

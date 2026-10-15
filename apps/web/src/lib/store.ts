@@ -82,7 +82,7 @@ export interface ActiveSession {
 	stats: SessionStats | null;
 }
 
-export type SettingsTab = "general" | "gateways" | "mcp" | "skills" | "market" | "plugins";
+export type SettingsTab = "general" | "gateways" | "mcp" | "skills" | "market" | "plugins" | "usage";
 export type View = "chat" | "knowledge" | "memory" | "settings" | { panel: string };
 
 interface State {

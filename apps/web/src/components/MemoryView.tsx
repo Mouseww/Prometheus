@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { MemoryEntry, MemoryScope } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { pluginCall, toast } from "../lib/store.ts";
-import { Badge, Button, Empty, Input, PageHeader, Select, Textarea } from "./ui.tsx";
+import { Badge, Button, Dialog, Empty, Input, PageHeader, Select, Textarea } from "./ui.tsx";
 
 const M = defineMessages({
 	zh: {
@@ -29,6 +29,7 @@ const M = defineMessages({
 		tagsPlaceholder: "标签，逗号分隔",
 		currentProject: "当前项目",
 		add: "添加",
+		newMemory: "新增记忆",
 		searchPlaceholder: "搜索内容或标签",
 		deleteSelected: "删除所选 ({n})",
 		emptyTitle: "还没有记忆",
@@ -68,6 +69,7 @@ const M = defineMessages({
 		tagsPlaceholder: "Tags, comma-separated",
 		currentProject: "This project",
 		add: "Add",
+		newMemory: "New memory",
 		searchPlaceholder: "Search content or tags",
 		deleteSelected: "Delete selected ({n})",
 		emptyTitle: "No memories yet",
@@ -118,6 +120,7 @@ export function MemoryView() {
 	const [query, setQuery] = useState("");
 	const [filter, setFilter] = useState<Filter>("all");
 	const [picked, setPicked] = useState<Set<string>>(new Set());
+	const [adding, setAdding] = useState(false);
 	const [draft, setDraft] = useState({ content: "", tags: "", scope: "user" as MemoryScope, pinned: false });
 
 	const load = async () => {
@@ -158,7 +161,10 @@ export function MemoryView() {
 		const content = draft.content.trim();
 		if (!content || content.length > MAX) return;
 		const ok = await mutate("add", { content, tags: parseTags(draft.tags), scope: draft.scope, pinned: draft.pinned }, t("added"));
-		if (ok) setDraft({ content: "", tags: "", scope: draft.scope, pinned: false });
+		if (ok) {
+			setDraft({ content: "", tags: "", scope: draft.scope, pinned: false });
+			setAdding(false);
+		}
 	};
 
 	const removeSelected = async () => {
@@ -175,52 +181,30 @@ export function MemoryView() {
 		});
 
 	return (
-		<div className="flex min-h-0 flex-1 flex-col">
+		<div className="relative flex min-h-0 flex-1 flex-col">
 			<PageHeader
 				title={t("title")}
 				subtitle={t("subtitle")}
 				actions={
-					<label className="flex items-center gap-2 text-sm text-ink-300">
-						<input
-							type="checkbox"
-							checked={autoInject}
-							disabled={busy}
-							onChange={(e) => void mutate("settings", { autoInject: e.target.checked }, e.target.checked ? t("injectOn") : t("injectOff"))}
-							className="accent-ember-500"
-						/>
-						{t("autoInject")}
-					</label>
+					<>
+						<label className="flex items-center gap-2 text-sm text-ink-300">
+							<input
+								type="checkbox"
+								checked={autoInject}
+								disabled={busy}
+								onChange={(e) => void mutate("settings", { autoInject: e.target.checked }, e.target.checked ? t("injectOn") : t("injectOff"))}
+								className="accent-ember-500"
+							/>
+							{t("autoInject")}
+						</label>
+						<Button variant="primary" onClick={() => setAdding(true)}>
+							<Plus className="size-4" /> {t("newMemory")}
+						</Button>
+					</>
 				}
 			/>
 			<div className="min-h-0 flex-1 overflow-y-auto">
 				<div className="mx-auto max-w-3xl space-y-5 p-6">
-					<div className="animate-rise space-y-3 rounded-xl border border-ink-800 bg-ink-900/60 p-4">
-						<Textarea
-							rows={3}
-							value={draft.content}
-							maxLength={MAX}
-							onChange={(e) => setDraft({ ...draft, content: e.target.value })}
-							placeholder={t("draftPlaceholder")}
-						/>
-						<div className="flex flex-wrap items-center gap-2">
-							<Input value={draft.tags} onChange={(e) => setDraft({ ...draft, tags: e.target.value })} placeholder={t("tagsPlaceholder")} className="w-48 flex-1" />
-							<Select value={draft.scope} onChange={(e) => setDraft({ ...draft, scope: e.target.value as MemoryScope })} className="w-32">
-								<option value="user">{t("user")}</option>
-								<option value="project">{t("currentProject")}</option>
-							</Select>
-							<label className="flex items-center gap-1.5 text-sm text-ink-300">
-								<input type="checkbox" checked={draft.pinned} onChange={(e) => setDraft({ ...draft, pinned: e.target.checked })} className="accent-ember-500" />
-								{t("pinned")}
-							</label>
-							<span className={clsx("font-mono text-[11px]", draft.content.length >= MAX ? "text-rose-400" : "text-ink-500")}>
-								{draft.content.length}/{MAX}
-							</span>
-							<Button variant="primary" disabled={busy || !draft.content.trim()} onClick={() => void add()}>
-								<Plus className="size-4" /> {t("add")}
-							</Button>
-						</div>
-					</div>
-
 					<div className="flex flex-wrap items-center gap-2">
 						<div className="relative min-w-48 flex-1">
 							<Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-500" />
@@ -259,6 +243,38 @@ export function MemoryView() {
 					)}
 				</div>
 			</div>
+			{adding && (
+				<Dialog title={t("newMemory")} onClose={() => setAdding(false)}>
+					<Textarea
+						autoFocus
+						rows={5}
+						value={draft.content}
+						maxLength={MAX}
+						onChange={(e) => setDraft({ ...draft, content: e.target.value })}
+						placeholder={t("draftPlaceholder")}
+					/>
+					<Input value={draft.tags} onChange={(e) => setDraft({ ...draft, tags: e.target.value })} placeholder={t("tagsPlaceholder")} />
+					<div className="flex flex-wrap items-center gap-3">
+						<Select value={draft.scope} onChange={(e) => setDraft({ ...draft, scope: e.target.value as MemoryScope })} className="w-36">
+							<option value="user">{t("user")}</option>
+							<option value="project">{t("currentProject")}</option>
+						</Select>
+						<label className="flex items-center gap-1.5 text-sm text-ink-300">
+							<input type="checkbox" checked={draft.pinned} onChange={(e) => setDraft({ ...draft, pinned: e.target.checked })} className="accent-ember-500" />
+							{t("pinned")}
+						</label>
+						<span className={clsx("ml-auto font-mono text-[11px]", draft.content.length >= MAX ? "text-rose-400" : "text-ink-500")}>
+							{draft.content.length}/{MAX}
+						</span>
+					</div>
+					<div className="flex justify-end gap-2">
+						<Button onClick={() => setAdding(false)}>{t("cancel")}</Button>
+						<Button variant="primary" disabled={busy || !draft.content.trim()} onClick={() => void add()}>
+							<Plus className="size-4" /> {t("add")}
+						</Button>
+					</div>
+				</Dialog>
+			)}
 		</div>
 	);
 }
