@@ -3,6 +3,7 @@ import type {
 	ChatMessage,
 	CommandInfo,
 	HostSettings,
+	HostInfo,
 	MessageRef,
 	ModelInfo,
 	ModelRef,
@@ -24,6 +25,7 @@ const M = defineMessages({
 		compacting: "正在压缩上下文…",
 		compactFailed: "压缩失败：{e}",
 		compactTooSmall: "当前对话还很短，暂无需压缩",
+		alreadyCompacted: "上下文刚压缩过，暂无需再次压缩",
 		compacted: "上下文已压缩",
 		retrying: "请求失败，{s} 秒后重试（{a}/{m}）：{e}",
 		retryFailed: "重试失败：{e}",
@@ -33,6 +35,7 @@ const M = defineMessages({
 		compacting: "Compacting context…",
 		compactFailed: "Compaction failed: {e}",
 		compactTooSmall: "The conversation is still short; nothing to compact",
+		alreadyCompacted: "Context was just compacted; nothing more to compact",
 		compacted: "Context compacted",
 		retrying: "Request failed, retrying in {s}s ({a}/{m}): {e}",
 		retryFailed: "Retry failed: {e}",
@@ -79,7 +82,7 @@ export interface ActiveSession {
 	stats: SessionStats | null;
 }
 
-export type SettingsTab = "general" | "gateways" | "mcp" | "skills" | "plugins";
+export type SettingsTab = "general" | "gateways" | "mcp" | "skills" | "market" | "plugins";
 export type View = "chat" | "knowledge" | "memory" | "settings" | { panel: string };
 
 interface State {
@@ -90,6 +93,7 @@ interface State {
 	sessions: SessionSummary[];
 	workspaces: WorkspaceInfo[];
 	hostSettings: HostSettings | null;
+	hostInfo: HostInfo | null;
 	session: ActiveSession | null;
 	models: ModelInfo[];
 	commands: CommandInfo[];
@@ -107,6 +111,7 @@ export const useStore = create<State>(() => ({
 	sessions: [],
 	workspaces: [],
 	hostSettings: null,
+	hostInfo: null,
 	session: null,
 	models: [],
 	commands: [],
@@ -232,6 +237,7 @@ function reduce(session: ActiveSession, e: SessionEvent): ActiveSession {
 			return { ...session, banner: { kind: "compaction", text: tr(M, "compacting") } };
 		case "compaction_end":
 			if (e.errorMessage?.includes("Nothing to compact")) toast(tr(M, "compactTooSmall"));
+			else if (e.errorMessage?.includes("Already compacted")) toast(tr(M, "alreadyCompacted"));
 			else if (e.errorMessage) toast(tr(M, "compactFailed", { e: e.errorMessage.replace(/^Compaction failed:\s*/, "") }), "error");
 			else if (!e.aborted && e.reason === "manual") toast(tr(M, "compacted"));
 			return { ...session, banner: null };
@@ -269,7 +275,7 @@ function flush(): void {
 	let next = session;
 	for (const e of events) next = reduce(next, e);
 	set({ session: next });
-	if (events.some((e) => e.type === "agent_settled" || e.type === "message_end")) void refreshStats();
+	if (events.some((e) => e.type === "agent_settled" || e.type === "message_end" || e.type === "compaction_end")) void refreshStats();
 }
 
 function enqueue(e: SessionEvent): void {
@@ -389,6 +395,11 @@ export async function refreshWorkspaces(): Promise<void> {
 export async function refreshHostSettings(): Promise<void> {
 	const hostSettings = await call((c) => c.rpc("settings.get", {}));
 	if (hostSettings) set({ hostSettings });
+}
+
+export async function refreshHostInfo(): Promise<void> {
+	const hostInfo = await call((c) => c.rpc("host.info", {}));
+	if (hostInfo) set({ hostInfo });
 }
 
 export async function updateHostSettings(patch: Partial<HostSettings>): Promise<void> {
@@ -545,7 +556,7 @@ export function bindClient(client: PrometheusClient): () => void {
 }
 
 async function onConnected(): Promise<void> {
-	await Promise.all([refreshSessions(), refreshModels(), refreshWorkspaces(), refreshHostSettings()]);
+	await Promise.all([refreshSessions(), refreshModels(), refreshWorkspaces(), refreshHostSettings(), refreshHostInfo()]);
 	const current = get().session;
 	const target = current?.id ?? localStorage.getItem("prometheus.lastSession");
 	const exists = target && get().sessions.some((s) => s.id === target && !s.archived);

@@ -1,0 +1,17 @@
+{
+  "name": "@prometheus/plugin-packages",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.2.0",
+    "@prometheus/plugin-sdk": "workspace:*",
+    "@prometheus/protocol": "workspace:*"
+  }
+}

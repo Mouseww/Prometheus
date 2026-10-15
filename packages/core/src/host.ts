@@ -8,8 +8,8 @@ import {
 	createCodemodeExtension,
 	createMcpExtension,
 	createToolSearchExtension,
+	calculateContextTokens,
 	DefaultResourceLoader,
-	estimateTokens,
 	getAgentDir,
 	type InlineExtension,
 	ModelRuntime,
@@ -41,8 +41,10 @@ import { slimEvent, toModelRef } from "./events.ts";
 import { bootstrap, type Runtime } from "./runtime.ts";
 import { UIBridge } from "./ui-bridge.ts";
 import { normalizeDir, WorkspaceStore, workspaceId } from "./workspaces.ts";
+import tauriConf from "../../../apps/desktop/src-tauri/tauri.conf.json" with { type: "json" };
 
-export const PROMETHEUS_VERSION = "0.1.0";
+// Single source of truth shared with the desktop release (the tag must match it).
+export const PROMETHEUS_VERSION: string = tauriConf.version;
 
 // Mirrors PI's CLI built-ins (main() adds them for the TUI); names keep `builtin:<name>` settings working.
 const builtInExtensions: InlineExtension[] = [
@@ -51,7 +53,42 @@ const builtInExtensions: InlineExtension[] = [
 	{ name: "mcp", factory: createMcpExtension(), replaceable: true, builtin: true },
 ];
 
-const approxTokens = (text: string): number => Math.ceil(text.length / 4);
+const CJK = /[\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]/gu;
+
+/** chars/4 undercounts CJK badly (roughly one token per character), so weigh those separately. */
+function approxTokens(text: string): number {
+	const cjk = text.match(CJK)?.length ?? 0;
+	return cjk + Math.ceil((text.length - cjk) / 4);
+}
+
+interface Block {
+	type: string;
+	text?: string;
+	thinking?: string;
+	name?: string;
+	arguments?: unknown;
+}
+
+function estimateTokens(m: AgentSession["messages"][number]): number {
+	const r = m as unknown as { content?: string | Block[]; summary?: string; command?: string; output?: string };
+	let n = approxTokens(`${r.summary ?? ""}${r.command ?? ""}${r.output ?? ""}`);
+	if (typeof r.content === "string") return n + approxTokens(r.content);
+	for (const b of r.content ?? []) {
+		if (b.type === "text") n += approxTokens(b.text ?? "");
+		else if (b.type === "thinking") n += approxTokens(b.thinking ?? "");
+		else if (b.type === "toolCall") n += approxTokens(`${b.name ?? ""}${JSON.stringify(b.arguments ?? {})}`);
+		else if (b.type === "image") n += 1200;
+	}
+	return n;
+}
+
+/** Whether any reply in the current context carries provider-reported usage (some gateways report none). */
+function hasReportedUsage(s: AgentSession): boolean {
+	return s.messages.some((m) => {
+		const a = m as unknown as { role: string; stopReason?: string; usage?: Parameters<typeof calculateContextTokens>[0] };
+		return a.role === "assistant" && a.stopReason !== "aborted" && a.stopReason !== "error" && !!a.usage && calculateContextTokens(a.usage) > 0;
+	});
+}
 
 function contextBreakdown(s: AgentSession): ContextBreakdown {
 	const out: ContextBreakdown = { system: approxTokens(s.systemPrompt), tools: 0, user: 0, assistant: 0, toolResults: 0, other: 0 };
@@ -218,6 +255,11 @@ export class PrometheusHost {
 			const slim = slimEvent(e);
 			if (slim) this.listener.event(id, slim);
 			if (e.type === "agent_settled" || e.type === "session_info_changed") this.listener.sessionsChanged();
+			// Compaction replaces the context; clients rebuild their message list from events and would otherwise keep the old one.
+			if (e.type === "compaction_end" && e.result) {
+				const current = this.live.get(id);
+				if (current) this.resetMessages(id, current);
+			}
 			if (e.type === "agent_settled" && this.pendingReload.has(id)) {
 				const current = this.live.get(id);
 				if (current) void this.reloadOne(id, current);
@@ -544,11 +586,21 @@ export class PrometheusHost {
 			const s = this.require(sessionId).session;
 			const stats = s.getSessionStats();
 			const usage = s.getContextUsage();
+			const breakdown = contextBreakdown(s);
+			const piTokens = usage?.tokens ?? null;
+			let tokens = Object.values(breakdown).reduce((a, b) => a + b, 0);
+			let estimated = true;
+			if (piTokens != null && hasReportedUsage(s)) {
+				tokens = piTokens;
+				estimated = false;
+			}
+			const contextWindow = usage?.contextWindow ?? s.model?.contextWindow ?? 0;
 			return {
-				contextTokens: usage?.tokens ?? null,
-				contextWindow: usage?.contextWindow ?? s.model?.contextWindow ?? 0,
-				contextPercent: usage?.percent ?? null,
-				breakdown: contextBreakdown(s),
+				contextTokens: tokens,
+				contextEstimated: estimated,
+				contextWindow,
+				contextPercent: contextWindow > 0 ? (tokens / contextWindow) * 100 : null,
+				breakdown,
 				totalCost: stats.cost,
 				inputTokens: stats.tokens.input,
 				outputTokens: stats.tokens.output,
@@ -566,8 +618,21 @@ export class PrometheusHost {
 		},
 		"chat.compact": ({ sessionId, instructions }) => {
 			const { session } = this.require(sessionId);
+			const settings = session.settingsManager;
+			const model = session.model;
+			// PI keeps the last `keepRecentTokens` (20k) verbatim, so a shorter chat has nothing to summarise; cap it at a third of the chat.
+			const configured = settings.getCompactionKeepRecentTokens(model);
+			const keep = Math.min(configured, Math.floor(session.messages.reduce((n, m) => n + estimateTokens(m), 0) / 3));
+			const key = model ? `${model.provider}/${model.id}` : undefined;
+			const apply = (n: number) => settings.applyOverrides({ compaction: { keepRecentTokens: n, ...(key ? { modelOverrides: { [key]: { keepRecentTokens: n } } } : {}) } });
+			if (keep < configured) apply(keep);
 			// Failures already reach the UI through the `compaction_end` event.
-			session.compact(instructions).catch(() => undefined);
+			session
+				.compact(instructions)
+				.catch(() => undefined)
+				.finally(() => {
+					if (keep < configured) apply(configured);
+				});
 			return null;
 		},
 

@@ -161,7 +161,12 @@ async function copyText(text: string, done: string): Promise<void> {
 	}
 }
 
-function Actions({ index, text, canRetry, align }: { index: number; text: string; canRetry: boolean; align: "start" | "end" }) {
+async function removeAll(indices: number[]): Promise<void> {
+	// Last to first so earlier indices stay valid after each reset.
+	for (const i of [...indices].reverse()) await deleteMessage(i);
+}
+
+function Actions({ index, indices, text, canRetry, align }: { index: number; indices?: number[]; text: string; canRetry: boolean; align: "start" | "end" }) {
 	const t = useT(M);
 	const [copied, setCopied] = useState(false);
 	const btn = "rounded-md p-1.5 text-ink-500 transition-colors hover:bg-ink-800 hover:text-ink-100 disabled:pointer-events-none disabled:opacity-30";
@@ -191,7 +196,7 @@ function Actions({ index, text, canRetry, align }: { index: number; text: string
 				className={clsx(btn, "hover:text-rose-400")}
 				title={t("delete")}
 				disabled={!canRetry}
-				onClick={() => confirm(t("confirmDelete")) && void deleteMessage(index)}
+				onClick={() => confirm(t("confirmDelete")) && void removeAll(indices ?? [index])}
 			>
 				<Trash2 className="size-3.5" />
 			</button>
@@ -222,15 +227,37 @@ export function MessageList({ messages, tools, streaming }: { messages: ChatMess
 					);
 				}
 				if (m.role === "assistant") {
-					const live = streaming && i === lastIndex;
+					// Each tool round is its own assistant message; render a whole turn as one block.
+					const prev = messages.slice(0, i).findLast((p) => p.role !== "toolResult");
+					if (prev?.role === "assistant") return null;
+					const group: { message: AssistantMessage; index: number }[] = [];
+					for (let j = i; j < messages.length; j++) {
+						const g = messages[j];
+						if (g?.role === "assistant") group.push({ message: g, index: j });
+						else if (g?.role !== "toolResult") break;
+					}
+					const lastInGroup = group[group.length - 1]?.index ?? i;
+					const live = streaming && lastInGroup === lastIndex;
 					return (
 						<div key={i} className="group/msg flex gap-3">
 							<div className="mt-1 grid size-6 shrink-0 place-items-center rounded-md bg-ember-500/12">
 								<span className="size-2 rounded-full bg-ember-400 shadow-[0_0_10px_2px_rgb(var(--glow)/0.6)]" />
 							</div>
 							<div className="min-w-0 flex-1">
-								<AssistantBlock message={m} live={live} tools={tools} results={results} />
-								{!live && <Actions index={i} text={assistantText(m)} canRetry={!streaming} align="start" />}
+								<div className="flex flex-col gap-3">
+									{group.map((g) => (
+										<AssistantBlock key={g.index} message={g.message} live={streaming && g.index === lastIndex} tools={tools} results={results} />
+									))}
+								</div>
+								{!live && (
+									<Actions
+										index={lastInGroup}
+										indices={group.map((g) => g.index)}
+										text={group.map((g) => assistantText(g.message)).filter(Boolean).join("\n\n")}
+										canRetry={!streaming}
+										align="start"
+									/>
+								)}
 							</div>
 						</div>
 					);

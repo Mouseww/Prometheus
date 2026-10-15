@@ -186,7 +186,9 @@ export interface ContextBreakdown {
 }
 
 export interface SessionStats {
-	contextTokens: number | null;
+	/** Provider-reported when available, otherwise a local estimate (see `contextEstimated`). */
+	contextTokens: number;
+	contextEstimated: boolean;
 	contextWindow: number;
 	contextPercent: number | null;
 	breakdown: ContextBreakdown;
@@ -294,7 +296,7 @@ export interface SkillInfo {
 	name: string;
 	description: string;
 	path: string;
-	scope: "prometheus" | "user" | "project";
+	scope: "builtin" | "prometheus" | "user" | "project";
 	enabled: boolean;
 	editable: boolean;
 	modelInvocation: boolean;
@@ -303,6 +305,49 @@ export interface SkillInfo {
 export interface SkillDocument {
 	name: string;
 	content: string;
+}
+
+export type PackageKind = "extensions" | "skills" | "prompts" | "themes";
+
+/** A PI package declared in settings.json (`pi install` equivalent). */
+export interface PackageInfo {
+	/** Settings source string, e.g. `npm:pkg@1.0.0` or `git:github.com/o/r`. */
+	source: string;
+	scope: "user" | "project";
+	name: string;
+	version?: string;
+	description?: string;
+	kinds: PackageKind[];
+	/** False when declared but not present on disk yet. */
+	installed: boolean;
+	/** The settings entry narrows which resources load. */
+	filtered: boolean;
+}
+
+/** One marketplace search hit (npm packages tagged `pi-package`). */
+export interface PackageListing {
+	name: string;
+	version: string;
+	description?: string;
+	author?: string;
+	date?: string;
+	keywords: string[];
+	source: string;
+	links: { npm?: string; homepage?: string; repository?: string };
+}
+
+export interface PackageSearchPage {
+	total: number;
+	items: PackageListing[];
+	page: number;
+	size: number;
+}
+
+export interface PackageUpdateInfo {
+	source: string;
+	name: string;
+	scope: "user" | "project";
+	type: "npm" | "git";
 }
 
 export type MemoryScope = "user" | "project";
