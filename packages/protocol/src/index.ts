@@ -175,10 +175,21 @@ export interface SessionSnapshot {
 	widgets: Record<string, { lines: string[]; placement: string }>;
 }
 
+/** Estimated tokens (chars/4) per context component; the sum approximates, not equals, `contextTokens`. */
+export interface ContextBreakdown {
+	system: number;
+	tools: number;
+	user: number;
+	assistant: number;
+	toolResults: number;
+	other: number;
+}
+
 export interface SessionStats {
 	contextTokens: number | null;
 	contextWindow: number;
 	contextPercent: number | null;
+	breakdown: ContextBreakdown;
 	totalCost: number;
 	inputTokens: number;
 	outputTokens: number;

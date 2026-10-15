@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ThinkingLevel } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { abortRun, openSettings, sendPrompt, setModel, setThinking, useStore } from "../lib/store.ts";
+import { ContextMeter } from "./ContextMeter.tsx";
 import { usePopover } from "./TitleBar.tsx";
 
 const M = defineMessages({
@@ -347,6 +348,7 @@ export function Composer() {
 					<ModelPicker />
 					<EffortPicker />
 					<div className="flex-1" />
+					<ContextMeter />
 					{streaming && (
 						<div className="mr-1 flex rounded-lg bg-ink-950 p-0.5 text-xs">
 							{(["steer", "followUp"] as const).map((d) => (

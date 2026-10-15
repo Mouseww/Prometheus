@@ -9,6 +9,7 @@ import {
 	createMcpExtension,
 	createToolSearchExtension,
 	DefaultResourceLoader,
+	estimateTokens,
 	getAgentDir,
 	type InlineExtension,
 	ModelRuntime,
@@ -20,6 +21,7 @@ import { listModels, mergeGatewayUpdate, redactGateway, toProviderConfig } from 
 import type { PrometheusPlugin } from "@prometheus/plugin-sdk";
 import {
 	type CommandInfo,
+	type ContextBreakdown,
 	type DirListing,
 	type ImageContent,
 	type MessageRef,
@@ -48,6 +50,26 @@ const builtInExtensions: InlineExtension[] = [
 	{ name: "tool-search", factory: createToolSearchExtension(), replaceable: true, builtin: true },
 	{ name: "mcp", factory: createMcpExtension(), replaceable: true, builtin: true },
 ];
+
+const approxTokens = (text: string): number => Math.ceil(text.length / 4);
+
+function contextBreakdown(s: AgentSession): ContextBreakdown {
+	const out: ContextBreakdown = { system: approxTokens(s.systemPrompt), tools: 0, user: 0, assistant: 0, toolResults: 0, other: 0 };
+	const active = new Set(s.getActiveToolNames());
+	for (const t of s.getAllTools()) {
+		if (active.has(t.name)) out.tools += approxTokens(JSON.stringify({ name: t.name, description: t.description, parameters: t.parameters }));
+	}
+	for (const m of s.messages) {
+		// The system message mirrors `systemPrompt` + tool definitions, already counted above.
+		if (m.role === "system") continue;
+		const n = estimateTokens(m);
+		if (m.role === "user") out.user += n;
+		else if (m.role === "assistant") out.assistant += n;
+		else if (m.role === "toolResult") out.toolResults += n;
+		else out.other += n;
+	}
+	return out;
+}
 
 export interface HostListener {
 	event(sessionId: string, event: SessionEvent): void;
@@ -526,6 +548,7 @@ export class PrometheusHost {
 				contextTokens: usage?.tokens ?? null,
 				contextWindow: usage?.contextWindow ?? s.model?.contextWindow ?? 0,
 				contextPercent: usage?.percent ?? null,
+				breakdown: contextBreakdown(s),
 				totalCost: stats.cost,
 				inputTokens: stats.tokens.input,
 				outputTokens: stats.tokens.output,
@@ -542,8 +565,9 @@ export class PrometheusHost {
 			return null;
 		},
 		"chat.compact": ({ sessionId, instructions }) => {
-			const { session, bridge } = this.require(sessionId);
-			session.compact(instructions).catch((err: unknown) => bridge.context().notify(`压缩失败：${err instanceof Error ? err.message : err}`, "error"));
+			const { session } = this.require(sessionId);
+			// Failures already reach the UI through the `compaction_end` event.
+			session.compact(instructions).catch(() => undefined);
 			return null;
 		},
 

@@ -3,6 +3,7 @@
     "beforeBuildCommand": "pnpm --filter @prometheus/web build && pnpm --filter @prometheus/desktop bundle-server"
   },
   "bundle": {
+    "createUpdaterArtifacts": true,
     "resources": {
       "../../../dist/server-bundle/": "server/"
     }

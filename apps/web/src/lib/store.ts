@@ -23,6 +23,7 @@ const M = defineMessages({
 	zh: {
 		compacting: "正在压缩上下文…",
 		compactFailed: "压缩失败：{e}",
+		compactTooSmall: "当前对话还很短，暂无需压缩",
 		compacted: "上下文已压缩",
 		retrying: "请求失败，{s} 秒后重试（{a}/{m}）：{e}",
 		retryFailed: "重试失败：{e}",
@@ -31,6 +32,7 @@ const M = defineMessages({
 	en: {
 		compacting: "Compacting context…",
 		compactFailed: "Compaction failed: {e}",
+		compactTooSmall: "The conversation is still short; nothing to compact",
 		compacted: "Context compacted",
 		retrying: "Request failed, retrying in {s}s ({a}/{m}): {e}",
 		retryFailed: "Retry failed: {e}",
@@ -229,7 +231,8 @@ function reduce(session: ActiveSession, e: SessionEvent): ActiveSession {
 		case "compaction_start":
 			return { ...session, banner: { kind: "compaction", text: tr(M, "compacting") } };
 		case "compaction_end":
-			if (e.errorMessage) toast(tr(M, "compactFailed", { e: e.errorMessage }), "error");
+			if (e.errorMessage?.includes("Nothing to compact")) toast(tr(M, "compactTooSmall"));
+			else if (e.errorMessage) toast(tr(M, "compactFailed", { e: e.errorMessage.replace(/^Compaction failed:\s*/, "") }), "error");
 			else if (!e.aborted && e.reason === "manual") toast(tr(M, "compacted"));
 			return { ...session, banner: null };
 		case "auto_retry_start":

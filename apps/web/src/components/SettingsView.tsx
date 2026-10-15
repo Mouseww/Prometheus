@@ -1,14 +1,16 @@
 import clsx from "clsx";
 import { Blocks, Cable, Check, Laptop, Moon, Network, Sparkles, Sun, SlidersHorizontal } from "lucide-react";
 import type { ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { type Lang, SKINS, type Skin, setPrefs, type ThemeMode, usePrefs } from "../lib/prefs.ts";
 import { openSettings, type SettingsTab, updateHostSettings, useStore } from "../lib/store.ts";
+import { checkForUpdate, showUpdate, updaterSupported, useUpdater } from "../lib/updater.ts";
 import { GatewaysView } from "./GatewaysView.tsx";
 import { McpView } from "./McpView.tsx";
 import { PluginsView } from "./PluginsView.tsx";
 import { SkillsView } from "./SkillsView.tsx";
-import { PageHeader } from "./ui.tsx";
+import { Button, PageHeader } from "./ui.tsx";
 
 const M = defineMessages({
 	zh: {
@@ -34,6 +36,14 @@ const M = defineMessages({
 		session: "会话",
 		autoCompact: "自动压缩上下文",
 		autoCompactHint: "上下文接近模型窗口上限时自动生成摘要并压缩。与 PI TUI 共享此设置。",
+		updates: "更新",
+		checkUpdate: "检查更新",
+		checking: "检查中…",
+		upToDate: "已是最新版本",
+		newVersion: "发现新版本 {v}",
+		viewUpdate: "查看并更新",
+		updateHint: "桌面版的本机服务端随应用一同更新。",
+		updateFailed: "检查失败：{e}",
 	},
 	en: {
 		general: "General",
@@ -58,6 +68,14 @@ const M = defineMessages({
 		session: "Session",
 		autoCompact: "Auto-compact context",
 		autoCompactHint: "Summarise and compact automatically when the context nears the model's window. Shared with the PI TUI.",
+		updates: "Updates",
+		checkUpdate: "Check for updates",
+		checking: "Checking…",
+		upToDate: "You are up to date",
+		newVersion: "Version {v} is available",
+		viewUpdate: "View and update",
+		updateHint: "The desktop app's local server is updated together with the app.",
+		updateFailed: "Check failed: {e}",
 	},
 });
 
@@ -118,10 +136,35 @@ function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (
 	);
 }
 
+function UpdateRow() {
+	const t = useT(M);
+	const { phase, version, error } = useUpdater();
+	const busy = phase === "checking" || phase === "installing";
+	const status =
+		phase === "checking" ? t("checking") : phase === "uptodate" ? t("upToDate") : version && phase !== "error" ? t("newVersion", { v: version }) : phase === "error" ? t("updateFailed", { e: error ?? "" }) : t("updateHint");
+	return (
+		<Row label={t("checkUpdate")} hint={status}>
+			{phase === "available" ? (
+				<Button variant="primary" onClick={showUpdate}>
+					{t("viewUpdate")}
+				</Button>
+			) : (
+				<Button variant="outline" disabled={busy} onClick={() => void checkForUpdate()}>
+					{t("checkUpdate")}
+				</Button>
+			)}
+		</Row>
+	);
+}
+
 function GeneralSettings() {
 	const t = useT(M);
 	const prefs = usePrefs();
 	const host = useStore((s) => s.hostSettings);
+	const [canUpdate, setCanUpdate] = useState(false);
+	useEffect(() => {
+		void updaterSupported().then(setCanUpdate);
+	}, []);
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
@@ -177,6 +220,12 @@ function GeneralSettings() {
 							<Toggle checked={host?.autoCompaction ?? false} disabled={!host} onChange={(v) => void updateHostSettings({ autoCompaction: v })} />
 						</Row>
 					</Section>
+
+					{canUpdate && (
+						<Section title={t("updates")}>
+							<UpdateRow />
+						</Section>
+					)}
 				</div>
 			</div>
 		</div>
