@@ -1,6 +1,6 @@
 [package]
 name = "prometheus-desktop"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 rust-version = "1.77"
 
@@ -12,13 +12,14 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 getrandom = "0.3"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
+tauri-plugin-single-instance = "2"
 
 [profile.release]
 codegen-units = 1

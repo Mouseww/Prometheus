@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -90,6 +91,20 @@ function hasReportedUsage(s: AgentSession): boolean {
 		const a = m as unknown as { role: string; stopReason?: string; usage?: Parameters<typeof calculateContextTokens>[0] };
 		return a.role === "assistant" && a.stopReason !== "aborted" && a.stopReason !== "error" && !!a.usage && calculateContextTokens(a.usage) > 0;
 	});
+}
+
+/** Fire-and-forget: the file manager's own exit code is meaningless (explorer.exe exits 1 on success). */
+function openInFileManager(dir: string): void {
+	const [cmd, args] = process.platform === "win32" ? ["explorer.exe", [dir]] : process.platform === "darwin" ? ["open", [dir]] : ["xdg-open", [dir]];
+	const child = spawn(cmd as string, args as string[], { detached: true, stdio: "ignore" });
+	child.on("error", () => {});
+	child.unref();
+}
+
+function firstUserText(messages: AgentSession["messages"]): string {
+	const m = messages.find((x) => x.role === "user") as unknown as { content?: string | Block[] } | undefined;
+	if (!m) return "";
+	return typeof m.content === "string" ? m.content : (m.content ?? []).map((b) => (b.type === "text" ? (b.text ?? "") : "")).join("");
 }
 
 function contextBreakdown(s: AgentSession): ContextBreakdown {
@@ -256,7 +271,7 @@ export class PrometheusHost {
 		const unsubscribe = session.subscribe((e) => {
 			const slim = slimEvent(e);
 			if (slim) this.listener.event(id, slim);
-			if (e.type === "agent_settled" || e.type === "session_info_changed") this.listener.sessionsChanged();
+			if (e.type === "agent_start" || e.type === "agent_settled" || e.type === "session_info_changed") this.listener.sessionsChanged();
 			// Compaction replaces the context; clients rebuild their message list from events and would otherwise keep the old one.
 			if (e.type === "compaction_end" && e.result) {
 				const current = this.live.get(id);
@@ -322,7 +337,28 @@ export class PrometheusHost {
 		for (const info of infos) this.paths.set(info.id, info.path);
 		await this.workspaces.ensure(infos.map((i) => ({ path: i.cwd, modified: i.modified.toISOString() })));
 		const archived = await this.workspaces.archived();
-		return infos
+		const listed = new Set(infos.map((i) => i.id));
+		const now = new Date().toISOString();
+		// A first reply still in flight has no session file yet, so list it from memory.
+		const unsaved: SessionSummary[] = [];
+		for (const [id, live] of this.live) {
+			if (listed.has(id) || !live.session.isStreaming) continue;
+			const cwd = live.session.sessionManager.getCwd();
+			unsaved.push({
+				id,
+				name: live.session.sessionName,
+				cwd,
+				created: now,
+				modified: now,
+				messageCount: live.session.messages.length,
+				firstMessage: firstUserText(live.session.messages).slice(0, 200),
+				live: true,
+				running: true,
+				archived: false,
+				workspaceId: workspaceId(cwd),
+			});
+		}
+		return [...infos
 			.map((info) => ({
 				id: info.id,
 				name: info.name,
@@ -332,9 +368,10 @@ export class PrometheusHost {
 				messageCount: info.messageCount,
 				firstMessage: info.firstMessage.slice(0, 200),
 				live: this.live.has(info.id),
+				running: this.live.get(info.id)?.session.isStreaming ?? false,
 				archived: archived.has(info.id),
 				workspaceId: info.cwd ? workspaceId(info.cwd) : "",
-			}))
+			})), ...unsaved]
 			.sort((a, b) => b.modified.localeCompare(a.modified));
 	}
 
@@ -567,6 +604,13 @@ export class PrometheusHost {
 			const w = await this.workspaces.rename(id, name);
 			this.listener.sessionsChanged();
 			return w;
+		},
+		"workspace.open": async ({ id }) => {
+			const w = (await this.workspaces.list()).find((x) => x.id === id);
+			if (!w) throw new Error(`工作区不存在：${id}`);
+			if (!existsSync(w.path) || !statSync(w.path).isDirectory()) throw new Error(`目录不存在：${w.path}`);
+			openInFileManager(w.path);
+			return null;
 		},
 		"workspace.remove": async ({ id }) => {
 			await this.workspaces.remove(id);

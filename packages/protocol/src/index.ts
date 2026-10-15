@@ -124,6 +124,8 @@ export interface SessionSummary {
 	messageCount: number;
 	firstMessage: string;
 	live: boolean;
+	/** A run is in progress right now. */
+	running: boolean;
 	archived: boolean;
 	/** Workspace (project directory) this session belongs to. */
 	workspaceId: string;
@@ -425,6 +427,8 @@ export interface RpcMethods {
 	"workspace.add": { params: { path: string; name?: string }; result: WorkspaceInfo };
 	"workspace.rename": { params: { id: string; name: string }; result: WorkspaceInfo };
 	"workspace.remove": { params: { id: string }; result: null };
+	/** Reveal the workspace folder in the OS file manager of the machine running the server. */
+	"workspace.open": { params: { id: string }; result: null };
 	"fs.dirs": { params: { path?: string }; result: DirListing };
 
 	"settings.get": { params: Record<string, never>; result: HostSettings };
