@@ -32,9 +32,9 @@ You can tell GUI from TUI by whether extension UI (dialogs, panels) is available
 
 ## Where things live in the UI
 
-- **Sidebar**: workspaces (project folders) and the sessions in each; Knowledge; Memory; Settings. Sessions can be renamed, archived, forked, retried, or have single messages deleted.
+- **Sidebar**: a "New chat" button at the top opens the new-chat page (an input box with a workspace chooser; picking a workspace enables sending, and the first message opens the conversation); below it, workspaces (project folders) and the sessions in each; Knowledge; Memory; Settings. Sessions can be renamed, archived, forked, retried, or have single messages deleted.
 - **Composer footer**: model picker (grouped by provider), thinking level, context-usage ring. Clicking the ring shows what fills the context and offers "compact".
-- **Settings** tabs: General (theme, language, auto-compaction, updates), AI Gateways, MCP, Skills, Marketplace, Plugins, Usage (tokens and cost by day and model across all sessions). A knowledge base's embedding model is set when creating it and can be changed from its settings button until it has documents.
+- **Settings** tabs: General (theme, language, auto-compaction, updates), AI Gateways, MCP, Skills, PI Marketplace, Prometheus Plugins, Usage (tokens and cost by day and model across all sessions). A knowledge base's embedding model is set when creating it and can be changed from its settings button until it has documents.
 
 Tell the user which tab to open rather than editing files when a UI exists for the job: the UI validates input, keeps secrets masked, and reloads live sessions.
 
@@ -50,7 +50,7 @@ Tell the user which tab to open rather than editing files when a UI exists for t
 | Memory | Long-term facts across sessions. Tools: \`memory_save\`, \`memory_search\`, \`memory_forget\`. Relevant memories can be injected into the prompt automatically (user toggle) and are context, not instructions | \`<home>/plugin-data/memory/memories.json\` |
 | MCP servers | stdio or HTTP servers managed in Settings → MCP and handed to PI's built-in MCP extension; tools appear as \`mcp__<server>__<tool>\`. PI's own \`mcp.json\` is shown read-only | \`<home>/plugin-data/mcp/servers.json\`, \`<pi>/mcp.json\` |
 | Skills | SKILL.md guides loaded on demand. Prometheus' library plus PI's \`<pi>/skills\` and the project's \`.pi/skills\` | \`<home>/plugin-data/skills/library/<name>/SKILL.md\` |
-| Marketplace | Installs PI packages (extensions, skills, prompts, themes) from npm packages tagged \`pi-package\` or from git, using PI's package manager. Shared with the PI TUI | declarations in \`<pi>/settings.json\` |
+| PI Marketplace | Installs PI packages (extensions, skills, prompts, themes) from npm packages tagged \`pi-package\` or from git, using PI's package manager. Shared with the PI TUI | declarations in \`<pi>/settings.json\` |
 | Plugins | Prometheus plugins (see \`plugin-development.md\`). Loaded from built-ins, \`config.json\` → \`plugins\`, and \`<home>/plugins/*/\`. Restart to load changes | \`<home>/plugins/\` |
 | Workspaces | Project folders grouping sessions | \`<home>/workspaces.json\` |
 | Sessions | PI session files | \`<pi>/sessions/\` |
@@ -76,7 +76,7 @@ If a question depends on details not covered here (exact UI wording, version-spe
 
 const PLUGIN_DEV = `# Writing Prometheus plugins
 
-A plugin is a module whose default export is \`definePlugin({ name, version?, setup(ctx) })\` from \`@prometheus/plugin-sdk\`. The same plugin runs in the GUI/server and in the TUI. A plugin that throws in \`setup\` is reported as failed in Settings → Plugins and does not affect the host.
+A plugin is a module whose default export is \`definePlugin({ name, version?, setup(ctx) })\` from \`@prometheus/plugin-sdk\`. The same plugin runs in the GUI/server and in the TUI. A plugin that throws in \`setup\` is reported as failed in Settings → Prometheus Plugins and does not affect the host.
 
 \`\`\`ts
 import { definePlugin } from "@prometheus/plugin-sdk";
@@ -139,14 +139,14 @@ Built-in plugins in the repository (\`plugins/mcp\`, \`plugins/skills\`, \`plugi
 
 ## Packaging a PI package instead
 
-If the goal is to share tools, skills, prompts or themes with PI users generally, a PI package (npm or git, with the \`pi-package\` keyword and a \`pi\` manifest in \`package.json\`) can be installed from Settings → Marketplace and also works in the plain PI CLI. Use a Prometheus plugin only when you need Prometheus-specific hooks (RPC, routes, panels, knowledge stores).
+If the goal is to share tools, skills, prompts or themes with PI users generally, a PI package (npm or git, with the \`pi-package\` keyword and a \`pi\` manifest in \`package.json\`) can be installed from Settings → PI Marketplace and also works in the plain PI CLI. Use a Prometheus plugin only when you need Prometheus-specific hooks (RPC, routes, panels, knowledge stores).
 `;
 
 export const BUILTIN_SKILLS: BuiltinSkill[] = [
 	{
 		name: "prometheus",
 		description:
-			"You are running inside Prometheus, a GUI/Web/TUI host built on the PI agent SDK, not the plain PI CLI. Load this when the user asks about Prometheus itself or its features: AI gateways and models, knowledge bases, memory, MCP servers, skills, the plugin marketplace, plugins, settings, sessions and workspaces, context compaction, where its data and config files live, deployment, or how to extend it. Also load before editing Prometheus or PI configuration files.",
+			"You are running inside Prometheus, a GUI/Web/TUI host built on the PI agent SDK, not the plain PI CLI. Load this when the user asks about Prometheus itself or its features: AI gateways and models, knowledge bases, memory, MCP servers, skills, the PI marketplace (PI packages), Prometheus plugins, settings, sessions and workspaces, context compaction, where its data and config files live, deployment, or how to extend it. Also load before editing Prometheus or PI configuration files.",
 		files: { "SKILL.md": OVERVIEW, "plugin-development.md": PLUGIN_DEV },
 	},
 ];

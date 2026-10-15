@@ -13,7 +13,6 @@ const M = defineMessages({
 		thinkingLive: "思考中…",
 		thinking: "思考过程",
 		chars: "{n} 字",
-		waiting: "等待模型响应…",
 		aborted: "— 已中断",
 		compacted: "上下文已压缩",
 		copy: "复制",
@@ -27,7 +26,6 @@ const M = defineMessages({
 		thinkingLive: "Thinking…",
 		thinking: "Thoughts",
 		chars: "{n} chars",
-		waiting: "Waiting for the model…",
 		aborted: "— Stopped",
 		compacted: "Context compacted",
 		copy: "Copy",
@@ -85,6 +83,25 @@ function ThinkingBlock({ text, live }: { text: string; live: boolean }) {
 	);
 }
 
+/** Shown from the moment a prompt is sent until the first token arrives, so the UI never looks idle. */
+function Pondering() {
+	const t = useT(M);
+	return (
+		<div role="status" className="flex items-center gap-2 text-sm">
+			<LoaderCircle className="size-3.5 animate-spin text-ember-400" />
+			<span className="thinking-shimmer">{t("thinkingLive")}</span>
+		</div>
+	);
+}
+
+function Avatar() {
+	return (
+		<div className="mt-1 grid size-6 shrink-0 place-items-center rounded-md bg-ember-500/12">
+			<span className="size-2 rounded-full bg-ember-400 shadow-[0_0_10px_2px_rgb(var(--glow)/0.6)]" />
+		</div>
+	);
+}
+
 function ToolCard({ call, run, result }: { call: ToolCallContent; run?: ToolRun; result?: ToolResultMessage }) {
 	const [open, setOpen] = useState(false);
 	const status = run?.status ?? (result ? (result.isError ? "error" : "done") : "running");
@@ -132,11 +149,7 @@ function AssistantBlock({ message, live, tools, results }: { message: AssistantM
 					</div>
 				);
 			})}
-			{live && message.content.length === 0 && (
-				<div className="flex items-center gap-2 text-sm text-ink-500">
-					<LoaderCircle className="size-3.5 animate-spin text-ember-400" /> {t("waiting")}
-				</div>
-			)}
+			{live && message.content.length === 0 && <Pondering />}
 			{message.stopReason === "error" && message.errorMessage && (
 				<div className="rounded-lg border border-rose-400/25 bg-rose-400/8 px-3 py-2 text-sm text-rose-400">{message.errorMessage}</div>
 			)}
@@ -204,11 +217,22 @@ function Actions({ index, indices, text, canRetry, align }: { index: number; ind
 	);
 }
 
-export function MessageList({ messages, tools, streaming }: { messages: ChatMessage[]; tools: Record<string, ToolRun>; streaming: boolean }) {
+export function MessageList({
+	messages,
+	tools,
+	streaming,
+	pending,
+}: {
+	messages: ChatMessage[];
+	tools: Record<string, ToolRun>;
+	streaming: boolean;
+	pending: { text: string } | null;
+}) {
 	const t = useT(M);
 	const results = new Map<string, ToolResultMessage>();
 	for (const m of messages) if (m.role === "toolResult") results.set(m.toolCallId, m);
 	const lastIndex = messages.length - 1;
+	const waitingOnReply = Boolean(pending) || (streaming && messages[lastIndex]?.role === "user");
 
 	return (
 		<div className="mx-auto w-full max-w-3xl space-y-5 px-5 py-8">
@@ -237,17 +261,18 @@ export function MessageList({ messages, tools, streaming }: { messages: ChatMess
 						else if (g?.role !== "toolResult") break;
 					}
 					const lastInGroup = group[group.length - 1]?.index ?? i;
-					const live = streaming && lastInGroup === lastIndex;
+					// Tool results after the last assistant message mean the next model call is still pending.
+					const awaitingNext = lastInGroup < lastIndex && messages.slice(lastInGroup + 1).every((x) => x.role === "toolResult");
+					const live = streaming && (lastInGroup === lastIndex || awaitingNext);
 					return (
 						<div key={i} className="group/msg flex gap-3">
-							<div className="mt-1 grid size-6 shrink-0 place-items-center rounded-md bg-ember-500/12">
-								<span className="size-2 rounded-full bg-ember-400 shadow-[0_0_10px_2px_rgb(var(--glow)/0.6)]" />
-							</div>
+							<Avatar />
 							<div className="min-w-0 flex-1">
 								<div className="flex flex-col gap-3">
 									{group.map((g) => (
 										<AssistantBlock key={g.index} message={g.message} live={streaming && g.index === lastIndex} tools={tools} results={results} />
 									))}
+									{live && awaitingNext && <Pondering />}
 								</div>
 								{!live && (
 									<Actions
@@ -271,6 +296,24 @@ export function MessageList({ messages, tools, streaming }: { messages: ChatMess
 				}
 				return null;
 			})}
+			{pending && (
+				// Same key as the real message will get, so the bubble is reused instead of replayed when the server echoes it.
+				<div key={messages.length} className="group/msg animate-rise">
+					<div className="flex justify-end">
+						<div className="max-w-[85%] rounded-2xl rounded-br-md border border-ember-500/20 bg-gradient-to-b from-ink-800 to-ink-850 px-4 py-2.5 text-[15px] whitespace-pre-wrap text-ink-100">
+							{pending.text}
+						</div>
+					</div>
+				</div>
+			)}
+			{waitingOnReply && (
+				<div className="flex gap-3">
+					<Avatar />
+					<div className="min-w-0 flex-1 pt-0.5">
+						<Pondering />
+					</div>
+				</div>
+			)}
 		</div>
 	);
 }

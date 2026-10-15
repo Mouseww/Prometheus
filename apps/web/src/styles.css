@@ -214,3 +214,22 @@ body { margin: 0; overflow: hidden; }
 	0%, 100% { opacity: 1; }
 	50% { opacity: 0; }
 }
+
+/* "Thinking…" label: a soft highlight sweeps across the text. */
+.thinking-shimmer {
+	background: linear-gradient(90deg, var(--color-ink-500) 0%, var(--color-ember-300) 45%, var(--color-ink-500) 90%);
+	background-size: 220% 100%;
+	-webkit-background-clip: text;
+	background-clip: text;
+	color: transparent;
+	animation: shimmer 2.2s linear infinite;
+}
+
+@keyframes shimmer {
+	from { background-position: 120% 0; }
+	to { background-position: -100% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.thinking-shimmer { animation: none; color: var(--color-ink-400); background: none; }
+}

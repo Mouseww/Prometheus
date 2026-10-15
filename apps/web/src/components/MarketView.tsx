@@ -1,14 +1,15 @@
-import { ArrowUpCircle, Download, ExternalLink, LoaderCircle, Package, RefreshCw, Search, Trash2 } from "lucide-react";
+import clsx from "clsx";
+import { ArrowUpCircle, CircleAlert, CircleCheck, Download, ExternalLink, LoaderCircle, Package, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { PackageInfo, PackageListing, PackageSearchPage, PackageUpdateInfo } from "@prometheus/protocol";
+import type { PackageInfo, PackageJob, PackageListing, PackageSearchPage, PackageUpdateInfo } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { pluginCall, toast } from "../lib/store.ts";
+import { dismissPackageJob, pluginCall, refreshPackageJobs, startPackageJob, toast, useStore } from "../lib/store.ts";
 import { Badge, Button, Empty, Input, PageHeader } from "./ui.tsx";
 
 const M = defineMessages({
 	zh: {
-		title: "插件市场",
-		subtitle: "安装 PI 扩展包：工具、技能、提示词模板与主题，与 PI TUI 共享",
+		title: "PI 插件市场",
+		subtitle: "安装 PI 扩展包（工具、技能、提示词模板与主题），与 PI TUI 共享。这不同于“Prometheus 插件”，后者用于扩展本项目自身",
 		installedTab: "已安装",
 		discoverTab: "发现",
 		search: "搜索扩展包…",
@@ -17,6 +18,7 @@ const M = defineMessages({
 		manualPlaceholder: "npm:@scope/pkg@1.0.0 或 git:github.com/owner/repo",
 		install: "安装",
 		installing: "安装中…",
+		queued: "排队中…",
 		installedBadge: "已安装",
 		remove: "卸载",
 		removing: "卸载中…",
@@ -32,9 +34,6 @@ const M = defineMessages({
 		emptyInstalledBody: "到「发现」里挑一个，或粘贴包名直接安装。",
 		emptyResults: "没有找到匹配的扩展包",
 		notInstalled: "已声明但尚未安装到磁盘",
-		installOk: "已安装 {name}，会话已重新加载",
-		removeOk: "已卸载 {name}",
-		updateOk: "更新完成，会话已重新加载",
 		loadMore: "加载更多",
 		trust: "扩展包以宿主进程权限运行，且可能包含让模型执行程序的技能。只安装可信来源的包，并先查看其源码。",
 		filtered: "已筛选",
@@ -45,10 +44,22 @@ const M = defineMessages({
 		kinds_skills: "技能",
 		kinds_prompts: "提示词",
 		kinds_themes: "主题",
+		tasks: "任务",
+		actionInstall: "安装",
+		actionRemove: "卸载",
+		actionUpdate: "更新",
+		allPackages: "全部包",
+		succeeded: "完成",
+		failed: "失败",
+		showLog: "查看输出",
+		hideLog: "收起输出",
+		dismiss: "清除",
+		noOutput: "（暂无输出）",
+		elapsed: "{s} 秒",
 	},
 	en: {
-		title: "Marketplace",
-		subtitle: "Install PI packages: tools, skills, prompt templates and themes, shared with the PI TUI",
+		title: "PI Marketplace",
+		subtitle: "Install PI packages (tools, skills, prompt templates and themes), shared with the PI TUI. Not to be confused with Prometheus plugins, which extend this app itself",
 		installedTab: "Installed",
 		discoverTab: "Discover",
 		search: "Search packages…",
@@ -57,6 +68,7 @@ const M = defineMessages({
 		manualPlaceholder: "npm:@scope/pkg@1.0.0 or git:github.com/owner/repo",
 		install: "Install",
 		installing: "Installing…",
+		queued: "Queued…",
 		installedBadge: "Installed",
 		remove: "Remove",
 		removing: "Removing…",
@@ -72,9 +84,6 @@ const M = defineMessages({
 		emptyInstalledBody: "Pick one under Discover, or paste a package name to install it directly.",
 		emptyResults: "No matching packages",
 		notInstalled: "Declared but not installed on disk yet",
-		installOk: "Installed {name}; sessions reloaded",
-		removeOk: "Removed {name}",
-		updateOk: "Update complete; sessions reloaded",
 		loadMore: "Load more",
 		trust: "Packages run with host process permissions and may ship skills that tell the model to run programs. Only install from sources you trust, and review the source first.",
 		filtered: "filtered",
@@ -85,6 +94,18 @@ const M = defineMessages({
 		kinds_skills: "skills",
 		kinds_prompts: "prompts",
 		kinds_themes: "themes",
+		tasks: "Tasks",
+		actionInstall: "Install",
+		actionRemove: "Remove",
+		actionUpdate: "Update",
+		allPackages: "all packages",
+		succeeded: "Done",
+		failed: "Failed",
+		showLog: "Show output",
+		hideLog: "Hide output",
+		dismiss: "Dismiss",
+		noOutput: "(no output yet)",
+		elapsed: "{s}s",
 	},
 });
 
@@ -96,6 +117,8 @@ const npmName = (source: string): string | undefined => {
 	const at = spec.lastIndexOf("@");
 	return at > 0 ? spec.slice(0, at) : spec;
 };
+
+const isActive = (j: PackageJob) => j.status === "queued" || j.status === "running";
 
 function Kinds({ kinds }: { kinds: PackageInfo["kinds"] }) {
 	const t = useT(M);
@@ -110,13 +133,63 @@ function Kinds({ kinds }: { kinds: PackageInfo["kinds"] }) {
 	);
 }
 
+function JobRow({ job }: { job: PackageJob }) {
+	const t = useT(M);
+	const [open, setOpen] = useState(job.status === "error");
+	const [now, setNow] = useState(() => Date.now());
+	useEffect(() => {
+		if (!isActive(job)) return;
+		const id = setInterval(() => setNow(Date.now()), 1000);
+		return () => clearInterval(id);
+	}, [job]);
+
+	const action = t(job.action === "install" ? "actionInstall" : job.action === "remove" ? "actionRemove" : "actionUpdate");
+	const name = job.label === "*" ? t("allPackages") : job.label;
+	const seconds = Math.max(0, Math.round(((job.finishedAt ?? now) - job.startedAt) / 1000));
+	const lines = job.log.slice(-60);
+
+	return (
+		<div className={clsx("rounded-xl border p-3", job.status === "error" ? "border-rose-400/40 bg-rose-400/5" : "border-ink-800 bg-ink-900/60")}>
+			<div className="flex items-center gap-2 text-sm">
+				{job.status === "success" ? (
+					<CircleCheck className="size-4 shrink-0 text-moss-400" />
+				) : job.status === "error" ? (
+					<CircleAlert className="size-4 shrink-0 text-rose-400" />
+				) : (
+					<LoaderCircle className="size-4 shrink-0 animate-spin text-ember-400" />
+				)}
+				<span className="font-medium text-ink-100">{action}</span>
+				<span className="min-w-0 truncate font-mono text-[13px] text-ink-200" title={job.source}>
+					{name}
+				</span>
+				<span className="shrink-0 text-xs text-ink-500">
+					{job.status === "queued" ? t("queued") : job.status === "running" ? t("elapsed", { s: seconds }) : `${job.status === "success" ? t("succeeded") : t("failed")} · ${t("elapsed", { s: seconds })}`}
+				</span>
+				<span className="ml-auto flex shrink-0 items-center gap-1">
+					<Button variant="ghost" className="px-2 py-1 text-xs" onClick={() => setOpen(!open)}>
+						{open ? t("hideLog") : t("showLog")}
+					</Button>
+					{!isActive(job) && (
+						<button type="button" onClick={() => void dismissPackageJob(job.id)} className="rounded-md p-1 text-ink-500 hover:bg-ink-800 hover:text-ink-100" aria-label={t("dismiss")} title={t("dismiss")}>
+							<X className="size-4" />
+						</button>
+					)}
+				</span>
+			</div>
+			{job.error && <p className="mt-2 break-words text-sm text-rose-300">{job.error}</p>}
+			{open && <pre className="mt-2 max-h-48 overflow-auto rounded-lg border border-ink-800 bg-ink-950 p-2.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-ink-400">{lines.length ? lines.join("\n") : t("noOutput")}</pre>}
+		</div>
+	);
+}
+
 export function MarketView() {
 	const t = useT(M);
 	const [tab, setTab] = useState<Tab>("installed");
 	const [installed, setInstalled] = useState<PackageInfo[]>([]);
 	const [updates, setUpdates] = useState<PackageUpdateInfo[]>([]);
-	const [busy, setBusy] = useState<string | null>(null);
 	const [checking, setChecking] = useState(false);
+	const jobs = useStore((s) => s.packageJobs);
+	const revision = useStore((s) => s.packageRevision);
 
 	const [query, setQuery] = useState("");
 	const [results, setResults] = useState<PackageListing[]>([]);
@@ -125,6 +198,10 @@ export function MarketView() {
 	const [searching, setSearching] = useState(false);
 	const [searchError, setSearchError] = useState(false);
 	const [manual, setManual] = useState("");
+
+	const active = useMemo(() => jobs.filter(isActive), [jobs]);
+	const activeFor = useCallback((action: PackageJob["action"], source: string) => active.find((j) => j.action === action && j.source === source), [active]);
+	const busy = active.length > 0;
 
 	const loadInstalled = useCallback(async () => {
 		const list = await pluginCall<PackageInfo[]>("packages", "list");
@@ -145,9 +222,16 @@ export function MarketView() {
 		setResults((prev) => (p === 0 ? res.items : [...prev, ...res.items]));
 	}, []);
 
+	// Reload the list on mount and whenever a background operation finishes successfully.
 	useEffect(() => {
 		void loadInstalled();
-	}, [loadInstalled]);
+	}, [loadInstalled, revision]);
+	useEffect(() => {
+		void refreshPackageJobs();
+	}, []);
+	useEffect(() => {
+		if (revision > 0) setUpdates((u) => u.filter((x) => installed.some((p) => p.source === x.source)));
+	}, [installed, revision]);
 	useEffect(() => {
 		if (tab === "discover" && results.length === 0 && !searching && !searchError) void runSearch(query, 0);
 	}, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -155,45 +239,13 @@ export function MarketView() {
 	const installedNames = useMemo(() => new Set(installed.flatMap((p) => [npmName(p.source), p.name]).filter(Boolean)), [installed]);
 	const updatable = useMemo(() => new Set(updates.map((u) => u.source)), [updates]);
 
-	const act = async (key: string, task: () => Promise<boolean>) => {
-		setBusy(key);
-		try {
-			await task();
-		} finally {
-			setBusy(null);
-		}
-	};
-
-	const install = (source: string, label: string) =>
-		act(`install:${source}`, async () => {
-			const res = await pluginCall<PackageInfo | null>("packages", "install", { source });
-			if (res === undefined) return false;
-			toast(t("installOk", { name: label }));
-			await loadInstalled();
-			return true;
-		});
+	const install = (source: string, label: string) => startPackageJob("install", { source, label });
 
 	const remove = (p: PackageInfo) => {
-		if (!window.confirm(t("confirmRemove", { name: p.name }))) return;
-		void act(`remove:${p.source}`, async () => {
-			const res = await pluginCall<null>("packages", "remove", { source: p.source });
-			if (res === undefined) return false;
-			toast(t("removeOk", { name: p.name }));
-			setUpdates((u) => u.filter((x) => x.source !== p.source));
-			await loadInstalled();
-			return true;
-		});
+		if (window.confirm(t("confirmRemove", { name: p.name }))) void startPackageJob("remove", { source: p.source });
 	};
 
-	const update = (source?: string) =>
-		act(`update:${source ?? "*"}`, async () => {
-			const res = await pluginCall<null>("packages", "update", source ? { source } : {});
-			if (res === undefined) return false;
-			toast(t("updateOk"));
-			setUpdates((u) => (source ? u.filter((x) => x.source !== source) : []));
-			await loadInstalled();
-			return true;
-		});
+	const update = (source?: string) => startPackageJob("update", source ? { source } : {});
 
 	const check = async () => {
 		setChecking(true);
@@ -219,8 +271,8 @@ export function MarketView() {
 								{checking ? <LoaderCircle className="size-4 animate-spin" /> : <RefreshCw className="size-4" />} {checking ? t("checking") : t("checkUpdates")}
 							</Button>
 							{updates.length > 0 && (
-								<Button variant="primary" disabled={busy !== null} onClick={() => void update()}>
-									{busy === "update:*" ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUpCircle className="size-4" />} {busy === "update:*" ? t("updating") : t("updateAll")}
+								<Button variant="primary" disabled={busy} onClick={() => void update()}>
+									{activeFor("update", "*") ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUpCircle className="size-4" />} {activeFor("update", "*") ? t("updating") : t("updateAll")}
 								</Button>
 							)}
 						</>
@@ -241,6 +293,15 @@ export function MarketView() {
 				<div className="mx-auto max-w-4xl space-y-5">
 					<p className="rounded-lg border border-ember-500/20 bg-ember-500/5 px-3 py-2 text-xs text-ember-200">{t("trust")}</p>
 
+					{jobs.length > 0 && (
+						<section className="space-y-2">
+							<h2 className="font-mono text-[10.5px] tracking-[0.18em] text-ink-500 uppercase">{t("tasks")}</h2>
+							{jobs.map((j) => (
+								<JobRow key={j.id} job={j} />
+							))}
+						</section>
+					)}
+
 					{tab === "installed" && (
 						<>
 							{installed.length === 0 ? (
@@ -249,33 +310,36 @@ export function MarketView() {
 								</Empty>
 							) : (
 								<div className="space-y-2">
-									{installed.map((p) => (
-										<div key={`${p.scope}:${p.source}`} className="animate-rise rounded-xl border border-ink-800 bg-ink-900/60 p-4">
-											<div className="flex flex-wrap items-center gap-2">
-												<span className="font-mono text-sm font-medium">{p.name}</span>
-												{p.version && <span className="font-mono text-[11px] text-ink-500">v{p.version}</span>}
-												<Kinds kinds={p.kinds} />
-												{p.filtered && <Badge>{t("filtered")}</Badge>}
-												{updatable.has(p.source) && <Badge tone="moss">{t("update")}</Badge>}
-												<span className="ml-auto flex items-center gap-1">
-													{updatable.has(p.source) && (
-														<Button disabled={busy !== null} onClick={() => void update(p.source)}>
-															{busy === `update:${p.source}` ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUpCircle className="size-4" />} {t("update")}
+									{installed.map((p) => {
+										const removing = activeFor("remove", p.source);
+										const updating = activeFor("update", p.source) ?? activeFor("update", "*");
+										return (
+											<div key={`${p.scope}:${p.source}`} className="animate-rise rounded-xl border border-ink-800 bg-ink-900/60 p-4">
+												<div className="flex flex-wrap items-center gap-2">
+													<span className="font-mono text-sm font-medium">{p.name}</span>
+													{p.version && <span className="font-mono text-[11px] text-ink-500">v{p.version}</span>}
+													<Kinds kinds={p.kinds} />
+													{p.filtered && <Badge>{t("filtered")}</Badge>}
+													{updatable.has(p.source) && <Badge tone="moss">{t("update")}</Badge>}
+													<span className="ml-auto flex items-center gap-1">
+														{updatable.has(p.source) && (
+															<Button disabled={busy} onClick={() => void update(p.source)}>
+																{updating ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUpCircle className="size-4" />} {updating ? t("updating") : t("update")}
+															</Button>
+														)}
+														<Button variant="danger" disabled={busy || p.scope !== "user"} onClick={() => remove(p)}>
+															{removing ? <LoaderCircle className="size-4 animate-spin" /> : <Trash2 className="size-4" />} {removing ? t("removing") : t("remove")}
 														</Button>
-													)}
-													<Button variant="danger" disabled={busy !== null || p.scope !== "user"} onClick={() => remove(p)}>
-														{busy === `remove:${p.source}` ? <LoaderCircle className="size-4 animate-spin" /> : <Trash2 className="size-4" />}{" "}
-														{busy === `remove:${p.source}` ? t("removing") : t("remove")}
-													</Button>
-												</span>
+													</span>
+												</div>
+												{p.description && <p className="mt-1.5 text-sm text-ink-400">{p.description}</p>}
+												<p className="mt-1.5 truncate font-mono text-[11px] text-ink-600">
+													{p.scope} · {p.source}
+												</p>
+												{!p.installed && <p className="mt-1 text-xs text-rose-400">{t("notInstalled")}</p>}
 											</div>
-											{p.description && <p className="mt-1.5 text-sm text-ink-400">{p.description}</p>}
-											<p className="mt-1.5 truncate font-mono text-[11px] text-ink-600">
-												{p.scope} · {p.source}
-											</p>
-											{!p.installed && <p className="mt-1 text-xs text-rose-400">{t("notInstalled")}</p>}
-										</div>
-									))}
+										);
+									})}
 								</div>
 							)}
 						</>
@@ -301,13 +365,14 @@ export function MarketView() {
 								onSubmit={(e) => {
 									e.preventDefault();
 									const source = manual.trim();
-									if (source) void install(source, source).then(() => setManual(""));
+									if (!source) return;
+									void install(source, source).then((ok) => ok && setManual(""));
 								}}
 							>
 								<span className="text-xs text-ink-500">{t("manual")}</span>
 								<div className="flex gap-2">
 									<Input value={manual} onChange={(e) => setManual(e.target.value)} placeholder={t("manualPlaceholder")} className="font-mono text-xs" />
-									<Button type="submit" variant="outline" disabled={busy !== null || !manual.trim()}>
+									<Button type="submit" variant="outline" disabled={busy || !manual.trim()}>
 										<Download className="size-4" /> {t("install")}
 									</Button>
 								</div>
@@ -325,7 +390,7 @@ export function MarketView() {
 							<div className="space-y-2">
 								{results.map((r) => {
 									const isInstalled = installedNames.has(r.name);
-									const key = `install:${r.source}`;
+									const job = activeFor("install", r.source);
 									return (
 										<div key={r.name} className="animate-rise rounded-xl border border-ink-800 bg-ink-900/60 p-4">
 											<div className="flex flex-wrap items-center gap-2">
@@ -347,8 +412,8 @@ export function MarketView() {
 													{isInstalled ? (
 														<Badge tone="moss">{t("installedBadge")}</Badge>
 													) : (
-														<Button variant="outline" disabled={busy !== null} onClick={() => void install(r.source, r.name)}>
-															{busy === key ? <LoaderCircle className="size-4 animate-spin" /> : <Download className="size-4" />} {busy === key ? t("installing") : t("install")}
+														<Button variant="outline" disabled={busy} onClick={() => void install(r.source, r.name)}>
+															{job ? <LoaderCircle className="size-4 animate-spin" /> : <Download className="size-4" />} {job ? (job.status === "queued" ? t("queued") : t("installing")) : t("install")}
 														</Button>
 													)}
 												</span>

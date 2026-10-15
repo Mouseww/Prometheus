@@ -7,8 +7,8 @@ import { Badge, Empty, PageHeader } from "./ui.tsx";
 
 const M = defineMessages({
 	zh: {
-		title: "插件",
-		subtitle: "网关、知识库、工具、命令、面板——万物皆插件",
+		title: "Prometheus 插件",
+		subtitle: "扩展本项目自身：网关、知识库、工具、命令、面板。PI 扩展包请到“PI 插件市场”安装",
 		empty: "没有已加载的插件",
 		panels: "面板：{list}",
 		listSep: "、",
@@ -19,8 +19,8 @@ const M = defineMessages({
 		trust: "插件以宿主进程权限运行，请只安装可信来源的插件。",
 	},
 	en: {
-		title: "Plugins",
-		subtitle: "Gateways, knowledge, tools, commands, panels — everything is a plugin",
+		title: "Prometheus Plugins",
+		subtitle: "Extend this app itself: gateways, knowledge, tools, commands, panels. For PI packages, use the PI Marketplace",
 		empty: "No plugins loaded",
 		panels: "Panels: {list}",
 		listSep: ", ",

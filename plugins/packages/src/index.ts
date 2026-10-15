@@ -1,6 +1,9 @@
 import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { definePlugin } from "@prometheus/plugin-sdk";
-import type { PackageInfo, PackageSearchPage, PackageUpdateInfo } from "@prometheus/protocol";
+import type { PackageInfo, PackageJob, PackageSearchPage, PackageUpdateInfo } from "@prometheus/protocol";
+import { captureCommandOutput } from "./capture.ts";
+import { explainFailure } from "./explain.ts";
+import { JobTracker } from "./jobs.ts";
 import { readManifest } from "./manifest.ts";
 import { parseSearch, resolveRegistry, searchUrl } from "./registry.ts";
 import { normalizeSource, npmNameOf } from "./source.ts";
@@ -20,13 +23,9 @@ export default definePlugin({
 		const settings = SettingsManager.create(ctx.cwd, ctx.agentDir);
 		const manager = new DefaultPackageManager({ cwd: ctx.cwd, agentDir: ctx.agentDir, settingsManager: settings });
 
-		// npm/git operations rewrite settings.json and node_modules; run them one at a time.
-		let queue: Promise<unknown> = Promise.resolve();
-		const exclusive = <T>(task: () => Promise<T>): Promise<T> => {
-			const run = queue.then(task, task);
-			queue = run.catch(() => undefined);
-			return run;
-		};
+		// npm/git operations rewrite settings.json and node_modules, so they run one at a time in the background.
+		const jobs = new JobTracker(explainFailure);
+		if (!captureCommandOutput(manager, (chunk) => jobs.append(chunk))) ctx.log.warn("无法捕获 npm 输出，安装失败时只能显示退出码");
 
 		const list = async (): Promise<PackageInfo[]> => {
 			await settings.reload();
@@ -65,38 +64,43 @@ export default definePlugin({
 			return parseSearch(await res.json(), page, PAGE_SIZE);
 		});
 
-		ctx.rpc("install", (params) =>
-			exclusive(async () => {
-				const source = normalizeSource(params.source);
+		ctx.rpc("install", (params): PackageJob => {
+			const source = normalizeSource(params.source);
+			return jobs.run("install", source, typeof params.label === "string" && params.label ? params.label.slice(0, 120) : fallbackName(source), async () => {
 				await settings.reload();
 				await manager.installAndPersist(source);
 				await apply();
-				return (await list()).find((p) => p.source === source) ?? null;
-			}),
-		);
+			});
+		});
 
-		ctx.rpc("remove", (params) =>
-			exclusive(async () => {
-				if (typeof params.source !== "string") throw new Error("缺少 source");
+		ctx.rpc("remove", (params): PackageJob => {
+			if (typeof params.source !== "string") throw new Error("缺少 source");
+			const source = params.source;
+			return jobs.run("remove", source, fallbackName(source), async () => {
 				await settings.reload();
-				const configured = manager.listConfiguredPackages().find((p) => p.scope === "user" && p.source === params.source);
+				const configured = manager.listConfiguredPackages().find((p) => p.scope === "user" && p.source === source);
 				if (!configured) throw new Error("该包不在已安装列表中");
 				await manager.removeAndPersist(configured.source);
 				await apply();
-				return null;
-			}),
-		);
+			});
+		});
 
-		ctx.rpc("update", (params) =>
-			exclusive(async () => {
+		ctx.rpc("update", (params): PackageJob => {
+			const source = typeof params.source === "string" ? params.source : undefined;
+			return jobs.run("update", source ?? "*", source ? fallbackName(source) : "*", async () => {
 				await settings.reload();
-				const source = typeof params.source === "string" ? params.source : undefined;
 				if (source && !manager.listConfiguredPackages().some((p) => p.source === source)) throw new Error("该包不在已安装列表中");
 				await manager.update(source);
 				await apply();
-				return null;
-			}),
-		);
+			});
+		});
+
+		ctx.rpc("jobs", (): PackageJob[] => jobs.list());
+
+		ctx.rpc("dismiss", (params) => {
+			if (typeof params.id === "string") jobs.dismiss(params.id);
+			return null;
+		});
 
 		ctx.rpc("checkUpdates", async (): Promise<PackageUpdateInfo[]> => {
 			await settings.reload();
