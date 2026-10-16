@@ -211,7 +211,7 @@ export function GitView() {
 						{dir && <span className="ml-1.5 text-ink-500">{dir}</span>}
 					</span>
 				</button>
-				<span className="flex shrink-0 gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100">
+				<span className="flex shrink-0 gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 nohover:opacity-100">
 					{isStaged ? (
 						<button type="button" title={t("unstage")} className="rounded p-1 text-ink-400 hover:bg-ink-700 hover:text-ink-100" onClick={() => void act(() => call("unstage", { paths: [f.path] }))}>
 							<Minus className="size-3.5" />
@@ -249,7 +249,7 @@ export function GitView() {
 				actions={
 					<div className="flex items-center gap-2">
 						{workspaces.length > 0 && (
-							<Select value={wsId} onChange={(e) => setWsId(e.target.value)} aria-label={t("workspace")} className="w-48 py-1.5">
+							<Select value={wsId} onChange={(e) => setWsId(e.target.value)} aria-label={t("workspace")} className="w-36 py-1.5 md:w-48">
 								{workspaces.map((w) => (
 									<option key={w.id} value={w.id}>
 										{w.name}
@@ -277,8 +277,8 @@ export function GitView() {
 					</Button>
 				</Empty>
 			) : (
-				<div className="grid min-h-0 flex-1 grid-cols-[minmax(300px,380px)_1fr]">
-					<div className="flex min-h-0 flex-col border-r hairline">
+				<div className={clsx("grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[minmax(300px,380px)_1fr] md:grid-rows-1", picked ? "grid-rows-[minmax(0,3fr)_minmax(0,2fr)]" : "grid-rows-[minmax(0,1fr)]")}>
+					<div className="flex min-h-0 flex-col border-b hairline md:border-r md:border-b-0">
 						<div className="flex flex-wrap items-center gap-2 border-b hairline px-4 py-3">
 							<GitBranch className="size-4 shrink-0 text-ember-400" />
 							{status.detached ? (
@@ -404,7 +404,7 @@ export function GitView() {
 						</form>
 					</div>
 
-					<div className="flex min-h-0 min-w-0 flex-col">
+					<div className={clsx("min-h-0 min-w-0 flex-col", picked ? "flex" : "flex max-md:hidden")}>
 						{picked ? (
 							<>
 								<div className="border-b hairline px-4 py-2 font-mono text-xs text-ink-300">{picked.file.path}</div>

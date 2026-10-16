@@ -75,7 +75,7 @@ export function VoiceSettings() {
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
 			<PageHeader title={t("title")} subtitle={t("subtitle")} />
-			<div className="min-h-0 flex-1 overflow-y-auto p-8">
+			<div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-8">
 				<div className="max-w-2xl space-y-5">
 					{!enabled ? (
 						<Empty icon={<Mic className="size-5" />} title={t("off")} />

@@ -19,6 +19,7 @@ import { clearSession, discoverBackend, establishCookie, isTauri, saveMode, save
 import { bindClient, openSession, pluginActive, setView, useStore } from "./lib/store.ts";
 import { usePrefs } from "./lib/prefs.ts";
 import { checkForUpdate } from "./lib/updater.ts";
+import { useIsMobile } from "./lib/viewport.ts";
 
 const closeView = () => setView("chat");
 
@@ -26,11 +27,21 @@ export function App() {
 	const [target, setTarget] = useState<BackendTarget | null | undefined>(undefined);
 	const [bootError, setBootError] = useState<string | null>(null);
 	const [wantsPassword, setWantsPassword] = useState(false);
+	const isMobile = useIsMobile();
 	const [sidebar, setSidebar] = useState(() => window.innerWidth >= 768);
 	const conn = useStore((s) => s.conn);
 	const view = useStore((s) => s.view);
 	const title = useStore((s) => s.title);
 	const plugins = useStore((s) => s.plugins);
+	const sessionId = useStore((s) => s.session?.id);
+
+	// On a phone the sidebar is a drawer: picking a chat or a page should reveal it, not leave the menu on top.
+	useEffect(() => {
+		if (isMobile) setSidebar(false);
+	}, [sessionId, view]);
+	useEffect(() => {
+		setSidebar(!isMobile);
+	}, [isMobile]);
 
 	// A view whose plugin was just switched off would render against RPCs that no longer exist.
 	useEffect(() => {
@@ -109,8 +120,13 @@ export function App() {
 	return (
 		<div className="forge-bg flex h-full flex-col">
 			<TitleBar onToggleSidebar={() => setSidebar((v) => !v)} />
-			<div className="flex min-h-0 flex-1">
-				{sidebar && <Sidebar target={target} onDisconnect={() => setTarget(null)} />}
+			<div className="relative flex min-h-0 flex-1">
+				{sidebar && isMobile && <div className="absolute inset-0 z-30 bg-ink-950/60 backdrop-blur-[2px]" onClick={() => setSidebar(false)} aria-hidden />}
+				{sidebar && (
+					<div className={isMobile ? "absolute inset-y-0 left-0 z-40 flex w-[min(20rem,88%)] shadow-2xl shadow-black/60" : "flex"}>
+						<Sidebar target={target} onDisconnect={() => setTarget(null)} />
+					</div>
+				)}
 				<main className="relative flex min-w-0 flex-1 flex-col">
 					<ChatView />
 					{view !== "chat" && (

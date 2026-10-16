@@ -176,7 +176,7 @@ describe("forwarding and loopback detection", () => {
 });
 
 describe("accessFor", () => {
-	const base = { tokenSet: false, passwordSet: true, forwarded: false, loopbackSocket: true };
+	const base = { tokenSet: false, managed: false, passwordSet: true, forwarded: false, loopbackSocket: true };
 
 	it("lets a direct local connection in without a password", () => {
 		expect(accessFor({ ...base, listener: "main" })).toEqual({ mode: "none", local: true });
@@ -193,9 +193,17 @@ describe("accessFor", () => {
 		expect(accessFor({ ...base, listener: "main", forwarded: true, passwordSet: false })).toEqual({ mode: "deny", local: false });
 	});
 
-	it("keeps token deployments on tokens, and local only when direct", () => {
-		expect(accessFor({ ...base, listener: "main", tokenSet: true })).toEqual({ mode: "token", local: true });
-		expect(accessFor({ ...base, listener: "main", tokenSet: true, forwarded: true })).toEqual({ mode: "token", local: false });
-		expect(accessFor({ ...base, listener: "main", tokenSet: true, loopbackSocket: false })).toEqual({ mode: "token", local: false });
+	it("keeps non-loopback deployments on tokens, and local only when direct", () => {
+		const m = { ...base, listener: "main" as const, tokenSet: true, managed: true };
+		expect(accessFor(m)).toEqual({ mode: "token", local: true });
+		expect(accessFor({ ...m, forwarded: true })).toEqual({ mode: "token", local: false });
+		expect(accessFor({ ...m, loopbackSocket: false })).toEqual({ mode: "token", local: false });
+	});
+
+	it("lets the desktop app (loopback + token) edit settings, and sends proxied requests to the password", () => {
+		const d = { ...base, listener: "main" as const, tokenSet: true };
+		expect(accessFor(d)).toEqual({ mode: "token", local: true });
+		expect(accessFor({ ...d, forwarded: true })).toEqual({ mode: "password", local: false });
+		expect(accessFor({ ...d, forwarded: true, passwordSet: false })).toEqual({ mode: "deny", local: false });
 	});
 });

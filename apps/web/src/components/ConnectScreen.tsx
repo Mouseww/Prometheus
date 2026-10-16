@@ -122,8 +122,8 @@ export function ConnectScreen({ unauthorized, error, onConnect, wantsPassword = 
 	const card = "flex w-full items-start gap-3.5 rounded-2xl border p-4 text-left transition-all disabled:opacity-60";
 
 	return (
-		<div className="forge-bg grid h-full place-items-center p-6">
-			<div className="w-full max-w-md animate-rise space-y-6">
+		<div className="forge-bg flex h-full overflow-y-auto p-5 md:p-6">
+			<div className="m-auto w-full max-w-md animate-rise space-y-6">
 				<div className="flex items-center gap-3">
 					<Flame className="size-11" />
 					<div>

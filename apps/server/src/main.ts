@@ -33,8 +33,8 @@ const EXTRA_ORIGINS = new Set((process.env.PROMETHEUS_ALLOWED_ORIGINS ?? "").spl
 const AUTH_TIMEOUT_MS = 5_000;
 const MAX_FRAME_BYTES = 32 * 1024 * 1024;
 const COOKIE = "prometheus_token";
-/** The settings only apply to the default loopback setup; an operator who sets HOST/TOKEN manages exposure themselves. */
-const MANAGED = !isLoopbackAddress(HOST) || Boolean(TOKEN);
+/** An operator who binds a non-loopback HOST manages exposure themselves; a token on loopback (the desktop app) still allows these settings. */
+const MANAGED = !isLoopbackAddress(HOST);
 
 if (!isLoopbackAddress(HOST) && !TOKEN) {
 	console.error(`[prometheus] 监听非回环地址 ${HOST} 时必须设置 PROMETHEUS_TOKEN，已拒绝启动`);
@@ -95,6 +95,7 @@ function accessOf(req: IncomingMessage, kind: Kind): Access {
 	return accessFor({
 		listener: kind,
 		tokenSet: Boolean(TOKEN),
+		managed: MANAGED,
 		passwordSet: Boolean(config.network().passwordHash),
 		forwarded: isForwarded(req),
 		loopbackSocket: isLoopbackSocket(req.socket.remoteAddress),

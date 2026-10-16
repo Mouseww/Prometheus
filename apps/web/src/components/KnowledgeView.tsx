@@ -137,8 +137,8 @@ export function KnowledgeView() {
 					</Button>
 				}
 			/>
-			<div className="flex min-h-0 flex-1">
-				<div className="w-72 shrink-0 space-y-1 overflow-y-auto border-r hairline p-3">
+			<div className="flex min-h-0 flex-1 flex-col md:flex-row">
+				<div className="max-h-[38%] w-full shrink-0 space-y-1 overflow-y-auto border-b hairline p-3 md:max-h-none md:w-72 md:border-r md:border-b-0">
 					{bases.map((b) => (
 						<button
 							key={b.id}
@@ -262,7 +262,7 @@ function CreateBase({ onDone }: { onDone: (id?: string) => void }) {
 	};
 
 	return (
-		<form onSubmit={submit} className="mx-auto max-w-xl animate-rise space-y-5 p-8">
+		<form onSubmit={submit} className="mx-auto max-w-xl animate-rise space-y-5 p-4 md:p-8">
 			<h2 className="font-display text-xl font-semibold">{t("newBase")}</h2>
 			<Field label={t("name")}>
 				<Input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t("namePlaceholder")} />
@@ -384,7 +384,7 @@ function BaseDetail({ base, onChanged }: { base: KnowledgeBaseInfo; onChanged: (
 	};
 
 	return (
-		<div className="mx-auto max-w-3xl space-y-8 p-8">
+		<div className="mx-auto max-w-3xl space-y-8 p-4 md:p-8">
 			<div className="flex items-start justify-between gap-4">
 				<div>
 					<h2 className="font-display text-2xl font-semibold">{base.name}</h2>

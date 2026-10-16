@@ -238,7 +238,7 @@ function GeneralSettings() {
 		<div className="flex min-h-0 flex-1 flex-col">
 			<PageHeader title={t("title")} subtitle={t("subtitle")} />
 			<div className="min-h-0 flex-1 overflow-y-auto">
-				<div className="max-w-3xl space-y-8 p-8">
+				<div className="max-w-3xl space-y-8 p-4 md:p-8">
 					<Section title={t("appearance")}>
 						<Row label={t("theme")}>
 							<Segmented<ThemeMode>
@@ -328,15 +328,15 @@ export function SettingsView() {
 	const t = useT(M);
 	const tab = useStore((s) => s.settingsTab);
 	return (
-		<div className="flex min-h-0 flex-1">
-			<nav className="w-48 shrink-0 space-y-0.5 border-r hairline p-3">
+		<div className="flex min-h-0 flex-1 flex-col md:flex-row">
+			<nav className="flex shrink-0 gap-1 overflow-x-auto border-b hairline p-2 md:block md:w-48 md:space-y-0.5 md:overflow-x-visible md:border-r md:border-b-0 md:p-3">
 				{TABS.map(({ id, icon: Icon }) => (
 					<button
 						key={id}
 						type="button"
 						onClick={() => openSettings(id)}
 						className={clsx(
-							"flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors",
+							"flex shrink-0 items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm whitespace-nowrap transition-colors md:w-full",
 							tab === id ? "bg-ink-800 text-ink-100" : "text-ink-400 hover:bg-ink-850 hover:text-ink-100",
 						)}
 					>

@@ -100,7 +100,7 @@ function ModelPicker() {
 	const label = current ? (info?.name ?? current.id) : t("pickModel");
 
 	return (
-		<div ref={ref} className="relative">
+		<div ref={ref} className="md:relative">
 			<button
 				type="button"
 				onClick={() => setOpen(!open)}
@@ -115,7 +115,7 @@ function ModelPicker() {
 				<ChevronDown className="size-3 shrink-0 opacity-60" />
 			</button>
 			{open && (
-				<div className="absolute bottom-full left-0 z-40 mb-2 w-80 animate-rise overflow-hidden rounded-xl border border-ink-700 bg-ink-900/97 shadow-2xl shadow-black/40 backdrop-blur">
+				<div className="absolute bottom-full left-3 right-3 z-40 mb-2 md:left-0 md:right-auto md:w-80 animate-rise overflow-hidden rounded-xl border border-ink-700 bg-ink-900/97 shadow-2xl shadow-black/40 backdrop-blur">
 					<div className="flex items-center gap-2 border-b border-ink-800 px-3">
 						<Search className="size-3.5 text-ink-500" />
 						<input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("searchModel")} className="w-full bg-transparent py-2.5 text-sm focus:outline-none" />
@@ -196,7 +196,7 @@ function EffortPicker() {
 	const pos = (i: number) => (levels.length > 1 ? (i / (levels.length - 1)) * 100 : 0);
 
 	return (
-		<div ref={ref} className="relative">
+		<div ref={ref} className="md:relative">
 			<button
 				type="button"
 				onClick={() => setOpen(!open)}
@@ -208,7 +208,7 @@ function EffortPicker() {
 				<span>{t(level)}</span>
 			</button>
 			{open && (
-				<div className="absolute bottom-full left-0 z-40 mb-2 w-80 animate-rise rounded-xl border border-ink-700 bg-ink-900/97 px-4 pt-3.5 pb-3 shadow-2xl shadow-black/40 backdrop-blur">
+				<div className="absolute bottom-full left-3 right-3 z-40 mb-2 md:left-0 md:right-auto md:w-80 animate-rise rounded-xl border border-ink-700 bg-ink-900/97 px-4 pt-3.5 pb-3 shadow-2xl shadow-black/40 backdrop-blur">
 					<div className="flex items-baseline justify-between">
 						<span className="text-sm font-medium text-ink-100">{t("effort")}</span>
 						<span className="font-mono text-xs text-ember-300">{t(level)}</span>
@@ -388,7 +388,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 
 	return (
 		<div
-			className="relative mx-auto w-full max-w-3xl px-5 pb-5"
+			className="relative mx-auto w-full max-w-3xl px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:px-5 md:pb-5"
 			onDragOver={(e) => {
 				if (![...e.dataTransfer.types].includes("Files")) return;
 				e.preventDefault();
@@ -405,7 +405,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 			}}
 		>
 			{matches.length > 0 && (
-				<div className="absolute right-5 bottom-full left-5 z-30 mb-2 overflow-hidden rounded-xl border border-ink-700 bg-ink-900/95 shadow-2xl shadow-black/40 backdrop-blur">
+				<div className="absolute right-3 bottom-full left-3 z-30 md:right-5 md:left-5 mb-2 overflow-hidden rounded-xl border border-ink-700 bg-ink-900/95 shadow-2xl shadow-black/40 backdrop-blur">
 					{matches.map((c, i) => (
 						<button
 							key={`${c.source}:${c.name}`}
@@ -451,7 +451,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 								<button
 									type="button"
 									onClick={() => setImages((cur) => cur.filter((_, j) => j !== i))}
-									className="absolute top-0.5 right-0.5 grid size-5 place-items-center rounded-full bg-ink-950/80 text-ink-200 opacity-0 transition-opacity group-hover/thumb:opacity-100 hover:bg-rose-500 hover:text-white focus-visible:opacity-100"
+									className="absolute top-0.5 right-0.5 grid size-5 place-items-center rounded-full bg-ink-950/80 text-ink-200 opacity-0 transition-opacity group-hover/thumb:opacity-100 nohover:opacity-100 hover:bg-rose-500 hover:text-white focus-visible:opacity-100"
 									title={t("removeImage")}
 									aria-label={t("removeImage")}
 								>
@@ -476,7 +476,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 					placeholder={streaming ? t("placeholderStreaming") : t("placeholder")}
 					className="block max-h-64 w-full resize-none bg-transparent px-4 pt-3.5 pb-2 text-[15px] text-ink-100 placeholder:text-ink-500 focus:outline-none"
 				/>
-				<div className="flex items-center gap-1 px-2 pb-2">
+				<div className="flex flex-wrap items-center gap-1 px-2 pb-2">
 					<input
 						ref={files}
 						type="file"

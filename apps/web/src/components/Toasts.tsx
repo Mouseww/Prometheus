@@ -5,7 +5,7 @@ import { useStore } from "../lib/store.ts";
 export function Toasts() {
 	const toasts = useStore((s) => s.toasts);
 	return (
-		<div className="pointer-events-none fixed right-5 bottom-5 z-50 flex w-80 flex-col gap-2" aria-live="polite">
+		<div className="pointer-events-none fixed right-3 bottom-3 left-3 z-50 flex flex-col gap-2 md:right-5 md:bottom-5 md:left-auto md:w-80" aria-live="polite">
 			{toasts.map((t) => (
 				<div
 					key={t.id}

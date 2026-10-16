@@ -301,3 +301,48 @@ describe("network access (end to end)", () => {
 		expect(r).toBe(200);
 	});
 });
+
+describe("network access in the desktop setup (loopback + access token)", () => {
+	const PORT = 17533;
+	const TOKEN = "desktop-token-0123456789";
+	let proc: ChildProcess | undefined;
+	let dir = "";
+
+	beforeAll(async () => {
+		dir = mkdtempSync(join(tmpdir(), "prom-net-desktop-"));
+		proc = spawn(process.execPath, [entry], { env: { ...process.env, ...NO_PROXY_ENV, PROMETHEUS_PORT: String(PORT), PROMETHEUS_HOME: dir, PROMETHEUS_HOST: "127.0.0.1", PROMETHEUS_TOKEN: TOKEN }, stdio: "ignore" });
+		for (let i = 0; i < 120; i++) {
+			try {
+				if ((await http(PORT, "/api/health")).status === 200) return;
+			} catch {
+				// not up yet
+			}
+			await new Promise((r) => setTimeout(r, 500));
+		}
+		throw new Error("server did not start");
+	}, 90_000);
+
+	afterAll(() => {
+		proc?.kill();
+	});
+
+	it("lets the local app set a password even though it is guarded by a token", async () => {
+		const c = (await connect(PORT)) as Conn;
+		expect(await c.next(type("hello"))).toMatchObject({ authRequired: true, login: "token", local: true });
+		c.send({ type: "auth", token: TOKEN });
+		await c.next(type("auth_ok"));
+		const status = await rpc(c, "network.get");
+		expect(status.data).toMatchObject({ managed: false, canEdit: true, passwordSet: false });
+		const set = await rpc(c, "network.set", { password: "desktop-pass-123" });
+		expect(set.ok).toBe(true);
+		expect(set.data).toMatchObject({ passwordSet: true });
+		c.ws.close();
+	});
+
+	it("sends a proxied request on the local port to the password, not the token", async () => {
+		const p = await connect(PORT, { "x-forwarded-for": "203.0.113.9" });
+		if (!isConn(p)) throw new Error("expected the proxied socket to open");
+		expect(await p.next(type("hello"))).toMatchObject({ authRequired: true, login: "password", local: false });
+		p.ws.close();
+	});
+});
