@@ -1,4 +1,4 @@
-export { ConfigStore, defaultDataDir, type PrometheusConfig } from "./config.ts";
+export { ConfigStore, DEFAULT_LAN_PORT, defaultDataDir, type NetworkConfig, type PrometheusConfig } from "./config.ts";
 export { slimEvent } from "./events.ts";
 export { type HostListener, PROMETHEUS_VERSION, PrometheusHost, type PrometheusHostOptions } from "./host.ts";
 export { PluginHost, type PluginRoute } from "./plugin-host.ts";

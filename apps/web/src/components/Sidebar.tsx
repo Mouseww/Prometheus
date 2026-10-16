@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { PanelInfo, SessionSummary, WorkspaceInfo } from "@prometheus/protocol";
-import { saveMode, saveRemote } from "../lib/backend.ts";
+import { clearSession, saveMode, saveRemote } from "../lib/backend.ts";
 import type { BackendTarget } from "../lib/client.ts";
 import { defineMessages, relativeTime, useT } from "../lib/i18n.ts";
 import { usePrefs } from "../lib/prefs.ts";
@@ -420,6 +420,7 @@ export function Sidebar({ target, onDisconnect }: { target: BackendTarget; onDis
 					onClick={() => {
 						saveRemote(null);
 						saveMode(null);
+						clearSession(target);
 						onDisconnect();
 					}}
 					className="rounded p-1 hover:bg-ink-800 hover:text-ink-200"

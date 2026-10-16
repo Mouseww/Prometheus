@@ -9,6 +9,9 @@ export interface BackendTarget {
 
 export type ConnState = "idle" | "connecting" | "open" | "unauthorized" | "closed";
 
+/** What the server asked for on connect: nothing, a password (network/proxied access) or the deployment token. */
+export type LoginKind = "none" | "password" | "token";
+
 interface Pending {
 	resolve: (value: unknown) => void;
 	reject: (error: Error) => void;
@@ -18,6 +21,11 @@ interface Pending {
 export class PrometheusClient {
 	readonly target: BackendTarget;
 	state: ConnState = "idle";
+	/** Set from the server's hello; settings that reshape network access are only offered when true. */
+	local = false;
+	loginKind: LoginKind = "none";
+	/** Called with the session token after a password login, so it can be saved for next time. */
+	onSession: ((token: string) => void) | undefined;
 	private ws: WebSocket | undefined;
 	private seq = 0;
 	private retry = 0;
@@ -49,6 +57,8 @@ export class PrometheusClient {
 		ws.onclose = (ev) => {
 			if (this.ws !== ws) return;
 			this.failPending("连接已断开");
+			// Closing the idle socket to ask for credentials must not replace the sign-in prompt with "closed".
+			if (this.state === "unauthorized") return;
 			if (ev.code === 4001 || ev.code === 4003) {
 				this.stopped = true;
 				this.setState("unauthorized");
@@ -99,8 +109,11 @@ export class PrometheusClient {
 	private handle(frame: ServerFrame): void {
 		switch (frame.type) {
 			case "hello":
+				this.local = frame.local === true;
+				this.loginKind = !frame.authRequired ? "none" : (frame.login ?? "token");
 				if (!frame.authRequired) return this.opened();
 				if (!this.target.token) {
+					// Nothing to present: the sign-in screen asks for it and connects again.
 					this.stopped = true;
 					this.setState("unauthorized");
 					this.ws?.close();
@@ -109,6 +122,7 @@ export class PrometheusClient {
 				this.send({ type: "auth", token: this.target.token });
 				return;
 			case "auth_ok":
+				if (frame.token) this.onSession?.(frame.token);
 				return this.opened();
 			case "response": {
 				const p = this.pending.get(frame.id);

@@ -33,6 +33,7 @@ import {
 	type RpcMethod,
 	type RpcParams,
 	type RpcResult,
+	type ServerRpcMethod,
 	type SessionEvent,
 	type SessionSnapshot,
 	type SessionSummary,
@@ -157,7 +158,7 @@ interface LiveSession {
 	unsubscribe: () => void;
 }
 
-type Handlers = { [M in RpcMethod]: (params: RpcParams<M>) => Promise<RpcResult<M>> | RpcResult<M> };
+type Handlers = { [M in Exclude<RpcMethod, ServerRpcMethod>]: (params: RpcParams<M>) => Promise<RpcResult<M>> | RpcResult<M> };
 
 /** Embeddable Prometheus host: one ModelRuntime, many PI sessions, all exposed through the RPC surface. */
 export class PrometheusHost {
@@ -200,7 +201,7 @@ export class PrometheusHost {
 	}
 
 	async call<M extends RpcMethod>(method: M, params: RpcParams<M>): Promise<RpcResult<M>> {
-		const handler = this.handlers[method] as ((p: RpcParams<M>) => Promise<RpcResult<M>> | RpcResult<M>) | undefined;
+		const handler = (this.handlers as Partial<Record<RpcMethod, unknown>>)[method] as ((p: RpcParams<M>) => Promise<RpcResult<M>> | RpcResult<M>) | undefined;
 		if (!handler) throw new Error(`未知方法：${method}`);
 		return handler(params ?? ({} as RpcParams<M>));
 	}
