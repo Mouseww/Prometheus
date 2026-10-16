@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { isTauri } from "../lib/backend.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { type Lang, SKINS, type Skin, setPrefs, type ThemeMode, usePrefs } from "../lib/prefs.ts";
+import { type Lang, SKINS, type SendMode, type Skin, setPrefs, type ThemeMode, usePrefs } from "../lib/prefs.ts";
 import { openSettings, type SettingsTab, toast, updateHostSettings, useStore } from "../lib/store.ts";
 import { checkForUpdate, showUpdate, updaterSupported, useUpdater } from "../lib/updater.ts";
 import { GatewaysView } from "./GatewaysView.tsx";
@@ -48,6 +48,10 @@ const M = defineMessages({
 		closeToTrayHint: "关闭窗口后 Prometheus 继续在后台运行，会话不会中断；点击托盘图标查看运行中的会话，右键可显示、隐藏或退出。",
 		autoCompact: "自动压缩上下文",
 		autoCompactHint: "上下文接近模型窗口上限时自动生成摘要并压缩。与 PI TUI 共享此设置。",
+		sendMode: "回复中发送时",
+		sendModeHint: "Agent 还在回复时发送新消息：排队是等本轮结束后再发，插队是在当前工具调用结束后立即插入。也可以在发送按钮旁的箭头上切换。",
+		sendFollowUp: "排队",
+		sendSteer: "插队",
 		updates: "更新",
 		checkUpdate: "检查更新",
 		checking: "检查中…",
@@ -94,6 +98,10 @@ const M = defineMessages({
 		closeToTrayHint: "Closing the window keeps Prometheus running in the background so sessions are not interrupted. Click the tray icon to see running sessions; right-click to show, hide or quit.",
 		autoCompact: "Auto-compact context",
 		autoCompactHint: "Summarise and compact automatically when the context nears the model's window. Shared with the PI TUI.",
+		sendMode: "When sending during a reply",
+		sendModeHint: "What a message does when the agent is still replying: Queue waits for the turn to end, Steer cuts in after the current tool call. You can also switch from the arrow beside the send button.",
+		sendFollowUp: "Queue",
+		sendSteer: "Steer",
 		updates: "Updates",
 		checkUpdate: "Check for updates",
 		checking: "Checking…",
@@ -286,6 +294,16 @@ function GeneralSettings() {
 					<Section title={t("session")}>
 						<Row label={t("autoCompact")} hint={t("autoCompactHint")}>
 							<Toggle checked={host?.autoCompaction ?? false} disabled={!host} onChange={(v) => void updateHostSettings({ autoCompaction: v })} />
+						</Row>
+						<Row label={t("sendMode")} hint={t("sendModeHint")}>
+							<Segmented<SendMode>
+								value={prefs.sendMode}
+								onChange={(sendMode) => setPrefs({ sendMode })}
+								options={[
+									{ value: "followUp", label: t("sendFollowUp") },
+									{ value: "steer", label: t("sendSteer") },
+								]}
+							/>
 						</Row>
 					</Section>
 

@@ -1,9 +1,10 @@
 import clsx from "clsx";
-import { ArrowUp, Brain, Check, ChevronDown, Cpu, Paperclip, Search, Square, X } from "lucide-react";
+import { ArrowUp, Brain, Check, ChevronDown, CornerDownRight, Cpu, ListEnd, Paperclip, Search, Square, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ImageContent, ThinkingLevel } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { fileToImage, IMAGE_ACCEPT, ImageError, imageSrc, isImageFile, MAX_IMAGES } from "../lib/images.ts";
+import { type SendMode, setPrefs, usePrefs } from "../lib/prefs.ts";
 import { abortRun, openSettings, sendPrompt, setModel, setPermissionMode, setThinking, toast, useStore } from "../lib/store.ts";
 import { ContextMeter } from "./ContextMeter.tsx";
 import { nextPermissionMode, PermissionPicker } from "./PermissionPicker.tsx";
@@ -14,12 +15,16 @@ import { WorkspacePicker } from "./WorkspacePicker.tsx";
 const M = defineMessages({
 	zh: {
 		placeholder: "向 Agent 下达任务，输入 / 查看命令",
-		placeholderStreaming: "继续输入以插队或排队…  (Esc 中断)",
+		placeholderStreaming: "回复中… 按“{mode}”发送  (Esc 中断)",
 		steer: "插队",
 		followUp: "排队",
 		steerHint: "在当前工具调用结束后立即插入",
 		followUpHint: "等本轮结束后再发送",
+		sendMode: "回复中发送时",
+		sendModeTitle: "回复中发送：{mode}（点击更改）",
+		sendAs: "发送（{mode}）",
 		queued: "排队中 · {q}",
+		steered: "插队中 · {q}",
 		abort: "中断",
 		send: "发送",
 		needWorkspace: "请先选择工作区",
@@ -49,12 +54,16 @@ const M = defineMessages({
 	},
 	en: {
 		placeholder: "Give the agent a task, type / for commands",
-		placeholderStreaming: "Keep typing to steer or queue…  (Esc to stop)",
+		placeholderStreaming: "Replying… sends as \"{mode}\"  (Esc to stop)",
 		steer: "Steer",
 		followUp: "Queue",
 		steerHint: "Insert right after the current tool call",
 		followUpHint: "Send after this turn ends",
+		sendMode: "When sending during a reply",
+		sendModeTitle: "Sending during a reply: {mode} (click to change)",
+		sendAs: "Send ({mode})",
 		queued: "Queued · {q}",
+		steered: "Steering · {q}",
 		abort: "Stop",
 		send: "Send",
 		needWorkspace: "Choose a workspace first",
@@ -168,6 +177,56 @@ function ModelPicker() {
 	);
 }
 
+/** Chevron beside the send button: what a message sent mid-reply does. The choice is remembered. */
+function SendModePicker() {
+	const t = useT(M);
+	const mode = usePrefs((p) => p.sendMode);
+	const { open, setOpen, ref } = usePopover();
+	const options: { value: SendMode; icon: typeof ListEnd }[] = [
+		{ value: "followUp", icon: ListEnd },
+		{ value: "steer", icon: CornerDownRight },
+	];
+	return (
+		<div ref={ref} className="md:relative">
+			<button
+				type="button"
+				onClick={() => setOpen(!open)}
+				className="grid h-8 w-5 place-items-center rounded-r-lg border-l border-ink-950/25 bg-ember-500 text-white transition hover:bg-ember-400"
+				title={t("sendModeTitle", { mode: t(mode) })}
+				aria-label={t("sendMode")}
+				aria-expanded={open}
+			>
+				<ChevronDown className="size-3" />
+			</button>
+			{open && (
+				<div className="absolute right-3 bottom-full left-3 z-40 mb-2 animate-rise overflow-hidden rounded-xl border border-ink-700 bg-ink-900/97 shadow-2xl shadow-black/40 backdrop-blur md:right-0 md:left-auto md:w-72">
+					<div className="px-3.5 pt-3 pb-1.5 text-sm font-medium text-ink-100">{t("sendMode")}</div>
+					<div className="pb-1.5">
+						{options.map(({ value, icon: Icon }) => (
+							<button
+								key={value}
+								type="button"
+								onClick={() => {
+									setPrefs({ sendMode: value });
+									setOpen(false);
+								}}
+								className={clsx("flex w-full items-start gap-2.5 px-3.5 py-2 text-left", mode === value ? "bg-ember-500/10" : "hover:bg-ink-800")}
+							>
+								<Icon className={clsx("mt-0.5 size-4 shrink-0", mode === value ? "text-ember-300" : "text-ink-400")} />
+								<span className="min-w-0 flex-1">
+									<span className={clsx("block text-sm", mode === value ? "text-ember-200" : "text-ink-100")}>{t(value)}</span>
+									<span className="block text-xs text-ink-500">{t(value === "steer" ? "steerHint" : "followUpHint")}</span>
+								</span>
+								{mode === value && <Check className="mt-0.5 size-3.5 shrink-0 text-ember-300" />}
+							</button>
+						))}
+					</div>
+				</div>
+			)}
+		</div>
+	);
+}
+
 /** Signal-bar glyph: one bar per non-off level, lit up to the current one. */
 function EffortBars({ value, total }: { value: number; total: number }) {
 	const bars = Math.max(total, 1);
@@ -263,7 +322,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 	const files = useRef<HTMLInputElement>(null);
 	const models = useStore((s) => s.models);
 	const model = useStore((s) => s.session?.model ?? s.draftModel);
-	const [delivery, setDelivery] = useState<"steer" | "followUp">("followUp");
+	const sendMode = usePrefs((p) => p.sendMode);
 	const [cursor, setCursor] = useState(0);
 	const ref = useRef<HTMLTextAreaElement>(null);
 	const streaming = session?.isStreaming ?? false;
@@ -301,7 +360,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 		const attached = images;
 		setText("");
 		setImages([]);
-		const ok = await sendPrompt(value, streaming ? delivery : undefined, attached);
+		const ok = await sendPrompt(value, streaming ? sendMode : undefined, attached);
 		if (!ok) {
 			setText(value);
 			setImages(attached);
@@ -372,7 +431,10 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 		}
 	};
 
-	const queued = [...(session?.queue.steering ?? []), ...(session?.queue.followUp ?? [])];
+	const queued = [
+		...(session?.queue.steering ?? []).map((q) => ({ q, steer: true })),
+		...(session?.queue.followUp ?? []).map((q) => ({ q, steer: false })),
+	];
 
 	// Dictation lands where the cursor was, spaced from what is already typed.
 	const insertDictation = (spoken: string) => {
@@ -426,11 +488,12 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 			)}
 
 			{queued.length > 0 && (
-				<div className="mb-2 flex flex-wrap gap-1.5">
-					{queued.map((q, i) => (
-						<span key={i} className="max-w-xs truncate rounded-full border border-ink-700 bg-ink-900 px-2.5 py-1 text-xs text-ink-400">
-							{t("queued", { q })}
-						</span>
+				<div className="mb-2 flex flex-col gap-1 px-1">
+					{queued.map(({ q, steer }, i) => (
+						<div key={i} className="flex min-w-0 items-center gap-1.5 text-xs text-ink-400" title={q}>
+							{steer ? <CornerDownRight className="size-3 shrink-0 text-ember-300" /> : <ListEnd className="size-3 shrink-0 text-ink-500" />}
+							<span className="truncate">{t(steer ? "steered" : "queued", { q })}</span>
+						</div>
 					))}
 				</div>
 			)}
@@ -473,7 +536,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 					onKeyDown={onKeyDown}
 					onPaste={onPaste}
 					rows={1}
-					placeholder={streaming ? t("placeholderStreaming") : t("placeholder")}
+					placeholder={streaming ? t("placeholderStreaming", { mode: t(sendMode) }) : t("placeholder")}
 					className="block max-h-64 w-full resize-none bg-transparent px-4 pt-3.5 pb-2 text-[15px] text-ink-100 placeholder:text-ink-500 focus:outline-none"
 				/>
 				<div className="flex flex-wrap items-center gap-1 px-2 pb-2">
@@ -501,40 +564,34 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 					{newChat && <WorkspacePicker />}
 					<ModelPicker />
 					<EffortPicker />
-					<PermissionPicker />
 					<div className="flex-1" />
-					<ContextMeter />
 					<VoiceButton onText={insertDictation} />
 					{streaming && (
-						<div className="mr-1 flex rounded-lg bg-ink-950 p-0.5 text-xs">
-							{(["steer", "followUp"] as const).map((d) => (
-								<button
-									key={d}
-									type="button"
-									onClick={() => setDelivery(d)}
-									className={clsx("rounded-md px-2 py-1 transition-colors", delivery === d ? "bg-ink-800 text-ink-100" : "text-ink-500 hover:text-ink-300")}
-									title={d === "steer" ? t("steerHint") : t("followUpHint")}
-								>
-									{t(d)}
-								</button>
-							))}
-						</div>
-					)}
-					{streaming && (
-						<button type="button" onClick={() => void abortRun()} className="grid size-8 place-items-center rounded-lg bg-ink-800 text-ink-200 hover:bg-ink-700" aria-label={t("abort")}>
+						<button type="button" onClick={() => void abortRun()} className="grid size-8 place-items-center rounded-lg bg-ink-800 text-ink-200 hover:bg-ink-700" aria-label={t("abort")} title={t("abort")}>
 							<Square className="size-3.5 fill-current" />
 						</button>
 					)}
-					<button
-						type="button"
-						onClick={() => void submit()}
-						disabled={(!text.trim() && images.length === 0) || reading > 0 || !session}
-						title={session ? undefined : t("needWorkspace")}
-						className="grid size-8 place-items-center rounded-lg bg-ember-500 text-white transition hover:bg-ember-400 disabled:bg-ink-800 disabled:text-ink-600"
-						aria-label={t("send")}
-					>
-						<ArrowUp className="size-4" strokeWidth={2.5} />
-					</button>
+					<div className="flex items-stretch">
+						<button
+							type="button"
+							onClick={() => void submit()}
+							disabled={(!text.trim() && images.length === 0) || reading > 0 || !session}
+							title={session ? (streaming ? t("sendAs", { mode: t(sendMode) }) : undefined) : t("needWorkspace")}
+							className={clsx(
+								"grid h-8 place-items-center bg-ember-500 text-white transition hover:bg-ember-400 disabled:bg-ink-800 disabled:text-ink-600",
+								streaming ? "w-8 rounded-l-lg" : "w-8 rounded-lg",
+							)}
+							aria-label={t("send")}
+						>
+							{streaming ? (sendMode === "steer" ? <CornerDownRight className="size-4" strokeWidth={2.5} /> : <ListEnd className="size-4" strokeWidth={2.5} />) : <ArrowUp className="size-4" strokeWidth={2.5} />}
+						</button>
+						{streaming && <SendModePicker />}
+					</div>
+				</div>
+				<div className="flex items-center gap-1 border-t border-ink-800/70 px-2 py-1">
+					<PermissionPicker />
+					<div className="flex-1" />
+					<ContextMeter />
 				</div>
 			</div>
 		</div>

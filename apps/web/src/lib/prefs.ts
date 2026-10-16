@@ -3,6 +3,8 @@ import { create } from "zustand";
 export type ThemeMode = "dark" | "light" | "system";
 export type Skin = "ember" | "ocean" | "forest" | "violet" | "rose";
 export type Lang = "zh" | "en";
+/** What the send button does while the agent is replying: wait for the turn to end, or cut in after the current tool call. */
+export type SendMode = "followUp" | "steer";
 
 export const SKINS: { id: Skin; swatch: string }[] = [
 	{ id: "ember", swatch: "#ff5a1f" },
@@ -18,12 +20,13 @@ interface Prefs {
 	lang: Lang;
 	/** Desktop: closing the window hides it to the tray instead of quitting. */
 	closeToTray: boolean;
+	sendMode: SendMode;
 }
 
 const KEY = "prometheus.prefs";
 
 function load(): Prefs {
-	const fallback: Prefs = { theme: "dark", skin: "ember", lang: navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en", closeToTray: true };
+	const fallback: Prefs = { theme: "dark", skin: "ember", lang: navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en", closeToTray: true, sendMode: "followUp" };
 	try {
 		return { ...fallback, ...(JSON.parse(localStorage.getItem(KEY) ?? "{}") as Partial<Prefs>) };
 	} catch {
