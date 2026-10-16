@@ -1,6 +1,6 @@
 import type { Update } from "@tauri-apps/plugin-updater";
 import { create } from "zustand";
-import { isTauri, localSupported } from "./backend.ts";
+import { isDesktopShell, localSupported } from "./backend.ts";
 
 export type UpdatePhase = "idle" | "checking" | "uptodate" | "available" | "installing" | "error";
 
@@ -21,7 +21,7 @@ const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** The updater only exists in desktop builds. */
 export async function updaterSupported(): Promise<boolean> {
-	return isTauri() && (await localSupported());
+	return isDesktopShell() && (await localSupported());
 }
 
 /** `silent` checks (startup) never surface "up to date" or errors. */

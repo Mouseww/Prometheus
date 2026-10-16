@@ -63,3 +63,89 @@ jobs:
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
+
+  android:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install NDK
+        run: |
+          sdkmanager --install "ndk;27.2.12479018" "platforms;android-36" "build-tools;36.0.0"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+      - name: Build web UI and the Android server bundle
+        run: |
+          pnpm --filter @prometheus/web build
+          pnpm --filter @prometheus/desktop bundle-server:android
+
+      - name: Generate the Android project
+        working-directory: apps/desktop
+        run: pnpm tauri android init --ci
+
+      - name: Add Node and the server to the project
+        run: pnpm --filter @prometheus/desktop android-runtime
+
+      - name: Signing key
+        id: key
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          ks="$RUNNER_TEMP/release.jks"
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$ks"
+            echo "suffix=" >> "$GITHUB_OUTPUT"
+          else
+            # No release key configured: sign with a throwaway key so the APK still installs, but it cannot upgrade a properly signed build.
+            KEYSTORE_PASSWORD=$(openssl rand -hex 16)
+            KEY_ALIAS=prometheus
+            keytool -genkeypair -keystore "$ks" -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 3650 -dname "CN=Prometheus CI"
+            echo "suffix=-unofficial" >> "$GITHUB_OUTPUT"
+          fi
+          echo "::add-mask::$KEYSTORE_PASSWORD"
+          echo "KS_PATH=$ks" >> "$GITHUB_ENV"
+          echo "KS_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "KS_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
+
+      - name: Build APK
+        working-directory: apps/desktop
+        run: pnpm tauri android build --apk --target aarch64
+
+      - name: Sign and publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          apk=$(find apps/desktop/src-tauri/gen/android/app/build/outputs/apk -name '*-unsigned.apk' | head -n1)
+          [ -n "$apk" ] || { echo "no unsigned APK produced" >&2; exit 1; }
+          bt="$ANDROID_HOME/build-tools/36.0.0"
+          "$bt/zipalign" -f -p 4 "$apk" aligned.apk
+          "$bt/apksigner" sign --ks "$KS_PATH" --ks-pass "pass:$KS_PASSWORD" --ks-key-alias "$KS_ALIAS" --out "Prometheus-${GITHUB_REF_NAME}-android-arm64${{ steps.key.outputs.suffix }}.apk" aligned.apk
+          # tauri-action creates the release; wait for it rather than racing the desktop jobs.
+          for i in $(seq 1 30); do gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && break; sleep 20; done
+          gh release upload "$GITHUB_REF_NAME" Prometheus-*.apk --clobber

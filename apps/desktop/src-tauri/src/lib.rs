@@ -10,6 +10,9 @@ use tauri::{Manager, RunEvent};
 #[cfg(desktop)]
 mod tray;
 
+#[cfg(target_os = "android")]
+mod android;
+
 #[derive(Clone, Serialize)]
 struct BackendInfo {
     port: u16,
@@ -84,6 +87,7 @@ fn random_token() -> String {
 }
 
 /// Node cannot resolve Windows verbatim paths (`\\?\D:\...`), which Tauri's resource_dir returns.
+#[cfg(not(target_os = "android"))]
 fn strip_verbatim(p: PathBuf) -> PathBuf {
     let s = p.to_string_lossy();
     if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
@@ -96,6 +100,7 @@ fn strip_verbatim(p: PathBuf) -> PathBuf {
 }
 
 /// Resolution order: PROMETHEUS_SERVER_ENTRY, bundled resource, then the repo source in debug builds.
+#[cfg(not(target_os = "android"))]
 fn server_entry(app: &tauri::AppHandle) -> Option<PathBuf> {
     if let Ok(p) = std::env::var("PROMETHEUS_SERVER_ENTRY") {
         return Some(PathBuf::from(p));
@@ -115,17 +120,56 @@ fn server_entry(app: &tauri::AppHandle) -> Option<PathBuf> {
     None
 }
 
-fn spawn_backend(app: &tauri::AppHandle, backend: &Backend) -> Result<(), String> {
+/// What to run and how: the runtime, the server script, extra environment and an optional working directory.
+struct Launch {
+    node: PathBuf,
+    entry: PathBuf,
+    env: Vec<(&'static str, PathBuf)>,
+    cwd: Option<PathBuf>,
+}
+
+#[cfg(not(target_os = "android"))]
+fn launch_target(app: &tauri::AppHandle) -> Result<Launch, String> {
     let entry = server_entry(app).ok_or("找不到 Prometheus 服务端入口（可设置 PROMETHEUS_SERVER_ENTRY）")?;
-    let node = std::env::var("PROMETHEUS_NODE").unwrap_or_else(|_| "node".into());
+    let node = PathBuf::from(std::env::var("PROMETHEUS_NODE").unwrap_or_else(|_| "node".into()));
+    let cwd = if std::env::var_os("PROMETHEUS_CWD").is_none() { app.path().home_dir().ok() } else { None };
+    Ok(Launch { node, entry, env: Vec::new(), cwd })
+}
+
+#[cfg(target_os = "android")]
+fn launch_target(app: &tauri::AppHandle) -> Result<Launch, String> {
+    let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let runtime = android::prepare(&data)?;
+    let (home, work, tmp) = (data.join("home"), data.join("workspace"), data.join("tmp"));
+    for d in [&home, &work, &tmp] {
+        std::fs::create_dir_all(d).map_err(|e| format!("无法创建目录：{e}"))?;
+    }
+    Ok(Launch {
+        node: runtime.node,
+        entry: runtime.entry,
+        env: vec![
+            ("HOME", home),
+            ("TMPDIR", tmp),
+            ("PROMETHEUS_HOME", data.join("prometheus")),
+            ("PROMETHEUS_CWD", work.clone()),
+            ("LD_LIBRARY_PATH", runtime.lib_dir),
+        ],
+        cwd: Some(work),
+    })
+}
+
+fn spawn_backend(app: &tauri::AppHandle, backend: &Backend) -> Result<(), String> {
+    let launch = launch_target(app)?;
+    let node = launch.node.to_string_lossy().into_owned();
     let token = random_token();
 
-    let mut cmd = Command::new(&node);
-    cmd.arg(&entry)
+    let mut cmd = Command::new(&launch.node);
+    cmd.arg(&launch.entry)
         .env("PROMETHEUS_HOST", "127.0.0.1")
         .env("PROMETHEUS_PORT", "0")
         .env("PROMETHEUS_TOKEN", &token)
         .env("PROMETHEUS_PARENT_WATCH", "1")
+        .envs(launch.env.iter().map(|(k, v)| (k, v)))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -133,10 +177,8 @@ fn spawn_backend(app: &tauri::AppHandle, backend: &Backend) -> Result<(), String
     if cfg!(debug_assertions) && std::env::var_os("PROMETHEUS_ALLOWED_ORIGINS").is_none() {
         cmd.env("PROMETHEUS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173");
     }
-    if std::env::var_os("PROMETHEUS_CWD").is_none() {
-        if let Ok(home) = app.path().home_dir() {
-            cmd.current_dir(home);
-        }
+    if let Some(dir) = &launch.cwd {
+        cmd.current_dir(dir);
     }
     #[cfg(windows)]
     {
@@ -200,7 +242,7 @@ fn spawn_backend(app: &tauri::AppHandle, backend: &Backend) -> Result<(), String
 /// Local mode: spawns the bundled server on first use, then returns its port and one-time token.
 #[tauri::command]
 async fn start_local_backend(app: tauri::AppHandle, state: tauri::State<'_, Backend>) -> Result<Option<BackendInfo>, String> {
-    if cfg!(mobile) {
+    if !local_supported() {
         return Ok(None);
     }
     let backend = state.inner().clone();
@@ -230,10 +272,13 @@ fn relaunch_app(app: tauri::AppHandle, state: tauri::State<'_, Backend>) {
     app.restart();
 }
 
-/// Whether this build can host a local server (desktop) or is a thin client (mobile).
+/// Whether this build can host a local server: desktop always, Android only when the APK carries a Node runtime.
 #[tauri::command]
 fn local_supported() -> bool {
-    cfg!(desktop)
+    #[cfg(target_os = "android")]
+    return android::runtime_present();
+    #[cfg(not(target_os = "android"))]
+    return cfg!(desktop);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

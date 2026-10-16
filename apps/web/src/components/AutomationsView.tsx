@@ -169,7 +169,7 @@ function TaskDialog({ initial, onClose, onSaved }: { initial: (AutomationInput &
 
 	return (
 		<Dialog title={draft.id ? t("edit") : t("add")} onClose={onClose}>
-			<div className="max-h-[70vh] space-y-4 overflow-y-auto pr-1">
+			<div className="max-h-[70dvh] space-y-4 overflow-y-auto pr-1">
 				<Field label={t("name")}>
 					<Input value={draft.name} onChange={(e) => set({ name: e.target.value })} placeholder={t("namePh")} maxLength={80} autoFocus />
 				</Field>
@@ -188,8 +188,8 @@ function TaskDialog({ initial, onClose, onSaved }: { initial: (AutomationInput &
 
 				<div className="space-y-2">
 					<span className="text-xs font-medium tracking-wide text-ink-300">{t("schedule")}</span>
-					<div className="flex gap-2">
-						<Select value={sch.type} onChange={(e) => setKind(e.target.value as Kind)} className="w-44">
+					<div className="flex flex-wrap gap-2">
+						<Select value={sch.type} onChange={(e) => setKind(e.target.value as Kind)} className="w-44 max-sm:w-full">
 							<option value="daily">{t("daily")}</option>
 							<option value="interval">{t("interval")}</option>
 							<option value="once">{t("once")}</option>
@@ -341,7 +341,7 @@ export function AutomationsView() {
 					</Button>
 				}
 			/>
-			<div className="min-h-0 flex-1 overflow-y-auto p-6">
+			<div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
 				<div className="mx-auto max-w-4xl space-y-8">
 					{!data ? (
 						<div className="grid place-items-center py-16 text-ink-500">

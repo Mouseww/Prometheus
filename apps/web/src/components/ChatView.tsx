@@ -102,7 +102,7 @@ function NewChat({ reconnecting }: { reconnecting: boolean }) {
 					<LoaderCircle className="size-3 animate-spin" /> {t("reconnecting")}
 				</div>
 			)}
-			<div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 overflow-y-auto px-6 text-center">
+			<div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 overflow-y-auto px-4 text-center md:px-6">
 				<Flame className="size-16 drop-shadow-[0_0_30px_rgb(var(--glow)/0.45)]" />
 				<h2 className="font-display text-4xl font-semibold tracking-tight">
 					{t("headline1")}

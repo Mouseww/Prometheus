@@ -159,7 +159,7 @@ export function GatewaysView() {
 				}
 			/>
 			<div className="flex min-h-0 flex-1">
-				<div className={clsx("min-h-0 overflow-y-auto p-6", editing ? "hidden w-96 shrink-0 border-r hairline lg:block" : "flex-1")}>
+				<div className={clsx("min-h-0 overflow-y-auto p-4 md:p-6", editing ? "hidden w-96 shrink-0 border-r hairline lg:block" : "flex-1")}>
 					{list.length === 0 ? (
 						<Empty icon={<Network className="size-5" />} title={t("emptyTitle")}>
 							{t("emptyBody")}
@@ -272,7 +272,7 @@ function GatewayEditor({ initial, isNew, onClose, onSaved }: { initial: GatewayC
 
 	return (
 		<div className="min-h-0 flex-1 overflow-y-auto">
-			<div className="mx-auto max-w-2xl space-y-6 p-6">
+			<div className="mx-auto max-w-2xl space-y-6 p-4 md:p-6">
 				<div className="flex items-center justify-between">
 					<h2 className="font-display text-xl font-semibold">{isNew ? t("newGateway") : g.name}</h2>
 					<Button onClick={onClose}>{t("close")}</Button>

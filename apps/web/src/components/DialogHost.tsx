@@ -78,8 +78,8 @@ function PermissionDialog({ sessionId, id, prompt }: { sessionId: string; id: st
 	else heading = t("runTool", { tool: prompt.toolName });
 
 	return (
-		<div className="fixed inset-0 z-40 grid place-items-center bg-ink-950/70 p-4 backdrop-blur-sm" role="dialog" aria-modal>
-			<div className="flex max-h-[88vh] w-full max-w-2xl animate-rise flex-col rounded-2xl border border-ink-700 bg-ink-900 p-5 shadow-2xl shadow-black/60">
+		<div className="fixed inset-0 z-40 flex items-end justify-center bg-ink-950/70 backdrop-blur-sm md:items-center md:p-4" role="dialog" aria-modal>
+			<div className="flex max-h-[88dvh] w-full max-w-2xl animate-rise flex-col rounded-2xl border border-ink-700 bg-ink-900 p-5 shadow-2xl shadow-black/60 max-md:rounded-b-none max-md:border-x-0 max-md:border-b-0 max-md:pb-[max(1.25rem,env(safe-area-inset-bottom))]">
 				<div className="mb-1 flex items-center justify-between gap-3 font-mono text-[10.5px] tracking-widest text-ember-400 uppercase">
 					<span>{t("permission")}</span>
 					<span className="min-w-0 truncate text-ink-500 normal-case">{t("fromSession", { name })}</span>
@@ -92,7 +92,7 @@ function PermissionDialog({ sessionId, id, prompt }: { sessionId: string; id: st
 						<div className="prose-forge mt-3 min-h-0 flex-1 overflow-y-auto rounded-lg border border-ink-800 bg-ink-950/50 p-4">
 							<ReactMarkdown remarkPlugins={[remarkGfm]}>{prompt.plan}</ReactMarkdown>
 						</div>
-						<div className="mt-4 flex flex-wrap justify-end gap-2">
+						<div className="mt-4 flex flex-wrap justify-end gap-2 max-md:flex-col-reverse max-md:[&>button]:w-full max-md:[&>button]:py-2.5">
 							<Button variant="outline" onClick={() => answer("keep")}>
 								{t("planKeep")}
 							</Button>
@@ -106,11 +106,11 @@ function PermissionDialog({ sessionId, id, prompt }: { sessionId: string; id: st
 					</>
 				) : (
 					<>
-						<pre className="mt-3 overflow-x-auto rounded-lg border border-ink-800 bg-ink-950/60 px-3.5 py-2.5 font-mono text-[13px] break-all whitespace-pre-wrap text-ink-100">{prompt.summary}</pre>
+						<pre className="mt-3 max-h-[30dvh] shrink-0 overflow-auto rounded-lg border border-ink-800 bg-ink-950/60 px-3.5 py-2.5 font-mono text-[13px] break-all whitespace-pre-wrap text-ink-100">{prompt.summary}</pre>
 						{prompt.detail && (
-							<pre className="mt-2 max-h-64 overflow-auto rounded-lg border border-ink-800 bg-ink-950/40 px-3.5 py-2.5 font-mono text-xs whitespace-pre-wrap text-ink-400">{prompt.detail}</pre>
+							<pre className="mt-2 max-h-[min(16rem,28dvh)] min-h-0 overflow-auto rounded-lg border border-ink-800 bg-ink-950/40 px-3.5 py-2.5 font-mono text-xs break-all whitespace-pre-wrap text-ink-400">{prompt.detail}</pre>
 						)}
-						<div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+						<div className="mt-4 flex shrink-0 flex-wrap items-center justify-end gap-2 max-md:flex-col-reverse max-md:items-stretch max-md:[&>button]:w-full max-md:[&>button]:py-2.5">
 							<Button variant="outline" onClick={deny}>
 								{t("deny")}
 							</Button>
@@ -142,17 +142,19 @@ function Dialog({ sessionId, request }: { sessionId: string; request: UIRequest 
 	});
 
 	const title = "title" in request ? request.title : "";
+	// Text entry stays centred: a bottom sheet would sit behind the on-screen keyboard.
+	const sheet = request.method === "confirm" || request.method === "select";
 
 	return (
-		<div className="fixed inset-0 z-40 grid place-items-center bg-ink-950/70 p-4 backdrop-blur-sm" role="dialog" aria-modal>
-			<div className="w-full max-w-lg animate-rise rounded-2xl border border-ink-700 bg-ink-900 p-5 shadow-2xl shadow-black/60">
+		<div className={`fixed inset-0 z-40 flex justify-center bg-ink-950/70 p-3 backdrop-blur-sm md:items-center md:p-4 ${sheet ? "items-end" : "items-center"}`} role="dialog" aria-modal>
+			<div className="max-h-full w-full max-w-lg animate-rise overflow-y-auto rounded-2xl border border-ink-700 bg-ink-900 p-5 shadow-2xl shadow-black/60">
 				<div className="mb-1 font-mono text-[10.5px] tracking-widest text-ember-400 uppercase">{t("request")}</div>
 				<h2 className="font-display text-lg font-semibold">{title}</h2>
 
 				{request.method === "confirm" && (
 					<>
 						<p className="mt-2 text-sm whitespace-pre-wrap text-ink-300">{request.message}</p>
-						<div className="mt-5 flex justify-end gap-2">
+						<div className="mt-5 flex justify-end gap-2 max-md:[&>button]:flex-1 max-md:[&>button]:py-2.5">
 							<Button variant="outline" onClick={() => void respondUI(sessionId, request.id, { confirmed: false })}>
 								{t("cancel")}
 							</Button>
@@ -164,14 +166,14 @@ function Dialog({ sessionId, request }: { sessionId: string; request: UIRequest 
 				)}
 
 				{request.method === "select" && (
-					<div className="mt-4 max-h-80 space-y-1 overflow-y-auto">
+					<div className="mt-4 max-h-[50dvh] space-y-1 overflow-y-auto">
 						{request.options.map((o, i) => (
 							<button
 								key={o}
 								type="button"
 								autoFocus={i === 0}
 								onClick={() => void respondUI(sessionId, request.id, { value: o })}
-								className="w-full rounded-lg border border-ink-800 px-3.5 py-2.5 text-left text-sm text-ink-200 hover:border-ember-500/40 hover:bg-ink-850 focus:border-ember-500/60 focus:outline-none"
+								className="w-full rounded-lg border border-ink-800 px-3.5 py-3 text-left text-sm break-words text-ink-200 md:py-2.5 hover:border-ember-500/40 hover:bg-ink-850 focus:border-ember-500/60 focus:outline-none"
 							>
 								{o}
 							</button>
@@ -190,7 +192,7 @@ function Dialog({ sessionId, request }: { sessionId: string; request: UIRequest 
 						{request.method === "input" ? (
 							<Input autoFocus value={value} placeholder={request.placeholder} onChange={(e) => setValue(e.target.value)} />
 						) : (
-							<Textarea autoFocus rows={12} value={value} onChange={(e) => setValue(e.target.value)} className="font-mono text-xs" />
+							<Textarea autoFocus rows={12} value={value} onChange={(e) => setValue(e.target.value)} className="max-h-[45dvh] font-mono text-xs" />
 						)}
 						<div className="flex justify-end gap-2">
 							<Button variant="outline" onClick={cancel}>

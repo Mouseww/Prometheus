@@ -37,8 +37,8 @@ export function Dialog({ title, onClose, children }: { title: string; onClose: (
 	}, [onClose]);
 
 	return (
-		<div className="absolute inset-0 z-30 m-0 grid place-items-center bg-ink-950/60 p-4 backdrop-blur-[2px]" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-			<div role="dialog" aria-modal aria-label={title} className="w-full max-w-lg animate-rise space-y-4 rounded-2xl border border-ink-700 bg-ink-900 p-5 shadow-2xl shadow-black/60">
+		<div className="absolute inset-0 z-30 m-0 flex items-end justify-center bg-ink-950/60 backdrop-blur-[2px] md:items-center md:p-4" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+			<div role="dialog" aria-modal aria-label={title} className="max-h-full w-full max-w-lg animate-rise space-y-4 overflow-y-auto rounded-2xl border border-ink-700 bg-ink-900 p-5 shadow-2xl shadow-black/60 max-md:rounded-b-none max-md:border-x-0 max-md:border-b-0 max-md:pb-[max(1.25rem,env(safe-area-inset-bottom))]">
 				<div className="flex items-center justify-between gap-3">
 					<h2 className="font-display text-lg font-semibold">{title}</h2>
 					<CloseButton onClose={onClose} className="-mr-1.5" />
@@ -133,7 +133,7 @@ export function Badge({ children, tone = "muted" }: { children: ReactNode; tone?
 
 export function Empty({ icon, title, children }: { icon: ReactNode; title: string; children?: ReactNode }) {
 	return (
-		<div className="flex flex-col items-center justify-center gap-3 py-20 text-center">
+		<div className="flex flex-col items-center justify-center gap-3 px-4 py-20 text-center">
 			<div className="grid size-12 place-items-center rounded-2xl border border-ink-700 bg-ink-900 text-ember-400">{icon}</div>
 			<h3 className="font-display text-lg font-semibold">{title}</h3>
 			{children && <div className="max-w-sm text-sm text-ink-400">{children}</div>}

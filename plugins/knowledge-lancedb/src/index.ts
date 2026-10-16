@@ -1,4 +1,4 @@
-import { connect, type Connection, type Table } from "@lancedb/lancedb";
+import type { Connection, Table } from "@lancedb/lancedb";
 import { definePlugin, type KnowledgeChunk, type KnowledgeSearchResult, type KnowledgeStore, type KnowledgeStoreOptions } from "@prometheus/plugin-sdk";
 
 const TABLE = "chunks";
@@ -26,6 +26,10 @@ export class LanceStore implements KnowledgeStore {
 	}
 
 	static async open(options: KnowledgeStoreOptions): Promise<LanceStore> {
+		// Loaded on first use: platforms without a native binding (Android) must still be able to start the server.
+		const { connect } = await import("@lancedb/lancedb").catch((err: unknown) => {
+			throw new Error(`当前平台不支持 LanceDB 向量库：${err instanceof Error ? err.message.split("\n")[0] : String(err)}`);
+		});
 		const db = await connect(options.dataDir);
 		const names = await db.tableNames();
 		return new LanceStore(db, names.includes(TABLE) ? await db.openTable(TABLE) : undefined);

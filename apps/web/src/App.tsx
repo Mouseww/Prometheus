@@ -15,7 +15,7 @@ import { Modal } from "./components/ui.tsx";
 import { UpdateDialog } from "./components/UpdateDialog.tsx";
 import type { BackendTarget } from "./lib/client.ts";
 import { PrometheusClient } from "./lib/client.ts";
-import { clearSession, discoverBackend, establishCookie, isTauri, saveMode, saveSession } from "./lib/backend.ts";
+import { clearSession, discoverBackend, establishCookie, isDesktopShell, saveMode, saveSession } from "./lib/backend.ts";
 import { bindClient, openSession, pluginActive, setView, useStore } from "./lib/store.ts";
 import { usePrefs } from "./lib/prefs.ts";
 import { checkForUpdate } from "./lib/updater.ts";
@@ -83,13 +83,13 @@ export function App() {
 
 	const closeToTray = usePrefs((p) => p.closeToTray);
 	useEffect(() => {
-		if (!isTauri()) return;
+		if (!isDesktopShell()) return;
 		void import("@tauri-apps/api/core").then(({ invoke }) => invoke("set_close_to_tray", { enabled: closeToTray })).catch(() => undefined);
 	}, [closeToTray]);
 
 	// The tray panel asks the main window to jump to a running session.
 	useEffect(() => {
-		if (!isTauri()) return;
+		if (!isDesktopShell()) return;
 		let off: (() => void) | undefined;
 		let dead = false;
 		void import("@tauri-apps/api/event").then(async ({ listen }) => {
@@ -151,7 +151,7 @@ export function App() {
 
 /** Frameless desktop windows still need a drag strip and window buttons before connecting. */
 function Shell({ children }: { children: React.ReactNode }) {
-	if (!isTauri()) return <>{children}</>;
+	if (!isDesktopShell()) return <>{children}</>;
 	return (
 		<div className="forge-bg flex h-full flex-col">
 			<TitleBar bare />

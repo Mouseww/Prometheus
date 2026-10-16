@@ -221,7 +221,7 @@ export function PluginsView() {
 					</div>
 				}
 			/>
-			<div className="min-h-0 flex-1 overflow-y-auto p-6">
+			<div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
 				<div className="mx-auto max-w-4xl space-y-8">
 					{plugins.length === 0 ? <Empty icon={<Blocks className="size-5" />} title={t("empty")} /> : <div className="grid gap-3 md:grid-cols-2">{plugins.map(row)}</div>}
 

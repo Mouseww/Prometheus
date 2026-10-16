@@ -27,7 +27,7 @@ export function TaskPanel() {
 	const closed = collapsed[sessionId ?? ""] ?? false;
 
 	return (
-		<div className="mx-auto mb-2 w-full max-w-3xl px-5">
+		<div className="mx-auto mb-2 w-full max-w-3xl px-3 md:px-5">
 			<div className="overflow-hidden rounded-xl border border-ink-800 bg-ink-900/70 backdrop-blur">
 				<button
 					type="button"
@@ -41,13 +41,13 @@ export function TaskPanel() {
 					<span className="font-mono text-ink-500">{finished ? t("allDone") : t("progress", { done, total: todos.length })}</span>
 					{closed && current && <span className="min-w-0 flex-1 truncate text-ink-400">· {current.activeForm || current.content}</span>}
 					<span className="flex-1" />
-					<span className="h-1 w-24 shrink-0 overflow-hidden rounded-full bg-ink-800">
+					<span className="h-1 w-24 shrink-0 overflow-hidden rounded-full bg-ink-800 max-sm:w-12">
 						<span className={clsx("block h-full rounded-full transition-all duration-500", finished ? "bg-moss-400" : "bg-ember-500")} style={{ width: `${(done / todos.length) * 100}%` }} />
 					</span>
 					{closed ? <ChevronUp className="size-3.5 shrink-0 text-ink-500" /> : <ChevronDown className="size-3.5 shrink-0 text-ink-500" />}
 				</button>
 				{!closed && (
-					<ul className="max-h-48 space-y-0.5 overflow-y-auto border-t border-ink-800 px-3.5 py-2">
+					<ul className="max-h-[30dvh] space-y-0.5 overflow-y-auto border-t border-ink-800 px-3.5 py-2 md:max-h-48">
 						{todos.map((item, i) => (
 							<li key={i} className="flex items-start gap-2 py-0.5 text-[13px]">
 								<span className="mt-0.5 grid size-4 shrink-0 place-items-center">
@@ -59,7 +59,7 @@ export function TaskPanel() {
 										<span className="size-2.5 rounded-full border border-ink-600" />
 									)}
 								</span>
-								<span className={clsx(item.status === "completed" ? "text-ink-500 line-through" : item.status === "in_progress" ? "text-ink-100" : "text-ink-300")}>
+								<span className={clsx("min-w-0 break-words", item.status === "completed" ? "text-ink-500 line-through" : item.status === "in_progress" ? "text-ink-100" : "text-ink-300")}>
 									{item.status === "in_progress" ? item.activeForm || item.content : item.content}
 								</span>
 							</li>

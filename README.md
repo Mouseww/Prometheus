@@ -62,7 +62,9 @@ docker run -p 7420:7420 -e PROMETHEUS_TOKEN=<至少16位随机串> \
 
 ### 安卓
 
-安卓端为瘦客户端：`pnpm --filter @prometheus/desktop tauri android init` 后 `tauri android dev`，在连接页填写服务器地址与令牌。
+安卓版与桌面版一样有两种方式：**连接服务器**（填写服务器地址与密码/令牌）和 **本机模式**（APK 内置 Node 与服务端，首次启动时解压到应用私有目录，数据留在手机上）。发布时由 CI 构建 arm64 的 APK 并上传到 Release。
+
+本机模式的限制：知识库的向量检索（LanceDB）在安卓上不可用；其余功能不受影响。未配置发布签名密钥时，CI 会用临时密钥签名，文件名带 `-unofficial`，不能覆盖安装正式签名的版本；配置 `ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS` 三个仓库 Secret 后即为正式签名。本地调试需要 JDK 17、Android SDK 与 NDK，执行 `pnpm --filter @prometheus/desktop tauri android init`，再依次运行 `bundle-server:android` 与 `android-runtime`（需 Linux），最后 `tauri android dev`。
 
 ## 目录
 

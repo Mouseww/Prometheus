@@ -20,7 +20,7 @@
 | 7 | 万物皆插件 | 网关、知识库、工具、命令、HTTP 路由、UI 面板全部通过 `definePlugin` 贡献 |
 | 8 | PI 全能力 UI 化 | 统一线协议 `@prometheus/protocol` 映射 PI 的全部会话事件与命令（见 §7 能力矩阵） |
 
-**非目标**：不实现自己的 LLM 抽象层（复用 `pi-ai`）；不在 Android 本地运行 Node。
+**非目标**：不实现自己的 LLM 抽象层（复用 `pi-ai`）。
 
 ---
 
@@ -268,7 +268,7 @@ flowchart LR
 | 平台 | 形态 | 后端发现 |
 |------|------|---------|
 | Windows / macOS / Linux | Tauri 2 壳 + `prometheus-server` sidecar（Node SEA 单文件） | Rust 选取空闲端口并生成随机令牌，通过 `backend_info` 命令传给 WebView |
-| Android | Tauri 2 Mobile，仅 UI | 首次启动填写 Server 地址 + 令牌，保存在本地 |
+| Android | Tauri 2 Mobile；APK 内置 Node（取自 Termux）与服务端 tarball，首次启动解压到应用私有目录，Rust 以子进程方式拉起，与桌面同一套握手 | 连接页可选「本机模式」或「连接服务器」；向量库（LanceDB）无 Android 原生绑定，本机模式下不可用 |
 | 服务器 | `node apps/server/dist/main.js` 或 Docker | 同源访问 |
 | 终端 | `prometheus` CLI（PI 原生 TUI） | 进程内 |
 

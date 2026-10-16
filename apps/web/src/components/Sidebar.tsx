@@ -102,7 +102,7 @@ const M = defineMessages({
 	},
 });
 
-const menuItem = "flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px]";
+const menuItem = "flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] max-md:py-2.5";
 
 function SessionMenu({ s, onRename }: { s: SessionSummary; onRename: () => void }) {
 	const t = useT(M);
@@ -113,7 +113,7 @@ function SessionMenu({ s, onRename }: { s: SessionSummary; onRename: () => void 
 			<button
 				type="button"
 				onClick={() => setOpen(!open)}
-				className={clsx("rounded p-0.5 text-ink-500 hover:bg-ink-700 hover:text-ink-100", open ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus:opacity-100 nohover:opacity-100")}
+				className={clsx("rounded p-0.5 text-ink-500 hover:bg-ink-700 hover:text-ink-100 max-md:p-1.5", open ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus:opacity-100 nohover:opacity-100")}
 				aria-label="menu"
 			>
 				<MoreHorizontal className="size-4" />

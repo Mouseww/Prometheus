@@ -138,7 +138,7 @@ export function McpView() {
 				}
 			/>
 			<div className="flex min-h-0 flex-1">
-				<div className={clsx("min-h-0 overflow-y-auto p-6", editing ? "hidden w-96 shrink-0 border-r hairline lg:block" : "flex-1")}>
+				<div className={clsx("min-h-0 overflow-y-auto p-4 md:p-6", editing ? "hidden w-96 shrink-0 border-r hairline lg:block" : "flex-1")}>
 					{list.length === 0 ? (
 						<Empty icon={<Cable className="size-5" />} title={t("emptyTitle")}>
 							{t("emptyBody")}
@@ -192,7 +192,7 @@ function PairRows({ rows, onChange, keyPlaceholder, label }: { rows: Pairs; onCh
 	return (
 		<div className="space-y-2">
 			{rows.map(([k, v], i) => (
-				<div key={i} className="flex gap-2">
+				<div key={i} className="flex gap-2 max-sm:flex-wrap">
 					<Input value={k} placeholder={keyPlaceholder} onChange={(e) => onChange(rows.map((r, j) => (j === i ? [e.target.value, r[1]] : r)))} className="font-mono" />
 					<Input value={v} placeholder={t("valuePlaceholder")} onChange={(e) => onChange(rows.map((r, j) => (j === i ? [r[0], e.target.value] : r)))} className="font-mono" />
 					<Button variant="danger" onClick={() => onChange(rows.filter((_, j) => j !== i))} aria-label={t("delete")}>
@@ -281,7 +281,7 @@ function McpEditor({ initial, isNew, onClose, onSaved }: { initial: McpServerInf
 
 	return (
 		<div className="min-h-0 flex-1 overflow-y-auto">
-			<div className="mx-auto max-w-2xl space-y-6 p-6">
+			<div className="mx-auto max-w-2xl space-y-6 p-4 md:p-6">
 				<div className="flex items-center justify-between gap-2">
 					<h2 className="flex items-center gap-2 font-display text-xl font-semibold">
 						{isNew ? t("newServer") : initial.name}

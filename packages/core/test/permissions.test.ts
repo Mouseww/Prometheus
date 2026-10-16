@@ -53,6 +53,11 @@ describe("decide", () => {
 		expect(decide("bypassPermissions", call("bash", { command: "rm -rf /" }), env).type).toBe("allow");
 	});
 
+	it("auto allows everything like bypass", () => {
+		expect(decide("auto", call("bash", { command: "rm -rf /" }), env).type).toBe("allow");
+		expect(decide("auto", call("write", { path: "../x" }), env).type).toBe("allow");
+	});
+
 	it("always allows reads and read-only commands", () => {
 		for (const mode of ["default", "acceptEdits", "plan"] as const) {
 			expect(decide(mode, call("read", { path: "a" }), env).type).toBe("allow");
@@ -96,7 +101,7 @@ describe("decide", () => {
 
 	it("always asks before installing a plugin, even in bypass mode, and never remembers it", () => {
 		const install = call("prometheus_plugin_install", { name: "x", files: [] });
-		for (const mode of ["default", "acceptEdits", "bypassPermissions"] as const) expect(decide(mode, install, env).type, mode).toBe("ask");
+		for (const mode of ["default", "acceptEdits", "bypassPermissions", "auto"] as const) expect(decide(mode, install, env).type, mode).toBe("ask");
 		expect(decide("plan", install, env).type).toBe("block");
 		expect(decide("default", install, { cwd, allowed: new Set(["tool:prometheus_plugin_install"]) }).type).toBe("ask");
 		expect(ruleKey("prometheus_plugin_install", {})).toBeUndefined();

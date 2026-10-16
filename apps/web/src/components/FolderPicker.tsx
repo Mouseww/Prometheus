@@ -89,19 +89,19 @@ export function FolderPicker({ onPick, onClose }: { onPick: (path: string) => vo
 	const go = (path?: string) => void load(path);
 
 	return createPortal(
-		<div className="fixed inset-0 z-50 grid place-items-center bg-ink-950/70 p-4 backdrop-blur-sm" role="dialog" aria-modal onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-			<div className="flex h-[min(620px,88vh)] w-[min(880px,94vw)] animate-rise flex-col overflow-hidden rounded-2xl border border-ink-700 bg-ink-900 shadow-2xl shadow-black/50">
-				<div className="flex items-start justify-between gap-3 px-6 pt-4 pb-3">
-					<div>
+		<div className="fixed inset-0 z-50 grid place-items-center bg-ink-950/70 backdrop-blur-sm md:p-4" role="dialog" aria-modal onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+			<div className="flex h-full w-full animate-rise flex-col overflow-hidden border-ink-700 bg-ink-900 shadow-2xl shadow-black/50 md:h-[min(620px,88vh)] md:w-[min(880px,94vw)] md:rounded-2xl md:border">
+				<div className="flex items-start justify-between gap-3 px-4 pt-4 pb-3 md:px-6">
+					<div className="min-w-0">
 						<h2 className="font-display text-lg font-semibold">{t("title")}</h2>
 						<p className="text-xs text-ink-500">{t("hint")}</p>
 					</div>
-					<button type="button" onClick={onClose} className="rounded-md p-1 text-ink-500 hover:bg-ink-800 hover:text-ink-100" aria-label={t("cancel")}>
+					<button type="button" onClick={onClose} className="shrink-0 rounded-md p-1 text-ink-500 hover:bg-ink-800 hover:text-ink-100 max-md:p-2.5" aria-label={t("cancel")}>
 						<X className="size-4" />
 					</button>
 				</div>
 				<form
-					className="flex gap-2 px-6 pb-3"
+					className="flex gap-2 px-4 pb-3 md:px-6"
 					onSubmit={(e) => {
 						e.preventDefault();
 						go(input);
@@ -129,9 +129,9 @@ export function FolderPicker({ onPick, onClose }: { onPick: (path: string) => vo
 					{loading && <LoaderCircle className="ml-auto size-4 animate-spin text-ink-500" />}
 				</div>
 
-				<div className="grid min-h-0 flex-1 grid-cols-[200px_1fr]">
-					<aside className="min-h-0 overflow-y-auto border-r hairline px-2 py-2">
-						<p className="px-2 pt-1 pb-1.5 font-mono text-[10.5px] tracking-widest text-ink-500 uppercase">{t("places")}</p>
+				<div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[auto_minmax(0,1fr)] md:grid-cols-[200px_1fr] md:grid-rows-1">
+					<aside className="flex min-h-0 gap-1 overflow-x-auto border-b hairline px-2 py-2 md:block md:overflow-x-visible md:overflow-y-auto md:border-r md:border-b-0 [&>button]:max-md:w-auto [&>button]:max-md:shrink-0 [&>button]:max-md:bg-ink-850 [&>button]:max-md:px-3">
+						<p className="px-2 pt-1 pb-1.5 font-mono text-[10.5px] tracking-widest text-ink-500 uppercase max-md:hidden">{t("places")}</p>
 						<button
 							type="button"
 							onClick={() => go(listing?.home)}
@@ -148,7 +148,7 @@ export function FolderPicker({ onPick, onClose }: { onPick: (path: string) => vo
 						))}
 						{recent.length > 0 && (
 							<>
-								<p className="px-2 pt-3 pb-1.5 font-mono text-[10.5px] tracking-widest text-ink-500 uppercase">{t("recent")}</p>
+								<p className="px-2 pt-3 pb-1.5 font-mono text-[10.5px] tracking-widest text-ink-500 uppercase max-md:hidden">{t("recent")}</p>
 								{recent.map((w) => (
 									<button
 										key={w.id}
@@ -172,14 +172,14 @@ export function FolderPicker({ onPick, onClose }: { onPick: (path: string) => vo
 							</p>
 						)}
 						{listing?.dirs.length === 0 && <p className="py-10 text-center text-sm text-ink-500">{t("empty")}</p>}
-						<div className="grid grid-cols-2 gap-0.5">
+						<div className="grid grid-cols-1 gap-0.5 md:grid-cols-2">
 							{listing?.dirs.map((d) => (
 								<button
 									key={d.path}
 									type="button"
 									onClick={() => go(d.path)}
 									onDoubleClick={() => onPick(d.path)}
-									className="group flex w-full items-center gap-2.5 rounded-lg px-3 py-1.5 text-left text-sm text-ink-200 hover:bg-ink-800"
+									className="group flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm text-ink-200 hover:bg-ink-800 md:py-1.5"
 								>
 									<Folder className="size-4 shrink-0 text-ember-400" />
 									<span className="min-w-0 flex-1 truncate">{d.name}</span>
@@ -190,14 +190,14 @@ export function FolderPicker({ onPick, onClose }: { onPick: (path: string) => vo
 					</div>
 				</div>
 
-				<div className="flex items-center gap-2 border-t hairline px-6 py-3">
-					<span className="min-w-0 flex-1 truncate font-mono text-xs text-ink-500" title={listing?.path}>
+				<div className="flex flex-wrap items-center gap-2 border-t hairline px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:px-6">
+					<span className="min-w-0 flex-1 basis-full truncate font-mono text-xs text-ink-500 md:basis-0" title={listing?.path}>
 						{listing?.path}
 					</span>
-					<Button variant="outline" onClick={onClose}>
+					<Button variant="outline" onClick={onClose} className="max-md:flex-1">
 						{t("cancel")}
 					</Button>
-					<Button variant="primary" disabled={!listing} onClick={() => listing && onPick(listing.path)}>
+					<Button variant="primary" className="max-md:flex-1" disabled={!listing} onClick={() => listing && onPick(listing.path)}>
 						<ArrowUp className="size-4 rotate-45" /> {t("choose")}
 					</Button>
 				</div>

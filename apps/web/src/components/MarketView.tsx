@@ -279,7 +279,7 @@ export function MarketView() {
 					) : undefined
 				}
 			/>
-			<div className="flex gap-1 border-b hairline px-6 py-2">
+			<div className="flex gap-1 overflow-x-auto border-b hairline px-4 py-2 md:px-6">
 				<button type="button" className={tabClass(tab === "installed")} onClick={() => setTab("installed")}>
 					{t("installedTab")}
 					{installed.length > 0 && <span className="ml-1.5 font-mono text-[11px] text-ink-500">{installed.length}</span>}
@@ -289,7 +289,7 @@ export function MarketView() {
 				</button>
 			</div>
 
-			<div className="min-h-0 flex-1 overflow-y-auto p-6">
+			<div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
 				<div className="mx-auto max-w-4xl space-y-5">
 					<p className="rounded-lg border border-ember-500/20 bg-ember-500/5 px-3 py-2 text-xs text-ember-200">{t("trust")}</p>
 

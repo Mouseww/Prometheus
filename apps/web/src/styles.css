@@ -179,6 +179,8 @@ body { margin: 0; overflow: hidden; overscroll-behavior: none; }
 
 /* Desktop title bar: draggable chrome, interactive children opt out. */
 .titlebar { -webkit-user-select: none; user-select: none; }
+/* Phones draw edge to edge; keep the bar below the status bar / notch (0 on desktop). */
+.titlebar { padding-top: env(safe-area-inset-top, 0px); }
 .titlebar button, .titlebar input, .titlebar a, .titlebar [data-no-drag] { -webkit-app-region: no-drag; }
 
 /* Thinking-effort slider */

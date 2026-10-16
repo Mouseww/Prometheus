@@ -46,7 +46,7 @@ export function WorkspacePicker() {
 			</button>
 			{open && (
 				<div className="absolute bottom-full left-3 right-3 z-40 mb-2 md:left-0 md:right-auto md:w-72 animate-rise overflow-hidden rounded-xl border border-ink-700 bg-ink-900/97 shadow-2xl shadow-black/40 backdrop-blur">
-					<div className="max-h-64 overflow-y-auto py-1">
+					<div className="max-h-[min(16rem,40dvh)] overflow-y-auto py-1">
 						{workspaces.length === 0 && <div className="px-3.5 py-4 text-center text-sm text-ink-500">{t("none")}</div>}
 						{workspaces.map((w) => {
 							const on = w.id === currentId;
