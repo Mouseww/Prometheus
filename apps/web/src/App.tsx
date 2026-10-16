@@ -8,6 +8,7 @@ import { KnowledgeView } from "./components/KnowledgeView.tsx";
 import { MemoryView } from "./components/MemoryView.tsx";
 import { SettingsView } from "./components/SettingsView.tsx";
 import { Sidebar } from "./components/Sidebar.tsx";
+import { SubagentPanel } from "./components/SubagentPanel.tsx";
 import { TitleBar } from "./components/TitleBar.tsx";
 import { Toasts } from "./components/Toasts.tsx";
 import { Modal } from "./components/ui.tsx";
@@ -116,6 +117,7 @@ export function App() {
 						</Modal>
 					)}
 				</main>
+				<SubagentPanel />
 			</div>
 			<DialogHost />
 			<UpdateDialog remote={target.label !== "local"} />

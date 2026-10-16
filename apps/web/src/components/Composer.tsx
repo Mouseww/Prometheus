@@ -1,8 +1,9 @@
 import clsx from "clsx";
-import { ArrowUp, Brain, Check, ChevronDown, Cpu, Search, Square } from "lucide-react";
+import { ArrowUp, Brain, Check, ChevronDown, Cpu, Paperclip, Search, Square, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ThinkingLevel } from "@prometheus/protocol";
+import type { ImageContent, ThinkingLevel } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
+import { fileToImage, IMAGE_ACCEPT, ImageError, imageSrc, isImageFile, MAX_IMAGES } from "../lib/images.ts";
 import { abortRun, openSettings, sendPrompt, setModel, setPermissionMode, setThinking, toast, useStore } from "../lib/store.ts";
 import { ContextMeter } from "./ContextMeter.tsx";
 import { nextPermissionMode, PermissionPicker } from "./PermissionPicker.tsx";
@@ -37,6 +38,14 @@ const M = defineMessages({
 		high: "高",
 		xhigh: "超高",
 		max: "极限",
+		attach: "添加图片",
+		removeImage: "移除图片",
+		tooMany: "一条消息最多 {n} 张图片",
+		badType: "只支持 PNG、JPEG、GIF、WebP 图片",
+		tooBig: "图片超过 25 MB，请压缩后再试",
+		badImage: "无法读取这张图片",
+		noVision: "当前模型不支持图片，图片可能被忽略或报错，请换用带“视觉”标记的模型",
+		dropHere: "松开即可添加图片",
 	},
 	en: {
 		placeholder: "Give the agent a task, type / for commands",
@@ -64,6 +73,14 @@ const M = defineMessages({
 		high: "High",
 		xhigh: "X-High",
 		max: "Max",
+		attach: "Add images",
+		removeImage: "Remove image",
+		tooMany: "At most {n} images per message",
+		badType: "Only PNG, JPEG, GIF and WebP images are supported",
+		tooBig: "That image is over 25 MB; shrink it and try again",
+		badImage: "Could not read that image",
+		noVision: "This model does not accept images, so they may be ignored or rejected. Pick a model marked \"vision\"",
+		dropHere: "Drop to add images",
 	},
 });
 
@@ -240,6 +257,12 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 	const commands = useStore((s) => s.commands);
 	const editorText = useStore((s) => s.editorText);
 	const [text, setText] = useState("");
+	const [images, setImages] = useState<ImageContent[]>([]);
+	const [reading, setReading] = useState(0);
+	const [dragging, setDragging] = useState(false);
+	const files = useRef<HTMLInputElement>(null);
+	const models = useStore((s) => s.models);
+	const model = useStore((s) => s.session?.model ?? s.draftModel);
 	const [delivery, setDelivery] = useState<"steer" | "followUp">("followUp");
 	const [cursor, setCursor] = useState(0);
 	const ref = useRef<HTMLTextAreaElement>(null);
@@ -270,15 +293,52 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 
 	const submit = async () => {
 		const value = text.trim();
-		if (!value) return;
+		if ((!value && !images.length) || reading > 0) return;
 		if (!session) {
 			toast(t("needWorkspace"), "warning");
 			return;
 		}
+		const attached = images;
 		setText("");
-		const ok = await sendPrompt(value, streaming ? delivery : undefined);
-		if (!ok) setText(value);
+		setImages([]);
+		const ok = await sendPrompt(value, streaming ? delivery : undefined, attached);
+		if (!ok) {
+			setText(value);
+			setImages(attached);
+		}
 	};
+
+	/** Add picked, pasted or dropped files; anything that is not a usable image is reported, the rest still go in. */
+	const addFiles = async (list: File[]) => {
+		const picked = list.filter((f) => f.type.startsWith("image/") || f.type === "");
+		if (!picked.length) return;
+		const room = MAX_IMAGES - images.length - reading;
+		if (picked.length > room) toast(t("tooMany", { n: MAX_IMAGES }), "warning");
+		const take = picked.slice(0, Math.max(room, 0));
+		setReading((n) => n + take.length);
+		for (const file of take) {
+			try {
+				if (!isImageFile(file)) throw new ImageError("type");
+				const image = await fileToImage(file);
+				setImages((cur) => (cur.length < MAX_IMAGES ? [...cur, image] : cur));
+			} catch (err) {
+				const reason = err instanceof ImageError ? err.reason : "decode";
+				toast(t(reason === "type" ? "badType" : reason === "size" ? "tooBig" : "badImage"), "error");
+			} finally {
+				setReading((n) => n - 1);
+			}
+		}
+	};
+
+	const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+		const pasted = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/"));
+		if (!pasted.length) return;
+		// Screenshots arrive as files with no text; leave ordinary text pastes alone.
+		e.preventDefault();
+		void addFiles(pasted);
+	};
+
+	const lacksVision = images.length > 0 && Boolean(model) && models.find((m) => m.provider === model?.provider && m.id === model.id)?.vision === false;
 
 	const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
 		if (e.key === "Tab" && e.shiftKey) {
@@ -327,7 +387,23 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 	};
 
 	return (
-		<div className="relative mx-auto w-full max-w-3xl px-5 pb-5">
+		<div
+			className="relative mx-auto w-full max-w-3xl px-5 pb-5"
+			onDragOver={(e) => {
+				if (![...e.dataTransfer.types].includes("Files")) return;
+				e.preventDefault();
+				setDragging(true);
+			}}
+			onDragLeave={(e) => {
+				if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+			}}
+			onDrop={(e) => {
+				setDragging(false);
+				if (![...e.dataTransfer.types].includes("Files")) return;
+				e.preventDefault();
+				void addFiles([...e.dataTransfer.files]);
+			}}
+		>
 			{matches.length > 0 && (
 				<div className="absolute right-5 bottom-full left-5 z-30 mb-2 overflow-hidden rounded-xl border border-ink-700 bg-ink-900/95 shadow-2xl shadow-black/40 backdrop-blur">
 					{matches.map((c, i) => (
@@ -363,19 +439,65 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 				className={clsx(
 					"rounded-2xl border bg-ink-900/85 shadow-[0_10px_40px_-12px_rgb(0_0_0/0.45)] backdrop-blur transition-colors",
 					streaming ? "border-ember-500/35" : "border-ink-700 focus-within:border-ink-500",
+					dragging && "border-ember-400 ring-2 ring-ember-500/30",
 				)}
 			>
+				{dragging && <div className="px-4 pt-3 text-xs text-ember-300">{t("dropHere")}</div>}
+				{(images.length > 0 || reading > 0) && (
+					<div className="flex flex-wrap gap-2 px-3 pt-3">
+						{images.map((img, i) => (
+							<div key={i} className="group/thumb relative size-16 overflow-hidden rounded-lg border border-ink-700 bg-ink-950">
+								<img src={imageSrc(img)} alt="" className="size-full object-cover" />
+								<button
+									type="button"
+									onClick={() => setImages((cur) => cur.filter((_, j) => j !== i))}
+									className="absolute top-0.5 right-0.5 grid size-5 place-items-center rounded-full bg-ink-950/80 text-ink-200 opacity-0 transition-opacity group-hover/thumb:opacity-100 hover:bg-rose-500 hover:text-white focus-visible:opacity-100"
+									title={t("removeImage")}
+									aria-label={t("removeImage")}
+								>
+									<X className="size-3" />
+								</button>
+							</div>
+						))}
+						{Array.from({ length: reading }, (_, i) => (
+							<div key={`r${i}`} className="size-16 animate-pulse rounded-lg border border-ink-800 bg-ink-850" />
+						))}
+					</div>
+				)}
+				{lacksVision && <div className="px-4 pt-2 text-[11px] text-ember-300">{t("noVision")}</div>}
 				<textarea
 					ref={ref}
 					autoFocus
 					value={text}
 					onChange={(e) => setText(e.target.value)}
 					onKeyDown={onKeyDown}
+					onPaste={onPaste}
 					rows={1}
 					placeholder={streaming ? t("placeholderStreaming") : t("placeholder")}
 					className="block max-h-64 w-full resize-none bg-transparent px-4 pt-3.5 pb-2 text-[15px] text-ink-100 placeholder:text-ink-500 focus:outline-none"
 				/>
 				<div className="flex items-center gap-1 px-2 pb-2">
+					<input
+						ref={files}
+						type="file"
+						accept={IMAGE_ACCEPT}
+						multiple
+						hidden
+						onChange={(e) => {
+							void addFiles([...(e.target.files ?? [])]);
+							e.target.value = "";
+						}}
+					/>
+					<button
+						type="button"
+						onClick={() => files.current?.click()}
+						disabled={images.length + reading >= MAX_IMAGES}
+						className="grid size-8 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-800 hover:text-ink-100 disabled:opacity-40"
+						title={t("attach")}
+						aria-label={t("attach")}
+					>
+						<Paperclip className="size-4" />
+					</button>
 					{newChat && <WorkspacePicker />}
 					<ModelPicker />
 					<EffortPicker />
@@ -406,7 +528,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 					<button
 						type="button"
 						onClick={() => void submit()}
-						disabled={!text.trim() || !session}
+						disabled={(!text.trim() && images.length === 0) || reading > 0 || !session}
 						title={session ? undefined : t("needWorkspace")}
 						className="grid size-8 place-items-center rounded-lg bg-ember-500 text-white transition hover:bg-ember-400 disabled:bg-ink-800 disabled:text-ink-600"
 						aria-label={t("send")}

@@ -41,10 +41,12 @@ import {
 	type ChatMessage,
 } from "@prometheus/protocol";
 import { slimEvent, toModelRef } from "./events.ts";
+import { checkImages, imageOnlyTitle } from "./images.ts";
 import { PermissionGate } from "./permission-gate.ts";
 import { EXIT_PLAN_MODE } from "./permissions.ts";
 import { pluginBuilderExtension } from "./plugin-tool.ts";
 import { bootstrap, type Runtime } from "./runtime.ts";
+import { ensureSubagentEnv, SubagentTracker } from "./subagents.ts";
 import { UIBridge } from "./ui-bridge.ts";
 import { collectUsage } from "./usage.ts";
 import { normalizeDir, WorkspaceStore, workspaceId } from "./workspaces.ts";
@@ -151,6 +153,7 @@ interface LiveSession {
 	session: AgentSession;
 	bridge: UIBridge;
 	gate: PermissionGate;
+	subagents: SubagentTracker;
 	unsubscribe: () => void;
 }
 
@@ -185,6 +188,8 @@ export class PrometheusHost {
 	}
 
 	static async create(options: PrometheusHostOptions): Promise<PrometheusHost> {
+		// Background subagents spawn a separate PI process and need to know where the package is.
+		ensureSubagentEnv();
 		const runtime = await bootstrap({ host: "server", dataDir: options.dataDir, cwd: options.cwd, builtinPlugins: options.builtinPlugins });
 		const agentDir = getAgentDir();
 		// Shares PI's auth.json/models.json so `/login` credentials from the TUI work here too.
@@ -246,12 +251,12 @@ export class PrometheusHost {
 	}
 
 	/** One loader per session: its extension runtime is invalidated when that session is disposed or reloaded, so sharing it would break sibling sessions. */
-	private async loader(cwd: string, gate: PermissionGate): Promise<DefaultResourceLoader> {
+	private async loader(cwd: string, gate: PermissionGate, subagents: SubagentTracker): Promise<DefaultResourceLoader> {
 		const loader = new DefaultResourceLoader({
 			cwd,
 			agentDir: this.agentDir,
 			// PI's own built-ins (MCP client, codemode, tool search) come first, as in the TUI.
-			extensionFactories: [...builtInExtensions, this.runtime.dynamicExtension(), pluginBuilderExtension(this.runtime.plugins), gate.extension()],
+			extensionFactories: [...builtInExtensions, this.runtime.dynamicExtension(), pluginBuilderExtension(this.runtime.plugins), gate.extension(), subagents.extension()],
 		});
 		await loader.reload();
 		return loader;
@@ -260,14 +265,23 @@ export class PrometheusHost {
 	private async attach(sessionManager: SessionManager): Promise<LiveSession> {
 		const cwd = sessionManager.getCwd();
 		const gate = new PermissionGate();
+		let sessionRef: AgentSession | undefined;
+		let sessionIdRef = "";
+		const subagents = new SubagentTracker({
+			emit: (runs) => this.listener.event(sessionIdRef, { type: "subagents_update", runs }),
+			parentFile: () => sessionRef?.sessionFile,
+		});
 		const { session } = await createAgentSession({
 			cwd,
 			agentDir: this.agentDir,
 			modelRuntime: this.modelRuntime,
 			sessionManager,
-			resourceLoader: await this.loader(cwd, gate),
+			resourceLoader: await this.loader(cwd, gate, subagents),
 		});
 		const id = session.sessionId;
+		sessionRef = session;
+		sessionIdRef = id;
+		subagents.restore(session.messages);
 		const bridge = new UIBridge({
 			request: (r) => this.listener.uiRequest(id, r),
 			resolved: (rid) => this.listener.uiResolved(id, rid),
@@ -280,6 +294,8 @@ export class PrometheusHost {
 			this.listener.event(id, { type: "permission_mode_changed", mode });
 		};
 		const unsubscribe = session.subscribe((e) => {
+			// Subagent progress is read from the raw event: slimming caps payloads and would cut its details.
+			subagents.observe(e);
 			const slim = slimEvent(e);
 			if (slim) this.listener.event(id, slim);
 			if (e.type === "agent_start" || e.type === "agent_settled" || e.type === "session_info_changed") this.listener.sessionsChanged();
@@ -298,7 +314,7 @@ export class PrometheusHost {
 			mode: "rpc",
 			onError: (err) => bridge.context().notify(`扩展错误：${err.error}`, "error"),
 		});
-		const live = { session, bridge, gate, unsubscribe };
+		const live = { session, bridge, gate, subagents, unsubscribe };
 		this.live.set(id, live);
 		const file = session.sessionFile;
 		if (file) this.paths.set(id, file);
@@ -339,6 +355,7 @@ export class PrometheusHost {
 		live.bridge.cancelAll();
 		if (live.session.isStreaming) await live.session.abort().catch(() => {});
 		live.unsubscribe();
+		live.subagents.dispose();
 		live.session.dispose();
 		this.live.delete(sessionId);
 	}
@@ -377,7 +394,7 @@ export class PrometheusHost {
 				created: info.created.toISOString(),
 				modified: info.modified.toISOString(),
 				messageCount: info.messageCount,
-				firstMessage: info.firstMessage.slice(0, 200),
+				firstMessage: imageOnlyTitle(info.firstMessage, info.messageCount).slice(0, 200),
 				live: this.live.has(info.id),
 				running: this.live.get(info.id)?.session.isStreaming ?? false,
 				archived: archived.has(info.id),
@@ -404,6 +421,7 @@ export class PrometheusHost {
 			pendingUI: live.bridge.pendingRequests(),
 			statuses: Object.fromEntries(live.bridge.statuses),
 			widgets: Object.fromEntries(live.bridge.widgets),
+			subagents: live.subagents.list(),
 		};
 	}
 
@@ -727,6 +745,7 @@ export class PrometheusHost {
 
 		"chat.prompt": async ({ sessionId, text, images, delivery }) => {
 			if (!text.trim() && !images?.length) throw new Error("消息不能为空");
+			checkImages(images);
 			const disposition = await this.prompt(sessionId, text, images, delivery);
 			return { disposition };
 		},
@@ -783,6 +802,12 @@ export class PrometheusHost {
 		"permission.set": ({ sessionId, mode }) => {
 			if (!PERMISSION_MODES.includes(mode)) throw new Error(`未知权限模式：${String(mode)}`);
 			this.require(sessionId).gate.setMode(mode);
+			return null;
+		},
+
+		"subagent.detail": ({ sessionId, id }) => this.require(sessionId).subagents.detail(id),
+		"subagent.stop": async ({ sessionId, id }) => {
+			await this.require(sessionId).subagents.stop(id);
 			return null;
 		},
 

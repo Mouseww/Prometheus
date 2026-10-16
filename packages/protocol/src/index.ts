@@ -85,6 +85,8 @@ export type SessionEvent =
 	| { type: "thinking_level_changed"; level: ThinkingLevel }
 	| { type: "model_changed"; model: ModelRef | null }
 	| { type: "permission_mode_changed"; mode: PermissionMode }
+	/** The full subagent list of this conversation changed (a child started, progressed or finished). */
+	| { type: "subagents_update"; runs: SubagentRun[] }
 	/** History rewritten (delete / retry / tree navigation): replace the client's message list. */
 	| { type: "messages_reset"; messages: ChatMessage[] }
 	| { type: "bash_execution_update"; delta: string };
@@ -184,6 +186,74 @@ export interface HostSettings {
 	autoCompaction: boolean;
 }
 
+// ---------- Subagents ----------
+
+export type SubagentState = "queued" | "running" | "completed" | "failed" | "stopped";
+
+export type SubagentSortKey = "status" | "started" | "ended";
+
+const STATE_RANK: Record<SubagentState, number> = { running: 0, queued: 1, failed: 2, stopped: 3, completed: 4 };
+
+/**
+ * Order the panel list. `status` puts live agents first (then problems, then successes), `started`
+ * is newest launch first, `ended` is most recently finished first with live agents on top.
+ * Ties fall back to launch order so the list does not jump around between updates.
+ */
+export function sortSubagents(runs: readonly SubagentRun[], by: SubagentSortKey): SubagentRun[] {
+	const live = (r: SubagentRun) => r.state === "running" || r.state === "queued";
+	const byStart = (a: SubagentRun, b: SubagentRun) => b.startedAt - a.startedAt || a.id.localeCompare(b.id);
+	return [...runs].sort((a, b) => {
+		if (by === "started") return byStart(a, b);
+		if (by === "ended") {
+			if (live(a) !== live(b)) return live(a) ? -1 : 1;
+			return (b.endedAt ?? 0) - (a.endedAt ?? 0) || byStart(a, b);
+		}
+		return STATE_RANK[a.state] - STATE_RANK[b.state] || byStart(a, b);
+	});
+}
+
+/** One delegated agent of a conversation, whether it ran in the foreground or the background. */
+export interface SubagentRun {
+	id: string;
+	/** Tool call that launched it; links the chat card to the panel. */
+	callId: string;
+	agent: string;
+	task: string;
+	state: SubagentState;
+	background: boolean;
+	/** Epoch ms. */
+	startedAt: number;
+	endedAt?: number;
+	model?: string;
+	tokens?: number;
+	toolCount?: number;
+	currentTool?: string;
+	error?: string;
+	/** Whether a stop request can still reach it. */
+	stoppable: boolean;
+}
+
+/** One entry of a subagent's transcript, in order. */
+export interface SubagentStep {
+	kind: "thinking" | "text" | "tool";
+	text: string;
+	tool?: string;
+	args?: string;
+	result?: string;
+	isError?: boolean;
+}
+
+export interface SubagentDetail {
+	run: SubagentRun;
+	/** The brief the parent gave it. */
+	task: string;
+	steps: SubagentStep[];
+	/** Final report once finished. */
+	output?: string;
+	/** Steps are rebuilt from the child's own session file (complete) rather than from live progress (recent tools only). */
+	complete: boolean;
+}
+
 export interface SessionSnapshot {
 	id: string;
 	name?: string;
@@ -199,6 +269,7 @@ export interface SessionSnapshot {
 	pendingUI: UIRequest[];
 	statuses: Record<string, string>;
 	widgets: Record<string, { lines: string[]; placement: string }>;
+	subagents: SubagentRun[];
 }
 
 /** Estimated tokens (chars/4) per context component; the sum approximates, not equals, `contextTokens`. */
@@ -630,6 +701,10 @@ export interface RpcMethods {
 	"model.set": { params: { sessionId: string; model: ModelRef }; result: null };
 	"thinking.set": { params: { sessionId: string; level: ThinkingLevel }; result: null };
 	"permission.set": { params: { sessionId: string; mode: PermissionMode }; result: null };
+
+	"subagent.detail": { params: { sessionId: string; id: string }; result: SubagentDetail };
+	/** Ask a running subagent to stop; the parent conversation keeps going. */
+	"subagent.stop": { params: { sessionId: string; id: string }; result: null };
 
 	"commands.list": { params: { sessionId: string }; result: CommandInfo[] };
 	"tools.list": { params: { sessionId: string }; result: ToolInfo[] };
