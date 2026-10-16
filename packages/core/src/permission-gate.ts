@@ -37,6 +37,9 @@ function describe(toolName: string, input: Record<string, unknown>): Pick<Extrac
 const UNATTENDED_PROMPT = `# Unattended run
 Nobody is watching this run and nobody can answer questions. Do not ask for confirmation or clarification: decide, do the work, and finish with a short report of what you did and anything you could not do. Actions that are not permitted are refused automatically; carry on without them.`;
 
+const AUTO_PROMPT = `# Auto mode
+The user is not answering questions during this session and every action is permitted. Do not stop to ask which option to take or for confirmation: pick the most sensible choice yourself, state the assumption in one line, and carry on until the task is done.`;
+
 const ACCESS_MODE: Record<RunAccess, PermissionMode> = { readonly: "plan", edits: "acceptEdits", full: "bypassPermissions" };
 
 /**
@@ -83,6 +86,7 @@ export class PermissionGate {
 
 				pi.on("before_agent_start", (event) => {
 					if (this.unattended) return { systemPrompt: `${event.systemPrompt}\n\n${UNATTENDED_PROMPT}` };
+					if (this.mode === "auto") return { systemPrompt: `${event.systemPrompt}\n\n${AUTO_PROMPT}` };
 					if (this.mode !== "plan") return;
 					return { systemPrompt: `${event.systemPrompt}\n\n${PLAN_PROMPT}` };
 				});

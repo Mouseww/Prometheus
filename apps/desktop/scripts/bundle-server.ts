@@ -1,15 +1,19 @@
 // Bundles apps/server into dist/server-bundle for the desktop installer.
 // Workspace packages ship .ts sources, which Node refuses to type-strip inside node_modules,
 // so they are inlined here; third-party deps stay external and are installed next to the bundle.
+// --android builds the phone flavour without the native vector DB (it has no Android binding); android-runtime.ts adds Node and packs it.
 import { execSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 
+const android = process.argv.includes("--android");
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const out = join(root, "dist/server-bundle");
+const out = join(root, android ? "dist/server-bundle-android" : "dist/server-bundle");
 const readPkg = (p: string) => JSON.parse(readFileSync(join(root, p, "package.json"), "utf8"));
+// Drags in onnxruntime-node and sharp (~700 MB) with no Android binary; the plugin imports it lazily and reports it unavailable.
+const NOT_ON_ANDROID = new Set(["@lancedb/lancedb"]);
 
 const sources = [
 	"apps/server",
@@ -30,7 +34,7 @@ const sources = [
 const dependencies: Record<string, string> = {};
 for (const dir of sources) {
 	for (const [name, version] of Object.entries<string>(readPkg(dir).dependencies ?? {})) {
-		if (!version.startsWith("workspace:")) dependencies[name] = version;
+		if (!version.startsWith("workspace:") && !(android && NOT_ON_ANDROID.has(name))) dependencies[name] = version;
 	}
 }
 

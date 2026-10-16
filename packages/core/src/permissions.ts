@@ -103,7 +103,7 @@ export function decide(
 ): Verdict {
 	// A plugin outlives the chat and runs with the app's own rights, so even "bypass" does not skip this question.
 	if (call.toolName === INSTALL_PLUGIN_TOOL) return mode === "plan" ? { type: "block", reason: PLAN_BLOCK_REASON } : { type: "ask" };
-	if (mode === "bypassPermissions") return { type: "allow" };
+	if (mode === "bypassPermissions" || mode === "auto") return { type: "allow" };
 	const kind = toolKind(call.toolName);
 	if (kind === "read" || kind === "safe" || (kind === "other" && call.readOnly)) return { type: "allow" };
 	if (kind === "exec" && isReadOnlyCommand(str(call.input.command))) return { type: "allow" };

@@ -10,7 +10,7 @@ const M = defineMessages({
 	zh: {
 		subtitle: "选择运行方式",
 		local: "本机模式",
-		localDesc: "在这台电脑上自动启动 Prometheus 服务，数据保存在本地",
+		localDesc: "在这台设备上自动启动 Prometheus 服务，数据保存在本地",
 		remote: "连接服务器",
 		remoteDesc: "连接到已部署的 Prometheus 服务器",
 		starting: "正在启动本机服务…首次启动可能需要数十秒",
@@ -31,7 +31,7 @@ const M = defineMessages({
 	en: {
 		subtitle: "Choose how to run",
 		local: "Local mode",
-		localDesc: "Start a Prometheus server on this computer automatically; data stays local",
+		localDesc: "Start a Prometheus server on this device automatically; data stays local",
 		remote: "Connect to server",
 		remoteDesc: "Connect to a deployed Prometheus server",
 		starting: "Starting the local server… first launch may take a while",

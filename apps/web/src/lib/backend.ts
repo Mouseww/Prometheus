@@ -15,6 +15,15 @@ export function isTauri(): boolean {
 	return "__TAURI_INTERNALS__" in window;
 }
 
+export function isAndroid(): boolean {
+	return /Android/i.test(navigator.userAgent);
+}
+
+/** The Tauri desktop shell: frameless window, tray and self-updater exist only here. */
+export function isDesktopShell(): boolean {
+	return isTauri() && !isAndroid();
+}
+
 export function targetFromUrl(url: string, token?: string): BackendTarget {
 	const u = new URL(url);
 	const wsProtocol = u.protocol === "https:" ? "wss:" : "ws:";
@@ -50,7 +59,7 @@ export function saveMode(mode: ConnectionMode | null): void {
 	else localStorage.removeItem(MODE_KEY);
 }
 
-/** Desktop builds can spawn a local server; mobile builds are thin clients. */
+/** Desktop builds spawn a local server; Android does too when the APK carries a Node runtime, otherwise it is a thin client. */
 export async function localSupported(): Promise<boolean> {
 	if (!isTauri()) return false;
 	try {

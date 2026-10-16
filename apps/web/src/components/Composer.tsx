@@ -129,7 +129,7 @@ function ModelPicker() {
 						<Search className="size-3.5 text-ink-500" />
 						<input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("searchModel")} className="w-full bg-transparent py-2.5 text-sm focus:outline-none" />
 					</div>
-					<div className="max-h-80 overflow-y-auto py-1">
+					<div className="max-h-[min(20rem,45dvh)] overflow-y-auto py-1">
 						{groups.length === 0 && (
 							<div className="px-3.5 py-6 text-center text-sm text-ink-500">
 								<p>{t("noModels")}</p>

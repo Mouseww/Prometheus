@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Check, ChevronDown, ClipboardList, FilePen, Hand, ShieldAlert } from "lucide-react";
+import { Bot, Check, ChevronDown, ClipboardList, FilePen, Hand, ShieldAlert } from "lucide-react";
 import { PERMISSION_MODES, type PermissionMode } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { setPermissionMode, useStore } from "../lib/store.ts";
@@ -17,6 +17,8 @@ const M = defineMessages({
 		planDesc: "只读调研，不做任何修改；给出计划并获批后才开始",
 		bypassPermissions: "完全放行",
 		bypassPermissionsDesc: "不再询问，直接执行所有操作（有风险）",
+		auto: "Auto",
+		autoDesc: "权限全放开，遇到选择题由 AI 自己决定，不再打断你（有风险）",
 	},
 	en: {
 		title: "Permission mode",
@@ -29,15 +31,18 @@ const M = defineMessages({
 		planDesc: "Read-only research; nothing changes until you approve the plan",
 		bypassPermissions: "Bypass permissions",
 		bypassPermissionsDesc: "Never ask; everything runs (risky)",
+		auto: "Auto",
+		autoDesc: "Everything allowed and the AI makes its own choices instead of asking you (risky)",
 	},
 });
 
-const ICONS = { default: Hand, acceptEdits: FilePen, plan: ClipboardList, bypassPermissions: ShieldAlert } as const;
+const ICONS = { default: Hand, acceptEdits: FilePen, plan: ClipboardList, bypassPermissions: ShieldAlert, auto: Bot } as const;
 const TONE: Record<PermissionMode, string> = {
 	default: "text-ink-400 hover:text-ink-200",
 	acceptEdits: "text-moss-400",
 	plan: "text-sky-400",
 	bypassPermissions: "text-rose-400",
+	auto: "text-amber-400",
 };
 
 export function nextPermissionMode(mode: PermissionMode): PermissionMode {

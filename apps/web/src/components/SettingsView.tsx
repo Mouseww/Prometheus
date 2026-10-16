@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { BarChart3, Blocks, Cable, Check, Copy, Globe, Laptop, Mic, Moon, Network, Package, Sparkles, Sun, SlidersHorizontal } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
-import { isTauri } from "../lib/backend.ts";
+import { isDesktopShell } from "../lib/backend.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { type Lang, SKINS, type SendMode, type Skin, setPrefs, type ThemeMode, usePrefs } from "../lib/prefs.ts";
 import { openSettings, type SettingsTab, toast, updateHostSettings, useStore } from "../lib/store.ts";
@@ -307,7 +307,7 @@ function GeneralSettings() {
 						</Row>
 					</Section>
 
-					{isTauri() && (
+					{isDesktopShell() && (
 						<Section title={t("window")}>
 							<Row label={t("closeToTray")} hint={t("closeToTrayHint")}>
 								<Toggle checked={prefs.closeToTray} onChange={(closeToTray) => setPrefs({ closeToTray })} />

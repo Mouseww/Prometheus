@@ -2761,11 +2761,13 @@ dependencies = [
 
 [[package]]
 name = "prometheus-desktop"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
+ "flate2",
  "getrandom 0.3.4",
  "serde",
  "serde_json",
+ "tar",
  "tauri",
  "tauri-build",
  "tauri-plugin-single-instance",

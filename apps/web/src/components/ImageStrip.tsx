@@ -23,9 +23,9 @@ function Lightbox({ image, onClose }: { image: ImageContent; onClose: () => void
 		return () => window.removeEventListener("keydown", onKey, true);
 	}, [onClose]);
 	return createPortal(
-		<div role="dialog" aria-modal aria-label={t("image")} className="fixed inset-0 z-50 grid place-items-center bg-black/80 p-6 backdrop-blur-sm" onClick={onClose}>
+		<div role="dialog" aria-modal aria-label={t("image")} className="fixed inset-0 z-50 grid place-items-center bg-black/80 p-3 pt-14 backdrop-blur-sm md:p-6" onClick={onClose}>
 			<img src={imageSrc(image)} alt="" className="max-h-full max-w-full rounded-lg object-contain shadow-2xl" onClick={(e) => e.stopPropagation()} />
-			<button type="button" onClick={onClose} className="absolute top-4 right-4 grid size-9 place-items-center rounded-full bg-ink-900/80 text-ink-100 hover:bg-ink-800" aria-label={t("close")}>
+			<button type="button" onClick={onClose} className="absolute top-3 right-3 grid size-10 place-items-center rounded-full bg-ink-900/80 text-ink-100 hover:bg-ink-800 md:top-4 md:right-4 md:size-9" aria-label={t("close")}>
 				<X className="size-5" />
 			</button>
 		</div>,
@@ -50,7 +50,7 @@ export function ImageStrip({ images, align = "start" }: { images: ImageContent[]
 						title={t("enlarge")}
 						className="overflow-hidden rounded-xl border border-ink-700 bg-ink-950 transition-colors hover:border-ember-500/50"
 					>
-						<img src={imageSrc(img)} alt={t("image")} loading="lazy" className={single ? "max-h-72 max-w-full object-contain" : "size-32 object-cover"} />
+						<img src={imageSrc(img)} alt={t("image")} loading="lazy" className={single ? "max-h-72 max-w-full object-contain" : "size-24 object-cover md:size-32"} />
 					</button>
 				))}
 			</div>

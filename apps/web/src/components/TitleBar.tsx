@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { FolderOpen, Minus, PanelLeft, PanelRight, Square, Wrench, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ToolInfo } from "@prometheus/protocol";
-import { isTauri } from "../lib/backend.ts";
+import { isDesktopShell } from "../lib/backend.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { call, NO_SUBAGENTS, toggleSubagentPanel, useStore } from "../lib/store.ts";
 import { Flame } from "./ui.tsx";
@@ -78,7 +78,7 @@ function ToolsPopover() {
 			{open && (
 				<div className="absolute top-full right-0 z-40 mt-2 w-80 max-w-[calc(100vw-1rem)] animate-rise rounded-xl border border-ink-700 bg-ink-900/97 p-1.5 shadow-2xl shadow-black/40 backdrop-blur">
 					<div className="px-2.5 pt-1.5 pb-2 font-mono text-[10.5px] tracking-widest text-ink-500 uppercase">{t("toolSwitch")}</div>
-					<div className="max-h-96 overflow-y-auto">
+					<div className="max-h-[min(24rem,70dvh)] overflow-y-auto">
 						{tools.map((x) => (
 							<label key={x.name} className="flex cursor-pointer items-start gap-2.5 rounded-lg px-2.5 py-2 hover:bg-ink-800">
 								<input type="checkbox" checked={x.active} onChange={() => void toggle(x.name)} className="mt-0.5 accent-ember-500" />
@@ -161,7 +161,7 @@ export function TitleBar({ onToggleSidebar, bare }: { onToggleSidebar?: () => vo
 	const workspaces = useStore((s) => s.workspaces);
 	const title = useStore((s) => s.title);
 	const summary = useStore((s) => s.sessions.find((x) => x.id === s.session?.id));
-	const desktop = isTauri();
+	const desktop = isDesktopShell();
 	const ws = workspaces.find((w) => w.id === session?.workspaceId);
 	const firstUser = session?.messages.find((m) => m.role === "user");
 	const firstText = firstUser ? (typeof firstUser.content === "string" ? firstUser.content : firstUser.content.map((c) => (c.type === "text" ? c.text : "")).join("")) : "";
@@ -187,7 +187,7 @@ export function TitleBar({ onToggleSidebar, bare }: { onToggleSidebar?: () => vo
 	}
 
 	return (
-		<header className="titlebar relative z-30 flex h-11 shrink-0 items-center gap-2 border-b hairline bg-ink-950/70 pl-2 backdrop-blur" data-tauri-drag-region>
+		<header className="titlebar relative z-30 flex min-h-11 shrink-0 items-center gap-2 border-b hairline bg-ink-950/70 pl-2 backdrop-blur" data-tauri-drag-region>
 			{onToggleSidebar && (
 				<button type="button" onClick={onToggleSidebar} className="rounded-md p-1.5 text-ink-400 hover:bg-ink-800 hover:text-ink-100 max-md:p-2.5" aria-label={t("toggleSidebar")}>
 					<PanelLeft className="size-4" />

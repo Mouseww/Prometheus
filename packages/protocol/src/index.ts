@@ -112,10 +112,11 @@ export const BLOCKING_UI_METHODS = new Set<UIRequest["method"]>(["select", "conf
 /**
  * How tool calls are gated, after Claude Code:
  * default (ask before edits and commands), acceptEdits (file edits pass, commands still ask),
- * plan (read-only until the plan is approved), bypassPermissions (nothing is asked).
+ * plan (read-only until the plan is approved), bypassPermissions (nothing is asked),
+ * auto (bypassPermissions, and choice questions are answered by the agent / first option instead of the user).
  */
-export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
-export const PERMISSION_MODES: readonly PermissionMode[] = ["default", "acceptEdits", "plan", "bypassPermissions"];
+export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions" | "auto";
+export const PERMISSION_MODES: readonly PermissionMode[] = ["default", "acceptEdits", "plan", "bypassPermissions", "auto"];
 
 /**
  * Asked of the user before a tool runs (`kind: "tool"`) or when the model proposes a plan (`kind: "plan"`).

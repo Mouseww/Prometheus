@@ -125,15 +125,15 @@ function ToolCard({ call, run, result }: { call: ToolCallContent; run?: ToolRun;
 				>
 					{status === "running" ? <LoaderCircle className="size-3.5 animate-spin" /> : status === "error" ? <CircleAlert className="size-3.5" /> : <Check className="size-3.5" />}
 				</span>
-				<span className="font-mono text-[13px] font-medium text-ink-100">{call.name || run?.toolName}</span>
+				<span className="shrink-0 font-mono text-[13px] font-medium text-ink-100">{call.name || run?.toolName}</span>
 				<span className="min-w-0 flex-1 truncate font-mono text-xs text-ink-500">{argSummary(call.name, call.arguments)}</span>
-				{run?.durationMs !== undefined && <span className="font-mono text-[11px] text-ink-600">{(run.durationMs / 1000).toFixed(1)}s</span>}
-				{open ? <ChevronDown className="size-3.5 text-ink-500" /> : <ChevronRight className="size-3.5 text-ink-500" />}
+				{run?.durationMs !== undefined && <span className="shrink-0 font-mono text-[11px] text-ink-600">{(run.durationMs / 1000).toFixed(1)}s</span>}
+				{open ? <ChevronDown className="size-3.5 shrink-0 text-ink-500" /> : <ChevronRight className="size-3.5 shrink-0 text-ink-500" />}
 			</button>
 			{open && (
 				<div className="space-y-2 border-t border-ink-800 px-3 py-3">
-					<pre className="max-h-48 overflow-auto rounded-lg bg-ink-950 p-2.5 font-mono text-[11.5px] text-ink-300">{JSON.stringify(call.arguments, null, 2)}</pre>
-					{output && <pre className="max-h-80 overflow-auto rounded-lg bg-ink-950 p-2.5 font-mono text-[11.5px] whitespace-pre-wrap text-ink-300">{output}</pre>}
+					<pre className="max-h-[35dvh] overflow-auto rounded-lg bg-ink-950 p-2.5 font-mono text-[11.5px] text-ink-300 md:max-h-48">{JSON.stringify(call.arguments, null, 2)}</pre>
+					{output && <pre className="max-h-[45dvh] overflow-auto rounded-lg bg-ink-950 p-2.5 font-mono text-[11.5px] break-words whitespace-pre-wrap text-ink-300 md:max-h-80">{output}</pre>}
 					<ImageStrip images={pictures} />
 				</div>
 			)}
