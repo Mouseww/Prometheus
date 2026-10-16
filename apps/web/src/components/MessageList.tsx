@@ -1,12 +1,13 @@
 import clsx from "clsx";
 import { Brain, Check, ChevronDown, ChevronRight, CircleAlert, Copy, GitBranch, LoaderCircle, RotateCcw, Trash2 } from "lucide-react";
-import { memo, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import rehypeHighlight from "rehype-highlight";
-import remarkGfm from "remark-gfm";
-import type { AssistantMessage, ChatMessage, ToolCallContent, ToolResultMessage, UserMessage } from "@prometheus/protocol";
+import { useState } from "react";
+import type { AssistantMessage, ChatMessage, ImageContent, ToolCallContent, ToolResultMessage, UserMessage } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
+import { imagesOf } from "../lib/images.ts";
 import { deleteMessage, forkMessage, retryMessage, type ToolRun, toast } from "../lib/store.ts";
+import { ImageStrip } from "./ImageStrip.tsx";
+import { Markdown } from "./Markdown.tsx";
+import { SubagentCard } from "./SubagentCard.tsx";
 
 const M = defineMessages({
 	zh: {
@@ -37,18 +38,22 @@ const M = defineMessages({
 	},
 });
 
-const Markdown = memo(function Markdown({ text }: { text: string }) {
-	return (
-		<div className="prose-forge">
-			<ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}>
-				{text}
-			</ReactMarkdown>
-		</div>
-	);
-});
-
 function userText(m: UserMessage): string {
 	return typeof m.content === "string" ? m.content : m.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+}
+
+function userImages(m: UserMessage): ImageContent[] {
+	return typeof m.content === "string" ? [] : m.content.filter((c): c is ImageContent => c.type === "image");
+}
+
+/** The bubble of a sent message: pictures above the words, either part optional. */
+function UserBubble({ text, images }: { text: string; images: ImageContent[] }) {
+	return (
+		<div className="flex max-w-[85%] flex-col items-end gap-2">
+			<ImageStrip images={images} align="end" />
+			{text && <div className="rounded-2xl rounded-br-md border border-ember-500/20 bg-gradient-to-b from-ink-800 to-ink-850 px-4 py-2.5 text-[15px] whitespace-pre-wrap text-ink-100">{text}</div>}
+		</div>
+	);
 }
 
 function resultText(value: unknown): string {
@@ -106,6 +111,7 @@ function ToolCard({ call, run, result }: { call: ToolCallContent; run?: ToolRun;
 	const [open, setOpen] = useState(false);
 	const status = run?.status ?? (result ? (result.isError ? "error" : "done") : "running");
 	const output = result ? resultText(result) : resultText(run?.result ?? run?.partial);
+	const pictures = result ? imagesOf(result) : imagesOf(run?.result ?? run?.partial);
 	return (
 		<div className={clsx("overflow-hidden rounded-xl border bg-ink-900/70", status === "error" ? "border-rose-400/25" : "border-ink-800")}>
 			<button type="button" onClick={() => setOpen(!open)} className="flex w-full items-center gap-2.5 px-3 py-2 text-left">
@@ -128,6 +134,7 @@ function ToolCard({ call, run, result }: { call: ToolCallContent; run?: ToolRun;
 				<div className="space-y-2 border-t border-ink-800 px-3 py-3">
 					<pre className="max-h-48 overflow-auto rounded-lg bg-ink-950 p-2.5 font-mono text-[11.5px] text-ink-300">{JSON.stringify(call.arguments, null, 2)}</pre>
 					{output && <pre className="max-h-80 overflow-auto rounded-lg bg-ink-950 p-2.5 font-mono text-[11.5px] whitespace-pre-wrap text-ink-300">{output}</pre>}
+					<ImageStrip images={pictures} />
 				</div>
 			)}
 		</div>
@@ -142,7 +149,10 @@ function AssistantBlock({ message, live, tools, results }: { message: AssistantM
 			{message.content.map((block, i) => {
 				if (!block) return null;
 				if (block.type === "thinking") return block.thinking.trim() ? <ThinkingBlock key={i} text={block.thinking} live={live && i === last} /> : null;
-				if (block.type === "toolCall") return <ToolCard key={block.id || i} call={block} run={tools[block.id]} result={results.get(block.id)} />;
+				if (block.type === "toolCall") {
+					const card = <ToolCard key={block.id || i} call={block} run={tools[block.id]} result={results.get(block.id)} />;
+					return block.name === "subagent" ? <SubagentCard key={block.id || i} callId={block.id} fallback={card} /> : card;
+				}
 				return (
 					<div key={i} className={clsx(live && i === last && "caret")}>
 						<Markdown text={block.text} />
@@ -226,7 +236,7 @@ export function MessageList({
 	messages: ChatMessage[];
 	tools: Record<string, ToolRun>;
 	streaming: boolean;
-	pending: { text: string } | null;
+	pending: { text: string; images?: ImageContent[] } | null;
 }) {
 	const t = useT(M);
 	const results = new Map<string, ToolResultMessage>();
@@ -242,9 +252,7 @@ export function MessageList({
 					return (
 						<div key={i} className="group/msg animate-rise">
 							<div className="flex justify-end">
-								<div className="max-w-[85%] rounded-2xl rounded-br-md border border-ember-500/20 bg-gradient-to-b from-ink-800 to-ink-850 px-4 py-2.5 text-[15px] whitespace-pre-wrap text-ink-100">
-									{text}
-								</div>
+								<UserBubble text={text} images={userImages(m)} />
 							</div>
 							<Actions index={i} text={text} canRetry={!streaming} align="end" />
 						</div>
@@ -300,9 +308,7 @@ export function MessageList({
 				// Same key as the real message will get, so the bubble is reused instead of replayed when the server echoes it.
 				<div key={messages.length} className="group/msg animate-rise">
 					<div className="flex justify-end">
-						<div className="max-w-[85%] rounded-2xl rounded-br-md border border-ember-500/20 bg-gradient-to-b from-ink-800 to-ink-850 px-4 py-2.5 text-[15px] whitespace-pre-wrap text-ink-100">
-							{pending.text}
-						</div>
+						<UserBubble text={pending.text} images={pending.images ?? []} />
 					</div>
 				</div>
 			)}

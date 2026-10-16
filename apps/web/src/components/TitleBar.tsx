@@ -1,16 +1,17 @@
 import clsx from "clsx";
-import { FolderOpen, Minus, PanelLeft, Square, Wrench, X } from "lucide-react";
+import { FolderOpen, Minus, PanelLeft, PanelRight, Square, Wrench, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ToolInfo } from "@prometheus/protocol";
 import { isTauri } from "../lib/backend.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { call, useStore } from "../lib/store.ts";
+import { call, NO_SUBAGENTS, toggleSubagentPanel, useStore } from "../lib/store.ts";
 import { Flame } from "./ui.tsx";
 
 const M = defineMessages({
 	zh: {
 		tools: "工具",
 		toolSwitch: "工具开关",
+		subagents: "子代理",
 		toggleSidebar: "切换侧栏",
 		minimize: "最小化",
 		maximize: "最大化",
@@ -23,6 +24,7 @@ const M = defineMessages({
 	en: {
 		tools: "Tools",
 		toolSwitch: "Tool switches",
+		subagents: "Subagents",
 		toggleSidebar: "Toggle sidebar",
 		minimize: "Minimize",
 		maximize: "Maximize",
@@ -93,6 +95,28 @@ function ToolsPopover() {
 	);
 }
 
+function SubagentToggle() {
+	const t = useT(M);
+	const open = useStore((s) => s.subagentUi.open);
+	const count = useStore((s) => (s.session?.subagents ?? NO_SUBAGENTS).length);
+	const live = useStore((s) => (s.session?.subagents ?? NO_SUBAGENTS).some((r) => r.state === "running" || r.state === "queued"));
+	// Nothing to show until the conversation has used a subagent.
+	if (count === 0) return null;
+	return (
+		<button
+			type="button"
+			onClick={toggleSubagentPanel}
+			aria-pressed={open}
+			className={clsx("relative rounded-md p-1.5 hover:bg-ink-800", open ? "bg-ink-800 text-ember-300" : "text-ink-400 hover:text-ink-100")}
+			title={t("subagents")}
+			aria-label={t("subagents")}
+		>
+			<PanelRight className="size-4" />
+			{live && <span className="absolute top-1 right-1 size-1.5 rounded-full bg-ember-400" />}
+		</button>
+	);
+}
+
 function SessionTools() {
 	const session = useStore((s) => s.session);
 	if (!session) return null;
@@ -103,6 +127,7 @@ function SessionTools() {
 					{v}
 				</span>
 			))}
+			<SubagentToggle />
 			<ToolsPopover />
 		</div>
 	);

@@ -4,6 +4,7 @@ import type {
 	CommandInfo,
 	HostSettings,
 	HostInfo,
+	ImageContent,
 	MessageRef,
 	ModelInfo,
 	ModelRef,
@@ -15,6 +16,8 @@ import type {
 	SessionSnapshot,
 	SessionStats,
 	SessionSummary,
+	SubagentRun,
+	SubagentSortKey,
 	ThinkingLevel,
 	UIRequest,
 	WorkspaceInfo,
@@ -96,10 +99,33 @@ export interface ActiveSession {
 	queue: { steering: string[]; followUp: string[] };
 	statuses: Record<string, string>;
 	widgets: Record<string, { lines: string[]; placement: string }>;
+	subagents: SubagentRun[];
 	banner: Banner | null;
 	stats: SessionStats | null;
 	/** Prompt just sent and not yet echoed by the server; shown at once so the UI reacts before the upstream does. */
-	pending: { text: string; timestamp: number } | null;
+	pending: { text: string; timestamp: number; images?: ImageContent[] } | null;
+}
+
+export type SubagentSort = SubagentSortKey;
+
+/** Stable empty list: a fresh `[]` per selector call would re-render forever. */
+export const NO_SUBAGENTS: SubagentRun[] = [];
+
+/** The right-hand subagent panel: a list on top and the selected agent's process below, each closable on its own. */
+export interface SubagentUi {
+	open: boolean;
+	listOpen: boolean;
+	detailOpen: boolean;
+	selected: string | null;
+	sort: SubagentSort;
+	/** Launches already seen, so only a new one reopens a panel the user closed. */
+	known: string[];
+}
+
+const SORT_KEY = "prometheus.subagentSort";
+function savedSort(): SubagentSort {
+	const v = localStorage.getItem(SORT_KEY);
+	return v === "started" || v === "ended" ? v : "status";
 }
 
 export type SettingsTab = "general" | "gateways" | "mcp" | "skills" | "market" | "plugins" | "voice" | "usage";
@@ -133,6 +159,7 @@ interface State {
 	packageJobs: PackageJob[];
 	/** Bumped whenever a package operation succeeds, so views can reload the installed list. */
 	packageRevision: number;
+	subagentUi: SubagentUi;
 }
 
 export const useStore = create<State>(() => ({
@@ -157,6 +184,7 @@ export const useStore = create<State>(() => ({
 	draftPermission: "default",
 	packageJobs: [],
 	packageRevision: 0,
+	subagentUi: { open: false, listOpen: true, detailOpen: false, selected: null, sort: savedSort(), known: [] },
 }));
 
 const set = useStore.setState;
@@ -297,6 +325,8 @@ function reduce(session: ActiveSession, e: SessionEvent): ActiveSession {
 			return { ...session, model: e.model };
 		case "permission_mode_changed":
 			return { ...session, permissionMode: e.mode };
+		case "subagents_update":
+			return { ...session, subagents: e.runs };
 		default:
 			return session;
 	}
@@ -315,6 +345,7 @@ function flush(): void {
 	let next = session;
 	for (const e of events) next = reduce(next, e);
 	set({ session: next });
+	if (next.subagents !== session.subagents) noteSubagents(next.subagents);
 	if (events.some((e) => e.type === "agent_settled" || e.type === "message_end" || e.type === "compaction_end")) void refreshStats();
 }
 
@@ -408,6 +439,7 @@ function fromSnapshot(s: SessionSnapshot): ActiveSession {
 		queue: s.queue,
 		statuses: s.statuses,
 		widgets: s.widgets,
+		subagents: s.subagents ?? [],
 		banner: null,
 		stats: null,
 		pending: null,
@@ -424,6 +456,10 @@ function activate(snapshot: SessionSnapshot): void {
 	}
 	client?.subscribe(snapshot.id);
 	buffer = [];
+	const runs = snapshot.subagents ?? [];
+	set((s) => ({
+		subagentUi: { ...s.subagentUi, open: runs.some(isLive), listOpen: true, detailOpen: false, selected: null, known: [...new Set(runs.map((r) => r.callId))] },
+	}));
 	set({
 		session: fromSnapshot(snapshot),
 		view: "chat",
@@ -612,15 +648,15 @@ export async function addWorkspace(path: string): Promise<WorkspaceInfo | undefi
 	return w;
 }
 
-export async function sendPrompt(text: string, delivery?: "steer" | "followUp"): Promise<boolean> {
+export async function sendPrompt(text: string, delivery?: "steer" | "followUp", images?: ImageContent[]): Promise<boolean> {
 	const session = get().session;
 	if (!session || session.pending) return false;
 
 	// Queued/steered messages ride on a run that is already visible; only a fresh run needs the instant echo.
-	const mark = session.isStreaming ? null : { text, timestamp: Date.now() };
+	const mark = session.isStreaming ? null : { text, timestamp: Date.now(), ...(images?.length ? { images } : {}) };
 	if (mark) set({ session: { ...session, pending: mark } });
 
-	const result = await call((c) => c.rpc("chat.prompt", { sessionId: session.id, text, delivery }));
+	const result = await call((c) => c.rpc("chat.prompt", { sessionId: session.id, text, delivery, ...(images?.length ? { images } : {}) }));
 
 	// Only a started run echoes the user message later; anything else must drop the placeholder now.
 	if (mark && result?.disposition !== "started") {
@@ -633,6 +669,52 @@ export async function sendPrompt(text: string, delivery?: "steer" | "followUp"):
 export async function abortRun(): Promise<void> {
 	const session = get().session;
 	if (session) await call((c) => c.rpc("chat.abort", { sessionId: session.id }));
+}
+
+const isLive = (r: SubagentRun) => r.state === "running" || r.state === "queued";
+
+/** A launch the panel has not seen yet opens it, even if the user closed it before. */
+function noteSubagents(runs: SubagentRun[]): void {
+	const ui = get().subagentUi;
+	const fresh = runs.map((r) => r.callId).filter((id) => !ui.known.includes(id));
+	if (!fresh.length) return;
+	set({ subagentUi: { ...ui, open: true, listOpen: true, known: [...ui.known, ...new Set(fresh)] } });
+}
+
+/** Show a subagent's process in the lower half, opening the panel if needed. */
+export function selectSubagent(id: string): void {
+	set((s) => ({ subagentUi: { ...s.subagentUi, open: true, detailOpen: true, selected: id } }));
+}
+
+/** The title-bar button: hide the panel, or bring back whichever regions make sense. */
+export function toggleSubagentPanel(): void {
+	set((s) => {
+		const ui = s.subagentUi;
+		if (ui.open) return { subagentUi: { ...ui, open: false } };
+		return { subagentUi: { ...ui, open: true, listOpen: true, detailOpen: ui.selected !== null } };
+	});
+}
+
+export function closeSubagentRegion(region: "list" | "detail"): void {
+	set((s) => {
+		const ui = { ...s.subagentUi, ...(region === "list" ? { listOpen: false } : { detailOpen: false }) };
+		return { subagentUi: { ...ui, open: ui.listOpen || ui.detailOpen } };
+	});
+}
+
+export function openSubagentList(): void {
+	set((s) => ({ subagentUi: { ...s.subagentUi, open: true, listOpen: true } }));
+}
+
+export function setSubagentSort(sort: SubagentSort): void {
+	localStorage.setItem(SORT_KEY, sort);
+	set((s) => ({ subagentUi: { ...s.subagentUi, sort } }));
+}
+
+/** Stopping ends only that agent; the conversation and its other agents carry on. */
+export async function stopSubagent(id: string): Promise<void> {
+	const session = get().session;
+	if (session) await call((c) => c.rpc("subagent.stop", { sessionId: session.id, id }));
 }
 
 export async function setModel(model: ModelRef): Promise<void> {
