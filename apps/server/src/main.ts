@@ -23,12 +23,12 @@ import {
 	verifySession,
 } from "./network.ts";
 import { isLoopbackAddress, originAllowed, parseCookies, tokensEqual } from "./security.ts";
-import { serveStatic } from "./static.ts";
+import { defaultWebRoot, serveStatic } from "./static.ts";
 
 const HOST = process.env.PROMETHEUS_HOST ?? "127.0.0.1";
 const PORT = Number(process.env.PROMETHEUS_PORT ?? 7420);
 const TOKEN = process.env.PROMETHEUS_TOKEN ?? "";
-const WEB_ROOT = process.env.PROMETHEUS_WEB_ROOT ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../web/dist");
+const WEB_ROOT = process.env.PROMETHEUS_WEB_ROOT ?? defaultWebRoot(dirname(fileURLToPath(import.meta.url)));
 const EXTRA_ORIGINS = new Set((process.env.PROMETHEUS_ALLOWED_ORIGINS ?? "").split(",").map((s) => s.trim()).filter(Boolean));
 const AUTH_TIMEOUT_MS = 5_000;
 const MAX_FRAME_BYTES = 32 * 1024 * 1024;

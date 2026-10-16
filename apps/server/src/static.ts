@@ -1,7 +1,13 @@
-import { createReadStream } from "node:fs";
+import { existsSync, createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, join, normalize, resolve, sep } from "node:path";
+
+/** The installer ships the web UI in `web/` beside main.js; a source checkout keeps it in apps/web/dist. */
+export function defaultWebRoot(here: string, exists: (path: string) => boolean = existsSync): string {
+	const bundled = join(here, "web");
+	return exists(join(bundled, "index.html")) ? bundled : resolve(here, "../../web/dist");
+}
 
 const MIME: Record<string, string> = {
 	".html": "text/html; charset=utf-8",
