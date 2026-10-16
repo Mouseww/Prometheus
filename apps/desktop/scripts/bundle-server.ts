@@ -2,7 +2,7 @@
 // Workspace packages ship .ts sources, which Node refuses to type-strip inside node_modules,
 // so they are inlined here; third-party deps stay external and are installed next to the bundle.
 import { execSync } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
@@ -58,6 +58,11 @@ await build({
 		},
 	],
 });
+
+// LAN and domain visitors load the UI from this server (the desktop window serves its own copy), so ship it alongside.
+const webDist = join(root, "apps/web/dist");
+if (!existsSync(join(webDist, "index.html"))) throw new Error("apps/web/dist is missing; build @prometheus/web before bundling the server");
+cpSync(webDist, join(out, "web"), { recursive: true });
 
 writeFileSync(
 	join(out, "package.json"),
