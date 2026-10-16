@@ -665,8 +665,45 @@ export interface VoiceState extends VoiceSettings {
 	configured: boolean;
 }
 
+// ---------- Network access ----------
+
+/** Server RPCs that never reach the PI host. */
+export type ServerRpcMethod = "network.get" | "network.set";
+
+export interface NetworkStatus {
+	/** The listen address comes from PROMETHEUS_HOST, so the settings below do not apply. */
+	managed: boolean;
+	lan: boolean;
+	port: number;
+	allowedHosts: string[];
+	passwordSet: boolean;
+	listening: boolean;
+	error?: string;
+	/** Addresses this machine can be reached at while listening. */
+	addresses: string[];
+	/** Port of the always-on local listener. */
+	localPort: number;
+	/** This client may change the settings (only from the machine itself). */
+	canEdit: boolean;
+}
+
+export interface NetworkPatch {
+	lan?: boolean;
+	port?: number;
+	/** Hostnames or `*.example.com`; replaces the whole list. */
+	allowedHosts?: string[];
+	/** Sets or changes the login password; every signed-in device is signed out. */
+	password?: string;
+	/** Signs every device out without changing the password. */
+	revokeSessions?: boolean;
+}
+
 export interface RpcMethods {
 	"host.info": { params: Record<string, never>; result: HostInfo };
+
+	/** Server-level, answered by the listener itself and only on the local port. */
+	"network.get": { params: Record<string, never>; result: NetworkStatus };
+	"network.set": { params: NetworkPatch; result: NetworkStatus };
 
 	"session.list": { params: Record<string, never>; result: SessionSummary[] };
 	"session.create": { params: { cwd?: string; name?: string }; result: SessionSnapshot };
@@ -749,13 +786,16 @@ export type RpcResult<M extends RpcMethod> = RpcMethods[M]["result"];
 
 export type ClientFrame =
 	| { type: "auth"; token: string }
+	/** Network listeners only: exchange the login password for a session token. */
+	| { type: "login"; password: string }
 	| { type: "subscribe"; sessionId: string }
 	| { type: "unsubscribe"; sessionId: string }
 	| { [M in RpcMethod]: { type: "rpc"; id: string; method: M; params: RpcParams<M> } }[RpcMethod];
 
 export type ServerFrame =
-	| { type: "hello"; protocol: number; authRequired: boolean }
-	| { type: "auth_ok" }
+	| { type: "hello"; protocol: number; authRequired: boolean; /** How this listener signs clients in. */ login?: "password" | "token"; /** The request came from this machine itself (network settings may be changed). */ local?: boolean }
+	| { type: "auth_ok"; /** Session token, present after a password login. */ token?: string }
+	| { type: "login_failed"; message: string; retryAfter?: number }
 	| { type: "response"; id: string; ok: true; data: unknown }
 	| { type: "response"; id: string; ok: false; error: string }
 	| { type: "event"; sessionId: string; event: SessionEvent }

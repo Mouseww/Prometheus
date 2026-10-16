@@ -19,7 +19,7 @@ function hostname(hostHeader: string | undefined): string {
 	return hostHeader.split(":")[0] ?? "";
 }
 
-const TAURI_ORIGINS = new Set(["tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"]);
+export const TAURI_ORIGINS = new Set(["tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"]);
 
 export interface OriginPolicy {
 	tokenRequired: boolean;

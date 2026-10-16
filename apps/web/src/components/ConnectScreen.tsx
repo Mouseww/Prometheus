@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { Globe, LoaderCircle, Monitor, Server } from "lucide-react";
 import { useEffect, useState } from "react";
-import { isTauri, localSupported, saveMode, saveRemote, saveSameOriginToken, startLocal, targetFromUrl } from "../lib/backend.ts";
+import { isTauri, localSupported, passwordLogin, saveMode, saveRemote, saveSameOriginToken, saveSession, startLocal, targetFromUrl } from "../lib/backend.ts";
 import type { BackendTarget } from "../lib/client.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { Button, Field, Flame, Input } from "./ui.tsx";
@@ -19,6 +19,10 @@ const M = defineMessages({
 		url: "服务器地址",
 		token: "访问令牌",
 		tokenHint: "服务器端 PROMETHEUS_TOKEN 的值；仅本机访问时可留空",
+		loginPassword: "登录密码",
+		loginHint: "在运行 Prometheus 的电脑上「设置 → 网络访问」里设置的密码；留空则按访问令牌连接",
+		needPassword: "这台服务器需要登录密码",
+		signingIn: "正在登录…",
 		badUrl: "服务器地址不合法",
 		connect: "连接",
 		back: "返回",
@@ -36,6 +40,10 @@ const M = defineMessages({
 		url: "Server URL",
 		token: "Access token",
 		tokenHint: "Value of PROMETHEUS_TOKEN on the server; may be empty for loopback-only servers",
+		loginPassword: "Login password",
+		loginHint: "The password set under Settings → Network access on the computer running Prometheus. Leave empty to connect with an access token instead",
+		needPassword: "This server needs a login password",
+		signingIn: "Signing in…",
 		badUrl: "Invalid server URL",
 		connect: "Connect",
 		back: "Back",
@@ -43,13 +51,14 @@ const M = defineMessages({
 	},
 });
 
-export function ConnectScreen({ unauthorized, error, onConnect }: { unauthorized: boolean; error?: string | null; onConnect: (t: BackendTarget) => void }) {
+export function ConnectScreen({ unauthorized, error, onConnect, wantsPassword = false }: { unauthorized: boolean; error?: string | null; onConnect: (t: BackendTarget) => void; wantsPassword?: boolean }) {
 	const t = useT(M);
 	const sameOrigin = !isTauri() && location.protocol.startsWith("http");
 	const [canLocal, setCanLocal] = useState(false);
 	const [mode, setMode] = useState<"choose" | "remote">(isTauri() ? "choose" : "remote");
 	const [url, setUrl] = useState(sameOrigin ? location.origin : "https://");
 	const [token, setToken] = useState("");
+	const [login, setLogin] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [message, setMessage] = useState<string | null>(error ?? null);
 
@@ -78,21 +87,36 @@ export function ConnectScreen({ unauthorized, error, onConnect }: { unauthorized
 		}
 	};
 
-	const submit = (e: React.FormEvent) => {
+	const submit = async (e: React.FormEvent) => {
 		e.preventDefault();
+		let target: BackendTarget;
 		try {
-			const target = targetFromUrl(url.trim(), token.trim());
-			if (sameOrigin && target.httpBase === location.origin) {
-				saveSameOriginToken(token.trim() || null);
-				saveRemote(null);
-			} else {
-				saveRemote({ url: target.httpBase, token: token.trim() || undefined });
-			}
-			saveMode("remote");
-			onConnect(target);
+			target = targetFromUrl(url.trim(), token.trim());
 		} catch {
 			setMessage(t("badUrl"));
+			return;
 		}
+		// A login password is traded for a long-lived session token; the password itself is never stored.
+		if (login) {
+			setBusy(true);
+			setMessage(null);
+			const result = await passwordLogin(target, login);
+			setBusy(false);
+			if (!result.ok) {
+				setMessage(result.message);
+				return;
+			}
+			setLogin("");
+			target = { ...target, token: result.token };
+			saveSession(target, result.token);
+		} else if (sameOrigin && target.httpBase === location.origin) {
+			saveSameOriginToken(token.trim() || null);
+			saveRemote(null);
+		} else {
+			saveRemote({ url: target.httpBase, token: token.trim() || undefined });
+		}
+		saveMode("remote");
+		onConnect(target);
 	};
 
 	const card = "flex w-full items-start gap-3.5 rounded-2xl border p-4 text-left transition-all disabled:opacity-60";
@@ -108,7 +132,7 @@ export function ConnectScreen({ unauthorized, error, onConnect }: { unauthorized
 					</div>
 				</div>
 
-				{unauthorized && <p className="rounded-lg border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-sm text-rose-400">{t("unauthorized")}</p>}
+				{unauthorized && <p className="rounded-lg border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-sm text-rose-400">{wantsPassword ? t("needPassword") : t("unauthorized")}</p>}
 				{message && <p className="rounded-lg border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-sm break-words text-rose-400">{message}</p>}
 
 				{mode === "choose" && (
@@ -141,8 +165,11 @@ export function ConnectScreen({ unauthorized, error, onConnect }: { unauthorized
 						<Field label={t("url")}>
 							<Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://agent.example.com" required />
 						</Field>
+						<Field label={t("loginPassword")} hint={t("loginHint")}>
+							<Input type="password" value={login} onChange={(e) => setLogin(e.target.value)} autoComplete="current-password" autoFocus={unauthorized} />
+						</Field>
 						<Field label={t("token")} hint={t("tokenHint")}>
-							<Input type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="current-password" />
+							<Input type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" />
 						</Field>
 						<div className="flex gap-2">
 							{canLocal && (
@@ -150,8 +177,8 @@ export function ConnectScreen({ unauthorized, error, onConnect }: { unauthorized
 									{t("back")}
 								</Button>
 							)}
-							<Button type="submit" variant="primary" className="flex-1 py-2.5">
-								<Server className="size-4" /> {t("connect")}
+							<Button type="submit" variant="primary" className="flex-1 py-2.5" disabled={busy}>
+								{busy ? <LoaderCircle className="size-4 animate-spin" /> : <Server className="size-4" />} {busy ? t("signingIn") : t("connect")}
 							</Button>
 						</div>
 					</form>

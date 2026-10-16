@@ -15,7 +15,7 @@ import { Modal } from "./components/ui.tsx";
 import { UpdateDialog } from "./components/UpdateDialog.tsx";
 import type { BackendTarget } from "./lib/client.ts";
 import { PrometheusClient } from "./lib/client.ts";
-import { discoverBackend, establishCookie, isTauri, saveMode } from "./lib/backend.ts";
+import { clearSession, discoverBackend, establishCookie, isTauri, saveMode, saveSession } from "./lib/backend.ts";
 import { bindClient, openSession, pluginActive, setView, useStore } from "./lib/store.ts";
 import { usePrefs } from "./lib/prefs.ts";
 import { checkForUpdate } from "./lib/updater.ts";
@@ -25,6 +25,7 @@ const closeView = () => setView("chat");
 export function App() {
 	const [target, setTarget] = useState<BackendTarget | null | undefined>(undefined);
 	const [bootError, setBootError] = useState<string | null>(null);
+	const [wantsPassword, setWantsPassword] = useState(false);
 	const [sidebar, setSidebar] = useState(() => window.innerWidth >= 768);
 	const conn = useStore((s) => s.conn);
 	const view = useStore((s) => s.view);
@@ -49,6 +50,12 @@ export function App() {
 	useEffect(() => {
 		if (!target) return;
 		const client = new PrometheusClient(target);
+		client.onSession = (token) => saveSession(target, token);
+		client.onState((s) => {
+			if (s === "unauthorized") setWantsPassword(client.loginKind === "password");
+			// A saved session the server no longer accepts (password changed, access revoked) must not be retried forever.
+			if (s === "unauthorized" && client.loginKind === "password") clearSession(target);
+		});
 		const unbind = bindClient(client);
 		void establishCookie(target);
 		client.connect();
@@ -93,7 +100,7 @@ export function App() {
 	if (target === null || conn === "unauthorized") {
 		return (
 			<Shell>
-				<ConnectScreen unauthorized={conn === "unauthorized"} error={bootError} onConnect={setTarget} />
+				<ConnectScreen unauthorized={conn === "unauthorized"} wantsPassword={wantsPassword} error={bootError} onConnect={setTarget} />
 				<UpdateDialog />
 			</Shell>
 		);

@@ -4,6 +4,20 @@ import { join } from "node:path";
 import { mergeGatewayUpdate, validateGateway } from "@prometheus/gateway";
 import type { GatewayConfig } from "@prometheus/protocol";
 
+export interface NetworkConfig {
+	/** Also listen on all network interfaces. */
+	lan: boolean;
+	port: number;
+	/** Hostnames the network listener answers to (IP literals always pass). */
+	allowedHosts: string[];
+	/** scrypt hash of the login password; network access cannot be on without it. */
+	passwordHash?: string;
+	/** Signs session tokens; replacing it signs every device out. */
+	secret?: string;
+}
+
+export const DEFAULT_LAN_PORT = 7421;
+
 export interface PrometheusConfig {
 	gateways: GatewayConfig[];
 	/** npm package names or paths (relative to dataDir) of extra plugins. */
@@ -11,13 +25,25 @@ export interface PrometheusConfig {
 	/** Plugin ids the user switched off. */
 	disabledPlugins: string[];
 	pluginSettings: Record<string, Record<string, unknown>>;
+	network: NetworkConfig;
+}
+
+function normalizeNetwork(raw: Partial<NetworkConfig> | undefined): NetworkConfig {
+	const port = typeof raw?.port === "number" && Number.isInteger(raw.port) && raw.port >= 1024 && raw.port <= 65535 ? raw.port : DEFAULT_LAN_PORT;
+	return {
+		lan: raw?.lan === true,
+		port,
+		allowedHosts: Array.isArray(raw?.allowedHosts) ? raw.allowedHosts.filter((h): h is string => typeof h === "string") : [],
+		...(typeof raw?.passwordHash === "string" && raw.passwordHash ? { passwordHash: raw.passwordHash } : {}),
+		...(typeof raw?.secret === "string" && raw.secret ? { secret: raw.secret } : {}),
+	};
 }
 
 export function defaultDataDir(): string {
 	return process.env.PROMETHEUS_HOME || join(homedir(), ".prometheus");
 }
 
-const EMPTY: PrometheusConfig = { gateways: [], plugins: [], disabledPlugins: [], pluginSettings: {} };
+const EMPTY: PrometheusConfig = { gateways: [], plugins: [], disabledPlugins: [], pluginSettings: {}, network: normalizeNetwork(undefined) };
 
 /** config.json holds API keys, so it is always written owner-only. */
 export class ConfigStore {
@@ -40,6 +66,7 @@ export class ConfigStore {
 				plugins: Array.isArray(raw.plugins) ? raw.plugins : [],
 				disabledPlugins: Array.isArray(raw.disabledPlugins) ? raw.disabledPlugins : [],
 				pluginSettings: raw.pluginSettings ?? {},
+				network: normalizeNetwork(raw.network),
 			};
 		} catch (err) {
 			if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
@@ -53,6 +80,15 @@ export class ConfigStore {
 
 	gateways(): GatewayConfig[] {
 		return this.config.gateways;
+	}
+
+	network(): Readonly<NetworkConfig> {
+		return this.config.network;
+	}
+
+	async setNetwork(next: NetworkConfig): Promise<void> {
+		this.config.network = normalizeNetwork(next);
+		await this.persist();
 	}
 
 	async saveGateway(incoming: GatewayConfig): Promise<GatewayConfig> {
