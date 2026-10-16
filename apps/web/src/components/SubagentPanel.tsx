@@ -408,7 +408,7 @@ export function SubagentPanel() {
 	const run = runs.find((r) => r.id === selected);
 	return (
 		<aside
-			className="flex w-[22rem] shrink-0 flex-col border-l hairline bg-ink-900/80 backdrop-blur max-md:absolute max-md:inset-y-0 max-md:right-0 max-md:z-30 max-md:w-[min(24rem,100%)] max-md:shadow-2xl lg:w-[26rem]"
+			className="flex w-[22rem] shrink-0 flex-col border-l hairline bg-ink-900/80 backdrop-blur max-md:bg-ink-900 max-md:absolute max-md:inset-y-0 max-md:right-0 max-md:z-30 max-md:w-[min(24rem,100%)] max-md:shadow-2xl lg:w-[26rem]"
 			aria-label={t("title")}
 		>
 			{listOpen && (

@@ -194,7 +194,7 @@ function Actions({ index, indices, text, canRetry, align }: { index: number; ind
 	const [copied, setCopied] = useState(false);
 	const btn = "rounded-md p-1.5 text-ink-500 transition-colors hover:bg-ink-800 hover:text-ink-100 disabled:pointer-events-none disabled:opacity-30";
 	return (
-		<div className={clsx("mt-1 flex gap-0.5 opacity-0 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100", align === "end" && "justify-end")}>
+		<div className={clsx("mt-1 flex gap-0.5 opacity-0 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100 nohover:opacity-100", align === "end" && "justify-end")}>
 			<button
 				type="button"
 				className={btn}
@@ -245,7 +245,7 @@ export function MessageList({
 	const waitingOnReply = Boolean(pending) || (streaming && messages[lastIndex]?.role === "user");
 
 	return (
-		<div className="mx-auto w-full max-w-3xl space-y-5 px-5 py-8">
+		<div className="mx-auto w-full max-w-3xl space-y-5 px-3 py-5 md:px-5 md:py-8">
 			{messages.map((m, i) => {
 				if (m.role === "user") {
 					const text = userText(m);

@@ -76,7 +76,7 @@ function ToolsPopover() {
 				<Wrench className="size-4" />
 			</button>
 			{open && (
-				<div className="absolute top-full right-0 z-40 mt-2 w-80 animate-rise rounded-xl border border-ink-700 bg-ink-900/97 p-1.5 shadow-2xl shadow-black/40 backdrop-blur">
+				<div className="absolute top-full right-0 z-40 mt-2 w-80 max-w-[calc(100vw-1rem)] animate-rise rounded-xl border border-ink-700 bg-ink-900/97 p-1.5 shadow-2xl shadow-black/40 backdrop-blur">
 					<div className="px-2.5 pt-1.5 pb-2 font-mono text-[10.5px] tracking-widest text-ink-500 uppercase">{t("toolSwitch")}</div>
 					<div className="max-h-96 overflow-y-auto">
 						{tools.map((x) => (
@@ -174,7 +174,7 @@ export function TitleBar({ onToggleSidebar, bare }: { onToggleSidebar?: () => vo
 		heading = (
 			<span className="flex min-w-0 items-center gap-2" data-tauri-drag-region>
 				{ws && (
-					<span className="flex shrink-0 items-center gap-1.5 rounded-md bg-ink-850 px-2 py-0.5 text-xs text-ink-300" title={ws.path} data-tauri-drag-region>
+					<span className="flex shrink-0 items-center gap-1.5 rounded-md bg-ink-850 px-2 py-0.5 text-xs text-ink-300 max-sm:hidden" title={ws.path} data-tauri-drag-region>
 						<FolderOpen className="size-3.5 text-ember-400" />
 						{ws.name}
 					</span>
@@ -189,13 +189,13 @@ export function TitleBar({ onToggleSidebar, bare }: { onToggleSidebar?: () => vo
 	return (
 		<header className="titlebar relative z-30 flex h-11 shrink-0 items-center gap-2 border-b hairline bg-ink-950/70 pl-2 backdrop-blur" data-tauri-drag-region>
 			{onToggleSidebar && (
-				<button type="button" onClick={onToggleSidebar} className="rounded-md p-1.5 text-ink-400 hover:bg-ink-800 hover:text-ink-100" aria-label={t("toggleSidebar")}>
+				<button type="button" onClick={onToggleSidebar} className="rounded-md p-1.5 text-ink-400 hover:bg-ink-800 hover:text-ink-100 max-md:p-2.5" aria-label={t("toggleSidebar")}>
 					<PanelLeft className="size-4" />
 				</button>
 			)}
 			<span className="flex items-center gap-1.5 pr-2 pl-1" data-tauri-drag-region>
 				<Flame className="pointer-events-none size-5" />
-				<span className="pointer-events-none font-display text-sm font-semibold tracking-tight">Prometheus</span>
+				<span className="pointer-events-none font-display text-sm font-semibold tracking-tight max-sm:hidden">Prometheus</span>
 			</span>
 			{!bare && <span className="h-4 w-px bg-ink-700" />}
 			<div className="flex min-w-0 flex-1 items-center gap-2 self-stretch px-1" data-tauri-drag-region>

@@ -113,7 +113,7 @@ function SessionMenu({ s, onRename }: { s: SessionSummary; onRename: () => void 
 			<button
 				type="button"
 				onClick={() => setOpen(!open)}
-				className={clsx("rounded p-0.5 text-ink-500 hover:bg-ink-700 hover:text-ink-100", open ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus:opacity-100")}
+				className={clsx("rounded p-0.5 text-ink-500 hover:bg-ink-700 hover:text-ink-100", open ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus:opacity-100 nohover:opacity-100")}
 				aria-label="menu"
 			>
 				<MoreHorizontal className="size-4" />
@@ -242,7 +242,7 @@ function WorkspaceGroup({ w, sessions, activeId, current }: { w: WorkspaceInfo; 
 					<button
 						type="button"
 						onClick={() => menu.setOpen(!menu.open)}
-						className={clsx("rounded p-0.5 text-ink-500 hover:bg-ink-700 hover:text-ink-100", menu.open ? "opacity-100" : "opacity-0 group-hover:opacity-100")}
+						className={clsx("rounded p-0.5 text-ink-500 hover:bg-ink-700 hover:text-ink-100", menu.open ? "opacity-100" : "opacity-0 group-hover:opacity-100 nohover:opacity-100")}
 						aria-label="menu"
 					>
 						<MoreHorizontal className="size-4" />
@@ -343,7 +343,7 @@ export function Sidebar({ target, onDisconnect }: { target: BackendTarget; onDis
 	];
 
 	return (
-		<aside className="flex w-72 shrink-0 flex-col border-r hairline bg-ink-950/60 backdrop-blur">
+		<aside className="flex w-72 shrink-0 flex-col border-r hairline bg-ink-950/60 backdrop-blur max-md:w-full max-md:bg-ink-950">
 			<div className="px-2 pt-3">
 				<button
 					type="button"

@@ -11,7 +11,7 @@ const M = defineMessages({
 		title: "网络访问",
 		subtitle: "让局域网里的其他设备，或通过域名（如 nginx 反向代理），访问这台电脑上的 Prometheus",
 		remoteBlocked: "为了安全，网络访问只能在运行 Prometheus 的这台电脑上修改。以下是当前状态。",
-		managed: "监听地址由环境变量（PROMETHEUS_HOST / PROMETHEUS_TOKEN）管理，这里的设置不生效。",
+		managed: "监听地址由环境变量（PROMETHEUS_HOST）管理，这里的设置不生效。",
 		lan: "允许局域网访问",
 		lanDesc: "开启后，同一网络里的设备可以通过这台电脑的 IP 打开 Prometheus，并需要输入下面的登录密码。",
 		needPasswordFirst: "请先设置登录密码，才能开启局域网访问",
@@ -52,7 +52,7 @@ const M = defineMessages({
 		title: "Network access",
 		subtitle: "Let other devices on your network, or a domain name (such as through an nginx reverse proxy), reach the Prometheus running on this computer",
 		remoteBlocked: "For safety, network access can only be changed on the computer running Prometheus. Current state shown below.",
-		managed: "The listen address is managed by environment variables (PROMETHEUS_HOST / PROMETHEUS_TOKEN), so these settings have no effect.",
+		managed: "The listen address is managed by the PROMETHEUS_HOST environment variable, so these settings have no effect.",
 		lan: "Allow LAN access",
 		lanDesc: "When on, devices on the same network can open Prometheus through this computer's IP and must sign in with the password below.",
 		needPasswordFirst: "Set a login password first to turn on LAN access",
@@ -173,7 +173,7 @@ export function NetworkSettings() {
 		return (
 			<div className="flex min-h-0 flex-1 flex-col">
 				<PageHeader title={t("title")} subtitle={t("subtitle")} />
-				<div className="p-8">{error ? <p className="text-sm text-rose-400">{error}</p> : <LoaderCircle className="size-5 animate-spin text-ink-500" />}</div>
+				<div className="p-4 md:p-8">{error ? <p className="text-sm text-rose-400">{error}</p> : <LoaderCircle className="size-5 animate-spin text-ink-500" />}</div>
 			</div>
 		);
 	}
@@ -189,7 +189,7 @@ export function NetworkSettings() {
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
 			<PageHeader title={t("title")} subtitle={t("subtitle")} />
-			<div className="min-h-0 flex-1 overflow-y-auto p-8">
+			<div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-8">
 				<div className="max-w-2xl space-y-5">
 					{status.managed && <p className="rounded-xl border border-ink-700 bg-ink-900/60 px-4 py-3 text-sm text-ink-300">{t("managed")}</p>}
 					{!status.managed && !editable && (

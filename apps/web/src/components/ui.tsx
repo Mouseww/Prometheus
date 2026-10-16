@@ -15,8 +15,8 @@ export function Modal({ onClose, children, floatingClose }: { onClose: () => voi
 	}, [onClose, dialogOpen]);
 
 	return (
-		<div className="absolute inset-0 z-20 grid place-items-center bg-ink-950/60 p-3 backdrop-blur-sm sm:p-6" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-			<div role="dialog" aria-modal className="relative flex h-full max-h-[52rem] w-full max-w-6xl animate-rise flex-col overflow-hidden rounded-2xl border border-ink-700 bg-ink-900 shadow-2xl shadow-black/60">
+		<div className="absolute inset-0 z-20 grid place-items-center bg-ink-950/60 backdrop-blur-sm md:p-6" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+			<div role="dialog" aria-modal className="relative flex h-full w-full max-w-6xl animate-rise flex-col overflow-hidden border-ink-700 bg-ink-900 shadow-2xl shadow-black/60 md:max-h-[52rem] md:rounded-2xl md:border">
 				{floatingClose && <CloseButton onClose={onClose} className="absolute top-2.5 right-2.5 z-10" />}
 				<ModalClose.Provider value={onClose}>{children}</ModalClose.Provider>
 			</div>
@@ -51,7 +51,7 @@ export function Dialog({ title, onClose, children }: { title: string; onClose: (
 
 function CloseButton({ onClose, className }: { onClose: () => void; className?: string }) {
 	return (
-		<button type="button" onClick={onClose} aria-label="Close" className={clsx("shrink-0 rounded-lg p-1.5 text-ink-400 transition-colors hover:bg-ink-800 hover:text-ink-100", className)}>
+		<button type="button" onClick={onClose} aria-label="Close" className={clsx("shrink-0 rounded-lg p-1.5 text-ink-400 transition-colors hover:bg-ink-800 hover:text-ink-100 max-md:p-2.5", className)}>
 			<X className="size-4" />
 		</button>
 	);
@@ -103,15 +103,13 @@ export function Field({ label, hint, children }: { label: string; hint?: ReactNo
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: ReactNode }) {
 	const onClose = useContext(ModalClose);
 	return (
-		<header className="flex items-end justify-between gap-4 border-b hairline px-8 pt-6 pb-4">
-			<div>
-				<h1 className="font-display text-2xl font-semibold tracking-tight">{title}</h1>
+		<header className="flex flex-wrap items-end gap-x-4 gap-y-2 border-b hairline px-4 pt-4 pb-3 md:px-8 md:pt-6 md:pb-4">
+			<div className="order-1 min-w-0 flex-1">
+				<h1 className="font-display text-xl font-semibold tracking-tight md:text-2xl">{title}</h1>
 				{subtitle && <p className="mt-1 text-sm text-ink-400">{subtitle}</p>}
 			</div>
-			<div className="flex items-center gap-2">
-				{actions}
-				{onClose && <CloseButton onClose={onClose} className="-mr-3 self-start" />}
-			</div>
+			{actions && <div className="order-2 flex items-center gap-2 max-md:order-3 max-md:w-full max-md:justify-end">{actions}</div>}
+			{onClose && <CloseButton onClose={onClose} className="order-3 self-start max-md:order-2 md:-mr-3" />}
 		</header>
 	);
 }

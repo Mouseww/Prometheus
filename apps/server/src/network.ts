@@ -213,6 +213,8 @@ export interface Access {
 export interface AccessInput {
 	listener: "main" | "network";
 	tokenSet: boolean;
+	/** HOST is non-loopback: the token is the only credential and the network settings are off. */
+	managed: boolean;
 	passwordSet: boolean;
 	forwarded: boolean;
 	loopbackSocket: boolean;
@@ -225,8 +227,9 @@ export interface AccessInput {
  */
 export function accessFor(i: AccessInput): Access {
 	if (i.listener === "network") return { mode: i.passwordSet ? "password" : "deny", local: false };
-	if (i.tokenSet) return { mode: "token", local: i.loopbackSocket && !i.forwarded };
+	if (i.tokenSet && i.managed) return { mode: "token", local: i.loopbackSocket && !i.forwarded };
 	if (i.forwarded) return { mode: i.passwordSet ? "password" : "deny", local: false };
+	if (i.tokenSet) return { mode: "token", local: i.loopbackSocket };
 	return { mode: "none", local: i.loopbackSocket };
 }
 
