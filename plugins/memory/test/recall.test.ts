@@ -41,9 +41,9 @@ describe("memory recall", () => {
 		expect(visibleTo(entries, "/work/a").map((e) => e.id)).toEqual(["u", "pa"]);
 	});
 
-	it("renders a delimited prompt section", () => {
+	it("renders a prompt section without wrapping tags (PI wraps the section name)", () => {
 		const out = renderMemorySection([entry("a", "line1\nline2")]);
-		expect(out).toContain("<memory>");
+		expect(out).not.toContain("<memory>");
 		expect(out).toContain("[a] line1 line2");
 	});
 

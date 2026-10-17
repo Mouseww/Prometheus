@@ -24,6 +24,8 @@ export class UIBridge {
 	private readonly pending = new Map<string, Pending>();
 	/** No user is present (automation runs): dialogs resolve at once with their cancel value instead of waiting forever. */
 	headless = false;
+	/** Permission mode is auto: pick the first option / confirm yes instead of waiting. Free-text dialogs still wait. */
+	auto = false;
 	readonly statuses = new Map<string, string>();
 	readonly widgets = new Map<string, { lines: string[]; placement: string }>();
 	title: string | undefined;
@@ -50,12 +52,24 @@ export class UIBridge {
 		for (const id of [...this.pending.keys()]) this.respond(id, { cancelled: true });
 	}
 
+	/** Answer any waiting select/confirm dialogs the way auto mode would, leaving free-text prompts alone. */
+	autoResolvePending(): void {
+		for (const [id, p] of [...this.pending]) {
+			const picked = autoResponse(p.request);
+			if (picked) this.respond(id, picked);
+		}
+	}
+
 	private emit(body: RequestBody): void {
 		this.listener.request({ id: randomUUID(), ...body } as UIRequest);
 	}
 
 	private dialog<T>(body: RequestBody, opts: ExtensionUIDialogOptions | undefined, fallback: T, map: (r: UIResponse) => T): Promise<T> {
 		if (opts?.signal?.aborted || this.headless) return Promise.resolve(fallback);
+		if (this.auto) {
+			const picked = autoResponse(body);
+			if (picked) return Promise.resolve(map(picked));
+		}
 		const request = { id: randomUUID(), ...body } as UIRequest;
 		return new Promise<T>((resolve) => {
 			let timer: ReturnType<typeof setTimeout> | undefined;
@@ -132,4 +146,11 @@ export class UIBridge {
 		};
 		return ctx as unknown as ExtensionUIContext;
 	}
+}
+
+/** First option / yes for choice dialogs. Free-text and permission prompts still wait for a person. */
+export function autoResponse(body: { method: string; options?: string[] }): UIResponse | undefined {
+	if (body.method === "select" && body.options?.[0]) return { value: body.options[0] };
+	if (body.method === "confirm") return { confirmed: true };
+	return undefined;
 }

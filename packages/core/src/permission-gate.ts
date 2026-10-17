@@ -7,6 +7,10 @@ const PLAN_PROMPT = `# Plan mode
 Plan mode is active. Do not change anything: only read-only tools (read, grep, find, ls and non-mutating commands) will run, everything else is refused.
 Explore the code, then call ${EXIT_PLAN_MODE} with a complete plan in Markdown. The user reviews it and decides whether you may start. Do not ask for approval in plain text; use ${EXIT_PLAN_MODE}.`;
 
+const PLAN_GUIDELINES = [
+	"Plan mode is active: do not change anything. Investigate with read-only tools, then call exit_plan_mode with the complete plan.",
+];
+
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
 const text = (value: string) => ({ content: [{ type: "text" as const, text: value }], details: {} });
 const str = (v: unknown) => (typeof v === "string" ? v : "");
@@ -37,8 +41,39 @@ function describe(toolName: string, input: Record<string, unknown>): Pick<Extrac
 const UNATTENDED_PROMPT = `# Unattended run
 Nobody is watching this run and nobody can answer questions. Do not ask for confirmation or clarification: decide, do the work, and finish with a short report of what you did and anything you could not do. Actions that are not permitted are refused automatically; carry on without them.`;
 
+const UNATTENDED_GUIDELINES = [
+	"Nobody is watching this run: do not ask questions. Decide, do the work, and finish with a short report. Refused actions are skipped automatically.",
+];
+
 const AUTO_PROMPT = `# Auto mode
 The user is not answering questions during this session and every action is permitted. Do not stop to ask which option to take or for confirmation: pick the most sensible choice yourself, state the assumption in one line, and carry on until the task is done.`;
+
+const AUTO_GUIDELINES = [
+	"Auto mode: every action is already permitted. Do not ask the user questions, present options, or wait for confirmation.",
+	"When a choice is required, pick the most sensible option, state the assumption in one line, and continue until the task is done.",
+];
+
+/** Prompt sections PI will actually send. Mutate `systemPromptOptions` in place so later handlers compose instead of replacing the whole prompt. */
+export function applyPermissionPrompt(
+	event: { systemPromptOptions: { promptGuidelines: string[]; sections: Record<string, string> } },
+	mode: PermissionMode,
+	unattended?: RunAccess,
+): void {
+	const opts = event.systemPromptOptions;
+	if (unattended) {
+		opts.promptGuidelines.push(...UNATTENDED_GUIDELINES);
+		opts.sections.unattended = UNATTENDED_PROMPT;
+		return;
+	}
+	if (mode === "auto") {
+		opts.promptGuidelines.push(...AUTO_GUIDELINES);
+		opts.sections.auto_mode = AUTO_PROMPT;
+	}
+	if (mode === "plan") {
+		opts.promptGuidelines.push(...PLAN_GUIDELINES);
+		opts.sections.plan_mode = PLAN_PROMPT;
+	}
+}
 
 const ACCESS_MODE: Record<RunAccess, PermissionMode> = { readonly: "plan", edits: "acceptEdits", full: "bypassPermissions" };
 
@@ -85,10 +120,7 @@ export class PermissionGate {
 				});
 
 				pi.on("before_agent_start", (event) => {
-					if (this.unattended) return { systemPrompt: `${event.systemPrompt}\n\n${UNATTENDED_PROMPT}` };
-					if (this.mode === "auto") return { systemPrompt: `${event.systemPrompt}\n\n${AUTO_PROMPT}` };
-					if (this.mode !== "plan") return;
-					return { systemPrompt: `${event.systemPrompt}\n\n${PLAN_PROMPT}` };
+					applyPermissionPrompt(event, this.mode, this.unattended);
 				});
 
 				// A reload resets the active tools, which would drop the plan-mode exit tool.

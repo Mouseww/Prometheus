@@ -289,6 +289,8 @@ export class PrometheusHost {
 		});
 		gate.ask = (prompt, signal) => bridge.askPermission(prompt, signal);
 		gate.onModeChange = (mode) => {
+			bridge.auto = mode === "auto";
+			if (bridge.auto) bridge.autoResolvePending();
 			// The plan-submission tool exists only while planning.
 			const active = session.getActiveToolNames().filter((n) => n !== EXIT_PLAN_MODE);
 			session.setActiveToolsByName(mode === "plan" ? [...active, EXIT_PLAN_MODE] : active);
