@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkImages, imageOnlyTitle, MAX_IMAGES } from "../src/images.ts";
+import { checkImages, imageOnlyTitle, MAX_IMAGES, skipPiImageAutoResize } from "../src/images.ts";
 
 describe("imageOnlyTitle", () => {
 	it("replaces PI's empty placeholder only for chats that have messages", () => {
@@ -10,6 +10,19 @@ describe("imageOnlyTitle", () => {
 });
 
 const img = (over: Record<string, unknown> = {}) => ({ type: "image" as const, data: "QUJD", mimeType: "image/png", ...over });
+
+describe("skipPiImageAutoResize", () => {
+	it("turns auto-resize off on the settings object without calling the setter", () => {
+		const settings = {
+			getImageAutoResize: () => true,
+			setImageAutoResize: (enabled: boolean) => {
+				throw new Error(`must not persist autoResize=${enabled}`);
+			},
+		};
+		skipPiImageAutoResize(settings);
+		expect(settings.getImageAutoResize()).toBe(false);
+	});
+});
 
 describe("checkImages", () => {
 	it("accepts nothing, and well-formed images", () => {

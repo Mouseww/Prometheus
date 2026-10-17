@@ -3,7 +3,7 @@ import { ArrowUp, Brain, Check, ChevronDown, CornerDownRight, Cpu, ListEnd, Pape
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ImageContent, ThinkingLevel } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { fileToImage, IMAGE_ACCEPT, ImageError, imageSrc, isImageFile, MAX_IMAGES } from "../lib/images.ts";
+import { fileToImage, IMAGE_ACCEPT, ImageError, imageSrc, MAX_IMAGES } from "../lib/images.ts";
 import { type SendMode, setPrefs, usePrefs } from "../lib/prefs.ts";
 import { abortRun, openSettings, sendPrompt, setModel, setPermissionMode, setThinking, toast, useStore } from "../lib/store.ts";
 import { ContextMeter } from "./ContextMeter.tsx";
@@ -369,15 +369,14 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 
 	/** Add picked, pasted or dropped files; anything that is not a usable image is reported, the rest still go in. */
 	const addFiles = async (list: File[]) => {
-		const picked = list.filter((f) => f.type.startsWith("image/") || f.type === "");
-		if (!picked.length) return;
+		if (!list.length) return;
 		const room = MAX_IMAGES - images.length - reading;
-		if (picked.length > room) toast(t("tooMany", { n: MAX_IMAGES }), "warning");
-		const take = picked.slice(0, Math.max(room, 0));
+		if (list.length > room) toast(t("tooMany", { n: MAX_IMAGES }), "warning");
+		const take = list.slice(0, Math.max(room, 0));
+		if (!take.length) return;
 		setReading((n) => n + take.length);
 		for (const file of take) {
 			try {
-				if (!isImageFile(file)) throw new ImageError("type");
 				const image = await fileToImage(file);
 				setImages((cur) => (cur.length < MAX_IMAGES ? [...cur, image] : cur));
 			} catch (err) {
@@ -390,7 +389,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 	};
 
 	const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-		const pasted = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/"));
+		const pasted = [...e.clipboardData.files];
 		if (!pasted.length) return;
 		// Screenshots arrive as files with no text; leave ordinary text pastes alone.
 		e.preventDefault();
@@ -546,27 +545,30 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 					className="block max-h-64 w-full resize-none bg-transparent px-4 pt-3.5 pb-2 text-[15px] text-ink-100 placeholder:text-ink-500 focus:outline-none"
 				/>
 				<div className="flex items-center gap-1 px-2 pb-2">
-					<input
-						ref={files}
-						type="file"
-						accept={IMAGE_ACCEPT}
-						multiple
-						hidden
-						onChange={(e) => {
-							void addFiles([...(e.target.files ?? [])]);
-							e.target.value = "";
-						}}
-					/>
-					<button
-						type="button"
-						onClick={() => files.current?.click()}
-						disabled={images.length + reading >= MAX_IMAGES}
-						className="grid size-8 shrink-0 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-800 hover:text-ink-100 disabled:opacity-40"
+					<label
+						className={clsx(
+							"relative grid size-8 shrink-0 place-items-center overflow-hidden rounded-lg text-ink-400 transition-colors",
+							images.length + reading >= MAX_IMAGES ? "pointer-events-none opacity-40" : "hover:bg-ink-800 hover:text-ink-100",
+						)}
 						title={t("attach")}
 						aria-label={t("attach")}
 					>
-						<Paperclip className="size-4" />
-					</button>
+						<input
+							ref={files}
+							type="file"
+							accept={IMAGE_ACCEPT}
+							multiple
+							className="absolute -inset-8 cursor-pointer opacity-0"
+							style={{ fontSize: 64 }}
+							onChange={(e) => {
+								const list = [...(e.target.files ?? [])];
+								void addFiles(list).finally(() => {
+									e.target.value = "";
+								});
+							}}
+						/>
+						<Paperclip className="pointer-events-none size-4" />
+					</label>
 					<div className="flex min-w-0 flex-1 items-center gap-1">
 						<ModelPicker />
 						<EffortPicker />
