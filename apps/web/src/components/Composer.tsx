@@ -498,6 +498,12 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 				</div>
 			)}
 
+			{newChat && (
+				<div className="mb-2 px-1">
+					<WorkspacePicker />
+				</div>
+			)}
+
 			<div
 				className={clsx(
 					"rounded-2xl border bg-ink-900/85 shadow-[0_10px_40px_-12px_rgb(0_0_0/0.45)] backdrop-blur transition-colors",
@@ -561,7 +567,6 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 					>
 						<Paperclip className="size-4" />
 					</button>
-					{newChat && <WorkspacePicker />}
 					<ModelPicker />
 					<EffortPicker />
 					<div className="flex-1" />

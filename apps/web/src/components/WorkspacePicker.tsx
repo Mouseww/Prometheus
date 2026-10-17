@@ -19,7 +19,7 @@ const M = defineMessages({
 	},
 });
 
-/** Composer-footer workspace chooser for the new-chat page; the last entry opens the folder browser. */
+/** Workspace chooser shown above the composer on the new-chat page; the last entry opens the folder browser. */
 export function WorkspacePicker() {
 	const t = useT(M);
 	const workspaces = useStore((s) => s.workspaces);
@@ -30,12 +30,12 @@ export function WorkspacePicker() {
 	const active = workspaces.find((w) => w.id === currentId);
 
 	return (
-		<div ref={ref} className="md:relative">
+		<div ref={ref} className="flex min-w-0 items-center gap-2 md:relative">
 			<button
 				type="button"
 				onClick={() => setOpen(!open)}
 				className={clsx(
-					"flex max-w-52 items-center gap-1.5 rounded-lg px-2 py-1 text-xs transition-colors",
+					"flex max-w-52 shrink-0 items-center gap-1.5 rounded-lg px-2 py-1 text-xs transition-colors",
 					active ? "text-ink-300 hover:bg-ink-800 hover:text-ink-100" : "bg-ember-500/10 text-ember-300 hover:bg-ember-500/15",
 				)}
 				title={active?.path}
@@ -44,6 +44,11 @@ export function WorkspacePicker() {
 				<span className="truncate">{active?.name ?? t("pick")}</span>
 				<ChevronDown className="size-3 shrink-0 opacity-60" />
 			</button>
+			{active && (
+				<span className="min-w-0 truncate font-mono text-[11px] text-ink-500" title={active.path}>
+					{active.path}
+				</span>
+			)}
 			{open && (
 				<div className="absolute bottom-full left-3 right-3 z-40 mb-2 md:left-0 md:right-auto md:w-72 animate-rise overflow-hidden rounded-xl border border-ink-700 bg-ink-900/97 shadow-2xl shadow-black/40 backdrop-blur">
 					<div className="max-h-[min(16rem,40dvh)] overflow-y-auto py-1">
