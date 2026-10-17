@@ -109,18 +109,18 @@ function ModelPicker() {
 	const label = current ? (info?.name ?? current.id) : t("pickModel");
 
 	return (
-		<div ref={ref} className="md:relative">
+		<div ref={ref} className="min-w-0 max-w-full overflow-hidden md:relative md:max-w-60">
 			<button
 				type="button"
 				onClick={() => setOpen(!open)}
 				className={clsx(
-					"flex max-w-60 items-center gap-1.5 rounded-lg px-2 py-1 text-xs transition-colors",
+					"flex w-full min-w-0 max-w-full items-center gap-1.5 rounded-lg px-2 py-1 text-xs transition-colors",
 					current ? "text-ink-300 hover:bg-ink-800 hover:text-ink-100" : "bg-ember-500/10 text-ember-300 hover:bg-ember-500/15",
 				)}
 				title={current ? `${current.provider}/${current.id}` : undefined}
 			>
 				<Cpu className="size-3.5 shrink-0" />
-				<span className="truncate">{label}</span>
+				<span className="min-w-0 truncate">{label}</span>
 				<ChevronDown className="size-3 shrink-0 opacity-60" />
 			</button>
 			{open && (
@@ -255,7 +255,7 @@ function EffortPicker() {
 	const pos = (i: number) => (levels.length > 1 ? (i / (levels.length - 1)) * 100 : 0);
 
 	return (
-		<div ref={ref} className="md:relative">
+		<div ref={ref} className="shrink-0 md:relative">
 			<button
 				type="button"
 				onClick={() => setOpen(!open)}
@@ -545,7 +545,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 					placeholder={streaming ? t("placeholderStreaming", { mode: t(sendMode) }) : t("placeholder")}
 					className="block max-h-64 w-full resize-none bg-transparent px-4 pt-3.5 pb-2 text-[15px] text-ink-100 placeholder:text-ink-500 focus:outline-none"
 				/>
-				<div className="flex flex-wrap items-center gap-1 px-2 pb-2">
+				<div className="flex items-center gap-1 px-2 pb-2">
 					<input
 						ref={files}
 						type="file"
@@ -561,36 +561,39 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 						type="button"
 						onClick={() => files.current?.click()}
 						disabled={images.length + reading >= MAX_IMAGES}
-						className="grid size-8 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-800 hover:text-ink-100 disabled:opacity-40"
+						className="grid size-8 shrink-0 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-800 hover:text-ink-100 disabled:opacity-40"
 						title={t("attach")}
 						aria-label={t("attach")}
 					>
 						<Paperclip className="size-4" />
 					</button>
-					<ModelPicker />
-					<EffortPicker />
-					<div className="flex-1" />
-					<VoiceButton onText={insertDictation} />
-					{streaming && (
-						<button type="button" onClick={() => void abortRun()} className="grid size-8 place-items-center rounded-lg bg-ink-800 text-ink-200 hover:bg-ink-700" aria-label={t("abort")} title={t("abort")}>
-							<Square className="size-3.5 fill-current" />
-						</button>
-					)}
-					<div className="flex items-stretch">
-						<button
-							type="button"
-							onClick={() => void submit()}
-							disabled={(!text.trim() && images.length === 0) || reading > 0 || !session}
-							title={session ? (streaming ? t("sendAs", { mode: t(sendMode) }) : undefined) : t("needWorkspace")}
-							className={clsx(
-								"grid h-8 place-items-center bg-ember-500 text-white transition hover:bg-ember-400 disabled:bg-ink-800 disabled:text-ink-600",
-								streaming ? "w-8 rounded-l-lg" : "w-8 rounded-lg",
-							)}
-							aria-label={t("send")}
-						>
-							{streaming ? (sendMode === "steer" ? <CornerDownRight className="size-4" strokeWidth={2.5} /> : <ListEnd className="size-4" strokeWidth={2.5} />) : <ArrowUp className="size-4" strokeWidth={2.5} />}
-						</button>
-						{streaming && <SendModePicker />}
+					<div className="flex min-w-0 flex-1 items-center gap-1">
+						<ModelPicker />
+						<EffortPicker />
+					</div>
+					<div className="flex shrink-0 items-center gap-1">
+						<VoiceButton onText={insertDictation} />
+						{streaming && (
+							<button type="button" onClick={() => void abortRun()} className="grid size-8 place-items-center rounded-lg bg-ink-800 text-ink-200 hover:bg-ink-700" aria-label={t("abort")} title={t("abort")}>
+								<Square className="size-3.5 fill-current" />
+							</button>
+						)}
+						<div className="flex items-stretch">
+							<button
+								type="button"
+								onClick={() => void submit()}
+								disabled={(!text.trim() && images.length === 0) || reading > 0 || !session}
+								title={session ? (streaming ? t("sendAs", { mode: t(sendMode) }) : undefined) : t("needWorkspace")}
+								className={clsx(
+									"grid h-8 place-items-center bg-ember-500 text-white transition hover:bg-ember-400 disabled:bg-ink-800 disabled:text-ink-600",
+									streaming ? "w-8 rounded-l-lg" : "w-8 rounded-lg",
+								)}
+								aria-label={t("send")}
+							>
+								{streaming ? (sendMode === "steer" ? <CornerDownRight className="size-4" strokeWidth={2.5} /> : <ListEnd className="size-4" strokeWidth={2.5} />) : <ArrowUp className="size-4" strokeWidth={2.5} />}
+							</button>
+							{streaming && <SendModePicker />}
+						</div>
 					</div>
 				</div>
 				<div className="flex items-center gap-1 border-t border-ink-800/70 px-2 py-1">
