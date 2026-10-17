@@ -3,12 +3,19 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # Rebuilds only the Android APK and attaches it to an existing release.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to attach the APK to
+        required: true
 
 permissions:
   contents: write
 
 jobs:
   release:
+    if: github.event_name == 'push'
     strategy:
       fail-fast: false
       matrix:
@@ -66,6 +73,8 @@ jobs:
 
   android:
     runs-on: ubuntu-22.04
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
 
@@ -81,8 +90,6 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - uses: android-actions/setup-android@v3
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
@@ -95,7 +102,13 @@ jobs:
 
       - name: Install NDK
         run: |
-          sdkmanager --install "ndk;27.2.12479018" "platforms;android-36" "build-tools;36.0.0"
+          # The runner image already has an Android SDK; setup-android@v3 breaks on it (sdkmanager no longer has a `tools` package).
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          sm="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$sm" ] || sm=$(ls "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | head -n1)
+          yes | "$sm" --licenses >/dev/null || true
+          "$sm" --install "ndk;27.2.12479018" "platforms;android-36" "build-tools;36.0.0"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
 
       - name: Build web UI and the Android server bundle
@@ -145,7 +158,7 @@ jobs:
           [ -n "$apk" ] || { echo "no unsigned APK produced" >&2; exit 1; }
           bt="$ANDROID_HOME/build-tools/36.0.0"
           "$bt/zipalign" -f -p 4 "$apk" aligned.apk
-          "$bt/apksigner" sign --ks "$KS_PATH" --ks-pass "pass:$KS_PASSWORD" --ks-key-alias "$KS_ALIAS" --out "Prometheus-${GITHUB_REF_NAME}-android-arm64${{ steps.key.outputs.suffix }}.apk" aligned.apk
+          "$bt/apksigner" sign --ks "$KS_PATH" --ks-pass "pass:$KS_PASSWORD" --ks-key-alias "$KS_ALIAS" --out "Prometheus-${TAG}-android-arm64${{ steps.key.outputs.suffix }}.apk" aligned.apk
           # tauri-action creates the release; wait for it rather than racing the desktop jobs.
-          for i in $(seq 1 30); do gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && break; sleep 20; done
-          gh release upload "$GITHUB_REF_NAME" Prometheus-*.apk --clobber
+          for i in $(seq 1 30); do gh release view "$TAG" >/dev/null 2>&1 && break; sleep 20; done
+          gh release upload "$TAG" Prometheus-*.apk --clobber
