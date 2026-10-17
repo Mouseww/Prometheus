@@ -109,7 +109,8 @@ export default definePlugin({
 				const prompt = event.messageType === "user" ? event.prompt : "";
 				const picked = selectForPrompt(visibleTo(state.entries, eventCtx.cwd), prompt);
 				if (!picked.length) return;
-				return { systemPrompt: `${event.systemPrompt}\n\n${renderMemorySection(picked)}` };
+				// A returned `systemPrompt` freezes the whole prompt and would hide later sections such as auto mode.
+				event.systemPromptOptions.sections.memory = renderMemorySection(picked);
 			});
 		});
 
