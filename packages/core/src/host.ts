@@ -42,7 +42,7 @@ import {
 	type ChatMessage,
 } from "@prometheus/protocol";
 import { slimEvent, toModelRef } from "./events.ts";
-import { checkImages, imageOnlyTitle } from "./images.ts";
+import { checkImages, imageOnlyTitle, skipPiImageAutoResize } from "./images.ts";
 import { PermissionGate } from "./permission-gate.ts";
 import { EXIT_PLAN_MODE } from "./permissions.ts";
 import { pluginBuilderExtension } from "./plugin-tool.ts";
@@ -272,11 +272,16 @@ export class PrometheusHost {
 			emit: (runs) => this.listener.event(sessionIdRef, { type: "subagents_update", runs }),
 			parentFile: () => sessionRef?.sessionFile,
 		});
+		const settingsManager = SettingsManager.create(cwd, this.agentDir);
+		// PI auto-resize needs Photon WASM. A failed load drops every picture with
+		// "Image omitted: could not be resized". The web UI already shrinks attachments.
+		skipPiImageAutoResize(settingsManager);
 		const { session } = await createAgentSession({
 			cwd,
 			agentDir: this.agentDir,
 			modelRuntime: this.modelRuntime,
 			sessionManager,
+			settingsManager,
 			resourceLoader: await this.loader(cwd, gate, subagents),
 		});
 		const id = session.sessionId;

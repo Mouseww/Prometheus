@@ -1,3 +1,4 @@
+import clsx from "clsx";
 import { BookOpen, FileText, Plus, RefreshCw, Search, Settings2, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { GatewayConfig, KnowledgeBaseInfo, KnowledgeDocumentInfo, KnowledgeHit } from "@prometheus/protocol";
@@ -367,7 +368,6 @@ function BaseDetail({ base, onChanged }: { base: KnowledgeBaseInfo; onChanged: (
 			}
 			await ingest(file.name, await file.text());
 		}
-		if (fileInput.current) fileInput.current.value = "";
 	};
 
 	const search = async (e: React.FormEvent) => {
@@ -429,10 +429,21 @@ function BaseDetail({ base, onChanged }: { base: KnowledgeBaseInfo; onChanged: (
 			>
 				<Upload className="mx-auto size-6 text-ember-400" />
 				<p className="mt-2 text-sm text-ink-300">{t("dropHint")}</p>
-				<Button variant="outline" className="mt-3" onClick={() => fileInput.current?.click()} disabled={Boolean(busy)}>
+				<label className={clsx("relative mt-3 inline-flex items-center justify-center gap-1.5 overflow-hidden rounded-lg border border-ink-700 px-3 py-1.5 text-sm font-medium text-ink-200", busy ? "pointer-events-none opacity-40" : "hover:border-ink-500 hover:bg-ink-850")}>
+					<input
+						ref={fileInput}
+						type="file"
+						multiple
+						className="absolute -inset-8 cursor-pointer opacity-0"
+						style={{ fontSize: 64 }}
+						onChange={(e) => {
+							void onFiles(e.target.files).finally(() => {
+								e.target.value = "";
+							});
+						}}
+					/>
 					{t("pickFiles")}
-				</Button>
-				<input ref={fileInput} type="file" multiple hidden onChange={(e) => void onFiles(e.target.files)} />
+				</label>
 				<p className="mt-2 text-xs text-ink-500">{t("supported")}</p>
 				{busy && <p className="mt-3 animate-pulse text-sm text-ember-300">{busy}</p>}
 			</section>

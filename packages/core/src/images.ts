@@ -12,6 +12,11 @@ export function imageOnlyTitle(firstMessage: string, messageCount: number): stri
 	return firstMessage === "(no messages)" && messageCount > 0 ? "[图片]" : firstMessage;
 }
 
+/** PI auto-resize needs Photon WASM; a failed load drops every picture. Skip that pass without writing settings.json. */
+export function skipPiImageAutoResize(settings: { getImageAutoResize: () => boolean }): void {
+	settings.getImageAutoResize = () => false;
+}
+
 /** Reject what a provider would, before it is stored in the session and sent upstream. */
 export function checkImages(images: readonly ImageContent[] | undefined): void {
 	if (!images?.length) return;
