@@ -75,6 +75,9 @@ importers:
       '@tauri-apps/api':
         specifier: 2.12.4
         version: 2.12.4
+      '@tauri-apps/plugin-opener':
+        specifier: 2.7.2
+        version: 2.7.2
       '@tauri-apps/plugin-updater':
         specifier: 2.14.0
         version: 2.14.0
@@ -1127,6 +1130,9 @@ packages:
     resolution: {integrity: sha512-f7/LsY74SVb1ChmOPw1ajOpxii0GSzDAgmWHRci8JUYuuai04rXsSbFobpmB0sP2DdlvMD/B5ZotEn8GOGMRUg==}
     engines: {node: '>= 10'}
     hasBin: true
+
+  '@tauri-apps/plugin-opener@2.7.2':
+    resolution: {integrity: sha512-LyybP1VSzTMQiaFYcsbAse47KpivlyXdLZMQzGLEnkgQacGESnpjAfFoQ6h5sqWgAdZDH9szYjPzHMpv0Sz+TQ==}
 
   '@tauri-apps/plugin-updater@2.14.0':
     resolution: {integrity: sha512-gdylJ9tger4hkyOn24QZd6MNOKVo2Eh53iw5th2Qj1vKTR/+u4PIwJWuiis5hohYvobn6iOvlnALfrqIPSzh7Q==}
@@ -3369,6 +3375,10 @@ snapshots:
       '@tauri-apps/cli-win32-arm64-msvc': 2.12.3
       '@tauri-apps/cli-win32-ia32-msvc': 2.12.3
       '@tauri-apps/cli-win32-x64-msvc': 2.12.3
+
+  '@tauri-apps/plugin-opener@2.7.2':
+    dependencies:
+      '@tauri-apps/api': 2.12.4
 
   '@tauri-apps/plugin-updater@2.14.0':
     dependencies:
