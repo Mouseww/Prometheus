@@ -348,7 +348,7 @@ export function SettingsView() {
 	const t = useT(M);
 	const tab = useStore((s) => s.settingsTab);
 	return (
-		<div className="flex min-h-0 flex-1 flex-col md:flex-row">
+		<div className="flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row">
 			<nav className="flex shrink-0 gap-1 overflow-x-auto border-b hairline p-2 md:block md:w-48 md:space-y-0.5 md:overflow-x-visible md:border-r md:border-b-0 md:p-3">
 				{TABS.map(({ id, icon: Icon }) => (
 					<button
@@ -365,7 +365,7 @@ export function SettingsView() {
 					</button>
 				))}
 			</nav>
-			<div className="flex min-w-0 flex-1 flex-col">
+			<div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
 				{tab === "general" && <GeneralSettings />}
 				{tab === "gateways" && <GatewaysView />}
 				{tab === "mcp" && <McpView />}
