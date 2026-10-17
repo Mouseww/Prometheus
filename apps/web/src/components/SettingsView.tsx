@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { BarChart3, Blocks, Cable, Check, Copy, Globe, Laptop, Mic, Moon, Network, Package, Sparkles, Sun, SlidersHorizontal } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
-import { isDesktopShell } from "../lib/backend.ts";
+import { isAndroid, isDesktopShell } from "../lib/backend.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { type Lang, SKINS, type SendMode, type Skin, setPrefs, type ThemeMode, usePrefs } from "../lib/prefs.ts";
 import { openSettings, type SettingsTab, toast, updateHostSettings, useStore } from "../lib/store.ts";
@@ -59,6 +59,7 @@ const M = defineMessages({
 		newVersion: "发现新版本 {v}",
 		viewUpdate: "查看并更新",
 		updateHint: "桌面版的本机服务端随应用一同更新。",
+		updateHintAndroid: "安卓版从 GitHub Release 下载新安装包，由系统安装。",
 		updateFailed: "检查失败：{e}",
 		about: "关于",
 		appVersion: "客户端版本",
@@ -109,6 +110,7 @@ const M = defineMessages({
 		newVersion: "Version {v} is available",
 		viewUpdate: "View and update",
 		updateHint: "The desktop app's local server is updated together with the app.",
+		updateHintAndroid: "The Android app downloads the new package from the GitHub release and the system installs it.",
 		updateFailed: "Check failed: {e}",
 		about: "About",
 		appVersion: "Client version",
@@ -182,7 +184,7 @@ function UpdateRow() {
 	const { phase, version, error } = useUpdater();
 	const busy = phase === "checking" || phase === "installing";
 	const status =
-		phase === "checking" ? t("checking") : phase === "uptodate" ? t("upToDate") : version && phase !== "error" ? t("newVersion", { v: version }) : phase === "error" ? t("updateFailed", { e: error ?? "" }) : t("updateHint");
+		phase === "checking" ? t("checking") : phase === "uptodate" ? t("upToDate") : version && phase !== "error" ? t("newVersion", { v: version }) : phase === "error" ? t("updateFailed", { e: error ?? "" }) : t(isAndroid() ? "updateHintAndroid" : "updateHint");
 	return (
 		<Row label={t("checkUpdate")} hint={status}>
 			{phase === "available" ? (

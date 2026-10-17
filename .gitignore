@@ -7,3 +7,7 @@ apps/desktop/src-tauri/gen/
 *.log
 .env
 .env.*
+
+*.p12
+*.jks
+*.keystore

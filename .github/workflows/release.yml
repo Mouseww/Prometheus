@@ -120,6 +120,15 @@ jobs:
         working-directory: apps/desktop
         run: pnpm tauri android init --ci
 
+      - name: Apply the app icons
+        run: |
+          # `android init` writes Tauri's default launcher icons and never copies src-tauri/icons/android.
+          res=apps/desktop/src-tauri/gen/android/app/src/main/res
+          [ -d "$res" ] || { echo "no res dir at $res" >&2; exit 1; }
+          cp -r apps/desktop/src-tauri/icons/android/. "$res/"
+          test -f "$res/mipmap-anydpi-v26/ic_launcher.xml"
+          test -f "$res/mipmap-xxxhdpi/ic_launcher_foreground.png"
+
       - name: Add Node and the server to the project
         run: pnpm --filter @prometheus/desktop android-runtime
 
@@ -130,7 +139,7 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
-          ks="$RUNNER_TEMP/release.jks"
+          ks="$RUNNER_TEMP/release.p12"
           if [ -n "$KEYSTORE_B64" ]; then
             echo "$KEYSTORE_B64" | base64 -d > "$ks"
             echo "suffix=" >> "$GITHUB_OUTPUT"
@@ -138,9 +147,10 @@ jobs:
             # No release key configured: sign with a throwaway key so the APK still installs, but it cannot upgrade a properly signed build.
             KEYSTORE_PASSWORD=$(openssl rand -hex 16)
             KEY_ALIAS=prometheus
-            keytool -genkeypair -keystore "$ks" -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 3650 -dname "CN=Prometheus CI"
+            keytool -genkeypair -storetype PKCS12 -keystore "$ks" -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 3650 -dname "CN=Prometheus CI"
             echo "suffix=-unofficial" >> "$GITHUB_OUTPUT"
           fi
+          keytool -list -storetype PKCS12 -keystore "$ks" -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null || { echo "cannot open the signing key: check ANDROID_KEYSTORE_PASSWORD and ANDROID_KEY_ALIAS" >&2; exit 1; }
           echo "::add-mask::$KEYSTORE_PASSWORD"
           echo "KS_PATH=$ks" >> "$GITHUB_ENV"
           echo "KS_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
@@ -158,7 +168,7 @@ jobs:
           [ -n "$apk" ] || { echo "no unsigned APK produced" >&2; exit 1; }
           bt="$ANDROID_HOME/build-tools/36.0.0"
           "$bt/zipalign" -f -p 4 "$apk" aligned.apk
-          "$bt/apksigner" sign --ks "$KS_PATH" --ks-pass "pass:$KS_PASSWORD" --ks-key-alias "$KS_ALIAS" --out "Prometheus-${TAG}-android-arm64${{ steps.key.outputs.suffix }}.apk" aligned.apk
+          "$bt/apksigner" sign --ks "$KS_PATH" --ks-type PKCS12 --ks-pass "pass:$KS_PASSWORD" --ks-key-alias "$KS_ALIAS" --out "Prometheus-${TAG}-android-arm64${{ steps.key.outputs.suffix }}.apk" aligned.apk
           # tauri-action creates the release; wait for it rather than racing the desktop jobs.
           for i in $(seq 1 30); do gh release view "$TAG" >/dev/null 2>&1 && break; sleep 20; done
           gh release upload "$TAG" Prometheus-*.apk --clobber

@@ -306,7 +306,9 @@ pub fn run() {
             tray::open_session_in_main
         ]);
     #[cfg(mobile)]
-    let builder = builder.invoke_handler(tauri::generate_handler![start_local_backend, stop_local_backend, relaunch_app, local_supported]);
+    let builder = builder
+        .plugin(tauri_plugin_opener::init())
+        .invoke_handler(tauri::generate_handler![start_local_backend, stop_local_backend, relaunch_app, local_supported]);
     let app = builder
         .manage(backend.clone())
         .build(tauri::generate_context!())

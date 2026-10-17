@@ -4,5 +4,11 @@
   "description": "Phone permissions: no window chrome, no self-updater",
   "windows": ["main"],
   "platforms": ["android", "iOS"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://github.com/Mouseww/Prometheus/releases/*" }]
+    }
+  ]
 }
