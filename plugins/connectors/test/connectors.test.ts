@@ -11,7 +11,7 @@ import { htmlToText } from "../src/providers/microsoft.ts";
 import { adf, flattenAdf } from "../src/providers/atlassian.ts";
 import { providers } from "../src/providers/index.ts";
 import { createService, decide, renderResult } from "../src/service.ts";
-import type { Operation } from "../src/types.ts";
+import type { AuthMethod, Operation } from "../src/types.ts";
 import { openVault } from "../src/vault.ts";
 
 afterEach(() => vi.restoreAllMocks());
@@ -182,7 +182,7 @@ describe("oauth", () => {
 		expect(challenge).toBe(createHash("sha256").update(verifier).digest("base64url"));
 	});
 
-	const device = { kind: "oauth-device", deviceUrl: "https://x/d", tokenUrl: "https://x/t", scopes: [] } as const;
+	const device: Extract<AuthMethod, { kind: "oauth-device" }> = { kind: "oauth-device", deviceUrl: "https://x/d", tokenUrl: "https://x/t", scopes: [] };
 
 	it("treats authorization_pending as pending, including on HTTP 400", async () => {
 		mockFetch(() => ({ error: "authorization_pending" }), 400);
@@ -236,5 +236,25 @@ describe("helpers", () => {
 	it("converts ADF and HTML to text", () => {
 		expect(flattenAdf(adf("hello\n\nworld"))).toBe("hello\n\nworld");
 		expect(htmlToText("<p>Hi&nbsp;<b>there</b></p><style>x{}</style>")).toBe("Hi there");
+	});
+});
+
+describe("authorization code flow", () => {
+	it("builds provider-specific authorize URLs and exchanges codes in the right style", async () => {
+		const { buildAuthorizeUrl, exchangeCode } = await import("../src/oauth.ts");
+		const atl = providers.find((p) => p.id === "atlassian")!.auth.find((a) => a.kind === "oauth-code")!;
+		const bb = providers.find((p) => p.id === "bitbucket")!.auth.find((a) => a.kind === "oauth-code")!;
+		if (atl.kind !== "oauth-code" || bb.kind !== "oauth-code") throw new Error("missing oauth-code");
+
+		const u = new URL(buildAuthorizeUrl(atl, {}, { clientId: "cid", redirectUri: "http://127.0.0.1:1/cb", state: "st", challenge: "ch" }));
+		expect(u.searchParams.get("audience")).toBe("api.atlassian.com");
+		expect(u.searchParams.get("code_challenge_method")).toBe("S256");
+		expect(u.searchParams.get("state")).toBe("st");
+
+		const spy = mockFetch(() => ({ access_token: "a", refresh_token: "r", expires_in: 3600 }));
+		await exchangeCode(atl, {}, { clientId: "cid", clientSecret: "sec", code: "c", redirectUri: "x", verifier: "v" });
+		expect(JSON.parse(String(spy.mock.calls[0]?.[1]?.body)).code).toBe("c");
+		await exchangeCode(bb, {}, { clientId: "k", clientSecret: "s", code: "c", redirectUri: "x", verifier: "v" });
+		expect((spy.mock.calls[1]?.[1]?.headers as Record<string, string>).authorization).toBe(`Basic ${Buffer.from("k:s").toString("base64")}`);
 	});
 });

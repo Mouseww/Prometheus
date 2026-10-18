@@ -1,5 +1,7 @@
 import type { TSchema } from "@earendil-works/pi-ai";
 
+/** How the token endpoint wants its request: form body (default), JSON body, or form body with HTTP Basic client auth. */
+export type TokenStyle = "form" | "json" | "basic";
 export type Access = "read" | "write";
 export type Policy = "read-only" | "confirm" | "allow";
 
@@ -8,7 +10,7 @@ export type AuthMethod =
 	| { kind: "token"; label: string; help?: string }
 	| { kind: "basic"; help?: string }
 	| { kind: "oauth-device"; deviceUrl: string; tokenUrl: string; scopes: string[]; help?: string }
-	| { kind: "oauth-code"; authorizeUrl: string; tokenUrl: string; scopes: string[]; help?: string }
+	| { kind: "oauth-code"; authorizeUrl: string; tokenUrl: string; scopes: string[]; help?: string; tokenStyle?: TokenStyle; extraAuthParams?: Record<string, string>; sendScope?: boolean }
 	| { kind: "connection-string"; help?: string };
 
 export interface FieldSpec {

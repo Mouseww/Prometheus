@@ -2,6 +2,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { request } from "../http.ts";
 import type { ConnectorProvider, OperationContext } from "../types.ts";
 
+const SCOPES = ["offline_access", "User.Read", "Mail.ReadWrite", "Mail.Send", "Calendars.Read", "Team.ReadBasic.All", "Channel.ReadBasic.All", "ChannelMessage.Send", "Files.Read.All"];
 const GRAPH = "https://graph.microsoft.com/v1.0";
 
 function graph<T>(c: OperationContext, path: string, opts: Parameters<typeof request>[1] = {}) {
@@ -45,10 +46,18 @@ export const microsoft: ConnectorProvider = {
 	description: "通过 Microsoft Graph 访问 Outlook 邮件与日历、Teams 频道、OneDrive 文件",
 	auth: [
 		{
+			kind: "oauth-code",
+			authorizeUrl: "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize",
+			tokenUrl: "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
+			scopes: SCOPES,
+			extraAuthParams: { prompt: "select_account" },
+			help: "在 Microsoft Entra 注册应用，平台选「移动和桌面应用程序」，重定向 URI 填下方地址（localhost 的端口会被忽略），并授予委托权限",
+		},
+		{
 			kind: "oauth-device",
 			deviceUrl: "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/devicecode",
 			tokenUrl: "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
-			scopes: ["offline_access", "User.Read", "Mail.ReadWrite", "Mail.Send", "Calendars.Read", "Team.ReadBasic.All", "Channel.ReadBasic.All", "ChannelMessage.Send", "Files.Read.All"],
+			scopes: SCOPES,
 			help: "在 Microsoft Entra 注册应用：公共客户端，启用「允许公共客户端流」，并授予上述委托权限",
 		},
 		{ kind: "token", label: "Graph Access Token（临时）", help: "例如从 Graph Explorer 复制，约 1 小时过期，仅用于试用" },
@@ -56,6 +65,7 @@ export const microsoft: ConnectorProvider = {
 	fields: {
 		"oauth-app": [
 			{ key: "clientId", label: "Application (client) ID", required: true },
+			{ key: "clientSecret", label: "Client Secret（公共客户端可留空）", secret: true },
 			{ key: "tenant", label: "Tenant", placeholder: "organizations 或租户 ID / 域名", help: "默认 organizations；个人账号用 consumers" },
 		],
 		token: [],

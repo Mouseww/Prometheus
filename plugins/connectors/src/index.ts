@@ -139,7 +139,20 @@ export default definePlugin({
 			const method = authMethodOf(provider, str(params.authKind, 32) as AuthMethod["kind"]);
 			if (method.kind !== "oauth-code" && method.kind !== "oauth-device") throw new ConnectorError("该认证方式不是 OAuth");
 			const input = (params.values ?? {}) as Record<string, unknown>;
-			const clientId = str(input.clientId, 300);
+			let clientId = str(input.clientId, 300);
+			let clientSecret = str(input.clientSecret, 500) || undefined;
+			if (!clientId) {
+				// Same OAuth app as an earlier connection of this service: no need to type it again.
+				for (const r of await vault.list()) {
+					if (r.provider !== provider.id) continue;
+					const prev = await vault.secrets(r).catch(() => undefined);
+					if (prev?.clientId) {
+						clientId = prev.clientId;
+						clientSecret = prev.clientSecret;
+						break;
+					}
+				}
+			}
 			if (!clientId) throw new ConnectorError("请填写 Client ID");
 			const config: Record<string, string> = {};
 			for (const f of fieldsFor(provider, "oauth-app")) {
@@ -148,7 +161,7 @@ export default definePlugin({
 			}
 			// Tenant defaults keep the common case to one field.
 			if (provider.id === "microsoft") config.tenant ||= "organizations";
-			const base = { provider, method, label: str(params.label, 80) || provider.name, policy: requirePolicy(params.policy), config, clientId, clientSecret: str(input.clientSecret, 500) || undefined, createdAt: Date.now() };
+			const base = { provider, method, label: str(params.label, 80) || provider.name, policy: requirePolicy(params.policy), config, clientId, clientSecret, createdAt: Date.now() };
 
 			if (method.kind === "oauth-device") {
 				const d = await startDevice(method, config, clientId);

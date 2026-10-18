@@ -41,10 +41,23 @@ export const bitbucket: ConnectorProvider = {
 	category: "code",
 	description: "Bitbucket 仓库与 Pull Request",
 	auth: [
+		{
+			kind: "oauth-code",
+			authorizeUrl: "https://bitbucket.org/site/oauth2/authorize",
+			tokenUrl: "https://bitbucket.org/site/oauth2/access_token",
+			// Scopes are fixed on the OAuth consumer itself, not requested per login.
+			scopes: [],
+			tokenStyle: "basic",
+			help: "在 Bitbucket → Workspace settings → OAuth consumers 添加，回调地址填下方地址，并勾选所需权限",
+		},
 		{ kind: "token", label: "Repository / Workspace Access Token", help: "Bitbucket → Repository settings → Access tokens" },
 		{ kind: "basic", help: "用户名 + App Password" },
 	],
 	fields: {
+		"oauth-app": [
+			{ key: "clientId", label: "Key", required: true },
+			{ key: "clientSecret", label: "Secret", secret: true, required: true },
+		],
 		token: [],
 		basic: [
 			{ key: "username", label: "用户名", required: true },

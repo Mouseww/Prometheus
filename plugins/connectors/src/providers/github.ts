@@ -33,12 +33,22 @@ export const github: ConnectorProvider = {
 	category: "code",
 	description: "仓库、Issue、Pull Request 与代码搜索（支持 GitHub Enterprise）",
 	auth: [
+		{
+			kind: "oauth-code",
+			authorizeUrl: "https://github.com/login/oauth/authorize",
+			tokenUrl: "https://github.com/login/oauth/access_token",
+			scopes: ["repo", "read:org"],
+			help: "在 GitHub → Settings → Developer settings → OAuth Apps 创建应用，把下方回调地址填进 Authorization callback URL",
+		},
 		{ kind: "token", label: "Personal Access Token", help: "在 GitHub → Settings → Developer settings 创建（建议 fine-grained，仅授予所需仓库）" },
 		{ kind: "oauth-device", deviceUrl: "https://github.com/login/device/code", tokenUrl: "https://github.com/login/oauth/access_token", scopes: ["repo", "read:org"], help: "需要先注册 OAuth App 并启用 Device Flow，填入 Client ID" },
 	],
 	fields: {
 		token: [{ key: "apiUrl", label: "API 地址（可选）", placeholder: "https://api.github.com", help: "GitHub Enterprise 填 https://host/api/v3" }],
-		"oauth-app": [{ key: "clientId", label: "Client ID", required: true }],
+		"oauth-app": [
+			{ key: "clientId", label: "Client ID", required: true },
+			{ key: "clientSecret", label: "Client Secret", secret: true, required: true },
+		],
 	},
 	async test(c) {
 		return (await gh<{ login: string }>(c, "/user")).login;

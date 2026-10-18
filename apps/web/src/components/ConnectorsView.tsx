@@ -1,7 +1,7 @@
 import { Copy, Loader2, Plug, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { pluginCall, toast } from "../lib/store.ts";
+import { pluginCall, toast, useStore } from "../lib/store.ts";
 import { Badge, Button, Dialog, Empty, Field, Input, PageHeader, Select } from "./ui.tsx";
 
 const M = defineMessages({
@@ -39,6 +39,7 @@ const M = defineMessages({
 		copyCode: "复制代码",
 		waiting: "等待授权…",
 		redirectHint: "在 OAuth 应用中登记的回调地址：",
+		reuseHint: "已为该服务配置过 OAuth 应用时，Client ID / Secret 可留空以沿用。",
 		secretHint: "凭据只加密保存在本机，永不回显",
 		ops: "可用操作",
 		writeBadge: "写",
@@ -78,6 +79,7 @@ const M = defineMessages({
 		copyCode: "Copy code",
 		waiting: "Waiting for authorisation…",
 		redirectHint: "Redirect URI to register in your OAuth app:",
+		reuseHint: "If an OAuth app is already set up for this service, leave Client ID / Secret empty to reuse it.",
 		secretHint: "Credentials are stored encrypted on this machine and never shown again",
 		ops: "Operations",
 		writeBadge: "write",
@@ -245,7 +247,8 @@ function AddDialog({ providers, onClose, onDone }: { providers: ProviderInfo[]; 
 
 	const isOAuth = method?.kind === "oauth-device" || method?.kind === "oauth-code";
 	const fields = (isOAuth ? provider?.fields["oauth-app"] : method && provider?.fields[method.kind]) ?? [];
-	const redirectUri = `${window.location.origin}${CALLBACK_PATH}`;
+	const httpBase = useStore((st) => st.client?.target.httpBase) ?? window.location.origin;
+	const redirectUri = `${httpBase}${CALLBACK_PATH}`;
 	const common = { provider: providerId, authKind: method?.kind, label: label.trim(), policy, values };
 
 	const poll = async (flowId: string, intervalSec: number) => {
@@ -344,9 +347,10 @@ function AddDialog({ providers, onClose, onDone }: { providers: ProviderInfo[]; 
 					/>
 				</Field>
 			))}
+			{isOAuth && <p className="text-xs text-ink-500">{t("reuseHint")}</p>}
 			{method?.kind === "oauth-code" && (
 				<p className="text-xs text-ink-400">
-					{t("redirectHint")} <code className="font-mono text-ink-200">{redirectUri}</code>
+					{t("redirectHint")} <code className="break-all font-mono text-ink-200">{redirectUri}</code>
 				</p>
 			)}
 			<Field label={t("policy")}>

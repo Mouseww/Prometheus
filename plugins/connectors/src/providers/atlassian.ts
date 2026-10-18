@@ -2,16 +2,42 @@ import { Type } from "@earendil-works/pi-ai";
 import { request } from "../http.ts";
 import type { ConnectorProvider, OperationContext } from "../types.ts";
 
-/** Atlassian Cloud with email + API token (https://id.atlassian.com/manage-profile/security/api-tokens). */
-function site(c: OperationContext): string {
-	const s = c.credentials.config.site ?? "";
-	if (!/^[a-z0-9-]+(\.atlassian\.net)?$/i.test(s)) throw new Error("站点应形如 your-team 或 your-team.atlassian.net");
-	return `https://${s.includes(".") ? s : `${s}.atlassian.net`}`;
+/** Cloud sites an OAuth token may reach, cached per token so one agent turn does not repeat the lookup. */
+const sites = new Map<string, Promise<{ id: string; url: string }>>();
+
+function oauthSite(c: OperationContext) {
+	const token = c.credentials.token ?? "";
+	let hit = sites.get(token);
+	if (!hit) {
+		hit = request<{ id: string; url: string }[]>("https://api.atlassian.com/oauth/token/accessible-resources", { headers: { authorization: `Bearer ${token}` }, signal: c.signal }).then((list) => {
+			const first = list[0];
+			if (!first) throw new Error("该账号没有可访问的 Atlassian 站点");
+			return first;
+		});
+		hit.catch(() => sites.delete(token));
+		if (sites.size > 50) sites.clear();
+		sites.set(token, hit);
+	}
+	return hit;
 }
 
-function call<T>(c: OperationContext, path: string, opts: Parameters<typeof request>[1] = {}) {
-	const basic = Buffer.from(`${c.credentials.config.email}:${c.credentials.token}`).toString("base64");
-	return request<T>(`${site(c)}${path}`, { ...opts, signal: c.signal, headers: { authorization: `Basic ${basic}`, ...opts.headers } });
+/** Two ways in: email + API token against the site itself, or an OAuth token through the api.atlassian.com gateway. */
+async function endpoint(c: OperationContext, path: string): Promise<{ url: string; authorization: string; browse: string }> {
+	const { config, token } = c.credentials;
+	if (!config.email) {
+		const s = await oauthSite(c);
+		const product = path.startsWith("/wiki") ? "confluence" : "jira";
+		return { url: `https://api.atlassian.com/ex/${product}/${s.id}${path}`, authorization: `Bearer ${token}`, browse: s.url };
+	}
+	const raw = config.site ?? "";
+	if (!/^[a-z0-9-]+(\.atlassian\.net)?$/i.test(raw)) throw new Error("站点应形如 your-team 或 your-team.atlassian.net");
+	const base = `https://${raw.includes(".") ? raw : `${raw}.atlassian.net`}`;
+	return { url: `${base}${path}`, authorization: `Basic ${Buffer.from(`${config.email}:${token}`).toString("base64")}`, browse: base };
+}
+
+async function call<T>(c: OperationContext, path: string, opts: Parameters<typeof request>[1] = {}) {
+	const e = await endpoint(c, path);
+	return request<T>(e.url, { ...opts, signal: c.signal, headers: { authorization: e.authorization, ...opts.headers } });
 }
 
 const key = Type.String({ description: "Issue key，如 PROJ-123", pattern: "^[A-Z][A-Z0-9_]+-\\d+$" });
@@ -48,8 +74,23 @@ export const atlassian: ConnectorProvider = {
 	name: "Atlassian (Jira / Confluence)",
 	category: "issues",
 	description: "Jira Cloud 的 Issue 搜索与流转，Confluence 页面搜索与阅读",
-	auth: [{ kind: "basic", help: "邮箱 + API Token（https://id.atlassian.com/manage-profile/security/api-tokens）" }],
+	auth: [
+		{
+			kind: "oauth-code",
+			authorizeUrl: "https://auth.atlassian.com/authorize",
+			tokenUrl: "https://auth.atlassian.com/oauth/token",
+			scopes: ["offline_access", "read:me", "read:jira-work", "write:jira-work", "read:confluence-content.all", "search:confluence"],
+			tokenStyle: "json",
+			extraAuthParams: { audience: "api.atlassian.com", prompt: "consent" },
+			help: "在 developer.atlassian.com 创建 OAuth 2.0 (3LO) 应用，添加上述权限，并把下方回调地址填进应用的 Callback URL",
+		},
+		{ kind: "basic", help: "邮箱 + API Token（https://id.atlassian.com/manage-profile/security/api-tokens）" },
+	],
 	fields: {
+		"oauth-app": [
+			{ key: "clientId", label: "Client ID", required: true },
+			{ key: "clientSecret", label: "Client Secret", secret: true, required: true },
+		],
 		basic: [
 			{ key: "site", label: "站点", required: true, placeholder: "your-team.atlassian.net" },
 			{ key: "email", label: "账户邮箱", required: true },
@@ -89,7 +130,7 @@ export const atlassian: ConnectorProvider = {
 					method: "POST",
 					json: { fields: { project: { key: p.project }, summary: p.summary, issuetype: { name: p.type || "Task" }, ...(p.description ? { description: adf(String(p.description)) } : {}) } },
 				});
-				return { key: r.key, url: `${site(c)}/browse/${r.key}` };
+				return { key: r.key, url: `${(await endpoint(c, "/rest/api/3/issue")).browse}/browse/${r.key}` };
 			},
 		},
 		{

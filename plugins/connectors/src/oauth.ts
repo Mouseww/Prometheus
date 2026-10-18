@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { fill, request } from "./http.ts";
-import type { AuthMethod } from "./types.ts";
+import type { AuthMethod, TokenStyle } from "./types.ts";
 
 export interface TokenResult {
 	accessToken: string;
@@ -30,6 +30,15 @@ function parseToken(raw: RawToken, now = Date.now()): TokenResult {
 	return { accessToken: raw.access_token, refreshToken: raw.refresh_token, expiresAt: Number.isFinite(ttl) && ttl > 0 ? now + ttl * 1000 : undefined };
 }
 
+/** POST to the token endpoint in the style the provider expects. */
+function tokenCall(url: string, style: TokenStyle, fields: Record<string, string>, clientId: string, clientSecret?: string): Promise<RawToken> {
+	if (style === "json") return request<RawToken>(url, { json: fields });
+	if (style === "basic") return request<RawToken>(url, { form: fields, headers: { authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret ?? ""}`).toString("base64")}` } });
+	return request<RawToken>(url, { form: fields });
+}
+
+const styleOf = (m: AuthMethod): TokenStyle => (m.kind === "oauth-code" ? (m.tokenStyle ?? "form") : "form");
+
 export function buildAuthorizeUrl(method: Extract<AuthMethod, { kind: "oauth-code" }>, config: Record<string, string>, p: { clientId: string; redirectUri: string; state: string; challenge: string; extra?: Record<string, string> }): string {
 	const url = new URL(fill(method.authorizeUrl, config));
 	url.searchParams.set("client_id", p.clientId);
@@ -38,8 +47,8 @@ export function buildAuthorizeUrl(method: Extract<AuthMethod, { kind: "oauth-cod
 	url.searchParams.set("state", p.state);
 	url.searchParams.set("code_challenge", p.challenge);
 	url.searchParams.set("code_challenge_method", "S256");
-	if (method.scopes.length) url.searchParams.set("scope", method.scopes.join(" "));
-	for (const [k, v] of Object.entries(p.extra ?? {})) url.searchParams.set(k, v);
+	if (method.scopes.length && method.sendScope !== false) url.searchParams.set("scope", method.scopes.join(" "));
+	for (const [k, v] of Object.entries({ ...method.extraAuthParams, ...p.extra })) url.searchParams.set(k, v);
 	return url.toString();
 }
 
@@ -50,7 +59,7 @@ export async function exchangeCode(
 ): Promise<TokenResult> {
 	const form: Record<string, string> = { grant_type: "authorization_code", client_id: p.clientId, code: p.code, redirect_uri: p.redirectUri, code_verifier: p.verifier };
 	if (p.clientSecret) form.client_secret = p.clientSecret;
-	return parseToken(await request<RawToken>(fill(method.tokenUrl, config), { form }));
+	return parseToken(await tokenCall(fill(method.tokenUrl, config), styleOf(method), form, p.clientId, p.clientSecret));
 }
 
 export interface DeviceStart {
@@ -107,7 +116,7 @@ export async function refreshToken(method: AuthMethod, config: Record<string, st
 	if (method.kind !== "oauth-code" && method.kind !== "oauth-device") throw new Error("该认证方式不支持刷新");
 	const form: Record<string, string> = { grant_type: "refresh_token", client_id: p.clientId, refresh_token: p.refreshToken };
 	if (p.clientSecret) form.client_secret = p.clientSecret;
-	const r = parseToken(await request<RawToken>(fill(method.tokenUrl, config), { form }));
+	const r = parseToken(await tokenCall(fill(method.tokenUrl, config), styleOf(method), form, p.clientId, p.clientSecret));
 	// Some providers rotate refresh tokens, others omit it on
 	// refresh; keep the old refresh token when the response omits a new one.
 	return { ...r, refreshToken: r.refreshToken ?? p.refreshToken };
