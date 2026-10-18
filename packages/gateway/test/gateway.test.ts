@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { GatewayConfig } from "@prometheus/protocol";
-import { embed, escapePiValue, maskSecret, mergeGatewayUpdate, redactGateway, requiresAdaptiveThinking, toProviderConfig, transcribe, validateGateway } from "../src/index.ts";
+import { embed, escapePiValue, maskSecret, mergeGatewayUpdate, normalizeProviderBaseUrl, redactGateway, requiresAdaptiveThinking, toProviderConfig, transcribe, validateGateway } from "../src/index.ts";
 
 const SECRET = ["sk", "test", "1234567890"].join("-");
 const NEW_SECRET = ["new", "secret", "value"].join("-");
@@ -84,14 +84,29 @@ describe("toProviderConfig", () => {
 			}),
 		);
 		expect(cfg.models[0]?.compat?.forceAdaptiveThinking).toBe(true);
+		expect(cfg.models[0]?.thinkingLevelMap?.off).toBeNull();
 		expect(cfg.models[1]?.compat?.forceAdaptiveThinking).toBe(true);
 		expect(cfg.models[2]?.compat?.forceAdaptiveThinking).toBe(true);
 		expect(cfg.models[3]?.compat).toBeUndefined();
+		expect(cfg.models[3]?.thinkingLevelMap).toBeUndefined();
 		expect(cfg.models[4]?.compat).toBeUndefined();
 	});
 	it("does not force adaptive thinking on OpenAI-format Claude proxies", () => {
 		const cfg = toProviderConfig(gw({ models: [{ id: "claude-sonnet-5-5", reasoning: true }] }));
 		expect(cfg.models[0]?.compat).toBeUndefined();
+	});
+	it("strips a trailing /v1 from Anthropic base URLs", () => {
+		const withV1 = toProviderConfig(gw({ format: "anthropic-messages", baseUrl: "https://agirouter.example.com/v1/" }));
+		expect(withV1.baseUrl).toBe("https://agirouter.example.com");
+		const hostOnly = toProviderConfig(gw({ format: "anthropic-messages", baseUrl: "https://agirouter.example.com" }));
+		expect(hostOnly.baseUrl).toBe("https://agirouter.example.com");
+	});
+});
+
+describe("normalizeProviderBaseUrl", () => {
+	it("keeps OpenAI /v1 and strips it only for Anthropic", () => {
+		expect(normalizeProviderBaseUrl("openai-completions", "https://llm.example.com/v1/")).toBe("https://llm.example.com/v1");
+		expect(normalizeProviderBaseUrl("anthropic-messages", "https://llm.example.com/v1")).toBe("https://llm.example.com");
 	});
 });
 

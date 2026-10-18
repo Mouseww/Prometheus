@@ -10,7 +10,7 @@ const M = defineMessages({
 	zh: {
 		hintCompletions: "/v1/chat/completions，兼容绝大多数中转与本地推理",
 		hintResponses: "/v1/responses，新一代 OpenAI 接口",
-		hintAnthropic: "/v1/messages，Claude 原生格式",
+		hintAnthropic: "/v1/messages，Claude 原生格式；Base URL 填到主机即可，末尾 /v1 会自动去掉",
 		hintGemini: "generateContent，Gemini 原生格式",
 		authNative: "协议默认",
 		authBearer: "Bearer Token",
@@ -58,7 +58,7 @@ const M = defineMessages({
 	en: {
 		hintCompletions: "/v1/chat/completions, works with most proxies and local inference",
 		hintResponses: "/v1/responses, the newer OpenAI API",
-		hintAnthropic: "/v1/messages, native Claude format",
+		hintAnthropic: "/v1/messages, native Claude format; host only is enough, a trailing /v1 is stripped",
 		hintGemini: "generateContent, native Gemini format",
 		authNative: "Protocol default",
 		authBearer: "Bearer Token",

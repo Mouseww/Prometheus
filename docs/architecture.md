@@ -193,7 +193,7 @@ Server 侧与 TUI 一致地加载 PI 的内置扩展（MCP 客户端、codemode�
 
 ### 5.3 编译到 PI
 
-`toProviderConfig(gateway)` 产出 `ProviderConfig`：`api = format`、`baseUrl`、`apiKey`、`headers`（合并自定义鉴权头）、`authHeader`（bearer 模式）、`models`（补齐 PI 必需字段：`name`、`input`、`cost`、`reasoning`、`contextWindow`、`maxTokens`）。`anthropic-messages` 网关上 Claude 5 / Sonnet 4.6 / Opus 4.6+ / Haiku 5 / Fable 5 会自动带上 `compat.forceAdaptiveThinking`，否则 PI 仍发预算制 `thinking.type=enabled`，上游会 400。
+`toProviderConfig(gateway)` 产出 `ProviderConfig`：`api = format`、`baseUrl`、`apiKey`、`headers`（合并自定义鉴权头）、`authHeader`（bearer 模式）、`models`（补齐 PI 必需字段：`name`、`input`、`cost`、`reasoning`、`contextWindow`、`maxTokens`）。`anthropic-messages` 网关会去掉末尾 `/v1`（Anthropic SDK 自己拼 `/v1/messages`，重复会 404）；Claude 5 / Sonnet 4.6 / Opus 4.6+ / Haiku 5 / Fable 5 会自动带上 `compat.forceAdaptiveThinking` 和 `thinkingLevelMap.off = null`，否则 PI 会发 `thinking.type=enabled` 或 `disabled`，上游会 400。
 
 - Server：`modelRuntime.registerProvider(id, cfg)`，修改即时生效，`unregisterProvider` 删除。
 - TUI：同一配置通过扩展 `pi.registerProvider(id, cfg)` 注入。

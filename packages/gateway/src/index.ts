@@ -21,6 +21,8 @@ export interface PiChatModelConfig {
 	maxTokens: number;
 	/** Passed through to PI. Adaptive-thinking Claude models need this or the API returns 400. */
 	compat?: { forceAdaptiveThinking?: boolean };
+	/** `off: null` tells PI to omit `thinking` instead of sending `type: disabled`. */
+	thinkingLevelMap?: { off?: string | null };
 }
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9-_]{0,47}$/;
@@ -84,6 +86,13 @@ export function requiresAdaptiveThinking(id: string, name?: string): boolean {
 	});
 }
 
+/** Anthropic's SDK always appends `/v1/messages`; a gateway URL that already ends in `/v1` would 404. */
+export function normalizeProviderBaseUrl(format: GatewayFormat, baseUrl: string): string {
+	const trimmed = baseUrl.replace(/\/+$/, "");
+	if (format === "anthropic-messages") return trimmed.replace(/\/v1$/i, "");
+	return trimmed;
+}
+
 function toModel(m: GatewayModel, format: GatewayFormat): PiChatModelConfig {
 	const model: PiChatModelConfig = {
 		id: m.id,
@@ -96,6 +105,8 @@ function toModel(m: GatewayModel, format: GatewayFormat): PiChatModelConfig {
 	};
 	if (format === "anthropic-messages" && requiresAdaptiveThinking(m.id, m.name)) {
 		model.compat = { forceAdaptiveThinking: true };
+		// Claude 5.5 rejects `thinking.type=disabled`; omitting the field is the off mode.
+		model.thinkingLevelMap = { off: null };
 	}
 	return model;
 }
@@ -130,7 +141,7 @@ export function toProviderConfig(g: GatewayConfig): PiProviderConfig {
 
 	return {
 		name: g.name,
-		baseUrl: g.baseUrl.replace(/\/+$/, ""),
+		baseUrl: normalizeProviderBaseUrl(g.format, g.baseUrl),
 		apiKey: piKey,
 		api: g.format,
 		...(Object.keys(headers).length ? { headers } : {}),
