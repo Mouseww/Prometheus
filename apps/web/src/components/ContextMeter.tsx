@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import { Minimize2 } from "lucide-react";
 import type { ContextBreakdown } from "@prometheus/protocol";
+import { cacheRate, fmtPercent, fmtTokens } from "../lib/format.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { call, refreshStats, toast, useStore } from "../lib/store.ts";
 import { Button } from "./ui.tsx";
@@ -23,6 +24,7 @@ const M = defineMessages({
 		compacting: "开始压缩上下文…",
 		busy: "对话进行中，无法压缩",
 		io: "累计输入 {i} · 输出 {o}",
+		cacheHit: "缓存命中率 {r}（读取 {c} / 写入 {w}）",
 	},
 	en: {
 		title: "Context usage",
@@ -40,6 +42,7 @@ const M = defineMessages({
 		compacting: "Compacting context…",
 		busy: "Cannot compact while a run is in progress",
 		io: "Total input {i} · output {o}",
+		cacheHit: "Cache hit rate {r} (read {c} / write {w})",
 	},
 });
 
@@ -53,7 +56,7 @@ const PARTS: { key: keyof ContextBreakdown | "unattributed"; color: string }[] =
 	{ key: "unattributed", color: "bg-ink-600" },
 ];
 
-const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+const fmt = fmtTokens;
 
 function Ring({ percent }: { percent: number | null }) {
 	const p = Math.min(Math.max(percent ?? 0, 0), 100);
@@ -139,8 +142,15 @@ export function ContextMeter() {
 
 					<p className="mt-3 text-[11px] leading-snug text-ink-500">{stats.contextEstimated ? t("unknown") : t("estimate")}</p>
 					<p className="mt-1 font-mono text-[11px] text-ink-500">
-						{t("io", { i: stats.inputTokens, o: stats.outputTokens })}
+						{t("io", { i: fmt(stats.inputTokens), o: fmt(stats.outputTokens) })}
 						{stats.totalCost > 0 && ` · $${stats.totalCost.toFixed(4)}`}
+					</p>
+					<p className="mt-1 font-mono text-[11px] text-ink-500">
+						{t("cacheHit", {
+							r: fmtPercent(cacheRate({ input: stats.inputTokens, cacheRead: stats.cacheReadTokens, cacheWrite: stats.cacheWriteTokens })),
+							c: fmt(stats.cacheReadTokens),
+							w: fmt(stats.cacheWriteTokens),
+						})}
 					</p>
 
 					<Button variant="outline" className="mt-3 w-full" disabled={session.isStreaming} title={session.isStreaming ? t("busy") : undefined} onClick={() => void compact()}>

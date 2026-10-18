@@ -98,7 +98,7 @@ function toModel(m: GatewayModel, format: GatewayFormat): PiChatModelConfig {
 		id: m.id,
 		name: m.name?.trim() || m.id,
 		input: m.vision ? ["text", "image"] : ["text"],
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		cost: { input: m.cost?.input ?? 0, output: m.cost?.output ?? 0, cacheRead: m.cost?.cacheRead ?? 0, cacheWrite: m.cost?.cacheWrite ?? 0 },
 		reasoning: m.reasoning ?? false,
 		contextWindow: m.contextWindow ?? 128_000,
 		maxTokens: m.maxTokens ?? 16_384,
@@ -310,6 +310,18 @@ function num(v: unknown): number | undefined {
 	return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined;
 }
 
+/** OpenRouter-style `pricing` (USD per token, as strings) -> USD per 1M tokens; undefined when absent or all zero. */
+function parsePricing(raw: unknown): GatewayModel["cost"] {
+	if (!raw || typeof raw !== "object") return undefined;
+	const p = raw as Record<string, unknown>;
+	const per = (v: unknown) => {
+		const n = typeof v === "string" || typeof v === "number" ? Number(v) : NaN;
+		return Number.isFinite(n) && n > 0 ? Math.round(n * 1e6 * 1e6) / 1e6 : 0;
+	};
+	const cost = { input: per(p.prompt), output: per(p.completion), cacheRead: per(p.input_cache_read), cacheWrite: per(p.input_cache_write) };
+	return cost.input || cost.output ? cost : undefined;
+}
+
 /** Fetch the provider's model list (`/models`); fields the provider doesn't report are left undefined. */
 export async function listModels(g: GatewayConfig, options: EmbedOptions = {}): Promise<GatewayModel[]> {
 	const doFetch = options.fetchImpl ?? fetch;
@@ -350,6 +362,7 @@ export async function listModels(g: GatewayConfig, options: EmbedOptions = {}): 
 				maxTokens: num(top.max_completion_tokens) ?? num(m.max_tokens),
 				vision: modalities ? modalities.includes("image") : undefined,
 				reasoning: params ? params.includes("reasoning") : undefined,
+				cost: parsePricing(m.pricing),
 			};
 		});
 	}

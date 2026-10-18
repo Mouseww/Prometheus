@@ -23,6 +23,7 @@ import type { AgentRunOptions, AgentRunResult, PrometheusPlugin } from "@prometh
 import {
 	type CommandInfo,
 	type ContextBreakdown,
+	type ModelPricing,
 	type DirListing,
 	type ImageContent,
 	type MessageRef,
@@ -743,6 +744,8 @@ export class PrometheusHost {
 				totalCost: stats.cost,
 				inputTokens: stats.tokens.input,
 				outputTokens: stats.tokens.output,
+				cacheReadTokens: stats.tokens.cacheRead,
+				cacheWriteTokens: stats.tokens.cacheWrite,
 			};
 		},
 
@@ -883,6 +886,27 @@ export class PrometheusHost {
 			const merged = mergeGatewayUpdate(gateway, existing);
 			if (!/^https?:\/\//.test(merged.baseUrl ?? "")) throw new Error("Base URL 必须是 http(s) 地址");
 			return listModels(merged, { signal: AbortSignal.timeout(20_000) });
+		},
+
+		"gateway.pricing": ({ models }) => {
+			// Official prices live on built-in providers; user gateways are registered at zero cost and must not match.
+			const norm = (id: string) => id.toLowerCase().replace(/^.*\//, "").replace(/[\s_.:]+/g, "-");
+			const exact = new Map<string, ModelPricing>();
+			const loose = new Map<string, ModelPricing>();
+			for (const m of this.modelRuntime.getModels()) {
+				if (this.registered.has(m.provider)) continue;
+				const c = m.cost;
+				if (!c || (!c.input && !c.output)) continue;
+				const price = { input: c.input, output: c.output, cacheRead: c.cacheRead ?? 0, cacheWrite: c.cacheWrite ?? 0 };
+				if (!exact.has(m.id.toLowerCase())) exact.set(m.id.toLowerCase(), price);
+				if (!loose.has(norm(m.id))) loose.set(norm(m.id), price);
+			}
+			const out: Record<string, ModelPricing> = {};
+			for (const id of models) {
+				const hit = exact.get(id.toLowerCase()) ?? loose.get(norm(id));
+				if (hit) out[id] = hit;
+			}
+			return out;
 		},
 
 		"kb.list": () => this.runtime.knowledge.list(),

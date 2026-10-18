@@ -2,6 +2,7 @@ import clsx from "clsx";
 import { Bot, Brain, Check, ChevronDown, ChevronRight, CircleAlert, Clock, ListTree, LoaderCircle, Square, Wrench, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { sortSubagents, type SubagentDetail, type SubagentRun, type SubagentState, type SubagentStep } from "@prometheus/protocol";
+import { fmtTokens } from "../lib/format.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { closeSubagentRegion, NO_SUBAGENTS, openSubagentList, selectSubagent, setSubagentSort, type SubagentSort, stopSubagent, useStore } from "../lib/store.ts";
 import { Markdown } from "./Markdown.tsx";
@@ -77,7 +78,7 @@ export function formatElapsed(ms: number): string {
 	return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
 }
 
-const formatTokens = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n));
+const formatTokens = fmtTokens;
 
 function useNow(active: boolean): number {
 	const [now, setNow] = useState(() => Date.now());

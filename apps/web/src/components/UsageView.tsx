@@ -1,6 +1,7 @@
 import { BarChart3 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { UsageStats, UsageTotals } from "@prometheus/protocol";
+import { cacheRate, fmtPercent, fmtTokens } from "../lib/format.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { call } from "../lib/store.ts";
 import { Empty, PageHeader } from "./ui.tsx";
@@ -17,6 +18,7 @@ const M = defineMessages({
 		input: "输入",
 		output: "输出",
 		cache: "缓存读取",
+		hitRate: "缓存命中率",
 		cost: "费用",
 		byModel: "按模型",
 		byDay: "按日期",
@@ -24,7 +26,7 @@ const M = defineMessages({
 		date: "日期",
 		empty: "还没有用量记录",
 		emptyBody: "开始对话后，这里会显示 token 与费用。未返回用量的网关不会被统计。",
-		costNote: "费用按模型单价估算；自定义网关未配置单价时为 0。",
+		costNote: "费用按模型单价估算；自定义网关请在「网关」里为模型填写单价（或点“获取官方价格”），否则为 0。",
 	},
 	en: {
 		title: "Usage",
@@ -37,6 +39,7 @@ const M = defineMessages({
 		input: "Input",
 		output: "Output",
 		cache: "Cache read",
+		hitRate: "Cache hit",
 		cost: "Cost",
 		byModel: "By model",
 		byDay: "By day",
@@ -44,7 +47,7 @@ const M = defineMessages({
 		date: "Date",
 		empty: "No usage yet",
 		emptyBody: "Token counts and cost show up here once you chat. Gateways that report no usage are not counted.",
-		costNote: "Cost is estimated from model pricing; custom gateways without pricing show 0.",
+		costNote: "Cost is estimated from model pricing; for custom gateways set prices in the gateway editor (or click \"Fetch official prices\"), otherwise it shows 0.",
 	},
 });
 
@@ -54,8 +57,7 @@ const RANGES = [
 	{ days: 0, label: "all" },
 ] as const;
 
-const compact = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
-const fmt = (n: number) => (n < 10_000 ? n.toLocaleString() : compact.format(n));
+const fmt = fmtTokens;
 const money = (n: number) => (n === 0 ? "$0" : n < 0.01 ? "<$0.01" : `$${n.toFixed(n < 100 ? 2 : 0)}`);
 
 function Stat({ label, value }: { label: string; value: string }) {
@@ -75,7 +77,7 @@ function Table({ head, rows }: { head: string[]; rows: { key: string; label: str
 				<thead className="bg-ink-900/60 text-xs text-ink-400">
 					<tr>
 						<th className="px-4 py-2 font-medium">{head[0]}</th>
-						{(["requests", "input", "output", "cache", "cost"] as const).map((k) => (
+						{(["requests", "input", "output", "cache", "hitRate", "cost"] as const).map((k) => (
 							<th key={k} className="px-4 py-2 text-right font-medium">
 								{t(k)}
 							</th>
@@ -90,6 +92,7 @@ function Table({ head, rows }: { head: string[]; rows: { key: string; label: str
 							<td className="px-4 py-2 text-right">{fmt(r.totals.input)}</td>
 							<td className="px-4 py-2 text-right">{fmt(r.totals.output)}</td>
 							<td className="px-4 py-2 text-right">{fmt(r.totals.cacheRead)}</td>
+							<td className="px-4 py-2 text-right">{fmtPercent(cacheRate(r.totals))}</td>
 							<td className="px-4 py-2 text-right">{money(r.totals.cost)}</td>
 						</tr>
 					))}
@@ -149,10 +152,11 @@ export function UsageView() {
 				) : (
 					stats && (
 						<div className={`mx-auto max-w-4xl space-y-8 p-4 md:p-8 transition-opacity ${loading ? "opacity-50" : ""}`}>
-							<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+							<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
 								<Stat label={t("requests")} value={fmt(stats.totals.requests)} />
 								<Stat label={t("input")} value={fmt(stats.totals.input)} />
 								<Stat label={t("output")} value={fmt(stats.totals.output)} />
+								<Stat label={t("hitRate")} value={fmtPercent(cacheRate(stats.totals))} />
 								<Stat label={t("cost")} value={money(stats.totals.cost)} />
 							</div>
 							<p className="-mt-4 text-xs text-ink-500">

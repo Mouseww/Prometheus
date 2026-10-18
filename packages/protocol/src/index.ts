@@ -293,6 +293,8 @@ export interface SessionStats {
 	totalCost: number;
 	inputTokens: number;
 	outputTokens: number;
+	cacheReadTokens: number;
+	cacheWriteTokens: number;
 }
 
 export interface CommandInfo { name: string; description?: string; source: "extension" | "prompt" | "skill" }
@@ -303,6 +305,14 @@ export type GatewayAuth =
 	| { type: "bearer" }
 	| { type: "header"; header: string; prefix?: string }
 	| { type: "none" };
+
+/** USD per 1M tokens. */
+export interface ModelPricing {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+}
 
 export interface GatewayModel {
 	id: string;
@@ -315,6 +325,8 @@ export interface GatewayModel {
 	xhigh?: boolean;
 	/** Opt in to the "max" thinking level. */
 	max?: boolean;
+	/** Price per 1M tokens; unset means free (cost shows 0). */
+	cost?: ModelPricing;
 }
 
 export interface GatewayConfig {
@@ -760,6 +772,8 @@ export interface RpcMethods {
 	"gateway.test": { params: { id: string; model?: string }; result: { ok: boolean; latencyMs: number; message: string } };
 	/** Fetch the provider's model catalogue using an (unsaved) draft; a masked apiKey falls back to the stored one. */
 	"gateway.models": { params: { gateway: GatewayConfig }; result: GatewayModel[] };
+	/** Look up official list prices (PI's built-in catalogue) by model id; ids without a match are omitted. */
+	"gateway.pricing": { params: { models: string[] }; result: Record<string, ModelPricing> };
 
 	"kb.list": { params: Record<string, never>; result: KnowledgeBaseInfo[] };
 	"kb.create": { params: { name: string; description?: string; store?: string; embedding: { gatewayId: string; model: string } }; result: KnowledgeBaseInfo };

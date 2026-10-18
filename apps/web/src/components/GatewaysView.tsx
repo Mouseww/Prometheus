@@ -1,7 +1,7 @@
 import clsx from "clsx";
-import { CloudDownload, LoaderCircle, Network, Plus, Search, Trash2, X, Zap } from "lucide-react";
+import { CloudDownload, Coins, LoaderCircle, Network, Plus, Search, Trash2, X, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { GatewayAuth, GatewayConfig, GatewayFormat, GatewayModel } from "@prometheus/protocol";
+import type { GatewayAuth, GatewayConfig, GatewayFormat, GatewayModel, ModelPricing } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { call, refreshModels, toast } from "../lib/store.ts";
 import { Badge, Button, Empty, Field, Input, PageHeader, Select } from "./ui.tsx";
@@ -49,6 +49,14 @@ const M = defineMessages({
 		deleteModel: "删除模型",
 		model: "模型",
 		loadModels: "从接口加载模型列表",
+		fetchPrices: "获取官方价格",
+		pricesDone: "已匹配 {n} 个模型的官方价格",
+		pricesNone: "没有匹配到官方价格，请手动填写",
+		priceUnit: "单价 (USD / 百万 token)",
+		priceInput: "输入",
+		priceOutput: "输出",
+		priceCacheRead: "缓存读",
+		priceCacheWrite: "缓存写",
 		enable: "启用此网关",
 		testOk: "连通成功",
 		testFail: "连通失败",
@@ -100,6 +108,14 @@ const M = defineMessages({
 		deleteModel: "Remove model",
 		model: "Model",
 		loadModels: "Load models from API",
+		fetchPrices: "Fetch official prices",
+		pricesDone: "Matched official prices for {n} models",
+		pricesNone: "No official prices matched; enter them manually",
+		priceUnit: "Price (USD / 1M tokens)",
+		priceInput: "Input",
+		priceOutput: "Output",
+		priceCacheRead: "Cache read",
+		priceCacheWrite: "Cache write",
 		enable: "Enable this gateway",
 		testOk: "Connected",
 		testFail: "Connection failed",
@@ -239,6 +255,22 @@ function GatewayEditor({ initial, isNew, onClose, onSaved }: { initial: GatewayC
 		const list = await call((c) => c.rpc("gateway.models", { gateway: draft() }));
 		setLoadingModels(false);
 		if (list) setCatalogue(list);
+	};
+
+	const patchPrice = (i: number, k: keyof ModelPricing, v: string) =>
+		setG((x) => ({
+			...x,
+			models: x.models.map((m, j) => (j === i ? { ...m, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, ...m.cost, [k]: v === "" ? 0 : Math.max(0, Number(v) || 0) } } : m)),
+		}));
+
+	const fetchPrices = async () => {
+		const ids = g.models.map((m) => m.id.trim()).filter(Boolean);
+		if (!ids.length) return;
+		const prices = await call((c) => c.rpc("gateway.pricing", { models: ids }));
+		if (!prices) return;
+		const n = Object.keys(prices).length;
+		if (n) setG((x) => ({ ...x, models: x.models.map((m) => (prices[m.id.trim()] ? { ...m, cost: prices[m.id.trim()] } : m)) }));
+		toast(n ? t("pricesDone", { n }) : t("pricesNone"));
 	};
 
 	const toggleModel = (m: GatewayModel) =>
@@ -395,11 +427,23 @@ function GatewayEditor({ initial, isNew, onClose, onSaved }: { initial: GatewayC
 								<Button variant="danger" onClick={() => setG({ ...g, models: g.models.filter((_, j) => j !== i) })} aria-label={t("deleteModel")}>
 									<Trash2 className="size-4" />
 								</Button>
+								<div className="col-span-full flex flex-wrap items-center gap-2 text-xs text-ink-500">
+									<span>{t("priceUnit")}</span>
+									{(["input", "output", "cacheRead", "cacheWrite"] as const).map((k) => (
+										<label key={k} className="flex items-center gap-1">
+											{t(k === "input" ? "priceInput" : k === "output" ? "priceOutput" : k === "cacheRead" ? "priceCacheRead" : "priceCacheWrite")}
+											<Input type="number" min={0} step="any" value={m.cost?.[k] ?? ""} placeholder="0" onChange={(e) => patchPrice(i, k, e.target.value)} className="w-20 font-mono" />
+										</label>
+									))}
+								</div>
 							</div>
 						))}
 						<div className="flex flex-wrap gap-2">
 							<Button variant="outline" onClick={() => setG({ ...g, models: [...g.models, { id: "" }] })}>
 								<Plus className="size-3.5" /> {t("model")}
+							</Button>
+							<Button variant="outline" disabled={!g.models.some((m) => m.id.trim())} onClick={() => void fetchPrices()}>
+								<Coins className="size-3.5" /> {t("fetchPrices")}
 							</Button>
 							<Button variant="outline" disabled={loadingModels || !g.baseUrl} onClick={() => void loadModels()}>
 								{loadingModels ? <LoaderCircle className="size-3.5 animate-spin" /> : <CloudDownload className="size-3.5" />} {t("loadModels")}
