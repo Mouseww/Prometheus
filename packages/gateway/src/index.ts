@@ -22,7 +22,7 @@ export interface PiChatModelConfig {
 	/** Passed through to PI. Adaptive-thinking Claude models need this or the API returns 400. */
 	compat?: { forceAdaptiveThinking?: boolean };
 	/** `off: null` tells PI to omit `thinking` instead of sending `type: disabled`. */
-	thinkingLevelMap?: { off?: string | null };
+	thinkingLevelMap?: { off?: string | null; xhigh?: string | null; max?: string | null };
 }
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9-_]{0,47}$/;
@@ -107,6 +107,10 @@ function toModel(m: GatewayModel, format: GatewayFormat): PiChatModelConfig {
 		model.compat = { forceAdaptiveThinking: true };
 		// Claude 5.5 rejects `thinking.type=disabled`; omitting the field is the off mode.
 		model.thinkingLevelMap = { off: null };
+	}
+	// PI only offers xhigh/max when the model maps them explicitly, so they are opt-in per model.
+	if (model.reasoning && (m.xhigh || m.max)) {
+		model.thinkingLevelMap = { ...model.thinkingLevelMap, ...(m.xhigh ? { xhigh: "xhigh" } : {}), ...(m.max ? { max: "max" } : {}) };
 	}
 	return model;
 }

@@ -43,6 +43,9 @@ const M = defineMessages({
 		context: "上下文",
 		reasoning: "思考",
 		vision: "视觉",
+		xhigh: "超高",
+		max: "极限",
+		extraHint: "思考力度默认最高到“高”；需要上游模型支持才勾选",
 		deleteModel: "删除模型",
 		model: "模型",
 		loadModels: "从接口加载模型列表",
@@ -91,6 +94,9 @@ const M = defineMessages({
 		context: "Context",
 		reasoning: "Reasoning",
 		vision: "Vision",
+		xhigh: "X-High",
+		max: "Max",
+		extraHint: "Thinking effort stops at High by default; enable only if the upstream model supports it",
 		deleteModel: "Remove model",
 		model: "Model",
 		loadModels: "Load models from API",
@@ -363,7 +369,7 @@ function GatewayEditor({ initial, isNew, onClose, onSaved }: { initial: GatewayC
 				<Field label={t("models")}>
 					<div className="space-y-2">
 						{g.models.map((m, i) => (
-							<div key={i} className="grid grid-cols-[1fr_6rem_auto_auto_auto] items-center gap-2 rounded-lg border border-ink-800 p-2">
+							<div key={i} className="grid grid-cols-[1fr_6rem_auto_auto_auto_auto_auto] items-center gap-2 rounded-lg border border-ink-800 p-2">
 								<Input value={m.id} placeholder={t("modelId")} onChange={(e) => patchModel(i, { id: e.target.value })} className="font-mono" />
 								<Input
 									type="number"
@@ -380,6 +386,12 @@ function GatewayEditor({ initial, isNew, onClose, onSaved }: { initial: GatewayC
 									<input type="checkbox" checked={m.vision ?? false} onChange={(e) => patchModel(i, { vision: e.target.checked })} className="accent-ember-500" />
 									{t("vision")}
 								</label>
+								{(["xhigh", "max"] as const).map((k) => (
+									<label key={k} className={"flex items-center gap-1 text-xs text-ink-400" + (m.reasoning ? "" : " opacity-40")} title={t("extraHint")}>
+										<input type="checkbox" disabled={!m.reasoning} checked={m[k] ?? false} onChange={(e) => patchModel(i, { [k]: e.target.checked })} className="accent-ember-500" />
+										{t(k)}
+									</label>
+								))}
 								<Button variant="danger" onClick={() => setG({ ...g, models: g.models.filter((_, j) => j !== i) })} aria-label={t("deleteModel")}>
 									<Trash2 className="size-4" />
 								</Button>

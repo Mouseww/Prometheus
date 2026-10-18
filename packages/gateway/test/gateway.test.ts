@@ -88,8 +88,18 @@ describe("toProviderConfig", () => {
 		expect(cfg.models[1]?.compat?.forceAdaptiveThinking).toBe(true);
 		expect(cfg.models[2]?.compat?.forceAdaptiveThinking).toBe(true);
 		expect(cfg.models[3]?.compat).toBeUndefined();
+		expect(cfg.models[3]?.thinkingLevelMap?.off).toBeUndefined();
 		expect(cfg.models[3]?.thinkingLevelMap).toBeUndefined();
 		expect(cfg.models[4]?.compat).toBeUndefined();
+	});
+	it("maps xhigh/max only when opted in on a reasoning model", () => {
+		const cfg = toProviderConfig(
+			gw({ models: [{ id: "a", reasoning: true, xhigh: true }, { id: "b", reasoning: true, xhigh: true, max: true }, { id: "c", xhigh: true }, { id: "d", reasoning: true }] }),
+		);
+		expect(cfg.models[0]?.thinkingLevelMap).toEqual({ xhigh: "xhigh" });
+		expect(cfg.models[1]?.thinkingLevelMap).toEqual({ xhigh: "xhigh", max: "max" });
+		expect(cfg.models[2]?.thinkingLevelMap).toBeUndefined();
+		expect(cfg.models[3]?.thinkingLevelMap).toBeUndefined();
 	});
 	it("does not force adaptive thinking on OpenAI-format Claude proxies", () => {
 		const cfg = toProviderConfig(gw({ models: [{ id: "claude-sonnet-5-5", reasoning: true }] }));

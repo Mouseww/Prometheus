@@ -311,6 +311,10 @@ export interface GatewayModel {
 	maxTokens?: number;
 	reasoning?: boolean;
 	vision?: boolean;
+	/** Opt in to the "xhigh" thinking level (default: levels stop at high). */
+	xhigh?: boolean;
+	/** Opt in to the "max" thinking level. */
+	max?: boolean;
 }
 
 export interface GatewayConfig {
