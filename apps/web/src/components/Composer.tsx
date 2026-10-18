@@ -109,7 +109,7 @@ function ModelPicker() {
 	const label = current ? (info?.name ?? current.id) : t("pickModel");
 
 	return (
-		<div ref={ref} className="min-w-0 max-w-full overflow-hidden md:relative md:max-w-60">
+		<div ref={ref} className="min-w-0 max-w-full md:relative md:max-w-60">
 			<button
 				type="button"
 				onClick={() => setOpen(!open)}
