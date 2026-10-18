@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { GatewayConfig } from "@prometheus/protocol";
-import { embed, escapePiValue, maskSecret, mergeGatewayUpdate, redactGateway, toProviderConfig, transcribe, validateGateway } from "../src/index.ts";
+import { embed, escapePiValue, maskSecret, mergeGatewayUpdate, redactGateway, requiresAdaptiveThinking, toProviderConfig, transcribe, validateGateway } from "../src/index.ts";
 
 const SECRET = ["sk", "test", "1234567890"].join("-");
 const NEW_SECRET = ["new", "secret", "value"].join("-");
@@ -69,6 +69,39 @@ describe("toProviderConfig", () => {
 		const cfg = toProviderConfig(gw({ models: [{ id: "v", vision: true, reasoning: true }] }));
 		expect(cfg.models[0]?.input).toEqual(["text", "image"]);
 		expect(cfg.models[0]?.reasoning).toBe(true);
+	});
+	it("marks Claude 5.5 Anthropic models as adaptive-thinking", () => {
+		const cfg = toProviderConfig(
+			gw({
+				format: "anthropic-messages",
+				models: [
+					{ id: "claude-sonnet-5-5", reasoning: true },
+					{ id: "anthropic/claude-sonnet-5.5", name: "Claude Sonnet 5.5", reasoning: true },
+					{ id: "claude-opus-4-6", reasoning: true },
+					{ id: "claude-sonnet-4-5", reasoning: true },
+					{ id: "claude-3-5-sonnet", reasoning: true },
+				],
+			}),
+		);
+		expect(cfg.models[0]?.compat?.forceAdaptiveThinking).toBe(true);
+		expect(cfg.models[1]?.compat?.forceAdaptiveThinking).toBe(true);
+		expect(cfg.models[2]?.compat?.forceAdaptiveThinking).toBe(true);
+		expect(cfg.models[3]?.compat).toBeUndefined();
+		expect(cfg.models[4]?.compat).toBeUndefined();
+	});
+	it("does not force adaptive thinking on OpenAI-format Claude proxies", () => {
+		const cfg = toProviderConfig(gw({ models: [{ id: "claude-sonnet-5-5", reasoning: true }] }));
+		expect(cfg.models[0]?.compat).toBeUndefined();
+	});
+});
+
+describe("requiresAdaptiveThinking", () => {
+	it("matches current Claude families that reject thinking.type=enabled", () => {
+		expect(requiresAdaptiveThinking("claude-sonnet-5-5")).toBe(true);
+		expect(requiresAdaptiveThinking("claude-haiku-5-5")).toBe(true);
+		expect(requiresAdaptiveThinking("claude-opus-5")).toBe(true);
+		expect(requiresAdaptiveThinking("claude-sonnet-4-5")).toBe(false);
+		expect(requiresAdaptiveThinking("gpt-4.1")).toBe(false);
 	});
 });
 

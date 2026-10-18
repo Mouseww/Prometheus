@@ -19,6 +19,8 @@ export interface PiChatModelConfig {
 	reasoning: boolean;
 	contextWindow: number;
 	maxTokens: number;
+	/** Passed through to PI. Adaptive-thinking Claude models need this or the API returns 400. */
+	compat?: { forceAdaptiveThinking?: boolean };
 }
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9-_]{0,47}$/;
@@ -61,8 +63,29 @@ export function escapePiValue(value: string): string {
 	return escaped.startsWith("!") ? `$${escaped}` : escaped;
 }
 
-function toModel(m: GatewayModel): PiChatModelConfig {
-	return {
+/**
+ * Claude models that reject budget-based `thinking.type=enabled`.
+ * Mirrors PI's Bedrock detector so custom Anthropic gateways send `thinking.type=adaptive`.
+ */
+export function requiresAdaptiveThinking(id: string, name?: string): boolean {
+	const values = name?.trim() ? [id, name] : [id];
+	return values.some((value) => {
+		const s = value.toLowerCase().replace(/[\s_.:]+/g, "-");
+		return (
+			s.includes("opus-4-6") ||
+			s.includes("opus-4-7") ||
+			s.includes("opus-4-8") ||
+			s.includes("opus-5") ||
+			s.includes("sonnet-4-6") ||
+			s.includes("sonnet-5") ||
+			s.includes("haiku-5") ||
+			s.includes("fable-5")
+		);
+	});
+}
+
+function toModel(m: GatewayModel, format: GatewayFormat): PiChatModelConfig {
+	const model: PiChatModelConfig = {
 		id: m.id,
 		name: m.name?.trim() || m.id,
 		input: m.vision ? ["text", "image"] : ["text"],
@@ -71,6 +94,10 @@ function toModel(m: GatewayModel): PiChatModelConfig {
 		contextWindow: m.contextWindow ?? 128_000,
 		maxTokens: m.maxTokens ?? 16_384,
 	};
+	if (format === "anthropic-messages" && requiresAdaptiveThinking(m.id, m.name)) {
+		model.compat = { forceAdaptiveThinking: true };
+	}
+	return model;
 }
 
 export function toProviderConfig(g: GatewayConfig): PiProviderConfig {
@@ -108,7 +135,7 @@ export function toProviderConfig(g: GatewayConfig): PiProviderConfig {
 		api: g.format,
 		...(Object.keys(headers).length ? { headers } : {}),
 		...(authHeader ? { authHeader } : {}),
-		models: g.models.map(toModel),
+		models: g.models.map((m) => toModel(m, g.format)),
 	};
 }
 
