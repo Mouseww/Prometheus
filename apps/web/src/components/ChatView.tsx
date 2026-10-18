@@ -10,15 +10,15 @@ import { Flame } from "./ui.tsx";
 const M = defineMessages({
 	zh: {
 		reconnecting: "连接中断，正在重连…",
-		headline1: "先见之明，",
-		headline2: "递你一簇火",
-		tagline: "普罗米修斯，原意“先知先觉者”。它先想在你前头，再把火种递到你手上。",
+		headline1: "想做什么，",
+		headline2: "直接告诉我",
+		tagline: "我是 Prometheus，你的 AI 助手。可以帮你读写文件、执行命令、查资料、写代码，先想清楚再动手。",
 	},
 	en: {
 		reconnecting: "Connection lost, reconnecting…",
-		headline1: "Forethought, ",
-		headline2: "fire in hand",
-		tagline: "Prometheus means \"the one who thinks ahead\". It works a step in front of you, then puts the spark in your hands.",
+		headline1: "What do you want to do? ",
+		headline2: "Just tell me",
+		tagline: "I'm Prometheus, your AI assistant. I can read and write files, run commands, look things up and write code, thinking first before acting.",
 	},
 });
 
