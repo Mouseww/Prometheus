@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { BarChart3, Blocks, Cable, Check, Copy, Globe, Laptop, Mic, Moon, Network, Package, Sparkles, Sun, SlidersHorizontal } from "lucide-react";
+import { BarChart3, Blocks, Cable, Check, Copy, Globe, Laptop, Mic, Moon, Network, Package, Plug, Sparkles, Sun, SlidersHorizontal } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { isAndroid, isDesktopShell } from "../lib/backend.ts";
@@ -9,6 +9,7 @@ import { openSettings, type SettingsTab, toast, updateHostSettings, useStore } f
 import { checkForUpdate, showUpdate, updaterSupported, useUpdater } from "../lib/updater.ts";
 import { GatewaysView } from "./GatewaysView.tsx";
 import { MarketView } from "./MarketView.tsx";
+import { ConnectorsView } from "./ConnectorsView.tsx";
 import { McpView } from "./McpView.tsx";
 import { NetworkSettings } from "./NetworkSettings.tsx";
 import { PluginsView } from "./PluginsView.tsx";
@@ -22,6 +23,7 @@ const M = defineMessages({
 		general: "通用",
 		gateways: "AI 网关",
 		mcp: "MCP",
+		connectors: "连接器",
 		skills: "技能",
 		market: "PI 插件市场",
 		plugins: "Prometheus 插件",
@@ -73,6 +75,7 @@ const M = defineMessages({
 		general: "General",
 		gateways: "AI Gateways",
 		mcp: "MCP",
+		connectors: "Connectors",
 		skills: "Skills",
 		market: "PI Marketplace",
 		plugins: "Prometheus Plugins",
@@ -336,6 +339,7 @@ const TABS: { id: SettingsTab; icon: typeof Network }[] = [
 	{ id: "general", icon: SlidersHorizontal },
 	{ id: "gateways", icon: Network },
 	{ id: "mcp", icon: Cable },
+	{ id: "connectors", icon: Plug },
 	{ id: "skills", icon: Sparkles },
 	{ id: "market", icon: Package },
 	{ id: "plugins", icon: Blocks },
@@ -369,6 +373,7 @@ export function SettingsView() {
 				{tab === "general" && <GeneralSettings />}
 				{tab === "gateways" && <GatewaysView />}
 				{tab === "mcp" && <McpView />}
+				{tab === "connectors" && <ConnectorsView />}
 				{tab === "skills" && <SkillsView />}
 				{tab === "market" && <MarketView />}
 				{tab === "voice" && <VoiceSettings />}

@@ -12,6 +12,7 @@
   "dependencies": {
     "@prometheus/knowledge-lancedb": "workspace:*",
     "@prometheus/plugin-automations": "workspace:*",
+    "@prometheus/plugin-connectors": "workspace:*",
     "@prometheus/plugin-git": "workspace:*",
     "@prometheus/plugin-mcp": "workspace:*",
     "@prometheus/plugin-memory": "workspace:*",
