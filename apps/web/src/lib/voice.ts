@@ -74,7 +74,8 @@ async function toBase64(blob: Blob): Promise<string> {
 
 /** Why recording is impossible here, or undefined when it should work. */
 export function voiceUnsupportedReason(): "insecure" | "unsupported" | undefined {
-	if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia || typeof AudioContext === "undefined") {
+	const hasAudioContext = typeof AudioContext !== "undefined" || typeof (window as unknown as { webkitAudioContext?: unknown }).webkitAudioContext !== "undefined";
+	if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia || !hasAudioContext) {
 		return window.isSecureContext ? "unsupported" : "insecure";
 	}
 	return undefined;
@@ -201,7 +202,10 @@ export function useVoiceInput(onText: (text: string, final: boolean) => void, me
 		clearInterval(draftTimer.current);
 		stream.current = media;
 
-		const ctx = new AudioContext();
+		const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+		const ctx = new Ctor();
+		// iOS Safari starts contexts suspended, which yields silent audio.
+		void ctx.resume().catch(() => {});
 		const source = ctx.createMediaStreamSource(media);
 		const node = ctx.createScriptProcessor(4096, 1, 1);
 		const chunks: Float32Array[] = [];

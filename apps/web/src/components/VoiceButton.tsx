@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { LoaderCircle, Mic, Square } from "lucide-react";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { openSettings, pluginActive, useStore } from "../lib/store.ts";
+import { openSettings, pluginActive, toast, useStore } from "../lib/store.ts";
 import { useVoiceInput, voiceUnsupportedReason } from "../lib/voice.ts";
 
 const M = defineMessages({
@@ -56,12 +56,19 @@ export function VoiceButton({ onText }: { onText: (text: string, final: boolean)
 			)}
 			<button
 				type="button"
-				disabled={working || (Boolean(blocked) && !recording)}
+				disabled={working}
 				onClick={async () => {
 					if (recording) return stop();
-					// The cached state can predate a save in Settings, so re-read it before deciding.
+					if (blocked) return toast(t(blocked), "error");
+					// Mobile browsers only show the permission prompt while the tap's user activation is alive,
+					// so request the microphone synchronously and never await the network first.
+					if (state?.configured) {
+						void start();
+						void refresh();
+						return;
+					}
+					// Not known to be configured: re-read the state (it may predate a save in Settings).
 					const fresh = (await refresh()) ?? state;
-					// Not configured yet: take the user to the setting instead of failing after they speak.
 					if (fresh && !fresh.configured) return openSettings("voice");
 					void start();
 				}}
