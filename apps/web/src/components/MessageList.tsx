@@ -1,10 +1,10 @@
 import clsx from "clsx";
-import { Brain, Check, ChevronDown, ChevronRight, CircleAlert, Copy, GitBranch, LoaderCircle, RotateCcw, Trash2 } from "lucide-react";
+import { Brain, Check, Eye, ChevronDown, ChevronRight, CircleAlert, Copy, GitBranch, LoaderCircle, RotateCcw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import type { AssistantMessage, ChatMessage, ImageContent, ToolCallContent, ToolResultMessage, UserMessage } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { imagesOf } from "../lib/images.ts";
-import { deleteMessage, forkMessage, retryMessage, type ToolRun, toast } from "../lib/store.ts";
+import { deleteMessage, forkMessage, openFile, pluginActive, retryMessage, type ToolRun, toast, useStore } from "../lib/store.ts";
 import { ImageStrip } from "./ImageStrip.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { SubagentCard } from "./SubagentCard.tsx";
@@ -112,6 +112,9 @@ function ToolCard({ call, run, result }: { call: ToolCallContent; run?: ToolRun;
 	const status = run?.status ?? (result ? (result.isError ? "error" : "done") : "running");
 	const output = result ? resultText(result) : resultText(run?.result ?? run?.partial);
 	const pictures = result ? imagesOf(result) : imagesOf(run?.result ?? run?.partial);
+	const viewer = useStore((s) => pluginActive(s.plugins, "workbench"));
+	const cwd = useStore((s) => s.session?.cwd ?? "");
+	const filePath = ["read", "write", "edit"].includes(call.name) && typeof call.arguments?.path === "string" ? call.arguments.path : undefined;
 	return (
 		<div className={clsx("overflow-hidden rounded-xl border bg-ink-900/70", status === "error" ? "border-rose-400/25" : "border-ink-800")}>
 			<button type="button" onClick={() => setOpen(!open)} className="flex w-full items-center gap-2.5 px-3 py-2 text-left">
@@ -127,6 +130,21 @@ function ToolCard({ call, run, result }: { call: ToolCallContent; run?: ToolRun;
 				</span>
 				<span className="shrink-0 font-mono text-[13px] font-medium text-ink-100">{call.name || run?.toolName}</span>
 				<span className="min-w-0 flex-1 truncate font-mono text-xs text-ink-500">{argSummary(call.name, call.arguments)}</span>
+				{viewer && filePath && (
+					<span
+						role="button"
+						tabIndex={0}
+						onClick={(e) => {
+							e.stopPropagation();
+							openFile(filePath, cwd);
+						}}
+						onKeyDown={(e) => e.key === "Enter" && (e.stopPropagation(), openFile(filePath, cwd))}
+						className="grid size-5 shrink-0 place-items-center rounded text-ink-500 hover:bg-ink-800 hover:text-ink-100"
+						title="View"
+					>
+						<Eye className="size-3.5" />
+					</span>
+				)}
 				{run?.durationMs !== undefined && <span className="shrink-0 font-mono text-[11px] text-ink-600">{(run.durationMs / 1000).toFixed(1)}s</span>}
 				{open ? <ChevronDown className="size-3.5 shrink-0 text-ink-500" /> : <ChevronRight className="size-3.5 shrink-0 text-ink-500" />}
 			</button>

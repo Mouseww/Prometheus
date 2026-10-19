@@ -225,6 +225,9 @@ importers:
       '@prometheus/plugin-voice':
         specifier: workspace:*
         version: link:../voice
+      '@prometheus/plugin-workbench':
+        specifier: workspace:*
+        version: link:../workbench
 
   plugins/connectors:
     dependencies:
@@ -333,6 +336,18 @@ importers:
       '@prometheus/gateway':
         specifier: workspace:*
         version: link:../../packages/gateway
+      '@prometheus/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      '@prometheus/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+
+  plugins/workbench:
+    dependencies:
+      '@earendil-works/pi-ai':
+        specifier: 1.2.0
+        version: 1.2.0(@aws-sdk/credential-provider-node@3.972.86)(@smithy/signature-v4@5.7.4)(undici@8.10.2)(ws@8.22.0)
       '@prometheus/plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk

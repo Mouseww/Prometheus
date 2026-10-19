@@ -10,6 +10,7 @@ import { SettingsView } from "./components/SettingsView.tsx";
 import { Sidebar } from "./components/Sidebar.tsx";
 import { SubagentPanel } from "./components/SubagentPanel.tsx";
 import { TitleBar } from "./components/TitleBar.tsx";
+import { WorkbenchPanel } from "./components/WorkbenchPanel.tsx";
 import { Toasts } from "./components/Toasts.tsx";
 import { Modal } from "./components/ui.tsx";
 import { UpdateDialog } from "./components/UpdateDialog.tsx";
@@ -103,6 +104,16 @@ export function App() {
 		};
 	}, []);
 
+	// Tell the workbench plugin a desktop webview exists, so the assistant's browser tools wait for it instead of starting a background Chrome.
+	const workbenchOn = pluginActive(plugins, "workbench");
+	useEffect(() => {
+		if (!isDesktopShell() || !workbenchOn || conn !== "open") return;
+		const ping = () => void useStore.getState().client?.rpc("plugin.call", { plugin: "workbench", method: "nativeHello", params: {} }).catch(() => undefined);
+		ping();
+		const t = setInterval(ping, 60_000);
+		return () => clearInterval(t);
+	}, [workbenchOn, conn]);
+
 	useEffect(() => {
 		document.title = title ? `${title} · Prometheus` : "Prometheus";
 	}, [title]);
@@ -140,6 +151,7 @@ export function App() {
 						</Modal>
 					)}
 				</main>
+				<WorkbenchPanel />
 				<SubagentPanel />
 			</div>
 			<DialogHost />

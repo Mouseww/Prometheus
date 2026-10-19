@@ -542,6 +542,34 @@ export interface PluginInstallResult {
 	restartReasons: string[];
 }
 
+// ---------- Workbench plugin (file viewer + built-in browser; hidden until used) ----------
+
+export const OPEN_FILE_TOOL = "open_file";
+/** Every browser tool starts with this; the chat opens the browser tab when one runs. */
+export const BROWSER_TOOL_PREFIX = "browser_";
+
+export interface WorkbenchFile {
+	path: string;
+	name: string;
+	size: number;
+	kind: "text" | "image" | "binary" | "tooLarge";
+	language: string;
+	text?: string;
+	/** `data:` URL for images. */
+	dataUrl?: string;
+	truncated?: boolean;
+}
+
+export interface WorkbenchBrowserState {
+	open: boolean;
+	url: string;
+	title: string;
+	/** Base64 JPEG of the current page. */
+	shot?: string;
+	width: number;
+	height: number;
+}
+
 // ---------- Task tracking (todos plugin) ----------
 
 export const TODO_TOOL = "todo_write";

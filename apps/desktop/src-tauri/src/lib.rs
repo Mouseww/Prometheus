@@ -8,6 +8,8 @@ use serde::Serialize;
 use tauri::{Manager, RunEvent};
 
 #[cfg(desktop)]
+mod browser;
+#[cfg(desktop)]
 mod tray;
 
 #[cfg(target_os = "android")]
@@ -291,6 +293,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| tray::show_main(app)))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(tray::TrayState::new())
+        .manage(browser::BrowserState::default())
         .on_window_event(tray::on_window_event)
         .setup(|app| {
             tray::init(app.handle())?;
@@ -303,7 +306,14 @@ pub fn run() {
             local_supported,
             tray::set_close_to_tray,
             tray::show_main_window,
-            tray::open_session_in_main
+            tray::open_session_in_main,
+            browser::wb_open,
+            browser::wb_bounds,
+            browser::wb_visible,
+            browser::wb_navigate,
+            browser::wb_url,
+            browser::wb_close,
+            browser::wb_exec
         ]);
     #[cfg(mobile)]
     let builder = builder

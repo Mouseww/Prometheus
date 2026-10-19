@@ -1,3 +1,4 @@
+import { BROWSER_TOOL_PREFIX, OPEN_FILE_TOOL } from "@prometheus/protocol";
 import type {
 	AssistantMessage,
 	ChatMessage,
@@ -111,6 +112,13 @@ export type SubagentSort = SubagentSortKey;
 /** Stable empty list: a fresh `[]` per selector call would re-render forever. */
 export const NO_SUBAGENTS: SubagentRun[] = [];
 
+/** Side viewer tabs. Empty by default, so nothing is shown until a file or the browser is actually used. */
+export type WorkbenchTab = { id: string; kind: "browser" } | { id: string; kind: "file"; path: string; cwd: string; line?: number };
+export interface WorkbenchUi {
+	tabs: WorkbenchTab[];
+	active: string | null;
+}
+
 /** The right-hand subagent panel: a list on top and the selected agent's process below, each closable on its own. */
 export interface SubagentUi {
 	open: boolean;
@@ -160,6 +168,7 @@ interface State {
 	/** Bumped whenever a package operation succeeds, so views can reload the installed list. */
 	packageRevision: number;
 	subagentUi: SubagentUi;
+	workbench: WorkbenchUi;
 }
 
 export const useStore = create<State>(() => ({
@@ -185,6 +194,7 @@ export const useStore = create<State>(() => ({
 	packageJobs: [],
 	packageRevision: 0,
 	subagentUi: { open: false, listOpen: true, detailOpen: false, selected: null, sort: savedSort(), known: [] },
+	workbench: { tabs: [], active: null },
 }));
 
 const set = useStore.setState;
@@ -346,6 +356,7 @@ function flush(): void {
 	for (const e of events) next = reduce(next, e);
 	set({ session: next });
 	if (next.subagents !== session.subagents) noteSubagents(next.subagents);
+	for (const e of events) if (e.type === "tool_execution_start") noteWorkbenchTool(e.toolName, e.args, session.cwd);
 	if (events.some((e) => e.type === "agent_settled" || e.type === "message_end" || e.type === "compaction_end")) void refreshStats();
 }
 
@@ -679,6 +690,45 @@ function noteSubagents(runs: SubagentRun[]): void {
 	const fresh = runs.map((r) => r.callId).filter((id) => !ui.known.includes(id));
 	if (!fresh.length) return;
 	set({ subagentUi: { ...ui, open: true, listOpen: true, known: [...ui.known, ...new Set(fresh)] } });
+}
+
+// ---------- workbench (file viewer + browser) ----------
+
+/** Open (or focus) a file in the side viewer; a line re-scrolls an already open tab. */
+export function openFile(path: string, cwd: string, line?: number): void {
+	const id = `file:${cwd}::${path}`;
+	set((s) => {
+		const old = s.workbench.tabs.find((t) => t.id === id);
+		const tab: WorkbenchTab = { id, kind: "file", path, cwd, line };
+		const tabs = old ? s.workbench.tabs.map((t) => (t.id === id ? tab : t)) : [...s.workbench.tabs, tab];
+		return { workbench: { tabs, active: id } };
+	});
+}
+
+export function openBrowserTab(): void {
+	set((s) => ({ workbench: { tabs: s.workbench.tabs.some((t) => t.kind === "browser") ? s.workbench.tabs : [...s.workbench.tabs, { id: "browser", kind: "browser" }], active: "browser" } }));
+}
+
+export function closeWorkbenchTab(id: string): void {
+	set((s) => {
+		const idx = s.workbench.tabs.findIndex((t) => t.id === id);
+		const tabs = s.workbench.tabs.filter((t) => t.id !== id);
+		const active = s.workbench.active === id ? (tabs[Math.min(idx, tabs.length - 1)]?.id ?? null) : s.workbench.active;
+		return { workbench: { tabs, active } };
+	});
+}
+
+export function activateWorkbenchTab(id: string): void {
+	set((s) => ({ workbench: { ...s.workbench, active: id } }));
+}
+
+/** A live tool call on the viewer's behalf opens its tab; history loaded on connect never does. */
+function noteWorkbenchTool(name: string, args: unknown, cwd: string): void {
+	if (!pluginActive(get().plugins, "workbench")) return;
+	if (name === OPEN_FILE_TOOL) {
+		const a = (args ?? {}) as { path?: unknown; line?: unknown };
+		if (typeof a.path === "string") openFile(a.path, cwd, typeof a.line === "number" ? a.line : undefined);
+	} else if (name.startsWith(BROWSER_TOOL_PREFIX) && name !== "browser_close") openBrowserTab();
 }
 
 /** Show a subagent's process in the lower half, opening the panel if needed. */

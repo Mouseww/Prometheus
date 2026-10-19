@@ -1,5 +1,5 @@
 import { isAbsolute, relative, resolve } from "node:path";
-import { type PermissionMode, TODO_TOOL } from "@prometheus/protocol";
+import { OPEN_FILE_TOOL, type PermissionMode, TODO_TOOL } from "@prometheus/protocol";
 
 export const EXIT_PLAN_MODE = "exit_plan_mode";
 /** Installs code that runs with the app's own permissions, so every use is confirmed and no answer is remembered. */
@@ -11,7 +11,7 @@ const READ = new Set(["read", "grep", "find", "ls"]);
 const EDIT = new Set(["edit", "write"]);
 const EXEC = new Set(["bash", "powershell"]);
 // codemode only forwards to other tools, and every nested call passes through the gate itself.
-const SAFE = new Set(["codemode", "tool_search", "knowledge_search", "memory_search", "memory_save", "memory_forget", EXIT_PLAN_MODE, TODO_TOOL]);
+const SAFE = new Set(["codemode", "tool_search", "knowledge_search", "memory_search", "memory_save", "memory_forget", EXIT_PLAN_MODE, TODO_TOOL, OPEN_FILE_TOOL]);
 
 export function toolKind(name: string): ToolKind {
 	if (READ.has(name)) return "read";

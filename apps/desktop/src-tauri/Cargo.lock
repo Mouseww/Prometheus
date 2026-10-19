@@ -2791,8 +2791,9 @@ dependencies = [
 
 [[package]]
 name = "prometheus-desktop"
-version = "0.4.6"
+version = "0.4.20"
 dependencies = [
+ "base64 0.22.1",
  "flate2",
  "getrandom 0.3.4",
  "serde",
