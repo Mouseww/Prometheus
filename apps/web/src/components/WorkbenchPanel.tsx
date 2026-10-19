@@ -58,16 +58,22 @@ export function WorkbenchPanel() {
 	const enabled = useStore((s) => s.plugins.some((p) => p.name === "workbench" && p.status === "loaded"));
 	// Settings and other pages open over the chat area; the panel steps aside (kept mounted) so they get the full width.
 	const pageOpen = useStore((s) => s.view !== "chat");
-	if (!enabled || !tabs.length) return null;
-	const tab = tabs.find((x) => x.id === active) ?? tabs[0];
-	if (!tab) return null;
+	if (!enabled) return null;
+	// On desktop the browser is its own window: no panel, just the headless controller below.
+	const desktop = isDesktopShell();
+	const shown = desktop ? tabs.filter((x) => x.kind !== "browser") : tabs;
+	const controller = desktop && tabs.some((x) => x.kind === "browser") ? <NativeBrowserView key="native-browser" /> : null;
+	const tab = shown.find((x) => x.id === active) ?? shown[0];
+	if (!tab) return controller;
 	return (
+		<>
+		{controller}
 		<aside
 			className={clsx(pageOpen ? "hidden" : "flex", "w-[28rem] shrink-0 flex-col border-l hairline bg-ink-900/80 backdrop-blur max-md:absolute max-md:inset-y-0 max-md:right-0 max-md:z-30 max-md:w-[min(30rem,100%)] max-md:bg-ink-900 max-md:shadow-2xl lg:w-[38rem]")}
 			aria-label={t("title")}
 		>
 			<div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b hairline px-1.5 py-1">
-				{tabs.map((x) => (
+				{shown.map((x) => (
 					<div key={x.id} className={clsx("group flex max-w-48 shrink-0 items-center gap-1.5 rounded-md py-1 pl-2 pr-1 text-xs", x.id === tab.id ? "bg-ink-800 text-ink-100" : "text-ink-400 hover:bg-ink-850")}>
 						<button type="button" onClick={() => activateWorkbenchTab(x.id)} className="flex min-w-0 items-center gap-1.5" title={x.kind === "file" ? x.path : t("browser")}>
 							{x.kind === "browser" ? <Globe className="size-3.5 shrink-0" /> : <FileText className="size-3.5 shrink-0" />}
@@ -79,8 +85,9 @@ export function WorkbenchPanel() {
 					</div>
 				))}
 			</div>
-			<div className="min-h-0 flex-1">{tab.kind === "browser" ? (isDesktopShell() ? <NativeBrowserView key="browser" /> : <BrowserView key="browser" />) : <FileView key={tab.id} tab={tab} />}</div>
+			<div className="min-h-0 flex-1">{tab.kind === "browser" ? <BrowserView key="browser" /> : <FileView key={tab.id} tab={tab} />}</div>
 		</aside>
+		</>
 	);
 }
 
@@ -301,56 +308,28 @@ const closeNativeSoon = () =>
 		if (nativeMounts === 0) void invoke("wb_close").catch(() => undefined);
 	}, 0);
 
+/** Headless: opens the browser window, and runs the assistant's browser commands in it. */
 function NativeBrowserView() {
-	const t = useT(M);
-	const slot = useRef<HTMLDivElement>(null);
-	const [address, setAddress] = useState("");
-	const [ready, setReady] = useState(false);
-	const [loading, setLoading] = useState(false);
-	const editing = useRef(false);
-	// A native view always paints above HTML, so it steps aside while a dialog or page covers the chat.
-	const covered = useStore((s) => s.view !== "chat" || s.uiQueue.length > 0);
-	const coveredRef = useRef(covered);
-	coveredRef.current = covered;
-	const resync = useRef<() => void>(() => undefined);
 	const waiters = useRef<((url: string) => void)[]>([]);
 
 	useEffect(() => {
 		let dead = false;
 		let unlisten: (() => void) | undefined;
-		let raf = 0;
-		let last = "";
-		const el = slot.current;
-		if (!el) return;
 		nativeMounts++;
 		void (async () => {
 			try {
-				await invoke("wb_open", { url: "about:blank", rect: rectOf(el) });
+				await invoke("wb_open", { url: "about:blank" });
 			} catch (e) {
 				if (!dead) toast(String(e), "error");
 				return;
 			}
 			if (dead) return;
-			setReady(true);
 			const { listen } = await import("@tauri-apps/api/event");
 			const un = await listen<{ phase: string; url: string }>("wb-load", (e) => {
-				setLoading(e.payload.phase === "started");
-				if (!editing.current && e.payload.url !== "about:blank") setAddress(e.payload.url);
 				if (e.payload.phase === "finished") for (const w of waiters.current.splice(0)) w(e.payload.url);
 			});
 			if (dead) un();
 			else unlisten = un;
-			// The panel can move without resizing (other panels open and close), so follow its position every frame.
-			const follow = () => {
-				const key = JSON.stringify(rectOf(el));
-				if (!coveredRef.current && key !== last) {
-					last = key;
-					void invoke("wb_bounds", { rect: rectOf(el) }).catch(() => undefined);
-				}
-				raf = requestAnimationFrame(follow);
-			};
-			follow();
-			resync.current = () => (last = "");
 			// Serve the assistant's browser tools: the server queues commands and this loop runs them in the page.
 			void quiet("nativeHello").catch(() => undefined);
 			while (!dead) {
@@ -389,63 +368,11 @@ function NativeBrowserView() {
 
 		return () => {
 			dead = true;
-			cancelAnimationFrame(raf);
 			unlisten?.();
 			nativeMounts--;
 			closeNativeSoon();
 		};
 	}, []);
 
-	useEffect(() => {
-		if (!ready) return;
-		if (covered) void invoke("wb_visible", { visible: false }).catch(() => undefined);
-		else {
-			resync.current();
-			void invoke("wb_visible", { visible: true }).catch(() => undefined);
-		}
-	}, [ready, covered]);
-
-	const go = () => {
-		const raw = address.trim();
-		if (!raw) return;
-		const url = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`;
-		setLoading(true);
-		void invoke("wb_navigate", { url }).catch((e) => {
-			setLoading(false);
-			toast(String(e), "error");
-		});
-	};
-
-	return (
-		<div className="flex h-full flex-col">
-			<form
-				className="flex shrink-0 items-center gap-1.5 border-b hairline px-2 py-1.5"
-				onSubmit={(e) => {
-					e.preventDefault();
-					editing.current = false;
-					go();
-				}}
-			>
-				<button type="button" onClick={() => void invoke("wb_exec", { script: "history.back(); return true;" }).catch(() => undefined)} className="grid size-7 place-items-center rounded text-ink-400 hover:bg-ink-800" title={t("back")}>
-					<ArrowLeft className="size-4" />
-				</button>
-				<input
-					value={address}
-					onChange={(e) => setAddress(e.target.value)}
-					onFocus={() => (editing.current = true)}
-					onBlur={() => (editing.current = false)}
-					placeholder={t("url")}
-					spellCheck={false}
-					className="min-w-0 flex-1 rounded-md bg-ink-950 px-2.5 py-1 font-mono text-xs text-ink-100 outline-none ring-1 ring-ink-800 focus:ring-ember-500/60"
-				/>
-				{loading && <LoaderCircle className="size-4 shrink-0 animate-spin text-ember-400" />}
-				<button type="button" onClick={() => closeWorkbenchTab("browser")} className="grid size-7 place-items-center rounded text-ink-400 hover:bg-ink-800" title={t("closeBrowser")}>
-					<X className="size-4" />
-				</button>
-			</form>
-			<div ref={slot} className="grid min-h-0 flex-1 place-items-center bg-ink-950 p-6 text-center text-xs text-ink-500">
-				{t("separateWindow")}
-			</div>
-		</div>
-	);
+	return null;
 }
