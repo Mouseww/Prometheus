@@ -34,7 +34,7 @@ const M = defineMessages({
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
 /** Composer mic button; renders nothing unless the voice plugin is running. */
-export function VoiceButton({ onText }: { onText: (text: string) => void }) {
+export function VoiceButton({ onText }: { onText: (text: string, final: boolean) => void }) {
 	const t = useT(M);
 	const enabled = useStore((s) => pluginActive(s.plugins, "voice"));
 	const messages = { denied: t("denied"), failed: t("failed"), empty: t("empty"), tooLong: t("tooLong") };
@@ -57,11 +57,12 @@ export function VoiceButton({ onText }: { onText: (text: string) => void }) {
 			<button
 				type="button"
 				disabled={working || (Boolean(blocked) && !recording)}
-				onClick={() => {
+				onClick={async () => {
 					if (recording) return stop();
+					// The cached state can predate a save in Settings, so re-read it before deciding.
+					const fresh = (await refresh()) ?? state;
 					// Not configured yet: take the user to the setting instead of failing after they speak.
-					if (state && !state.configured) return openSettings("voice");
-					void refresh();
+					if (fresh && !fresh.configured) return openSettings("voice");
 					void start();
 				}}
 				title={title}

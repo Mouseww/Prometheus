@@ -316,6 +316,8 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 	const commands = useStore((s) => s.commands);
 	const editorText = useStore((s) => s.editorText);
 	const [text, setText] = useState("");
+	const textRef = useRef(text);
+	textRef.current = text;
 	const [images, setImages] = useState<ImageContent[]>([]);
 	const [reading, setReading] = useState(0);
 	const [dragging, setDragging] = useState(false);
@@ -436,15 +438,23 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 	];
 
 	// Dictation lands where the cursor was, spaced from what is already typed.
-	const insertDictation = (spoken: string) => {
+	// While speaking, drafts replace one another between `before` and `after`, captured when the take began.
+	const dictation = useRef<{ before: string; after: string } | null>(null);
+	const insertDictation = (spoken: string, final: boolean) => {
 		const el = ref.current;
-		setText((current) => {
+		if (!dictation.current) {
+			if (!spoken) return;
+			const current = textRef.current;
 			const at = Math.min(el?.selectionStart ?? current.length, current.length);
-			const before = current.slice(0, at);
-			const glue = before && !/\s$/.test(before) && !/^[\u3000-\u9fff\uff00-\uffef]/.test(spoken) ? " " : "";
-			return `${before}${glue}${spoken}${current.slice(at)}`;
-		});
-		el?.focus();
+			dictation.current = { before: current.slice(0, at), after: current.slice(at) };
+		}
+		const { before, after } = dictation.current;
+		const glue = spoken && before && !/\s$/.test(before) && !/^[\u3000-\u9fff\uff00-\uffef]/.test(spoken) ? " " : "";
+		setText(`${before}${glue}${spoken}${after}`);
+		if (final) {
+			dictation.current = null;
+			el?.focus();
+		}
 	};
 
 	return (
