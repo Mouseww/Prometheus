@@ -1,4 +1,4 @@
-import { BROWSER_TOOL_PREFIX, OPEN_FILE_TOOL } from "@prometheus/protocol";
+import { OPEN_FILE_TOOL } from "@prometheus/protocol";
 import type {
 	AssistantMessage,
 	ChatMessage,
@@ -112,8 +112,8 @@ export type SubagentSort = SubagentSortKey;
 /** Stable empty list: a fresh `[]` per selector call would re-render forever. */
 export const NO_SUBAGENTS: SubagentRun[] = [];
 
-/** Side viewer tabs. Empty by default, so nothing is shown until a file or the browser is actually used. */
-export type WorkbenchTab = { id: string; kind: "browser" } | { id: string; kind: "file"; path: string; cwd: string; line?: number };
+/** Side viewer tabs. Empty by default, so nothing is shown until a file or a terminal is actually opened. */
+export type WorkbenchTab = { id: string; kind: "terminal"; cwd: string } | { id: string; kind: "file"; path: string; cwd: string; line?: number };
 export interface WorkbenchUi {
 	tabs: WorkbenchTab[];
 	active: string | null;
@@ -692,7 +692,7 @@ function noteSubagents(runs: SubagentRun[]): void {
 	set({ subagentUi: { ...ui, open: true, listOpen: true, known: [...ui.known, ...new Set(fresh)] } });
 }
 
-// ---------- workbench (file viewer + browser) ----------
+// ---------- workbench (file viewer) ----------
 
 /** Open (or focus) a file in the side viewer; a line re-scrolls an already open tab. */
 export function openFile(path: string, cwd: string, line?: number): void {
@@ -705,11 +705,20 @@ export function openFile(path: string, cwd: string, line?: number): void {
 	});
 }
 
-export function openBrowserTab(): void {
-	set((s) => ({ workbench: { tabs: s.workbench.tabs.some((t) => t.kind === "browser") ? s.workbench.tabs : [...s.workbench.tabs, { id: "browser", kind: "browser" }], active: "browser" } }));
+/** Server-side shell id of each open terminal tab, so switching tabs keeps the same shell. */
+export const terminalIds = new Map<string, string>();
+
+/** Open a terminal in the given folder (the current session's), or focus the one already open. */
+export function openTerminalTab(cwd: string): void {
+	set((s) => ({ workbench: { tabs: s.workbench.tabs.some((t) => t.kind === "terminal") ? s.workbench.tabs : [...s.workbench.tabs, { id: "terminal", kind: "terminal", cwd }], active: "terminal" } }));
 }
 
 export function closeWorkbenchTab(id: string): void {
+	const shell = terminalIds.get(id);
+	if (shell) {
+		terminalIds.delete(id);
+		void get().client?.rpc("plugin.call", { plugin: "terminal", method: "close", params: { id: shell } }).catch(() => undefined);
+	}
 	set((s) => {
 		const idx = s.workbench.tabs.findIndex((t) => t.id === id);
 		const tabs = s.workbench.tabs.filter((t) => t.id !== id);
@@ -728,7 +737,7 @@ function noteWorkbenchTool(name: string, args: unknown, cwd: string): void {
 	if (name === OPEN_FILE_TOOL) {
 		const a = (args ?? {}) as { path?: unknown; line?: unknown };
 		if (typeof a.path === "string") openFile(a.path, cwd, typeof a.line === "number" ? a.line : undefined);
-	} else if (name.startsWith(BROWSER_TOOL_PREFIX) && name !== "browser_close") openBrowserTab();
+	}
 }
 
 /** Show a subagent's process in the lower half, opening the panel if needed. */

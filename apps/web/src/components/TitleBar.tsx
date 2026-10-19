@@ -1,16 +1,16 @@
 import clsx from "clsx";
-import { FolderOpen, Globe, Minus, PanelLeft, PanelRight, Square, Wrench, X } from "lucide-react";
+import { FolderOpen, Minus, PanelLeft, PanelRight, Square, SquareTerminal, Wrench, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ToolInfo } from "@prometheus/protocol";
 import { isDesktopShell } from "../lib/backend.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { call, closeWorkbenchTab, NO_SUBAGENTS, openBrowserTab, pluginActive, toggleSubagentPanel, useStore } from "../lib/store.ts";
+import { call, closeWorkbenchTab, NO_SUBAGENTS, openTerminalTab, pluginActive, toggleSubagentPanel, useStore } from "../lib/store.ts";
 import { Flame } from "./ui.tsx";
 
 const M = defineMessages({
 	zh: {
 		tools: "工具",
-		browser: "内部浏览器",
+		terminal: "终端",
 		toolSwitch: "工具开关",
 		subagents: "子代理",
 		toggleSidebar: "切换侧栏",
@@ -24,7 +24,7 @@ const M = defineMessages({
 	},
 	en: {
 		tools: "Tools",
-		browser: "Built-in browser",
+		terminal: "Terminal",
 		toolSwitch: "Tool switches",
 		subagents: "Subagents",
 		toggleSidebar: "Toggle sidebar",
@@ -119,21 +119,22 @@ function SubagentToggle() {
 	);
 }
 
-function BrowserToggle() {
+function TerminalToggle() {
 	const t = useT(M);
-	const enabled = useStore((s) => pluginActive(s.plugins, "workbench"));
-	const open = useStore((s) => s.workbench.tabs.some((x) => x.kind === "browser"));
+	const enabled = useStore((s) => pluginActive(s.plugins, "terminal"));
+	const open = useStore((s) => s.workbench.tabs.some((x) => x.kind === "terminal"));
+	const cwd = useStore((s) => s.session?.cwd ?? "");
 	if (!enabled) return null;
 	return (
 		<button
 			type="button"
-			onClick={() => (open ? closeWorkbenchTab("browser") : openBrowserTab())}
+			onClick={() => (open ? closeWorkbenchTab("terminal") : openTerminalTab(cwd))}
 			aria-pressed={open}
 			className={clsx("rounded-md p-1.5 hover:bg-ink-800", open ? "bg-ink-800 text-ember-300" : "text-ink-400 hover:text-ink-100")}
-			title={t("browser")}
-			aria-label={t("browser")}
+			title={t("terminal")}
+			aria-label={t("terminal")}
 		>
-			<Globe className="size-4" />
+			<SquareTerminal className="size-4" />
 		</button>
 	);
 }
@@ -148,7 +149,7 @@ function SessionTools() {
 					{v}
 				</span>
 			))}
-			<BrowserToggle />
+			<TerminalToggle />
 			<SubagentToggle />
 			<ToolsPopover />
 		</div>

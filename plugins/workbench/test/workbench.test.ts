@@ -2,26 +2,7 @@ import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { findBrowser, normalizeUrl } from "../src/browser.ts";
 import { looksBinary, readForViewer, resolveAllowed } from "../src/files.ts";
-
-describe("normalizeUrl", () => {
-	it("adds https and accepts host:port", () => {
-		expect(normalizeUrl("example.com")).toBe("https://example.com/");
-		expect(normalizeUrl("localhost:3000/x")).toBe("https://localhost:3000/x");
-		expect(normalizeUrl("http://a.b")).toBe("http://a.b/");
-	});
-	it("rejects non-web schemes", () => {
-		for (const u of ["file:///etc/passwd", "javascript:alert(1)", "chrome://settings", "data:text/html,hi", ""]) expect(() => normalizeUrl(u)).toThrow();
-	});
-});
-
-describe("findBrowser", () => {
-	it("honours PROMETHEUS_BROWSER only when it exists", () => {
-		expect(findBrowser({ PROMETHEUS_BROWSER: "/x/chrome" }, () => true)).toBe("/x/chrome");
-		expect(findBrowser({ PROMETHEUS_BROWSER: "/x/chrome" }, () => false)).toBeUndefined();
-	});
-});
 
 describe("file viewer", () => {
 	it("stays inside the roots, including through symlinks", async () => {

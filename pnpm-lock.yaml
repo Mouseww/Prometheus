@@ -219,6 +219,9 @@ importers:
       '@prometheus/plugin-skills':
         specifier: workspace:*
         version: link:../skills
+      '@prometheus/plugin-terminal':
+        specifier: workspace:*
+        version: link:../terminal
       '@prometheus/plugin-todos':
         specifier: workspace:*
         version: link:../todos
@@ -318,6 +321,12 @@ importers:
       '@prometheus/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+
+  plugins/terminal:
+    dependencies:
+      '@prometheus/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
   plugins/todos:
     dependencies:

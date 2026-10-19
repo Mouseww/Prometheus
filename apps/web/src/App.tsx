@@ -104,16 +104,6 @@ export function App() {
 		};
 	}, []);
 
-	// Tell the workbench plugin a desktop webview exists, so the assistant's browser tools wait for it instead of starting a background Chrome.
-	const workbenchOn = pluginActive(plugins, "workbench");
-	useEffect(() => {
-		if (!isDesktopShell() || !workbenchOn || conn !== "open") return;
-		const ping = () => void useStore.getState().client?.rpc("plugin.call", { plugin: "workbench", method: "nativeHello", params: {} }).catch(() => undefined);
-		ping();
-		const t = setInterval(ping, 60_000);
-		return () => clearInterval(t);
-	}, [workbenchOn, conn]);
-
 	useEffect(() => {
 		document.title = title ? `${title} · Prometheus` : "Prometheus";
 	}, [title]);
