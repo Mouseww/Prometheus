@@ -258,3 +258,22 @@ describe("authorization code flow", () => {
 		expect((spy.mock.calls[1]?.[1]?.headers as Record<string, string>).authorization).toBe(`Basic ${Buffer.from("k:s").toString("base64")}`);
 	});
 });
+
+describe("built-in OAuth apps", () => {
+	it("ships only public client ids, and GitHub defaults to device flow", () => {
+		const gh = providers.find((p) => p.id === "github")!;
+		expect(gh.auth[0]?.kind).toBe("oauth-device");
+		expect(gh.builtinClientIds?.["oauth-device"]).toMatch(/^Ov23li/);
+		for (const p of providers) for (const id of Object.values(p.builtinClientIds ?? {})) expect(id).not.toMatch(/secret/i);
+	});
+});
+
+describe("refresh failure", () => {
+	it("tells the user to re-authorize instead of leaking a raw HTTP error", async () => {
+		const vault = await openVault(await tmp());
+		const service = createService(vault);
+		const rec = await vault.add({ provider: "github", label: "gh", authKind: "oauth-device", policy: "allow", config: {}, expiresAt: Date.now() - 1000, secrets: { token: "old", refreshToken: "r", clientId: "c", values: {} } });
+		mockFetch(() => ({ error: "bad_refresh_token", error_description: "expired" }));
+		await expect(service.call({ connection: rec.id, operation: "list_repos", params: {} })).rejects.toThrow("重新授权");
+	});
+});

@@ -79,6 +79,7 @@ function catalog() {
 		category: p.category,
 		description: p.description,
 		auth: p.auth.map((a) => ({ kind: a.kind, help: a.help, label: "label" in a ? a.label : undefined, scopes: "scopes" in a ? a.scopes : undefined })),
+		builtin: Object.keys(p.builtinClientIds ?? {}),
 		fields: Object.fromEntries([...p.auth.map((a): [string, FieldSpec[]] => [a.kind, formFields(p, a.kind)]), ["oauth-app", fieldsFor(p, "oauth-app")]]),
 		operations: p.operations.map((o) => ({ name: o.name, description: o.description, access: o.access })),
 	}));
@@ -153,6 +154,7 @@ export default definePlugin({
 					}
 				}
 			}
+			if (!clientId) clientId = provider.builtinClientIds?.[method.kind] ?? "";
 			if (!clientId) throw new ConnectorError("请填写 Client ID");
 			const config: Record<string, string> = {};
 			for (const f of fieldsFor(provider, "oauth-app")) {

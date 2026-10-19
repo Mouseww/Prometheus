@@ -49,7 +49,9 @@ export function createService(vault: Vault) {
 				if (!secrets.refreshToken || !secrets.clientId) throw new ConnectorError("授权已过期，且无法自动刷新，请重新授权该连接");
 				const provider = providerById(record.provider);
 				if (!provider) throw new ConnectorError(`未知提供方：${record.provider}`);
-				const next = await refreshToken(authMethodOf(provider, record.authKind), record.config, { clientId: secrets.clientId, clientSecret: secrets.clientSecret, refreshToken: secrets.refreshToken });
+				const next = await refreshToken(authMethodOf(provider, record.authKind), record.config, { clientId: secrets.clientId, clientSecret: secrets.clientSecret, refreshToken: secrets.refreshToken }).catch((err: unknown) => {
+					throw new ConnectorError(`连接「${record.label}」的授权已过期且自动刷新失败，请在 设置 → 连接器 中删除后重新授权（${err instanceof Error ? err.message.slice(0, 200) : String(err)}）`);
+				});
 				await vault.updateSecrets(record.id, (s) => ({ ...s, token: next.accessToken, refreshToken: next.refreshToken ?? s.refreshToken }), next.expiresAt);
 			})().finally(() => refreshing.delete(record.id));
 			refreshing.set(record.id, job);

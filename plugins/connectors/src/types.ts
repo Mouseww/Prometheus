@@ -56,6 +56,8 @@ export interface ConnectorProvider {
 	/** Non-OAuth inputs, per auth method kind. Keys with `secret` go to the encrypted part. */
 	fields: Partial<Record<AuthMethod["kind"] | "oauth-app", FieldSpec[]>>;
 	operations: Operation[];
+	/** OAuth app shipped with Prometheus, per auth kind. Only public client IDs belong here, never secrets. */
+	builtinClientIds?: Partial<Record<AuthMethod["kind"], string>>;
 	/** Cheap call proving the credentials work; returns a display name for the account. */
 	test(ctx: OperationContext): Promise<string>;
 }

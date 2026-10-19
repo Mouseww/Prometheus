@@ -33,6 +33,7 @@ export const github: ConnectorProvider = {
 	category: "code",
 	description: "仓库、Issue、Pull Request 与代码搜索（支持 GitHub Enterprise）",
 	auth: [
+		{ kind: "oauth-device", deviceUrl: "https://github.com/login/device/code", tokenUrl: "https://github.com/login/oauth/access_token", scopes: ["repo", "read:org"], help: "点击后会得到一个验证码，在 GitHub 页面输入并授权即可，无需手动创建令牌" },
 		{
 			kind: "oauth-code",
 			authorizeUrl: "https://github.com/login/oauth/authorize",
@@ -41,8 +42,8 @@ export const github: ConnectorProvider = {
 			help: "在 GitHub → Settings → Developer settings → OAuth Apps 创建应用，把下方回调地址填进 Authorization callback URL",
 		},
 		{ kind: "token", label: "Personal Access Token", help: "在 GitHub → Settings → Developer settings 创建（建议 fine-grained，仅授予所需仓库）" },
-		{ kind: "oauth-device", deviceUrl: "https://github.com/login/device/code", tokenUrl: "https://github.com/login/oauth/access_token", scopes: ["repo", "read:org"], help: "需要先注册 OAuth App 并启用 Device Flow，填入 Client ID" },
 	],
+	builtinClientIds: { "oauth-device": "Ov23liJbBhU83HnyA7Rs" },
 	fields: {
 		token: [{ key: "apiUrl", label: "API 地址（可选）", placeholder: "https://api.github.com", help: "GitHub Enterprise 填 https://host/api/v3" }],
 		"oauth-app": [

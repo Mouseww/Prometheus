@@ -103,6 +103,8 @@ interface ProviderInfo {
 	category: string;
 	description: string;
 	auth: { kind: Kind; help?: string; label?: string }[];
+	/** Auth kinds whose OAuth app ships with Prometheus, so no client ID is asked for. */
+	builtin?: string[];
 	fields: Record<string, FieldSpec[]>;
 	operations: { name: string; description: string; access: "read" | "write" }[];
 }
@@ -246,7 +248,8 @@ function AddDialog({ providers, onClose, onDone }: { providers: ProviderInfo[]; 
 	}, []);
 
 	const isOAuth = method?.kind === "oauth-device" || method?.kind === "oauth-code";
-	const fields = (isOAuth ? provider?.fields["oauth-app"] : method && provider?.fields[method.kind]) ?? [];
+	const builtin = !!method && !!provider?.builtin?.includes(method.kind);
+	const fields = builtin ? [] : ((isOAuth ? provider?.fields["oauth-app"] : method && provider?.fields[method.kind]) ?? []);
 	const httpBase = useStore((st) => st.client?.target.httpBase) ?? window.location.origin;
 	const redirectUri = `${httpBase}${CALLBACK_PATH}`;
 	const common = { provider: providerId, authKind: method?.kind, label: label.trim(), policy, values };
@@ -347,7 +350,7 @@ function AddDialog({ providers, onClose, onDone }: { providers: ProviderInfo[]; 
 					/>
 				</Field>
 			))}
-			{isOAuth && <p className="text-xs text-ink-500">{t("reuseHint")}</p>}
+			{isOAuth && !builtin && <p className="text-xs text-ink-500">{t("reuseHint")}</p>}
 			{method?.kind === "oauth-code" && (
 				<p className="text-xs text-ink-400">
 					{t("redirectHint")} <code className="break-all font-mono text-ink-200">{redirectUri}</code>
