@@ -26,6 +26,8 @@ history.replaceState(history.state,'',location.pathname+location.search+'#__PREF
 #[derive(Default)]
 pub struct BrowserState {
     exec: Mutex<()>,
+    /// Two quick opens (React remounts) must not both try to create the view.
+    open: Mutex<()>,
 }
 
 #[derive(Deserialize, Clone, Copy)]
@@ -51,10 +53,14 @@ fn webview(app: &AppHandle) -> Result<tauri::Webview, String> {
     app.get_webview(LABEL).ok_or_else(|| "浏览器未打开".to_string())
 }
 
+/// Async on purpose (all of these): a sync command runs inside WebView2's IPC callback on the main thread,
+/// where creating another WebView2 never completes and leaves an empty, click-swallowing host window behind.
 /// Creates the browser view at `rect` (CSS pixels of the main window), or moves it there if it exists.
 #[tauri::command]
-pub fn wb_open(app: AppHandle, url: String, rect: Rect) -> Result<(), String> {
+pub async fn wb_open(app: AppHandle, url: String, rect: Rect) -> Result<(), String> {
     let url = web_url(&url)?;
+    let state = app.state::<BrowserState>();
+    let _guard = state.open.lock().map_err(|_| "浏览器状态异常".to_string())?;
     if let Some(existing) = app.get_webview(LABEL) {
         existing.set_position(LogicalPosition::new(rect.x, rect.y)).map_err(|e| e.to_string())?;
         existing.set_size(LogicalSize::new(rect.w, rect.h)).map_err(|e| e.to_string())?;
@@ -83,7 +89,7 @@ pub fn wb_open(app: AppHandle, url: String, rect: Rect) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn wb_bounds(app: AppHandle, rect: Rect) -> Result<(), String> {
+pub async fn wb_bounds(app: AppHandle, rect: Rect) -> Result<(), String> {
     let Some(wv) = app.get_webview(LABEL) else { return Ok(()) };
     wv.set_position(LogicalPosition::new(rect.x, rect.y)).map_err(|e| e.to_string())?;
     wv.set_size(LogicalSize::new(rect.w.max(1.0), rect.h.max(1.0))).map_err(|e| e.to_string())
@@ -91,7 +97,7 @@ pub fn wb_bounds(app: AppHandle, rect: Rect) -> Result<(), String> {
 
 /// Hide while something in the app has to be drawn over it: a native view always sits above HTML.
 #[tauri::command]
-pub fn wb_visible(app: AppHandle, visible: bool) -> Result<(), String> {
+pub async fn wb_visible(app: AppHandle, visible: bool) -> Result<(), String> {
     let Some(wv) = app.get_webview(LABEL) else { return Ok(()) };
     if visible {
         return wv.show().map_err(|e| e.to_string());
@@ -108,17 +114,17 @@ fn park(wv: &tauri::Webview) {
 }
 
 #[tauri::command]
-pub fn wb_navigate(app: AppHandle, url: String) -> Result<(), String> {
+pub async fn wb_navigate(app: AppHandle, url: String) -> Result<(), String> {
     webview(&app)?.navigate(web_url(&url)?).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn wb_url(app: AppHandle) -> Result<String, String> {
+pub async fn wb_url(app: AppHandle) -> Result<String, String> {
     Ok(webview(&app)?.url().map_err(|e| e.to_string())?.to_string())
 }
 
 #[tauri::command]
-pub fn wb_close(app: AppHandle) -> Result<(), String> {
+pub async fn wb_close(app: AppHandle) -> Result<(), String> {
     if let Some(wv) = app.get_webview(LABEL) {
         park(&wv);
         wv.close().map_err(|e| e.to_string())?;

@@ -292,6 +292,13 @@ const rectOf = (el: HTMLElement): Rect => {
 	return { x: r.left, y: r.top, w: Math.max(1, r.width), h: Math.max(1, r.height) };
 };
 
+/** Mounted NativeBrowserViews; the native view is only closed once none is left (React may remount quickly). */
+let nativeMounts = 0;
+const closeNativeSoon = () =>
+	setTimeout(() => {
+		if (nativeMounts === 0) void invoke("wb_close").catch(() => undefined);
+	}, 0);
+
 function NativeBrowserView() {
 	const t = useT(M);
 	const slot = useRef<HTMLDivElement>(null);
@@ -313,13 +320,15 @@ function NativeBrowserView() {
 		let last = "";
 		const el = slot.current;
 		if (!el) return;
+		nativeMounts++;
 		void (async () => {
 			try {
 				await invoke("wb_open", { url: "about:blank", rect: rectOf(el) });
-			} catch {
+			} catch (e) {
+				if (!dead) toast(String(e), "error");
 				return;
 			}
-			if (dead) return void invoke("wb_close").catch(() => undefined);
+			if (dead) return;
 			setReady(true);
 			const { listen } = await import("@tauri-apps/api/event");
 			const un = await listen<{ phase: string; url: string }>("wb-load", (e) => {
@@ -380,7 +389,8 @@ function NativeBrowserView() {
 			dead = true;
 			cancelAnimationFrame(raf);
 			unlisten?.();
-			void invoke("wb_close").catch(() => undefined);
+			nativeMounts--;
+			closeNativeSoon();
 		};
 	}, []);
 
