@@ -54,12 +54,14 @@ export function WorkbenchPanel() {
 	const tabs = useStore((s) => s.workbench.tabs);
 	const active = useStore((s) => s.workbench.active);
 	const enabled = useStore((s) => s.plugins.some((p) => p.name === "workbench" && p.status === "loaded"));
+	// Settings and other pages open over the chat area; the panel steps aside (kept mounted) so they get the full width.
+	const pageOpen = useStore((s) => s.view !== "chat");
 	if (!enabled || !tabs.length) return null;
 	const tab = tabs.find((x) => x.id === active) ?? tabs[0];
 	if (!tab) return null;
 	return (
 		<aside
-			className="flex w-[28rem] shrink-0 flex-col border-l hairline bg-ink-900/80 backdrop-blur max-md:absolute max-md:inset-y-0 max-md:right-0 max-md:z-30 max-md:w-[min(30rem,100%)] max-md:bg-ink-900 max-md:shadow-2xl lg:w-[38rem]"
+			className={clsx(pageOpen ? "hidden" : "flex", "w-[28rem] shrink-0 flex-col border-l hairline bg-ink-900/80 backdrop-blur max-md:absolute max-md:inset-y-0 max-md:right-0 max-md:z-30 max-md:w-[min(30rem,100%)] max-md:bg-ink-900 max-md:shadow-2xl lg:w-[38rem]")}
 			aria-label={t("title")}
 		>
 			<div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b hairline px-1.5 py-1">
