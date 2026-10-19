@@ -23,6 +23,7 @@ const M = defineMessages({
 		back: "后退",
 		closed: "浏览器未打开。让助手访问网页，或在上方输入网址。",
 		closeBrowser: "关闭浏览器",
+		separateWindow: "浏览器在独立窗口中打开，可与本窗口并排摆放。",
 		typeHint: "输入到页面焦点处，回车发送",
 		send: "发送",
 		clickHint: "点击画面可直接操作页面",
@@ -42,6 +43,7 @@ const M = defineMessages({
 		back: "Back",
 		closed: "The browser is not open. Ask the assistant to visit a page, or enter a URL above.",
 		closeBrowser: "Close browser",
+		separateWindow: "The browser opens in its own window; place it beside this one.",
 		typeHint: "Type into the focused page element, Enter to send",
 		send: "Send",
 		clickHint: "Click the picture to interact with the page",
@@ -441,8 +443,9 @@ function NativeBrowserView() {
 					<X className="size-4" />
 				</button>
 			</form>
-			{/* The webview is positioned over this box. */}
-			<div ref={slot} className="min-h-0 flex-1 bg-ink-950" />
+			<div ref={slot} className="grid min-h-0 flex-1 place-items-center bg-ink-950 p-6 text-center text-xs text-ink-500">
+				{t("separateWindow")}
+			</div>
 		</div>
 	);
 }
