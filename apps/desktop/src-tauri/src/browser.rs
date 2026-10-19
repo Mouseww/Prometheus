@@ -93,7 +93,18 @@ pub fn wb_bounds(app: AppHandle, rect: Rect) -> Result<(), String> {
 #[tauri::command]
 pub fn wb_visible(app: AppHandle, visible: bool) -> Result<(), String> {
     let Some(wv) = app.get_webview(LABEL) else { return Ok(()) };
-    if visible { wv.show() } else { wv.hide() }.map_err(|e| e.to_string())
+    if visible {
+        return wv.show().map_err(|e| e.to_string());
+    }
+    // Hiding alone has not been enough to stop it swallowing clicks, so also park it off-screen at 1px.
+    let _ = wv.hide();
+    park(&wv);
+    Ok(())
+}
+
+fn park(wv: &tauri::Webview) {
+    let _ = wv.set_size(LogicalSize::new(1.0, 1.0));
+    let _ = wv.set_position(LogicalPosition::new(-20000.0, -20000.0));
 }
 
 #[tauri::command]
@@ -109,6 +120,7 @@ pub fn wb_url(app: AppHandle) -> Result<String, String> {
 #[tauri::command]
 pub fn wb_close(app: AppHandle) -> Result<(), String> {
     if let Some(wv) = app.get_webview(LABEL) {
+        park(&wv);
         wv.close().map_err(|e| e.to_string())?;
     }
     Ok(())

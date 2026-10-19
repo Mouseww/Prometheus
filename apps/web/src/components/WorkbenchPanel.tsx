@@ -299,6 +299,9 @@ function NativeBrowserView() {
 	const editing = useRef(false);
 	// A native view always paints above HTML, so it steps aside while a dialog or page covers the chat.
 	const covered = useStore((s) => s.view !== "chat" || s.uiQueue.length > 0);
+	const coveredRef = useRef(covered);
+	coveredRef.current = covered;
+	const resync = useRef<() => void>(() => undefined);
 	const waiters = useRef<((url: string) => void)[]>([]);
 
 	useEffect(() => {
@@ -327,13 +330,14 @@ function NativeBrowserView() {
 			// The panel can move without resizing (other panels open and close), so follow its position every frame.
 			const follow = () => {
 				const key = JSON.stringify(rectOf(el));
-				if (key !== last) {
+				if (!coveredRef.current && key !== last) {
 					last = key;
 					void invoke("wb_bounds", { rect: rectOf(el) }).catch(() => undefined);
 				}
 				raf = requestAnimationFrame(follow);
 			};
 			follow();
+			resync.current = () => (last = "");
 			// Serve the assistant's browser tools: the server queues commands and this loop runs them in the page.
 			void quiet("nativeHello").catch(() => undefined);
 			while (!dead) {
@@ -379,7 +383,12 @@ function NativeBrowserView() {
 	}, []);
 
 	useEffect(() => {
-		if (ready) void invoke("wb_visible", { visible: !covered }).catch(() => undefined);
+		if (!ready) return;
+		if (covered) void invoke("wb_visible", { visible: false }).catch(() => undefined);
+		else {
+			resync.current();
+			void invoke("wb_visible", { visible: true }).catch(() => undefined);
+		}
 	}, [ready, covered]);
 
 	const go = () => {
