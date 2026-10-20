@@ -113,7 +113,7 @@ export type SubagentSort = SubagentSortKey;
 export const NO_SUBAGENTS: SubagentRun[] = [];
 
 /** Side viewer tabs. Empty by default, so nothing is shown until a file or a terminal is actually opened. */
-export type WorkbenchTab = { id: string; kind: "terminal"; cwd: string } | { id: string; kind: "file"; path: string; cwd: string; line?: number };
+export type WorkbenchTab = { id: string; kind: "terminal"; cwd: string } | { id: string; kind: "folder"; cwd: string } | { id: string; kind: "file"; path: string; cwd: string; line?: number };
 export interface WorkbenchUi {
 	tabs: WorkbenchTab[];
 	active: string | null;
@@ -711,6 +711,11 @@ export const terminalIds = new Map<string, string>();
 /** Open a terminal in the given folder (the current session's), or focus the one already open. */
 export function openTerminalTab(cwd: string): void {
 	set((s) => ({ workbench: { tabs: s.workbench.tabs.some((t) => t.kind === "terminal") ? s.workbench.tabs : [...s.workbench.tabs, { id: "terminal", kind: "terminal", cwd }], active: "terminal" } }));
+}
+
+/** Open the folder tree for the current session's folder, or focus the one already open. */
+export function openFolderTab(cwd: string): void {
+	set((s) => ({ workbench: { tabs: s.workbench.tabs.some((t) => t.kind === "folder") ? s.workbench.tabs : [...s.workbench.tabs, { id: "folder", kind: "folder", cwd }], active: "folder" } }));
 }
 
 export function closeWorkbenchTab(id: string): void {

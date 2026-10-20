@@ -1,10 +1,11 @@
 import clsx from "clsx";
-import { Eye, FileText, LoaderCircle, RefreshCw, SquareTerminal, X } from "lucide-react";
+import { Eye, FileText, FolderTree, LoaderCircle, RefreshCw, SquareTerminal, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { WorkbenchFile } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { activateWorkbenchTab, closeWorkbenchTab, pluginCall, useStore, type WorkbenchTab } from "../lib/store.ts";
 import { Markdown } from "./Markdown.tsx";
+import { FolderView } from "./FolderView.tsx";
 import { TerminalView } from "./TerminalView.tsx";
 
 const M = defineMessages({
@@ -12,6 +13,7 @@ const M = defineMessages({
 		title: "查看器",
 		close: "关闭",
 		terminal: "终端",
+		folder: "文件夹",
 		refresh: "刷新",
 		loading: "加载中…",
 		binary: "二进制文件，无法预览",
@@ -24,6 +26,7 @@ const M = defineMessages({
 		title: "Viewer",
 		close: "Close",
 		terminal: "Terminal",
+		folder: "Folder",
 		refresh: "Refresh",
 		loading: "Loading…",
 		binary: "Binary file, no preview",
@@ -53,9 +56,9 @@ export function WorkbenchPanel() {
 			<div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b hairline px-1.5 py-1">
 				{tabs.map((x) => (
 					<div key={x.id} className={clsx("group flex max-w-48 shrink-0 items-center gap-1.5 rounded-md py-1 pl-2 pr-1 text-xs", x.id === tab.id ? "bg-ink-800 text-ink-100" : "text-ink-400 hover:bg-ink-850")}>
-						<button type="button" onClick={() => activateWorkbenchTab(x.id)} className="flex min-w-0 items-center gap-1.5" title={x.kind === "file" ? x.path : t("terminal")}>
-							{x.kind === "terminal" ? <SquareTerminal className="size-3.5 shrink-0" /> : <FileText className="size-3.5 shrink-0" />}
-							<span className="truncate">{x.kind === "terminal" ? t("terminal") : baseName(x.path)}</span>
+						<button type="button" onClick={() => activateWorkbenchTab(x.id)} className="flex min-w-0 items-center gap-1.5" title={x.kind === "file" ? x.path : t(x.kind)}>
+							{x.kind === "terminal" ? <SquareTerminal className="size-3.5 shrink-0" /> : x.kind === "folder" ? <FolderTree className="size-3.5 shrink-0" /> : <FileText className="size-3.5 shrink-0" />}
+							<span className="truncate">{x.kind === "file" ? baseName(x.path) : t(x.kind)}</span>
 						</button>
 						<button type="button" onClick={() => closeWorkbenchTab(x.id)} className="grid size-4 place-items-center rounded hover:bg-ink-700" aria-label={t("close")}>
 							<X className="size-3" />
@@ -63,7 +66,7 @@ export function WorkbenchPanel() {
 					</div>
 				))}
 			</div>
-			<div className="min-h-0 flex-1">{tab.kind === "terminal" ? <TerminalView key={tab.id} tab={tab} /> : <FileView key={tab.id} tab={tab} />}</div>
+			<div className="min-h-0 flex-1">{tab.kind === "terminal" ? <TerminalView key={tab.id} tab={tab} /> : tab.kind === "folder" ? <FolderView key={tab.id} cwd={tab.cwd} /> : <FileView key={tab.id} tab={tab} />}</div>
 		</aside>
 	);
 }

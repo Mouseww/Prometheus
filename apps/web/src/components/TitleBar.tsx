@@ -1,16 +1,17 @@
 import clsx from "clsx";
-import { FolderOpen, Minus, PanelLeft, PanelRight, Square, SquareTerminal, Wrench, X } from "lucide-react";
+import { FolderOpen, FolderTree, Minus, PanelLeft, PanelRight, Square, SquareTerminal, Wrench, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ToolInfo } from "@prometheus/protocol";
 import { isDesktopShell } from "../lib/backend.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { call, closeWorkbenchTab, NO_SUBAGENTS, openTerminalTab, pluginActive, toggleSubagentPanel, useStore } from "../lib/store.ts";
+import { call, closeWorkbenchTab, NO_SUBAGENTS, openFolderTab, openTerminalTab, pluginActive, toggleSubagentPanel, useStore } from "../lib/store.ts";
 import { Flame } from "./ui.tsx";
 
 const M = defineMessages({
 	zh: {
 		tools: "工具",
 		terminal: "终端",
+		folder: "文件夹",
 		toolSwitch: "工具开关",
 		subagents: "子代理",
 		toggleSidebar: "切换侧栏",
@@ -25,6 +26,7 @@ const M = defineMessages({
 	en: {
 		tools: "Tools",
 		terminal: "Terminal",
+		folder: "Folder",
 		toolSwitch: "Tool switches",
 		subagents: "Subagents",
 		toggleSidebar: "Toggle sidebar",
@@ -139,6 +141,26 @@ function TerminalToggle() {
 	);
 }
 
+function FolderToggle() {
+	const t = useT(M);
+	const enabled = useStore((s) => pluginActive(s.plugins, "folder"));
+	const open = useStore((s) => s.workbench.tabs.some((x) => x.kind === "folder"));
+	const cwd = useStore((s) => s.session?.cwd ?? "");
+	if (!enabled) return null;
+	return (
+		<button
+			type="button"
+			onClick={() => (open ? closeWorkbenchTab("folder") : openFolderTab(cwd))}
+			aria-pressed={open}
+			className={clsx("rounded-md p-1.5 hover:bg-ink-800", open ? "bg-ink-800 text-ember-300" : "text-ink-400 hover:text-ink-100")}
+			title={t("folder")}
+			aria-label={t("folder")}
+		>
+			<FolderTree className="size-4" />
+		</button>
+	);
+}
+
 function SessionTools() {
 	const session = useStore((s) => s.session);
 	if (!session) return null;
@@ -149,6 +171,7 @@ function SessionTools() {
 					{v}
 				</span>
 			))}
+			<FolderToggle />
 			<TerminalToggle />
 			<SubagentToggle />
 			<ToolsPopover />

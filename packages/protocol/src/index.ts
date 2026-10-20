@@ -558,6 +558,21 @@ export interface WorkbenchFile {
 	truncated?: boolean;
 }
 
+// ---------- Folder plugin (file tree in the side viewer) ----------
+
+export interface FolderEntry {
+	name: string;
+	path: string;
+	dir: boolean;
+	size?: number;
+}
+
+export interface FolderListing {
+	path: string;
+	entries: FolderEntry[];
+	truncated?: boolean;
+}
+
 // ---------- Task tracking (todos plugin) ----------
 
 export const TODO_TOOL = "todo_write";
@@ -842,3 +857,136 @@ export type ServerFrame =
 	| { type: "plugin.notify"; plugin: string }
 	| { type: "gateways.changed" }
 	| { type: "error"; message: string };
+
+// ---------- Built-in gateway presets ----------
+
+/** A ready-made gateway: the user only supplies credentials. Model lists are a starting point; "load models" refreshes them. */
+export interface GatewayPreset {
+	/** Becomes the gateway id (provider name). */
+	id: string;
+	name: string;
+	/** Short description shown on the picker card, per UI language. */
+	description: { zh: string; en: string };
+	format: GatewayFormat;
+	baseUrl: string;
+	auth: GatewayAuth;
+	models: GatewayModel[];
+	/** Page where the user creates an API key. */
+	keyUrl: string;
+}
+
+export const GATEWAY_PRESETS: readonly GatewayPreset[] = [
+	{
+		id: "deepseek",
+		name: "DeepSeek",
+		description: { zh: "深度求索 DeepSeek 官方 API", en: "DeepSeek official API" },
+		format: "openai-completions",
+		baseUrl: "https://api.deepseek.com/v1",
+		auth: { type: "native" },
+		keyUrl: "https://platform.deepseek.com/api_keys",
+		models: [
+			{ id: "deepseek-chat", name: "DeepSeek Chat", contextWindow: 128_000, maxTokens: 8_192 },
+			{ id: "deepseek-reasoner", name: "DeepSeek Reasoner", contextWindow: 128_000, maxTokens: 64_000, reasoning: true },
+		],
+	},
+	{
+		id: "zhipu",
+		name: "智谱 GLM",
+		description: { zh: "智谱 AI 开放平台（GLM 系列）", en: "Zhipu AI open platform (GLM)" },
+		format: "openai-completions",
+		baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+		auth: { type: "native" },
+		keyUrl: "https://open.bigmodel.cn/usercenter/apikeys",
+		models: [
+			{ id: "glm-4.6", name: "GLM-4.6", contextWindow: 200_000, maxTokens: 128_000, reasoning: true },
+			{ id: "glm-4.5", name: "GLM-4.5", contextWindow: 128_000, maxTokens: 96_000, reasoning: true },
+			{ id: "glm-4.5-air", name: "GLM-4.5 Air", contextWindow: 128_000, maxTokens: 96_000, reasoning: true },
+			{ id: "glm-4.5v", name: "GLM-4.5V", contextWindow: 64_000, maxTokens: 16_000, vision: true, reasoning: true },
+		],
+	},
+	{
+		id: "openai",
+		name: "OpenAI",
+		description: { zh: "OpenAI 官方 API（Responses 接口）", en: "OpenAI official API (Responses)" },
+		format: "openai-responses",
+		baseUrl: "https://api.openai.com/v1",
+		auth: { type: "native" },
+		keyUrl: "https://platform.openai.com/api-keys",
+		models: [
+			{ id: "gpt-5", name: "GPT-5", contextWindow: 400_000, maxTokens: 128_000, reasoning: true, vision: true },
+			{ id: "gpt-5-mini", name: "GPT-5 mini", contextWindow: 400_000, maxTokens: 128_000, reasoning: true, vision: true },
+			{ id: "gpt-4.1", name: "GPT-4.1", contextWindow: 1_047_576, maxTokens: 32_768, vision: true },
+			{ id: "gpt-4o", name: "GPT-4o", contextWindow: 128_000, maxTokens: 16_384, vision: true },
+		],
+	},
+	{
+		id: "claude",
+		name: "Claude",
+		description: { zh: "Anthropic 官方 API", en: "Anthropic official API" },
+		format: "anthropic-messages",
+		baseUrl: "https://api.anthropic.com",
+		auth: { type: "native" },
+		keyUrl: "https://console.anthropic.com/settings/keys",
+		models: [
+			{ id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", contextWindow: 200_000, maxTokens: 64_000, reasoning: true, vision: true },
+			{ id: "claude-opus-4-1", name: "Claude Opus 4.1", contextWindow: 200_000, maxTokens: 32_000, reasoning: true, vision: true },
+			{ id: "claude-haiku-4-5", name: "Claude Haiku 4.5", contextWindow: 200_000, maxTokens: 64_000, reasoning: true, vision: true },
+		],
+	},
+	{
+		id: "gemini",
+		name: "Gemini",
+		description: { zh: "Google AI Studio（Gemini API）", en: "Google AI Studio (Gemini API)" },
+		format: "google-generative-ai",
+		baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+		auth: { type: "native" },
+		keyUrl: "https://aistudio.google.com/apikey",
+		models: [
+			{ id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", contextWindow: 1_048_576, maxTokens: 65_536, reasoning: true, vision: true },
+			{ id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", contextWindow: 1_048_576, maxTokens: 65_536, reasoning: true, vision: true },
+		],
+	},
+	{
+		id: "moonshot",
+		name: "月之暗面 Kimi",
+		description: { zh: "Moonshot AI 开放平台（Kimi）", en: "Moonshot AI platform (Kimi)" },
+		format: "openai-completions",
+		baseUrl: "https://api.moonshot.cn/v1",
+		auth: { type: "native" },
+		keyUrl: "https://platform.moonshot.cn/console/api-keys",
+		models: [
+			{ id: "kimi-k2-0905-preview", name: "Kimi K2 0905", contextWindow: 262_144, maxTokens: 32_768 },
+			{ id: "kimi-k2-turbo-preview", name: "Kimi K2 Turbo", contextWindow: 262_144, maxTokens: 32_768 },
+			{ id: "kimi-k2-thinking", name: "Kimi K2 Thinking", contextWindow: 262_144, maxTokens: 32_768, reasoning: true },
+		],
+	},
+	{
+		id: "openrouter",
+		name: "OpenRouter",
+		description: { zh: "一个 Key 访问数百个模型", en: "One key for hundreds of models" },
+		format: "openai-completions",
+		baseUrl: "https://openrouter.ai/api/v1",
+		auth: { type: "native" },
+		keyUrl: "https://openrouter.ai/keys",
+		models: [
+			{ id: "anthropic/claude-sonnet-4.5", name: "Claude Sonnet 4.5", contextWindow: 200_000, maxTokens: 64_000, reasoning: true, vision: true },
+			{ id: "openai/gpt-5", name: "GPT-5", contextWindow: 400_000, maxTokens: 128_000, reasoning: true, vision: true },
+			{ id: "google/gemini-2.5-pro", name: "Gemini 2.5 Pro", contextWindow: 1_048_576, maxTokens: 65_536, reasoning: true, vision: true },
+			{ id: "deepseek/deepseek-chat", name: "DeepSeek Chat", contextWindow: 128_000, maxTokens: 8_192 },
+		],
+	},
+	{
+		id: "opencode",
+		name: "OpenCode Zen",
+		description: { zh: "OpenCode Zen 精选编程模型网关", en: "OpenCode Zen curated coding models" },
+		format: "openai-completions",
+		baseUrl: "https://opencode.ai/zen/v1",
+		auth: { type: "native" },
+		keyUrl: "https://opencode.ai/auth",
+		// Zen's lineup changes often; use "load models" in the editor to sync the live list.
+		models: [
+			{ id: "qwen3-coder", name: "Qwen3 Coder", contextWindow: 262_144, maxTokens: 65_536 },
+			{ id: "kimi-k2", name: "Kimi K2", contextWindow: 262_144, maxTokens: 32_768 },
+		],
+	},
+];
