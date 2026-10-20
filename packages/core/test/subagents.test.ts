@@ -261,3 +261,29 @@ describe("parseChildSession", () => {
 		expect(steps.at(-1)).toMatchObject({ args: "echo 499", isError: true });
 	});
 });
+
+describe("child gateway extension", () => {
+	it("writes an extension that registers gateways and requires it per session", async () => {
+		const { mkdtempSync, rmSync } = await import("node:fs");
+		const { tmpdir } = await import("node:os");
+		const { join } = await import("node:path");
+		const { pathToFileURL } = await import("node:url");
+		const { requireChildExtension, writeChildGatewayExtension } = await import("../src/subagents.ts");
+		const dir = mkdtempSync(join(tmpdir(), "prom-sub-"));
+		try {
+			const entry = writeChildGatewayExtension(dir, { "hakimi-router": { api: "openai-completions", models: [{ id: "deepseek-v4.1-flash" }] } });
+			const registered: [string, unknown][] = [];
+			const mod = (await import(pathToFileURL(entry).href)) as { default: (pi: unknown) => void };
+			mod.default({ registerProvider: (id: string, config: unknown) => registered.push([id, config]) });
+			expect(registered.map(([id]) => id)).toEqual(["hakimi-router"]);
+
+			const release = requireChildExtension("s1", "prometheus-gateways", entry);
+			const store = (globalThis as Record<symbol, { bySession: Map<string, { id: string; path: string }[]> }>)[Symbol.for("pi-subagents.required-child-extensions.v1")];
+			expect(store?.bySession.get("s1")?.map((e) => e.id)).toEqual(["prometheus-gateways"]);
+			release();
+			expect(store?.bySession.has("s1")).toBe(false);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});

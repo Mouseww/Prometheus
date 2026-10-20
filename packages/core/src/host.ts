@@ -48,7 +48,7 @@ import { PermissionGate } from "./permission-gate.ts";
 import { EXIT_PLAN_MODE } from "./permissions.ts";
 import { pluginBuilderExtension } from "./plugin-tool.ts";
 import { bootstrap, type Runtime } from "./runtime.ts";
-import { ensureSubagentEnv, SubagentTracker } from "./subagents.ts";
+import { ensureSubagentEnv, requireChildExtension, SubagentTracker, writeChildGatewayExtension } from "./subagents.ts";
 import { UIBridge } from "./ui-bridge.ts";
 import { collectUsage } from "./usage.ts";
 import { normalizeDir, WorkspaceStore, workspaceId } from "./workspaces.ts";
@@ -157,6 +157,7 @@ interface LiveSession {
 	gate: PermissionGate;
 	subagents: SubagentTracker;
 	unsubscribe: () => void;
+	releaseChildExtensions: () => void;
 }
 
 type Handlers = { [M in Exclude<RpcMethod, ServerRpcMethod>]: (params: RpcParams<M>) => Promise<RpcResult<M>> | RpcResult<M> };
@@ -171,6 +172,8 @@ export class PrometheusHost {
 	private readonly opening = new Map<string, Promise<LiveSession>>();
 	private readonly paths = new Map<string, string>();
 	private registered = new Set<string>();
+	/** Extension that gives subagent child processes the same gateways; undefined if it could not be written. */
+	private childGateways: string | undefined;
 	private readonly pendingReload = new Set<string>();
 	private readonly listener: HostListener;
 	private readonly workspaces: WorkspaceStore;
@@ -216,10 +219,13 @@ export class PrometheusHost {
 
 	private syncGateways(): void {
 		const next = new Set<string>();
+		const providers: Record<string, unknown> = {};
 		for (const g of this.runtime.config.gateways()) {
 			if (g.enabled === false) continue;
 			try {
-				this.modelRuntime.registerProvider(g.id, toProviderConfig(g) as Parameters<ModelRuntime["registerProvider"]>[1]);
+				const config = toProviderConfig(g);
+				this.modelRuntime.registerProvider(g.id, config as Parameters<ModelRuntime["registerProvider"]>[1]);
+				providers[g.id] = config;
 				next.add(g.id);
 			} catch (err) {
 				console.warn(`[prometheus] 网关注册失败 ${g.id}: ${err instanceof Error ? err.message : err}`);
@@ -227,6 +233,11 @@ export class PrometheusHost {
 		}
 		for (const id of this.registered) if (!next.has(id)) this.modelRuntime.unregisterProvider(id);
 		this.registered = next;
+		try {
+			this.childGateways = writeChildGatewayExtension(join(this.runtime.dataDir, "subagents"), providers);
+		} catch (err) {
+			console.warn(`[prometheus] 子代理网关扩展写入失败: ${err instanceof Error ? err.message : err}`);
+		}
 	}
 
 	// ---------- sessions ----------
@@ -323,7 +334,16 @@ export class PrometheusHost {
 			mode: "rpc",
 			onError: (err) => bridge.context().notify(`扩展错误：${err.error}`, "error"),
 		});
-		const live = { session, bridge, gate, subagents, unsubscribe };
+		// Subagent children are separate PI processes: without this they cannot resolve `<gateway>/<model>`.
+		let releaseChildExtensions = () => {};
+		if (this.childGateways) {
+			try {
+				releaseChildExtensions = requireChildExtension(id, "prometheus-gateways", this.childGateways);
+			} catch (err) {
+				console.warn(`[prometheus] 子代理网关扩展注册失败: ${err instanceof Error ? err.message : err}`);
+			}
+		}
+		const live = { session, bridge, gate, subagents, unsubscribe, releaseChildExtensions };
 		this.live.set(id, live);
 		const file = session.sessionFile;
 		if (file) this.paths.set(id, file);
@@ -365,6 +385,7 @@ export class PrometheusHost {
 		if (live.session.isStreaming) await live.session.abort().catch(() => {});
 		live.unsubscribe();
 		live.subagents.dispose();
+		live.releaseChildExtensions();
 		live.session.dispose();
 		this.live.delete(sessionId);
 	}
