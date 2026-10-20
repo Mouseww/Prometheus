@@ -11,3 +11,4 @@ apps/desktop/src-tauri/gen/
 *.p12
 *.jks
 *.keystore
+.pi/

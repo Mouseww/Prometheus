@@ -448,6 +448,22 @@ export interface SkillDocument {
 	content: string;
 }
 
+/** A system-prompt profile owned by the `prompts` plugin. */
+export interface ProfileSummary {
+	id: string;
+	title: string;
+	description: string;
+	/** `builtin` reads a shipped file every turn; `inline` is text saved by the user. */
+	source: "builtin" | "file" | "inline";
+	file?: string;
+	enabled: boolean;
+	mode: "replace" | "append";
+	/** Replaces `customPrompt` entirely, the strongest form. */
+	dropPersona: boolean;
+	updatedAt: number;
+	bodyLength: number;
+}
+
 export type PackageKind = "extensions" | "skills" | "prompts" | "themes";
 
 /** A PI package declared in settings.json (`pi install` equivalent). */

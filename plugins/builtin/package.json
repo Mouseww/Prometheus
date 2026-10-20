@@ -18,6 +18,7 @@
     "@prometheus/plugin-mcp": "workspace:*",
     "@prometheus/plugin-memory": "workspace:*",
     "@prometheus/plugin-packages": "workspace:*",
+    "@prometheus/plugin-prompts": "workspace:*",
     "@prometheus/plugin-sdk": "workspace:*",
     "@prometheus/plugin-skills": "workspace:*",
     "@prometheus/plugin-terminal": "workspace:*",
