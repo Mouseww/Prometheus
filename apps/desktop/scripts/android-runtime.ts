@@ -118,6 +118,16 @@ try {
 	if (!kts.includes("useLegacyPackaging = true")) throw new Error("could not patch build.gradle.kts (template changed?)");
 	writeFileSync(gradle, kts);
 	console.log("patched build.gradle.kts");
+
+	// Voice input: the WebView only prompts for the microphone when the app itself declares the permission.
+	const manifestPath = join(androidApp, "src", "main", "AndroidManifest.xml");
+	let manifest = readFileSync(manifestPath, "utf8");
+	for (const perm of ["android.permission.RECORD_AUDIO", "android.permission.MODIFY_AUDIO_SETTINGS"]) {
+		if (!manifest.includes(perm)) manifest = manifest.replace(/<manifest[^>]*>/, (m) => `${m}\n    <uses-permission android:name="${perm}" />`);
+	}
+	if (!manifest.includes("RECORD_AUDIO")) throw new Error("could not patch AndroidManifest.xml (template changed?)");
+	writeFileSync(manifestPath, manifest);
+	console.log("patched AndroidManifest.xml");
 } finally {
 	rmSync(work, { recursive: true, force: true });
 }
