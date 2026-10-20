@@ -511,38 +511,40 @@ function GatewayEditor({ initial, isNew, preset, onClose, onSaved }: { initial: 
 				<Field label={t("models")}>
 					<div className="space-y-2">
 						{g.models.map((m, i) => (
-							<div key={i} className="grid grid-cols-[1fr_6rem_auto_auto_auto_auto_auto] items-center gap-2 rounded-lg border border-ink-800 p-2">
-								<Input value={m.id} placeholder={t("modelId")} onChange={(e) => patchModel(i, { id: e.target.value })} className="font-mono" />
+							<div key={i} className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-ink-800 p-2">
+								<Input value={m.id} placeholder={t("modelId")} onChange={(e) => patchModel(i, { id: e.target.value })} className="min-w-[10rem] flex-1 basis-40 font-mono" />
 								<Input
 									type="number"
 									value={m.contextWindow ?? ""}
 									placeholder={t("context")}
 									onChange={(e) => patchModel(i, { contextWindow: e.target.value ? Number(e.target.value) : undefined })}
-									className="font-mono"
+									className="!w-28 shrink-0 font-mono"
 								/>
-								<label className="flex items-center gap-1 text-xs text-ink-400">
+								<Button variant="danger" onClick={() => setG({ ...g, models: g.models.filter((_, j) => j !== i) })} aria-label={t("deleteModel")}>
+									<Trash2 className="size-4" />
+								</Button>
+								<div className="flex w-full basis-full flex-wrap items-center gap-x-4 gap-y-1">
+								<label className="flex items-center gap-1 whitespace-nowrap text-xs text-ink-400">
 									<input type="checkbox" checked={m.reasoning ?? false} onChange={(e) => patchModel(i, { reasoning: e.target.checked })} className="accent-ember-500" />
 									{t("reasoning")}
 								</label>
-								<label className="flex items-center gap-1 text-xs text-ink-400">
+								<label className="flex items-center gap-1 whitespace-nowrap text-xs text-ink-400">
 									<input type="checkbox" checked={m.vision ?? false} onChange={(e) => patchModel(i, { vision: e.target.checked })} className="accent-ember-500" />
 									{t("vision")}
 								</label>
 								{(["xhigh", "max"] as const).map((k) => (
-									<label key={k} className={"flex items-center gap-1 text-xs text-ink-400" + (m.reasoning ? "" : " opacity-40")} title={t("extraHint")}>
+									<label key={k} className={"flex items-center gap-1 whitespace-nowrap text-xs text-ink-400" + (m.reasoning ? "" : " opacity-40")} title={t("extraHint")}>
 										<input type="checkbox" disabled={!m.reasoning} checked={m[k] ?? false} onChange={(e) => patchModel(i, { [k]: e.target.checked })} className="accent-ember-500" />
 										{t(k)}
 									</label>
 								))}
-								<Button variant="danger" onClick={() => setG({ ...g, models: g.models.filter((_, j) => j !== i) })} aria-label={t("deleteModel")}>
-									<Trash2 className="size-4" />
-								</Button>
-								<div className="col-span-full flex flex-wrap items-center gap-2 text-xs text-ink-500">
-									<span>{t("priceUnit")}</span>
+								</div>
+								<div className="grid w-full basis-full grid-cols-2 gap-2 text-xs text-ink-500 sm:grid-cols-4">
+									<span className="col-span-full">{t("priceUnit")}</span>
 									{(["input", "output", "cacheRead", "cacheWrite"] as const).map((k) => (
-										<label key={k} className="flex items-center gap-1">
+										<label key={k} className="flex min-w-0 flex-col gap-1 whitespace-nowrap">
 											{t(k === "input" ? "priceInput" : k === "output" ? "priceOutput" : k === "cacheRead" ? "priceCacheRead" : "priceCacheWrite")}
-											<Input type="number" min={0} step="any" value={m.cost?.[k] ?? ""} placeholder="0" onChange={(e) => patchPrice(i, k, e.target.value)} className="w-20 font-mono" />
+											<Input type="number" min={0} step="any" value={m.cost?.[k] ?? ""} placeholder="0" onChange={(e) => patchPrice(i, k, e.target.value)} className="w-full min-w-0 font-mono" />
 										</label>
 									))}
 								</div>
