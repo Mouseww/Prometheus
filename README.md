@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/images/logo.svg" width="96" alt="Prometheus" />
+<img src="https://raw.githubusercontent.com/Mouseww/Prometheus/main/docs/images/logo.svg" width="96" alt="Prometheus" />
 
 # Prometheus
 
@@ -15,7 +15,7 @@
 
 [快速开始](#快速开始) · [功能](#功能一览) · [架构](#架构) · [写一个插件](#写一个插件) · [部署文档](docs/deployment.md) · [架构文档](docs/architecture.md)
 
-<img src="docs/images/chat.png" alt="Prometheus 对话界面" width="900" />
+<img src="https://raw.githubusercontent.com/Mouseww/Prometheus/main/docs/images/chat.png" alt="Prometheus 对话界面" width="900" />
 
 </div>
 
@@ -39,21 +39,21 @@
 
 流式输出、Markdown / 表格 / 代码高亮、工具调用过程可展开查看，支持图片输入、语音输入、上下文用量仪表、会话分支与回滚。
 
-<img src="docs/images/chat.png" alt="对话与工具调用" width="900" />
+<img src="https://raw.githubusercontent.com/Mouseww/Prometheus/main/docs/images/chat.png" alt="对话与工具调用" width="900" />
 
 ### 写入与命令，先问再做
 
 默认模式下，写文件和执行命令都会先请求你的确认，并展示将要写入的内容或将要执行的命令。
 
 <div align="center">
-<img src="docs/images/permission.png" alt="权限确认" width="620" />
+<img src="https://raw.githubusercontent.com/Mouseww/Prometheus/main/docs/images/permission.png" alt="权限确认" width="620" />
 </div>
 
 ### AI 网关：接入任意兼容端点
 
 在设置里添加网关即可使用自建代理、中转或官方端点，模型列表、上下文窗口、价格都可配置。
 
-<img src="docs/images/gateways.png" alt="AI 网关" width="900" />
+<img src="https://raw.githubusercontent.com/Mouseww/Prometheus/main/docs/images/gateways.png" alt="AI 网关" width="900" />
 
 ### 技能与插件
 
@@ -61,15 +61,15 @@
 - **Prometheus 插件**：知识库（LanceDB 向量检索）、MCP 管理、记忆、待办、Git、自动化、语音、终端、工作台、连接器等均以插件形式提供，可单独停用。
 - **PI 插件市场**：直接安装社区的 PI 扩展包。
 
-<img src="docs/images/skills.png" alt="技能" width="900" />
+<img src="https://raw.githubusercontent.com/Mouseww/Prometheus/main/docs/images/skills.png" alt="技能" width="900" />
 
-<img src="docs/images/plugins.png" alt="Prometheus 插件" width="900" />
+<img src="https://raw.githubusercontent.com/Mouseww/Prometheus/main/docs/images/plugins.png" alt="Prometheus 插件" width="900" />
 
 ### 内置 Git 面板
 
 查看改动、暂存、提交、切换分支与同步，Agent 改完代码可以直接在这里审阅。
 
-<img src="docs/images/git.png" alt="Git 面板" width="900" />
+<img src="https://raw.githubusercontent.com/Mouseww/Prometheus/main/docs/images/git.png" alt="Git 面板" width="900" />
 
 ### 更多
 
