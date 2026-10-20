@@ -1,8 +1,10 @@
 import clsx from "clsx";
-import { CloudDownload, Coins, LoaderCircle, Network, Plus, Search, Trash2, X, Zap } from "lucide-react";
+import { CloudDownload, Coins, ExternalLink, LoaderCircle, Network, Plus, Search, SlidersHorizontal, Trash2, X, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { GatewayAuth, GatewayConfig, GatewayFormat, GatewayModel, ModelPricing } from "@prometheus/protocol";
+import { GATEWAY_PRESETS } from "@prometheus/protocol";
+import type { GatewayAuth, GatewayConfig, GatewayFormat, GatewayModel, GatewayPreset, ModelPricing } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
+import { usePrefs } from "../lib/prefs.ts";
 import { call, refreshModels, toast } from "../lib/store.ts";
 import { Badge, Button, Empty, Field, Input, PageHeader, Select } from "./ui.tsx";
 
@@ -65,6 +67,14 @@ const M = defineMessages({
 		searchModels: "搜索 {n} 个模型…",
 		selected: "已选 {n}",
 		noMatch: "没有匹配的模型",
+		pickTitle: "选择服务商",
+		pickHint: "内置主流厂商，选择后只需填写 API Key",
+		customTitle: "自定义网关",
+		customDesc: "手动配置任意兼容端点",
+		added: "已添加",
+		getKey: "获取 API Key",
+		advanced: "高级设置",
+		simpleHint: "地址、协议与模型已按官方配置预填，填入 API Key 即可使用。",
 	},
 	en: {
 		hintCompletions: "/v1/chat/completions, works with most proxies and local inference",
@@ -124,6 +134,14 @@ const M = defineMessages({
 		searchModels: "Search {n} models…",
 		selected: "{n} selected",
 		noMatch: "No matching models",
+		pickTitle: "Choose a provider",
+		pickHint: "Popular providers are built in; just enter your API key",
+		customTitle: "Custom gateway",
+		customDesc: "Configure any compatible endpoint by hand",
+		added: "Added",
+		getKey: "Get an API key",
+		advanced: "Advanced settings",
+		simpleHint: "URL, protocol and models are prefilled from the official setup. Enter your API key to start.",
 	},
 });
 type MsgKey = keyof typeof M.zh;
@@ -156,10 +174,15 @@ function blank(): GatewayConfig {
 	};
 }
 
+function fromPreset(p: GatewayPreset): GatewayConfig {
+	return { id: p.id, name: p.name, format: p.format, baseUrl: p.baseUrl, auth: structuredClone(p.auth), apiKey: "", headers: {}, models: structuredClone(p.models), enabled: true };
+}
+
 export function GatewaysView() {
 	const t = useT(M);
 	const [list, setList] = useState<GatewayConfig[]>([]);
-	const [editing, setEditing] = useState<{ gateway: GatewayConfig; isNew: boolean } | null>(null);
+	const [editing, setEditing] = useState<{ gateway: GatewayConfig; isNew: boolean; preset?: GatewayPreset } | null>(null);
+	const [picking, setPicking] = useState(false);
 
 	const load = async () => {
 		const gateways = await call((c) => c.rpc("gateway.list", {}));
@@ -175,24 +198,33 @@ export function GatewaysView() {
 				title={t("title")}
 				subtitle={t("subtitle")}
 				actions={
-					<Button variant="primary" onClick={() => setEditing({ gateway: blank(), isNew: true })}>
+					<Button
+						variant="primary"
+						onClick={() => {
+							setEditing(null);
+							setPicking(true);
+						}}
+					>
 						<Plus className="size-4" /> {t("addGateway")}
 					</Button>
 				}
 			/>
 			<div className="flex min-h-0 flex-1">
-				<div className={clsx("min-h-0 overflow-y-auto p-4 md:p-6", editing ? "hidden w-96 shrink-0 border-r hairline lg:block" : "flex-1")}>
+				<div className={clsx("min-h-0 overflow-y-auto p-4 md:p-6", editing || picking ? "hidden w-96 shrink-0 border-r hairline lg:block" : "flex-1")}>
 					{list.length === 0 ? (
 						<Empty icon={<Network className="size-5" />} title={t("emptyTitle")}>
 							{t("emptyBody")}
 						</Empty>
 					) : (
-						<div className={clsx("grid gap-3", !editing && "md:grid-cols-2 xl:grid-cols-3")}>
+						<div className={clsx("grid gap-3", !editing && !picking && "md:grid-cols-2 xl:grid-cols-3")}>
 							{list.map((g) => (
 								<button
 									key={g.id}
 									type="button"
-									onClick={() => setEditing({ gateway: structuredClone(g), isNew: false })}
+									onClick={() => {
+										setPicking(false);
+										setEditing({ gateway: structuredClone(g), isNew: false });
+									}}
 									className={clsx(
 										"group animate-rise rounded-xl border bg-ink-900/60 p-4 text-left transition-colors hover:border-ink-600",
 										editing?.gateway.id === g.id ? "border-ember-500/50" : "border-ink-800",
@@ -214,11 +246,22 @@ export function GatewaysView() {
 						</div>
 					)}
 				</div>
+				{picking && (
+					<PresetPicker
+						existing={list}
+						onClose={() => setPicking(false)}
+						onPick={(preset) => {
+							setPicking(false);
+							setEditing(preset ? { gateway: fromPreset(preset), isNew: true, preset } : { gateway: blank(), isNew: true });
+						}}
+					/>
+				)}
 				{editing && (
 					<GatewayEditor
-						key={editing.isNew ? "new" : editing.gateway.id}
+						key={editing.isNew ? `new-${editing.preset?.id ?? "custom"}` : editing.gateway.id}
 						initial={editing.gateway}
 						isNew={editing.isNew}
+						preset={editing.preset}
 						onClose={() => setEditing(null)}
 						onSaved={async () => {
 							await load();
@@ -231,8 +274,51 @@ export function GatewaysView() {
 	);
 }
 
-function GatewayEditor({ initial, isNew, onClose, onSaved }: { initial: GatewayConfig; isNew: boolean; onClose: () => void; onSaved: () => Promise<void> }) {
+function PresetPicker({ existing, onPick, onClose }: { existing: GatewayConfig[]; onPick: (preset: GatewayPreset | null) => void; onClose: () => void }) {
 	const t = useT(M);
+	const taken = new Set(existing.map((g) => g.id));
+	const lang = usePrefs((s) => s.lang);
+	return (
+		<div className="min-h-0 flex-1 overflow-y-auto">
+			<div className="mx-auto max-w-2xl space-y-5 p-4 md:p-6">
+				<div className="flex items-center justify-between">
+					<div>
+						<h2 className="font-display text-xl font-semibold">{t("pickTitle")}</h2>
+						<p className="mt-1 text-sm text-ink-500">{t("pickHint")}</p>
+					</div>
+					<Button onClick={onClose}>{t("close")}</Button>
+				</div>
+				<div className="grid gap-3 sm:grid-cols-2">
+					{GATEWAY_PRESETS.map((p) => (
+						<button
+							key={p.id}
+							type="button"
+							disabled={taken.has(p.id)}
+							onClick={() => onPick(p)}
+							className="rounded-xl border border-ink-800 bg-ink-900/60 p-4 text-left transition-colors hover:border-ember-500/50 disabled:cursor-not-allowed disabled:opacity-50"
+						>
+							<div className="flex items-center gap-2">
+								<span className="font-display font-semibold">{p.name}</span>
+								{taken.has(p.id) && <Badge tone="moss">{t("added")}</Badge>}
+							</div>
+							<div className="mt-1 text-xs text-ink-500">{p.description[lang]}</div>
+						</button>
+					))}
+					<button type="button" onClick={() => onPick(null)} className="rounded-xl border border-dashed border-ink-700 p-4 text-left transition-colors hover:border-ember-500/50">
+						<div className="flex items-center gap-2 font-display font-semibold">
+							<Plus className="size-4" /> {t("customTitle")}
+						</div>
+						<div className="mt-1 text-xs text-ink-500">{t("customDesc")}</div>
+					</button>
+				</div>
+			</div>
+		</div>
+	);
+}
+
+function GatewayEditor({ initial, isNew, preset, onClose, onSaved }: { initial: GatewayConfig; isNew: boolean; preset?: GatewayPreset; onClose: () => void; onSaved: () => Promise<void> }) {
+	const t = useT(M);
+	const [advanced, setAdvanced] = useState(!preset);
 	const [g, setG] = useState<GatewayConfig>(initial);
 	const [headers, setHeaders] = useState<[string, string][]>(Object.entries(initial.headers ?? {}));
 	const [busy, setBusy] = useState(false);
@@ -316,6 +402,30 @@ function GatewayEditor({ initial, isNew, onClose, onSaved }: { initial: GatewayC
 					<Button onClick={onClose}>{t("close")}</Button>
 				</div>
 
+				{!advanced && preset && (
+					<div className="space-y-4">
+						<p className="text-sm text-ink-400">{t("simpleHint")}</p>
+						<Field label="API Key / Token">
+							<Input type="password" autoComplete="off" autoFocus value={g.apiKey ?? ""} onChange={(e) => patch({ apiKey: e.target.value })} className="font-mono" />
+						</Field>
+						<div className="flex flex-wrap items-center gap-1.5">
+							<Badge tone="ember">{g.format}</Badge>
+							<Badge tone="sky">{t("modelCount", { n: g.models.length })}</Badge>
+							<span className="truncate font-mono text-xs text-ink-500">{g.baseUrl}</span>
+						</div>
+						<div className="flex flex-wrap gap-2">
+							<a href={preset.keyUrl} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1.5 text-sm text-ember-400 hover:underline">
+								<ExternalLink className="size-3.5" /> {t("getKey")}
+							</a>
+							<button type="button" onClick={() => setAdvanced(true)} className="ml-auto inline-flex items-center gap-1.5 text-sm text-ink-400 hover:text-ink-100">
+								<SlidersHorizontal className="size-3.5" /> {t("advanced")}
+							</button>
+						</div>
+					</div>
+				)}
+
+				{advanced && (
+				<>
 				<div className="grid gap-4 sm:grid-cols-2">
 					<Field label="ID" hint={t("idHint")}>
 						<Input value={g.id} disabled={!isNew} onChange={(e) => patch({ id: e.target.value })} placeholder="my-gateway" />
@@ -452,6 +562,8 @@ function GatewayEditor({ initial, isNew, onClose, onSaved }: { initial: GatewayC
 						{catalogue && <ModelCatalogue list={catalogue} selected={g.models} onToggle={toggleModel} onClose={() => setCatalogue(null)} />}
 					</div>
 				</Field>
+				</>
+				)}
 
 				<label className="flex items-center gap-2 text-sm text-ink-300">
 					<input type="checkbox" checked={g.enabled !== false} onChange={(e) => patch({ enabled: e.target.checked })} className="accent-ember-500" />
