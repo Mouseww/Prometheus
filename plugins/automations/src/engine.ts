@@ -65,7 +65,7 @@ export class AutomationEngine {
 			if (due && due.getTime() <= now.getTime() && catchUpDue(task.schedule, due, now)) continue; // stays due; the first tick runs it
 			if (!due || due.getTime() <= now.getTime()) this.schedule(task, now);
 		}
-		await this.persist();
+		await this.persist().catch(() => {});
 		this.timer = setInterval(() => void this.tick(), TICK_MS);
 		this.timer.unref?.();
 		void this.tick();
@@ -89,9 +89,11 @@ export class AutomationEngine {
 		if (task.enabled && !next && task.schedule.type === "once") task.enabled = false;
 	}
 
+	/** Writes the state to disk. Failures are logged and also reach the caller, so a create never claims success without being saved. */
 	private persist(): Promise<void> {
-		this.persisting = this.persisting.then(() => this.deps.save(structuredClone(this.state))).catch((err: unknown) => this.deps.log(`保存失败：${err instanceof Error ? err.message : err}`));
-		return this.persisting;
+		const write = this.persisting.then(() => this.deps.save(structuredClone(this.state)));
+		this.persisting = write.catch((err: unknown) => this.deps.log(`保存失败：${err instanceof Error ? err.message : err}`));
+		return write;
 	}
 
 	// ---------- CRUD ----------
@@ -196,7 +198,7 @@ export class AutomationEngine {
 		this.state.runs = this.state.runs.slice(0, MAX_RUNS);
 		const ctl = new AbortController();
 		this.running.set(task.id, ctl);
-		await this.persist();
+		await this.persist().catch(() => {});
 		this.deps.changed();
 
 		try {
@@ -224,7 +226,7 @@ export class AutomationEngine {
 		} finally {
 			run.finishedAt = this.deps.now().toISOString();
 			this.running.delete(task.id);
-			await this.persist();
+			await this.persist().catch(() => {});
 			this.deps.changed();
 		}
 		return run;

@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { Type } from "@earendil-works/pi-ai";
 import { createJsonStore, definePlugin } from "@prometheus/plugin-sdk";
 import type { AutomationInput, AutomationRun, AutomationTask } from "@prometheus/protocol";
 import { AutomationEngine, type AutomationState } from "./engine.ts";
@@ -42,6 +43,64 @@ export default definePlugin({
 		});
 		await engine.start();
 		ctx.onDispose(() => engine.stop());
+
+		const text = (value: string) => ({ content: [{ type: "text" as const, text: value }], details: {} });
+		const norm = (p: string) => p.replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
+
+		ctx.extension((pi) => {
+			pi.registerTool({
+				name: "automation_create",
+				label: "创建自动化任务",
+				description:
+					"Create a persistent scheduled automation that runs the agent unattended in the current workspace (shown in the Automations view). schedule: {type:'interval',minutes} (5..10080), {type:'daily',time:'HH:MM',days?:[0-6]} in local time, or {type:'once',at:ISO datetime}. access: readonly (default) | edits | full.",
+				promptSnippet: "automation_create: schedule a recurring or one-off unattended agent task",
+				parameters: Type.Object({
+					name: Type.String({ description: "Short task name" }),
+					prompt: Type.String({ description: "Complete, self-contained instruction the agent will run each time" }),
+					schedule: Type.Union([
+						Type.Object({ type: Type.Literal("interval"), minutes: Type.Integer() }),
+						Type.Object({ type: Type.Literal("daily"), time: Type.String({ description: "HH:MM local" }), days: Type.Optional(Type.Array(Type.Integer())) }),
+						Type.Object({ type: Type.Literal("once"), at: Type.String({ description: "ISO 8601 datetime" }) }),
+					]),
+					access: Type.Optional(Type.Union([Type.Literal("readonly"), Type.Literal("edits"), Type.Literal("full")])),
+				}),
+				async execute(_id, params, _signal, _update, toolCtx) {
+					const ws = (await ctx.workspaces()).find((w) => norm(w.path) === norm(toolCtx.cwd));
+					if (!ws) throw new Error("当前目录不是已添加的工作区，请先在侧栏添加");
+					const task = await engine.create({
+						name: params.name,
+						prompt: params.prompt,
+						workspaceId: ws.id,
+						schedule: params.schedule as AutomationInput["schedule"],
+						access: params.access ?? "readonly",
+						enabled: true,
+					});
+					return text(`Created automation ${task.id} "${task.name}" (${describeSchedule(task.schedule)}), next run ${task.nextRunAt ?? "none"}.`);
+				},
+			});
+			pi.registerTool({
+				name: "automation_list",
+				label: "列出自动化任务",
+				description: "List scheduled automations.",
+				promptSnippet: "automation_list: list scheduled automations",
+				parameters: Type.Object({}),
+				async execute() {
+					const list = engine.snapshot().tasks;
+					return text(list.length ? list.map((t) => `${t.id} ${t.enabled ? "on " : "off"} ${t.name} [${describeSchedule(t.schedule)}] next=${t.nextRunAt ?? "-"}`).join("\n") : "No automations.");
+				},
+			});
+			pi.registerTool({
+				name: "automation_delete",
+				label: "删除自动化任务",
+				description: "Delete a scheduled automation by id.",
+				promptSnippet: "automation_delete: remove a scheduled automation",
+				parameters: Type.Object({ id: Type.String() }),
+				async execute(_id, params) {
+					await engine.remove(params.id);
+					return text(`Deleted automation ${params.id}.`);
+				},
+			});
+		});
 
 		const tasks = () => engine.snapshot().tasks.map((t) => ({ ...t, scheduleText: describeSchedule(t.schedule) }));
 		ctx.rpc("list", () => {
