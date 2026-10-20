@@ -1,11 +1,11 @@
 import clsx from "clsx";
-import { ArrowUp, Brain, Check, ChevronDown, CornerDownRight, Cpu, ListEnd, Paperclip, Search, Square, X } from "lucide-react";
+import { ArrowUp, Brain, Check, ChevronDown, CornerDownRight, Cpu, File as FileIcon, Folder as FolderIcon, ListEnd, Paperclip, Search, Square, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ImageContent, ThinkingLevel } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { fileToImage, IMAGE_ACCEPT, ImageError, imageSrc, MAX_IMAGES } from "../lib/images.ts";
 import { type SendMode, setPrefs, usePrefs } from "../lib/prefs.ts";
-import { abortRun, openSettings, sendPrompt, setModel, setPermissionMode, setThinking, toast, useStore } from "../lib/store.ts";
+import { abortRun, openSettings, pluginCall, sendPrompt, setModel, setPermissionMode, setThinking, toast, useStore } from "../lib/store.ts";
 import { ContextMeter } from "./ContextMeter.tsx";
 import { nextPermissionMode, PermissionPicker } from "./PermissionPicker.tsx";
 import { VoiceButton } from "./VoiceButton.tsx";
@@ -352,6 +352,57 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 
 	useEffect(() => setCursor(0), [slashQuery]);
 
+	// @file mentions: `@query` right before the caret opens a workspace file list.
+	const [caret, setCaret] = useState(0);
+	const [mentionItems, setMentionItems] = useState<{ path: string; dir: boolean }[]>([]);
+	const [mentionCursor, setMentionCursor] = useState(0);
+	const [dismissed, setDismissed] = useState<string | null>(null);
+	const mention = useMemo(() => {
+		const m = /(^|\s)@([^\s@]*)$/.exec(text.slice(0, caret));
+		if (!m) return null;
+		const query = m[2] ?? "";
+		return { query, start: caret - query.length - 1 };
+	}, [text, caret]);
+	const mentionQuery = mention && dismissed !== `${mention.start}:${mention.query}` ? mention.query : undefined;
+	const cwd = session?.cwd;
+	useEffect(() => {
+		if (mentionQuery === undefined || !cwd) {
+			setMentionItems([]);
+			return;
+		}
+		let stale = false;
+		const timer = setTimeout(() => {
+			void pluginCall<{ items: { path: string; dir: boolean }[] }>("folder", "search", { query: mentionQuery, cwd })
+				.then((res) => {
+					if (stale) return;
+					setMentionItems(res?.items ?? []);
+					setMentionCursor(0);
+				})
+				.catch(() => !stale && setMentionItems([]));
+		}, 80);
+		return () => {
+			stale = true;
+			clearTimeout(timer);
+		};
+	}, [mentionQuery, cwd]);
+	const showMention = mentionQuery !== undefined && mentionItems.length > 0;
+
+	const pickMention = (item: { path: string; dir: boolean }) => {
+		if (!mention) return;
+		const quoted = /\s/.test(item.path) ? `"${item.path}"` : item.path;
+		const token = `@${quoted}${item.dir ? "/" : " "}`;
+		const next = text.slice(0, mention.start) + token + text.slice(caret);
+		const pos = mention.start + token.length;
+		setText(next);
+		setCaret(pos);
+		requestAnimationFrame(() => {
+			const el = ref.current;
+			if (!el) return;
+			el.focus();
+			el.setSelectionRange(pos, pos);
+		});
+	};
+
 	const submit = async () => {
 		const value = text.trim();
 		if ((!value && !images.length) || reading > 0) return;
@@ -406,6 +457,26 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 			const { session: s, draftPermission } = useStore.getState();
 			void setPermissionMode(nextPermissionMode(s?.permissionMode ?? draftPermission));
 			return;
+		}
+		if (showMention && !e.nativeEvent.isComposing) {
+			if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+				e.preventDefault();
+				setMentionCursor((c) => (c + (e.key === "ArrowDown" ? 1 : mentionItems.length - 1)) % mentionItems.length);
+				return;
+			}
+			if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+				const pick = mentionItems[mentionCursor];
+				if (pick) {
+					e.preventDefault();
+					pickMention(pick);
+					return;
+				}
+			}
+			if (e.key === "Escape" && mention) {
+				e.preventDefault();
+				setDismissed(`${mention.start}:${mention.query}`);
+				return;
+			}
 		}
 		if (matches.length) {
 			if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -475,7 +546,34 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 				void addFiles([...e.dataTransfer.files]);
 			}}
 		>
-			{matches.length > 0 && (
+			{showMention && (
+				<div className="absolute right-3 bottom-full left-3 z-30 mb-2 overflow-hidden rounded-xl border border-ink-700 bg-ink-900/95 shadow-2xl shadow-black/40 backdrop-blur md:right-5 md:left-5">
+					{mentionItems.map((it, i) => {
+						const slash = it.path.lastIndexOf("/");
+						const name = it.path.slice(slash + 1);
+						const dir = slash >= 0 ? it.path.slice(0, slash) : "";
+						const Icon = it.dir ? FolderIcon : FileIcon;
+						return (
+							<button
+								key={it.path}
+								type="button"
+								onMouseDown={(e) => {
+									e.preventDefault();
+									pickMention(it);
+								}}
+								onMouseEnter={() => setMentionCursor(i)}
+								className={clsx("flex w-full items-baseline gap-2 px-3.5 py-2 text-left", i === mentionCursor ? "bg-ink-800" : "hover:bg-ink-850")}
+							>
+								<Icon className="size-3.5 shrink-0 self-center text-ink-400" />
+								<span className="font-mono text-sm text-ember-300">{name}{it.dir ? "/" : ""}</span>
+								<span className="min-w-0 flex-1 truncate font-mono text-xs text-ink-500">{dir}</span>
+							</button>
+						);
+					})}
+				</div>
+			)}
+
+			{matches.length > 0 && !showMention && (
 				<div className="absolute right-3 bottom-full left-3 z-30 md:right-5 md:left-5 mb-2 overflow-hidden rounded-xl border border-ink-700 bg-ink-900/95 shadow-2xl shadow-black/40 backdrop-blur">
 					{matches.map((c, i) => (
 						<button
@@ -547,7 +645,11 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 					ref={ref}
 					autoFocus
 					value={text}
-					onChange={(e) => setText(e.target.value)}
+					onChange={(e) => {
+						setText(e.target.value);
+						setCaret(e.target.selectionStart);
+					}}
+					onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
 					onKeyDown={onKeyDown}
 					onPaste={onPaste}
 					rows={1}

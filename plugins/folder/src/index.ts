@@ -1,5 +1,5 @@
 import { readdir, realpath, stat } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { definePlugin } from "@prometheus/plugin-sdk";
 import type { FolderEntry, FolderListing } from "@prometheus/protocol";
 
@@ -7,6 +7,25 @@ const str = (v: unknown) => (typeof v === "string" ? v : "");
 const MAX_ENTRIES = 2000;
 /** Heavy or generated folders are listed but flagged, so the UI can dim them like Claude Desktop does. */
 const norm = (p: string) => (process.platform === "win32" ? p.toLowerCase() : p);
+
+const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", "out", ".next", ".turbo", ".cache", "target", "__pycache__", ".venv", "venv", ".idea", ".vscode"]);
+const MAX_SCAN = 20000;
+const INDEX_TTL = 5000;
+const indexes = new Map<string, { at: number; files: FolderEntry[] }>();
+
+/** Subsequence score: lower is better, -1 for no match. */
+function score(rel: string, name: string, q: string): number {
+	const r = rel.toLowerCase();
+	const n = name.toLowerCase();
+	if (!q) return 0;
+	if (n === q) return 1;
+	if (n.startsWith(q)) return 2;
+	if (n.includes(q)) return 3;
+	if (r.includes(q)) return 4;
+	let i = 0;
+	for (const c of r) if (c === q[i] && ++i === q.length) return 5;
+	return -1;
+}
 
 function inside(path: string, root: string): boolean {
 	const rel = relative(norm(root), norm(path));
@@ -19,6 +38,56 @@ export default definePlugin({
 	// Only adds a title-bar button and a viewer tab; nothing depends on it.
 	optional: true,
 	setup(ctx) {
+		/** Fuzzy file search under the workspace, for @-mentions in the composer. Returns paths relative to the root. */
+		ctx.rpc("search", async (p): Promise<{ items: { path: string; dir: boolean }[] }> => {
+			const cwd = str(p.cwd) || ctx.cwd;
+			const roots = [...(await ctx.workspaces()).map((w) => w.path), ctx.cwd, cwd];
+			let root: string;
+			try {
+				root = await realpath(cwd);
+			} catch {
+				return { items: [] };
+			}
+			let allowed = false;
+			for (const r of roots) {
+				const real = await realpath(r).catch(() => undefined);
+				if (real && inside(root, real)) {
+					allowed = true;
+					break;
+				}
+			}
+			if (!allowed) return { items: [] };
+
+			let idx = indexes.get(root);
+			if (!idx || Date.now() - idx.at > INDEX_TTL) {
+				const files: FolderEntry[] = [];
+				const queue = [root];
+				while (queue.length && files.length < MAX_SCAN) {
+					const dirPath = queue.shift() as string;
+					const dirents = await readdir(dirPath, { withFileTypes: true }).catch(() => []);
+					for (const d of dirents) {
+						const full = join(dirPath, d.name);
+						const isDir = d.isDirectory();
+						if (!isDir && !d.isFile()) continue;
+						if (isDir && (SKIP_DIRS.has(d.name) || d.name === ".")) continue;
+						files.push({ name: d.name, path: relative(root, full).split(sep).join("/"), dir: isDir });
+						if (isDir) queue.push(full);
+					}
+				}
+				idx = { at: Date.now(), files };
+				indexes.set(root, idx);
+			}
+
+			const q = str(p.query).toLowerCase().replace(/\\/g, "/");
+			const scored: { e: FolderEntry; s: number }[] = [];
+			for (const e of idx.files) {
+				const s = score(e.path, e.name, q);
+				if (s >= 0) scored.push({ e, s });
+			}
+			scored.sort((a, b) => a.s - b.s || a.e.path.split("/").length - b.e.path.split("/").length || a.e.path.localeCompare(b.e.path));
+			return { items: scored.slice(0, 8).map(({ e }) => ({ path: e.path, dir: e.dir })) };
+		});
+
 		/** Paths come from clients: only folders the app already knows (workspaces, host cwd, the session's cwd) may be listed. */
 		ctx.rpc("list", async (p): Promise<FolderListing> => {
 			const cwd = str(p.cwd) || ctx.cwd;
