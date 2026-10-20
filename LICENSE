@@ -1,0 +1,62 @@
+Prometheus Personal Use License (PPUL) v1.0
+
+Copyright (c) 2026 Mouseww. All rights reserved.
+
+1. Grant of license
+   Permission is granted, free of charge, to any individual to download, run,
+   copy, modify, and use this software and its source code ("the Software")
+   for Non-Commercial Purposes, subject to the terms below.
+
+2. Non-Commercial Purposes
+   "Non-Commercial Purposes" means personal use, learning, research, and
+   hobby projects that are not primarily intended for, or directed toward,
+   commercial advantage or monetary compensation.
+
+3. Commercial use requires authorization
+   Any use that is not a Non-Commercial Purpose requires a separate written
+   license from the copyright holder. Commercial use includes, without
+   limitation:
+   (a) use by or on behalf of a company, organization, or institution for
+       business operations;
+   (b) selling, sublicensing, renting, or offering the Software, or a
+       product or service derived from it, for a fee;
+   (c) providing the Software as a hosted or managed service to third
+       parties, whether or not for a fee;
+   (d) bundling the Software into a commercial product.
+   To request authorization, contact the copyright holder through the
+   project's GitHub repository (https://github.com/Mouseww/Prometheus).
+
+4. Conditions
+   - This license notice and the copyright notice must be included in all
+     copies or substantial portions of the Software.
+   - Modified versions may be shared for Non-Commercial Purposes only, must
+     carry the same license, and must state that they have been modified.
+   - No trademark rights are granted. The name "Prometheus" and its logo may
+     not be used to imply endorsement of derived works.
+
+5. Third-party components
+   The Software depends on third-party packages (including the PI Agent
+   runtime), each governed by its own license. This license does not alter
+   those licenses.
+
+6. Termination
+   Any use in breach of this license automatically terminates the rights
+   granted herein.
+
+7. Disclaimer of warranty and liability
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+   NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+   DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+   OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+   USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+---------------------------------------------------------------------------
+中文摘要（仅供参考，以英文原文为准）
+
+- 个人使用、学习、研究、兴趣项目：免费，可修改、可自行部署。
+- 商业使用（公司/组织业务、收费出售、对外提供托管服务、集成进商业产品等）：
+  必须事先取得版权方的书面授权。
+- 分发修改版须保留本许可证并注明修改，且仅限非商业用途。
+- 本软件按“现状”提供，不提供任何担保。
