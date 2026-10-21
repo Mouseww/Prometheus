@@ -125,6 +125,12 @@ pub fn tool_env(data_dir: &Path, runtime: &Runtime) -> Vec<(&'static str, std::f
     let _ = fs::create_dir_all(&cache);
     let empty_templates = data_dir.join("git-templates");
     let _ = fs::create_dir_all(&empty_templates);
+    // OpenSSL (in node, git, curl) defaults to Termux's openssl.cnf, which this app may not read: startup then fails
+    // with "OpenSSL configuration error ... Permission denied". Point it at a minimal config of our own.
+    let openssl_conf = data_dir.join("openssl.cnf");
+    if !openssl_conf.is_file() {
+        let _ = fs::write(&openssl_conf, "# Prometheus: minimal OpenSSL config (defaults only)\n");
+    }
 
     let mut path = OsString::from(&bin);
     path.push(":/system/bin:/system/xbin");
@@ -142,6 +148,7 @@ pub fn tool_env(data_dir: &Path, runtime: &Runtime) -> Vec<(&'static str, std::f
         ("PROMETHEUS_NPM_CLI", npm_cli.into()),
         ("PROMETHEUS_NPX_JS", server.join("tools/npx.mjs").into()),
         ("PROMETHEUS_TOOLS_BIN", bin.into()),
+        ("OPENSSL_CONF", openssl_conf.into()),
         // npm: keep its state in app storage and use the system shell for lifecycle scripts (there is no /bin/sh).
         ("npm_config_cache", cache.join("npm").into()),
         ("npm_config_prefix", data_dir.join("npm-global").into()),
