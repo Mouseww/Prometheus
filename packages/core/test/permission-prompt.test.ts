@@ -45,7 +45,7 @@ describe("applyPermissionPrompt", () => {
 	});
 
 	it("composes with earlier handlers instead of replacing their sections", () => {
-		const event = { systemPromptOptions: { promptGuidelines: ["Keep going"], sections: { memory: "remember pnpm" } } };
+		const event = { systemPromptOptions: { promptGuidelines: ["Keep going"], sections: { memory: "remember pnpm" } as Record<string, string> } };
 		applyPermissionPrompt(event, "auto");
 		expect(event.systemPromptOptions.promptGuidelines[0]).toBe("Keep going");
 		expect(event.systemPromptOptions.sections.memory).toBe("remember pnpm");

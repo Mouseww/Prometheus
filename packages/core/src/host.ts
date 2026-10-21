@@ -573,18 +573,35 @@ export class PrometheusHost {
 		this.resetMessages(sessionId, live);
 	}
 
-	private async retryMessage(sessionId: string, ref: MessageRef): Promise<void> {
+	private async retryMessage(sessionId: string, ref: MessageRef, edited?: string): Promise<void> {
 		const live = this.require(sessionId);
 		const { flat, pos } = this.locate(live, ref);
 		const user = this.userAt(flat, pos);
 		const m = user.message as Extract<ChatMessage, { role: "user" }>;
-		const text = typeof m.content === "string" ? m.content : m.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+		const text = edited ?? (typeof m.content === "string" ? m.content : m.content.map((c) => (c.type === "text" ? c.text : "")).join(""));
 		const images = typeof m.content === "string" ? [] : m.content.filter((c): c is ImageContent => c.type === "image");
+		if (!text.trim() && !images.length) throw new Error("消息不能为空");
 		// Branch from before the user message; the old reply stays in the session tree.
 		const result = await live.session.navigateTree(user.entryId);
 		if (result.cancelled) throw new Error("操作已取消");
 		this.resetMessages(sessionId, live);
 		await this.prompt(sessionId, text, images.length ? images : undefined, undefined);
+	}
+
+	/** Take one waiting message out of the steer / follow-up queue so it can be edited or dropped. */
+	private takeQueued(sessionId: string, kind: "steer" | "followUp", index: number, text: string): { text: string; images?: ImageContent[] } {
+		const { session } = this.require(sessionId);
+		// PI keeps the display strings and the real messages (with pictures) in parallel lists; both must change together.
+		const internal = session as unknown as { _steeringMessages: string[]; _followUpMessages: string[]; _emitQueueUpdate(): void; agent: { steeringQueue: { messages: unknown[] }; followUpQueue: { messages: unknown[] } } };
+		const labels = kind === "steer" ? internal._steeringMessages : internal._followUpMessages;
+		const queue = kind === "steer" ? internal.agent.steeringQueue : internal.agent.followUpQueue;
+		if (labels[index] !== text) throw new Error("该消息已发送");
+		const [message] = queue.messages.splice(index, 1) as { content?: unknown }[];
+		labels.splice(index, 1);
+		internal._emitQueueUpdate();
+		const content = Array.isArray(message?.content) ? (message.content as ImageContent[]) : [];
+		const images = content.filter((c) => c.type === "image");
+		return { text, ...(images.length ? { images } : {}) };
 	}
 
 	private async forkMessage(sessionId: string, ref: MessageRef): Promise<{ snapshot: SessionSnapshot; editorText?: string }> {
@@ -703,6 +720,11 @@ export class PrometheusHost {
 			await this.retryMessage(sessionId, ref);
 			return null;
 		},
+		"message.edit": async ({ sessionId, ref, text }) => {
+			await this.retryMessage(sessionId, ref, text);
+			return null;
+		},
+		"chat.unqueue": ({ sessionId, kind, index, text }) => this.takeQueued(sessionId, kind, index, text),
 		"message.fork": ({ sessionId, ref }) => this.forkMessage(sessionId, ref),
 
 		"workspace.list": async () => {

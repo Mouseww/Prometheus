@@ -1,10 +1,10 @@
 import clsx from "clsx";
-import { Brain, Check, Eye, ChevronDown, ChevronRight, CircleAlert, Copy, GitBranch, LoaderCircle, RotateCcw, Trash2 } from "lucide-react";
+import { Brain, Check, Eye, ChevronDown, ChevronRight, CircleAlert, Copy, GitBranch, LoaderCircle, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import type { AssistantMessage, ChatMessage, ImageContent, ToolCallContent, ToolResultMessage, UserMessage } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { imagesOf } from "../lib/images.ts";
-import { deleteMessage, forkMessage, openFile, pluginActive, retryMessage, type ToolRun, toast, useStore } from "../lib/store.ts";
+import { deleteMessage, editMessage, forkMessage, openFile, pluginActive, retryMessage, type ToolRun, toast, useStore } from "../lib/store.ts";
 import { ImageStrip } from "./ImageStrip.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { SubagentCard } from "./SubagentCard.tsx";
@@ -21,6 +21,9 @@ const M = defineMessages({
 		retry: "重试",
 		fork: "从此处 Fork 新会话",
 		delete: "删除",
+		edit: "编辑后重新发送",
+		cancel: "取消",
+		resend: "重新发送",
 		confirmDelete: "从上下文中删除这条消息？",
 	},
 	en: {
@@ -34,6 +37,9 @@ const M = defineMessages({
 		retry: "Retry",
 		fork: "Fork a new chat from here",
 		delete: "Delete",
+		edit: "Edit and resend",
+		cancel: "Cancel",
+		resend: "Resend",
 		confirmDelete: "Remove this message from the context?",
 	},
 });
@@ -52,6 +58,46 @@ function UserBubble({ text, images }: { text: string; images: ImageContent[] }) 
 		<div className="flex max-w-[85%] flex-col items-end gap-2">
 			<ImageStrip images={images} align="end" />
 			{text && <div className="rounded-2xl rounded-br-md border border-ember-500/20 bg-gradient-to-b from-ink-800 to-ink-850 px-4 py-2.5 text-[15px] whitespace-pre-wrap text-ink-100">{text}</div>}
+		</div>
+	);
+}
+
+/** Inline editor for a sent message; resending branches the chat from before it. */
+function UserEditor({ index, initial, onClose }: { index: number; initial: string; onClose: () => void }) {
+	const t = useT(M);
+	const [value, setValue] = useState(initial);
+	const [busy, setBusy] = useState(false);
+	const send = async () => {
+		if (busy || !value.trim()) return;
+		setBusy(true);
+		const ok = await editMessage(index, value);
+		setBusy(false);
+		if (ok) onClose();
+	};
+	return (
+		<div className="flex w-full max-w-[85%] flex-col items-end gap-2">
+			<textarea
+				autoFocus
+				value={value}
+				rows={Math.min(10, Math.max(2, value.split("\n").length))}
+				onChange={(e) => setValue(e.target.value)}
+				onKeyDown={(e) => {
+					if (e.key === "Escape") onClose();
+					else if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+						e.preventDefault();
+						void send();
+					}
+				}}
+				className="w-full resize-none rounded-2xl border border-ember-500/40 bg-ink-900 px-4 py-2.5 text-[15px] text-ink-100 outline-none focus:border-ember-400"
+			/>
+			<div className="flex gap-2 text-xs">
+				<button type="button" onClick={onClose} className="rounded-md px-3 py-1.5 text-ink-400 hover:bg-ink-800 hover:text-ink-100">
+					{t("cancel")}
+				</button>
+				<button type="button" disabled={busy || !value.trim()} onClick={() => void send()} className="rounded-md bg-ember-500 px-3 py-1.5 font-medium text-ink-950 hover:bg-ember-400 disabled:opacity-40">
+					{t("resend")}
+				</button>
+			</div>
 		</div>
 	);
 }
@@ -207,7 +253,7 @@ async function removeAll(indices: number[]): Promise<void> {
 	for (const i of [...indices].reverse()) await deleteMessage(i);
 }
 
-function Actions({ index, indices, text, canRetry, align }: { index: number; indices?: number[]; text: string; canRetry: boolean; align: "start" | "end" }) {
+function Actions({ index, indices, text, canRetry, align, onEdit }: { index: number; indices?: number[]; text: string; canRetry: boolean; align: "start" | "end"; onEdit?: () => void }) {
 	const t = useT(M);
 	const [copied, setCopied] = useState(false);
 	const btn = "rounded-md p-1.5 text-ink-500 transition-colors hover:bg-ink-800 hover:text-ink-100 disabled:pointer-events-none disabled:opacity-30";
@@ -226,6 +272,11 @@ function Actions({ index, indices, text, canRetry, align }: { index: number; ind
 			>
 				{copied ? <Check className="size-3.5 text-moss-400" /> : <Copy className="size-3.5" />}
 			</button>
+			{onEdit && (
+				<button type="button" className={btn} title={t("edit")} disabled={!canRetry} onClick={onEdit}>
+					<Pencil className="size-3.5" />
+				</button>
+			)}
 			<button type="button" className={btn} title={t("retry")} disabled={!canRetry} onClick={() => void retryMessage(index)}>
 				<RotateCcw className="size-3.5" />
 			</button>
@@ -257,6 +308,7 @@ export function MessageList({
 	pending: { text: string; images?: ImageContent[] } | null;
 }) {
 	const t = useT(M);
+	const [editingAt, setEditingAt] = useState<number | null>(null);
 	const results = new Map<string, ToolResultMessage>();
 	for (const m of messages) if (m.role === "toolResult") results.set(m.toolCallId, m);
 	const lastIndex = messages.length - 1;
@@ -267,12 +319,13 @@ export function MessageList({
 			{messages.map((m, i) => {
 				if (m.role === "user") {
 					const text = userText(m);
+					const editing = editingAt === i && !streaming;
 					return (
 						<div key={i} className="group/msg animate-rise">
 							<div className="flex justify-end">
-								<UserBubble text={text} images={userImages(m)} />
+								{editing ? <UserEditor index={i} initial={text} onClose={() => setEditingAt(null)} /> : <UserBubble text={text} images={userImages(m)} />}
 							</div>
-							<Actions index={i} text={text} canRetry={!streaming} align="end" />
+							{!editing && <Actions index={i} text={text} canRetry={!streaming} align="end" onEdit={() => setEditingAt(i)} />}
 						</div>
 					);
 				}

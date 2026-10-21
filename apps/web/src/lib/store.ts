@@ -156,7 +156,7 @@ interface State {
 	uiQueue: { sessionId: string; request: UIRequest }[];
 	toasts: Toast[];
 	title: string | null;
-	editorText: { text: string; nonce: number } | null;
+	editorText: { text: string; nonce: number; images?: ImageContent[]; append?: boolean } | null;
 	/** True once the first connection has restored (or decided not to restore) a session. */
 	booted: boolean;
 	/** Model picked on the new-chat page before any workspace (and so any session) exists. */
@@ -657,6 +657,22 @@ export async function retryMessage(index: number): Promise<void> {
 	const session = get().session;
 	const ref = refOf(index);
 	if (session && ref) await call((c) => c.rpc("message.retry", { sessionId: session.id, ref }));
+}
+
+/** Branch from before a sent message and run it again with new words (its pictures stay). */
+export async function editMessage(index: number, text: string): Promise<boolean> {
+	const session = get().session;
+	const ref = refOf(index);
+	if (!session || !ref) return false;
+	return (await call((c) => c.rpc("message.edit", { sessionId: session.id, ref, text }))) !== undefined;
+}
+
+/** Pull a waiting message out of the queue; with `edit` it goes back to the composer, otherwise it is dropped. */
+export async function unqueue(kind: "steer" | "followUp", index: number, text: string, edit: boolean): Promise<void> {
+	const session = get().session;
+	if (!session) return;
+	const taken = await call((c) => c.rpc("chat.unqueue", { sessionId: session.id, kind, index, text }));
+	if (taken && edit) set({ editorText: { text: taken.text, nonce: Date.now(), images: taken.images, append: true } });
 }
 
 export async function forkMessage(index: number): Promise<void> {

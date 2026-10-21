@@ -1,11 +1,11 @@
 import clsx from "clsx";
-import { ArrowUp, Brain, Check, ChevronDown, CornerDownRight, Cpu, File as FileIcon, Folder as FolderIcon, ListEnd, Paperclip, Search, Square, X } from "lucide-react";
+import { ArrowUp, Brain, Check, ChevronDown, CornerDownRight, Cpu, File as FileIcon, Folder as FolderIcon, ListEnd, Paperclip, Pencil, Search, Square, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ImageContent, ThinkingLevel } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { fileToImage, IMAGE_ACCEPT, ImageError, imageSrc, MAX_IMAGES } from "../lib/images.ts";
 import { type SendMode, setPrefs, usePrefs } from "../lib/prefs.ts";
-import { abortRun, openSettings, pluginCall, sendPrompt, setModel, setPermissionMode, setThinking, toast, useStore } from "../lib/store.ts";
+import { abortRun, openSettings, pluginCall, sendPrompt, setModel, setPermissionMode, setThinking, toast, unqueue, useStore } from "../lib/store.ts";
 import { ContextMeter } from "./ContextMeter.tsx";
 import { ModePicker } from "./ModePicker.tsx";
 import { nextPermissionMode, PermissionPicker } from "./PermissionPicker.tsx";
@@ -26,6 +26,8 @@ const M = defineMessages({
 		sendAs: "发送（{mode}）",
 		queued: "排队中 · {q}",
 		steered: "插队中 · {q}",
+		editQueued: "编辑（取回输入框）",
+		withdraw: "撤回",
 		abort: "中断",
 		send: "发送",
 		needWorkspace: "请先选择工作区",
@@ -65,6 +67,8 @@ const M = defineMessages({
 		sendAs: "Send ({mode})",
 		queued: "Queued · {q}",
 		steered: "Steering · {q}",
+		editQueued: "Edit (move back to the composer)",
+		withdraw: "Withdraw",
 		abort: "Stop",
 		send: "Send",
 		needWorkspace: "Choose a workspace first",
@@ -332,7 +336,9 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 
 	useEffect(() => {
 		if (editorText) {
-			setText(editorText.text);
+			const { text: next, images: attached, append } = editorText;
+			setText(append && textRef.current.trim() ? `${next}\n${textRef.current}` : next);
+			if (attached?.length) setImages((cur) => [...cur, ...attached].slice(0, MAX_IMAGES));
 			ref.current?.focus();
 		}
 	}, [editorText]);
@@ -505,8 +511,8 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 	};
 
 	const queued = [
-		...(session?.queue.steering ?? []).map((q) => ({ q, steer: true })),
-		...(session?.queue.followUp ?? []).map((q) => ({ q, steer: false })),
+		...(session?.queue.steering ?? []).map((q, index) => ({ q, steer: true, index })),
+		...(session?.queue.followUp ?? []).map((q, index) => ({ q, steer: false, index })),
 	];
 
 	// Dictation lands where the cursor was, spaced from what is already typed.
@@ -597,10 +603,16 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 
 			{queued.length > 0 && (
 				<div className="mb-2 flex flex-col gap-1 px-1">
-					{queued.map(({ q, steer }, i) => (
-						<div key={i} className="flex min-w-0 items-center gap-1.5 text-xs text-ink-400" title={q}>
+					{queued.map(({ q, steer, index }, i) => (
+						<div key={i} className="group/q flex min-w-0 items-center gap-1.5 text-xs text-ink-400" title={q}>
 							{steer ? <CornerDownRight className="size-3 shrink-0 text-ember-300" /> : <ListEnd className="size-3 shrink-0 text-ink-500" />}
-							<span className="truncate">{t(steer ? "steered" : "queued", { q })}</span>
+							<span className="min-w-0 flex-1 truncate">{t(steer ? "steered" : "queued", { q })}</span>
+							<button type="button" title={t("editQueued")} onClick={() => void unqueue(steer ? "steer" : "followUp", index, q, true)} className="shrink-0 rounded p-1 text-ink-500 hover:bg-ink-800 hover:text-ink-100">
+								<Pencil className="size-3" />
+							</button>
+							<button type="button" title={t("withdraw")} onClick={() => void unqueue(steer ? "steer" : "followUp", index, q, false)} className="shrink-0 rounded p-1 text-ink-500 hover:bg-ink-800 hover:text-rose-400">
+								<X className="size-3" />
+							</button>
 						</div>
 					))}
 				</div>

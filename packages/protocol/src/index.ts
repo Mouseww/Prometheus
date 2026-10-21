@@ -795,6 +795,8 @@ export interface RpcMethods {
 
 	"message.delete": { params: { sessionId: string; ref: MessageRef }; result: null };
 	"message.retry": { params: { sessionId: string; ref: MessageRef }; result: null };
+	"message.edit": { params: { sessionId: string; ref: MessageRef; text: string }; result: null };
+	"chat.unqueue": { params: { sessionId: string; kind: "steer" | "followUp"; index: number; text: string }; result: { text: string; images?: ImageContent[] } };
 	"message.fork": { params: { sessionId: string; ref: MessageRef }; result: { snapshot: SessionSnapshot; editorText?: string } };
 
 	"workspace.list": { params: Record<string, never>; result: WorkspaceInfo[] };
