@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
+import type { UIRequest } from "@prometheus/protocol";
 import { applyPermissionPrompt } from "../src/permission-gate.ts";
 import { autoResponse } from "../src/ui-bridge.ts";
 
-function opts() {
-	return { promptGuidelines: [] as string[], sections: {} as Record<string, string> };
+/**
+ * `sections` is an index signature, so `{}` narrows it to an empty object literal type and reading
+ * any key back fails to typecheck. Typing the factory's return makes the assertions honest.
+ */
+function opts(): { promptGuidelines: string[]; sections: Record<string, string> } {
+	return { promptGuidelines: [], sections: {} };
 }
 
 describe("applyPermissionPrompt", () => {
@@ -49,15 +54,22 @@ describe("applyPermissionPrompt", () => {
 });
 
 describe("autoResponse", () => {
+	// Dialogs go over the wire as UIRequest, which autoResponse is fed with; the permission prompt is
+	// modeled as a union on `kind`, so one has to name its own fields rather than a bare `title`.
+	// A plain Omit over a union collapses to its common keys, hence the distributive form (as in ui-bridge).
+	type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+	const request = (r: DistributiveOmit<UIRequest, "id">): UIRequest => ({ id: "q1", ...r }) as UIRequest;
+
 	it("picks the first select option and confirms yes", () => {
-		expect(autoResponse({ method: "select", title: "Pick", options: ["A", "B"] })).toEqual({ value: "A" });
-		expect(autoResponse({ method: "confirm", title: "Sure?", message: "ok" })).toEqual({ confirmed: true });
+		expect(autoResponse(request({ method: "select", title: "Pick", options: ["A", "B"] }))).toEqual({ value: "A" });
+		expect(autoResponse(request({ method: "confirm", title: "Sure?", message: "ok" }))).toEqual({ confirmed: true });
 	});
 
 	it("does not invent free text or permission answers", () => {
-		expect(autoResponse({ method: "input", title: "Name" })).toBeUndefined();
-		expect(autoResponse({ method: "editor", title: "Edit" })).toBeUndefined();
-		expect(autoResponse({ method: "permission", kind: "tool", toolName: "bash", summary: "rm" })).toBeUndefined();
-		expect(autoResponse({ method: "select", title: "Empty", options: [] })).toBeUndefined();
+		expect(autoResponse(request({ method: "input", title: "Name" }))).toBeUndefined();
+		expect(autoResponse(request({ method: "editor", title: "Edit" }))).toBeUndefined();
+		expect(autoResponse(request({ method: "permission", kind: "tool", toolName: "bash", summary: "rm" }))).toBeUndefined();
+		expect(autoResponse(request({ method: "permission", kind: "plan", plan: "do it" }))).toBeUndefined();
+		expect(autoResponse(request({ method: "select", title: "Empty", options: [] }))).toBeUndefined();
 	});
 });
