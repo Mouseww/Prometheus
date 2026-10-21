@@ -1,5 +1,7 @@
 # Prometheus 架构设计
 
+> English: [docs/en/architecture.md](en/architecture.md)
+
 > 基于 PI Agent 的高性能、高颜值、插件化 Agent 框架。任何人都可以在其上快速二次开发自己的 Agent。
 
 - 版本：v0.1（骨架）

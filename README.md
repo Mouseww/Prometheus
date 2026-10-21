@@ -13,7 +13,7 @@
 [![License](https://img.shields.io/badge/license-PPUL%20v1.0%20%C2%B7%20%E4%B8%AA%E4%BA%BA%E5%85%8D%E8%B4%B9%20%2F%20%E5%95%86%E7%94%A8%E9%9C%80%E6%8E%88%E6%9D%83-blue?style=for-the-badge)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A5%2022.19-339933?style=for-the-badge&logo=node.js&logoColor=white)](#快速开始)
 
-[快速开始](#快速开始) · [功能](#功能一览) · [架构](#架构) · [写一个插件](#写一个插件) · [部署文档](docs/deployment.md) · [架构文档](docs/architecture.md)
+[快速开始](#快速开始) · [功能](#功能一览) · [架构](#架构) · [写一个插件](#写一个插件) · [部署文档](docs/deployment.md) · [架构文档](docs/architecture.md) · [English](README.en.md)
 
 <img src="https://raw.githubusercontent.com/Mouseww/Prometheus/main/docs/images/chat.png" alt="Prometheus 对话界面" width="900" />
 
@@ -149,7 +149,7 @@ apps/desktop          Tauri 桌面壳
 apps/cli              TUI 入口
 ```
 
-完整设计见 [docs/architecture.md](docs/architecture.md)。
+完整设计见 [docs/architecture.md](docs/architecture.md)（英文版：[docs/en/architecture.md](docs/en/architecture.md)）。
 
 ## 写一个插件
 

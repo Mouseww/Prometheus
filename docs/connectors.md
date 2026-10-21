@@ -1,5 +1,7 @@
 # Connectors 连接器插件设计
 
+> English: [docs/en/connectors.md](en/connectors.md)
+
 让 Agent 通过「连接器」安全地使用第三方服务（GitHub、Jira/Confluence、Bitbucket、Microsoft 365 的 Outlook/Teams/OneDrive、数据库等）。用户在 **设置 → 连接器** 中完成授权，Agent 通过少量通用工具调用已授权的服务。
 
 ## 1. 目标与非目标

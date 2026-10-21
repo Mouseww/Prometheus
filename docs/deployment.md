@@ -1,5 +1,7 @@
 # 运行与部署
 
+> English: [docs/en/deployment.md](en/deployment.md)
+
 ## 环境
 
 - Node ≥ 22.19（推荐 24），pnpm 10
