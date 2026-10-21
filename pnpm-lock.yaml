@@ -234,6 +234,9 @@ importers:
       '@prometheus/plugin-todos':
         specifier: workspace:*
         version: link:../todos
+      '@prometheus/plugin-veil':
+        specifier: workspace:*
+        version: link:../veil
       '@prometheus/plugin-voice':
         specifier: workspace:*
         version: link:../voice
@@ -369,6 +372,12 @@ importers:
       '@prometheus/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+
+  plugins/veil:
+    dependencies:
+      '@prometheus/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
   plugins/voice:
     dependencies:

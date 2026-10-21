@@ -54,6 +54,28 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Release notes live in .github/release-notes/<tag>.md so every release says what changed.
+      - name: Read release notes
+        id: notes
+        shell: bash
+        run: |
+          file=".github/release-notes/${GITHUB_REF_NAME}.md"
+          if [ -f "$file" ]; then
+            echo "Found $file"
+            {
+              echo "body<<__RELEASE_NOTES__"
+              cat "$file"
+              echo "__RELEASE_NOTES__"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::$file is missing; falling back to a generic body"
+            {
+              echo "body<<__RELEASE_NOTES__"
+              echo "See the assets below to download and install."
+              echo "__RELEASE_NOTES__"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -66,7 +88,7 @@ jobs:
           args: --config src-tauri/tauri.bundle.json --verbose
           tagName: ${{ github.ref_name }}
           releaseName: Prometheus ${{ github.ref_name }}
-          releaseBody: See the assets below to download and install.
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true

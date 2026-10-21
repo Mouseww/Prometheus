@@ -17,12 +17,13 @@
     "@prometheus/plugin-git": "workspace:*",
     "@prometheus/plugin-mcp": "workspace:*",
     "@prometheus/plugin-memory": "workspace:*",
-    "@prometheus/plugin-packages": "workspace:*",
     "@prometheus/plugin-modes": "workspace:*",
+    "@prometheus/plugin-packages": "workspace:*",
     "@prometheus/plugin-sdk": "workspace:*",
     "@prometheus/plugin-skills": "workspace:*",
     "@prometheus/plugin-terminal": "workspace:*",
     "@prometheus/plugin-todos": "workspace:*",
+    "@prometheus/plugin-veil": "workspace:*",
     "@prometheus/plugin-voice": "workspace:*",
     "@prometheus/plugin-workbench": "workspace:*"
   }
