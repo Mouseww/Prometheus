@@ -135,3 +135,21 @@ describe("store", () => {
 		expect((await store.read()).modes.map((m) => m.id)).toEqual(["a", "b", "c"]);
 	});
 });
+
+describe("knownTools", () => {
+	it("lists the tools PI and the plugins actually provide", async () => {
+		const { knownTools } = await import("../src/tools.ts");
+		const names = knownTools();
+		// Present on every platform, so a broken factory import cannot pass silently.
+		for (const name of ["read", "write", "edit", "bash", "grep", "todo_write"]) expect(names).toContain(name);
+		expect(new Set(names).size).toBe(names.length);
+	});
+
+	it("every tool a shipped mode names really exists", async () => {
+		const { knownTools } = await import("../src/tools.ts");
+		const names = new Set(knownTools());
+		for (const mode of seed().modes) {
+			for (const tool of mode.tools) expect(names.has(tool), `${mode.id} names unknown tool ${tool}`).toBe(true);
+		}
+	});
+});

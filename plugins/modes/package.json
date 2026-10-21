@@ -12,6 +12,7 @@
 	},
 	"dependencies": {
 		"@prometheus/plugin-sdk": "workspace:*",
-		"@prometheus/protocol": "workspace:*"
+		"@prometheus/protocol": "workspace:*",
+		"@earendil-works/pi-coding-agent": "1.2.0"
 	}
 }

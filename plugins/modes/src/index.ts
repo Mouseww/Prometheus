@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { definePlugin } from "@prometheus/plugin-sdk";
 import type { AgentMode, ModesState } from "./store.ts";
 import { allowedTools, bodyOf, makeStore, modeFor, newMode, sanitizeMode, seedModes } from "./store.ts";
+import { knownTools } from "./tools.ts";
 
 /** Section carrying the mode's prompt text; tagged so a later turn replaces exactly this. */
 const SECTION = "agent_mode";
@@ -184,12 +185,8 @@ export default definePlugin({
 			return { session, id };
 		});
 
-		/** Every tool this host can offer, so the editor lists real names instead of guesses. */
-		ctx.rpc("tools", async () => {
-			const state = await read();
-			const used = new Set(state.modes.flatMap((m) => m.tools));
-			return { known: [...used].sort() };
-		});
+		/** The tool names a mode may name, so the editor picks from real ones instead of guesses. */
+		ctx.rpc("tools", async () => ({ known: knownTools() }));
 	},
 });
 

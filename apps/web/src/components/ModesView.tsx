@@ -34,6 +34,8 @@ const M = defineMessages({
 		toolsSome: "仅限 {n} 个",
 		toolsHint: "留空表示不限制。模式只能收窄工具，不能给出宿主没有登记的工具。",
 		toolSearch: "筛选工具…",
+		noToolMatch: "没有匹配的工具",
+		addTool: "添加工具名",
 		enable: "使用这个模式",
 		disable: "取消使用",
 		save: "保存",
@@ -77,6 +79,8 @@ const M = defineMessages({
 		toolsSome: "{n} selected",
 		toolsHint: "Empty means no restriction. A mode can only narrow tools, never add one the host did not register.",
 		toolSearch: "Filter tools…",
+		noToolMatch: "No matching tool",
+		addTool: "Add a tool name",
 		enable: "Use this mode",
 		disable: "Stop using",
 		save: "Save",
@@ -233,7 +237,7 @@ function ModeEditor({ mode, isCurrent, onChanged, onToggleDefault }: { mode: Mod
 	const [draft, setDraft] = useState<Draft | null>(null);
 	const [saved, setSaved] = useState<Draft | null>(null);
 	const [busy, setBusy] = useState(false);
-	/** Every tool name the app has ever seen in a mode, so the picker offers real names. */
+	/** Tools PI and the plugins actually provide, listed statically by the plugin. */
 	const [known, setKnown] = useState<string[]>([]);
 	const [filter, setFilter] = useState("");
 	const [adding, setAdding] = useState("");
@@ -357,7 +361,7 @@ function ModeEditor({ mode, isCurrent, onChanged, onToggleDefault }: { mode: Mod
 					</div>
 					<div className="flex gap-2">
 						<Input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={t("toolSearch")} className="max-w-52" />
-						<Input value={adding} onChange={(e) => setAdding(e.target.value)} placeholder="tool_name" className="max-w-44 font-mono" />
+						<Input value={adding} onChange={(e) => setAdding(e.target.value)} placeholder={t("addTool")} className="max-w-44 font-mono" />
 						<Button
 							variant="outline"
 							disabled={!adding.trim() || (draft?.tools.includes(adding.trim()) ?? false)}
@@ -386,7 +390,7 @@ function ModeEditor({ mode, isCurrent, onChanged, onToggleDefault }: { mode: Mod
 								</button>
 							);
 						})}
-						{shown.length === 0 && <span className="text-xs text-ink-600">{t("toolSearch")}</span>}
+						{shown.length === 0 && <span className="text-xs text-ink-600">{t("noToolMatch")}</span>}
 					</div>
 				</div>
 			</Field>
