@@ -1,14 +1,19 @@
-import { TEXT as operatorEn } from "./bundled/operator_en.ts";
-import { TEXT as researchEn } from "./bundled/research_en.ts";
+import { TEXT as acceptEdits } from "./bundled/accept-edits_en.ts";
+import { TEXT as defaultMode } from "./bundled/default_en.ts";
+import { TEXT as operator } from "./bundled/operator_en.ts";
+import { TEXT as plan } from "./bundled/plan_en.ts";
+import { TEXT as whitehat } from "./bundled/whitehat_en.ts";
 
 /**
- * Shipped prompt text, inlined at build time.
+ * Shipped prompt text, inlined at build time by scripts/embed-prompts.mjs.
  *
- * The desktop bundle is produced by esbuild, which only follows imports: a plain `readFile` on a
- * `.md` next to the source would work in dev and fail in every packaged build. Keeping the text in
- * modules makes it part of whatever bundle ships it.
+ * The desktop bundle is produced by esbuild, which only follows imports: a `readFile` on a `.md`
+ * next to the source works in dev and fails in every packaged build.
  */
 export const BUNDLED: Record<string, string> = {
-	"operator.en.md": operatorEn,
-	"research.en.md": researchEn,
+	"accept-edits.en.md": acceptEdits,
+	"default.en.md": defaultMode,
+	"operator.en.md": operator,
+	"plan.en.md": plan,
+	"whitehat.en.md": whitehat,
 };

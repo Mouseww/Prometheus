@@ -2,7 +2,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { makeStore, newProfile, profileFor, sanitizeProfile, seedProfiles, type PromptsState } from "../src/store.ts";
+import { BUNDLED } from "../src/bundled.ts";
+import { bodyOf, makeStore, newProfile, promptFor, sanitizeProfile, seedProfiles } from "../src/store.ts";
 
 let dir: string;
 
@@ -14,103 +15,125 @@ afterEach(async () => {
 	await rm(dir, { recursive: true, force: true });
 });
 
+const seeded = () => seedProfiles({ profiles: [], seeded: 0 });
+
 describe("seedProfiles", () => {
-	it("adds the shipped profiles once and is idempotent", () => {
-		const once = seedProfiles({ active: null, overrides: {}, profiles: [], seeded: false });
-		expect(once.seeded).toBe(true);
-		expect(once.profiles.map((p) => p.id).sort()).toEqual(["operator", "research"]);
+	it("gives every permission mode exactly one prompt", () => {
+		const state = seeded();
+		expect(state.profiles.map((p) => p.mode).sort()).toEqual(["acceptEdits", "auto", "bypassPermissions", "default", "plan"]);
+	});
+
+	it("points each prompt at a bundled file that exists", () => {
+		for (const p of seeded().profiles) {
+			expect(p.file && BUNDLED[p.file]).toBeTruthy();
+		}
+	});
+
+	it("is idempotent", () => {
+		const once = seeded();
 		expect(seedProfiles(once)).toBe(once);
 	});
 
-	it("keeps a user-chosen default across a reseed", () => {
-		const once = seedProfiles({ active: "research", overrides: {}, profiles: [], seeded: false });
-		expect(once.active).toBe("research");
-	});
-
-	it("drops a default that points at a removed profile", () => {
-		const once = seedProfiles({ active: "gone", overrides: {}, profiles: [], seeded: false });
-		expect(once.active).toBeNull();
+	it("keeps a user's edits when seeding an already-seeded state", () => {
+		const once = seeded();
+		const edited = { ...once, profiles: once.profiles.map((p) => (p.mode === "default" ? { ...p, body: "mine" } : p)) };
+		expect(seedProfiles(edited)).toBe(edited);
 	});
 });
 
-describe("profileFor", () => {
-	const state: PromptsState = seedProfiles({
-		active: "operator",
-		overrides: { s1: "research" },
-		profiles: [],
-		seeded: false,
+describe("promptFor", () => {
+	it("picks the prompt for the requested mode", () => {
+		const state = seeded();
+		expect(promptFor(state, "plan")?.mode).toBe("plan");
+		expect(promptFor(state, "bypassPermissions")?.file).toBe("whitehat.en.md");
 	});
 
-	it("prefers the chat's own pick", () => {
-		expect(profileFor(state, "s1")?.id).toBe("research");
-		expect(profileFor(state, "s2")?.id).toBe("operator");
+	it("skips disabled prompts", () => {
+		const state = seeded();
+		const off = { ...state, profiles: state.profiles.map((p) => (p.mode === "plan" ? { ...p, enabled: false } : p)) };
+		expect(promptFor(off, "plan")).toBeUndefined();
 	});
 
-	it("ignores an override that is switched off", () => {
-		const off: PromptsState = {
-			...state,
-			profiles: state.profiles.map((p) => (p.id === "research" ? { ...p, enabled: false } : p)),
-		};
-		expect(profileFor(off, "s1")?.id).toBe("operator");
+	it("prefers the seeded prompt when a mode has several", () => {
+		const state = seeded();
+		const extra = { ...newProfile("plan"), id: "custom-plan", title: "mine" };
+		const withExtra = { ...state, profiles: [...state.profiles, extra] };
+		expect(promptFor(withExtra, "plan")?.id).toBe("builtin-plan");
 	});
 
-	it("returns nothing when nothing is enabled", () => {
-		const none: PromptsState = { ...state, active: null, overrides: {}, profiles: state.profiles.map((p) => ({ ...p, enabled: false })) };
-		expect(profileFor(none, "s1")).toBeUndefined();
+	it("returns nothing for a mode with no prompt", () => {
+		expect(promptFor({ profiles: [], seeded: 2 }, "default")).toBeUndefined();
+	});
+});
+
+describe("bodyOf", () => {
+	it("reads the bundled text, and a body shadows it", () => {
+		const [first] = seeded().profiles;
+		expect(bodyOf(first!)).toBe(BUNDLED[first!.file!]);
+		expect(bodyOf({ ...first!, body: "edited" })).toBe("edited");
+	});
+
+	it("returns undefined for an unknown bundled file", () => {
+		expect(bodyOf({ ...newProfile("default"), file: "nope.md", body: undefined })).toBeUndefined();
 	});
 });
 
 describe("sanitizeProfile", () => {
 	it("rejects non-objects", () => {
 		expect(() => sanitizeProfile(null)).toThrow(/不合法/);
-		expect(() => sanitizeProfile("nope")).toThrow(/不合法/);
 	});
 
-	it("keeps the id of the profile being edited and fills defaults", () => {
-		const prior = { ...newProfile(), id: "fixed", title: "旧名字" };
-		const out = sanitizeProfile({ title: "  新名字  " }, prior);
+	it("keeps the id being edited and defaults the rest", () => {
+		const prior = { ...newProfile("auto"), id: "fixed", title: "old" };
+		const out = sanitizeProfile({ title: "  new  " }, prior);
 		expect(out.id).toBe("fixed");
-		expect(out.title).toBe("新名字");
-		expect(out.mode).toBe("replace");
+		expect(out.title).toBe("new");
+		expect(out.mode).toBe("auto");
 	});
 
 	it("falls back on values a client made up", () => {
-		const out = sanitizeProfile({ title: "x", mode: "explode", base: "whatever", source: "remote" });
-		expect(out.mode).toBe("replace");
-		expect(out.base).toBe("operator");
-		expect(out.source).toBe("inline");
+		const out = sanitizeProfile({ mode: "nope", how: "explode" }, newProfile("default"));
+		expect(out.mode).toBe("default");
+		expect(out.how).toBe("append");
+	});
+
+	it("drops the file name once a body is present, so edits win", () => {
+		const prior = { ...newProfile("plan"), file: "plan.en.md", body: undefined };
+		const out = sanitizeProfile({ body: "custom text" }, prior);
+		expect(out.body).toBe("custom text");
+		expect(out.file).toBeUndefined();
 	});
 
 	it("caps the body and the title", () => {
-		const out = sanitizeProfile({ title: "t".repeat(500), body: "b".repeat(500_000) }, newProfile());
+		const out = sanitizeProfile({ title: "t".repeat(500), body: "b".repeat(500_000) }, newProfile("default"));
 		expect(out.title.length).toBe(120);
 		expect(out.body?.length).toBe(400_000);
 	});
 });
 
 describe("store", () => {
-	it("round-trips through the json file with a seeded default", async () => {
-		const store = makeStore(join(dir, "prompts.json"));
-		await store.update((s) => seedProfiles(s));
-		const back = await store.read();
-		expect(back.seeded).toBe(true);
-		expect(back.profiles).toHaveLength(2);
-	});
-
 	it("serialises concurrent updates instead of losing writes", async () => {
 		const store = makeStore(join(dir, "prompts.json"));
 		await Promise.all(
-			["a", "b", "c"].map((id) =>
-				store.update((s) => ({ ...s, profiles: [...s.profiles, { ...newProfile(), id, title: id }] })),
-			),
+			["a", "b", "c"].map((id) => store.update((s) => ({ ...s, profiles: [...s.profiles, { ...newProfile("default"), id, title: id }] }))),
 		);
-		const back = await store.read();
-		expect(back.profiles.map((p) => p.id)).toEqual(["a", "b", "c"]);
+		expect((await store.read()).profiles.map((p) => p.id)).toEqual(["a", "b", "c"]);
 	});
 });
 
-describe("empty state", () => {
-	it("starts with no selection so an untouched install changes nothing", () => {
-		expect(seedProfiles({ active: null, overrides: {}, profiles: [], seeded: false }).active).toBeNull();
+describe("migration", () => {
+	it("replaces a pre-mode state instead of leaving every mode empty", () => {
+		// The previous version wrote seeded: true and profiles with a `mode: "replace"` field.
+		const legacy = {
+			profiles: [{ id: "operator", mode: "replace", title: "Operator", description: "", enabled: true, how: "replace", dropPersona: false, updatedAt: 0 }],
+			seeded: true,
+		} as unknown as Parameters<typeof seedProfiles>[0];
+		const out = seedProfiles(legacy);
+		expect(out.profiles.map((p) => p.mode).sort()).toEqual(["acceptEdits", "auto", "bypassPermissions", "default", "plan"]);
+	});
+
+	it("leaves a current state untouched", () => {
+		const current = seedProfiles({ profiles: [], seeded: 0 });
+		expect(seedProfiles(current)).toBe(current);
 	});
 });

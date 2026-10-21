@@ -44,7 +44,7 @@ import {
 } from "@prometheus/protocol";
 import { slimEvent, toModelRef } from "./events.ts";
 import { checkImages, imageOnlyTitle, skipPiImageAutoResize } from "./images.ts";
-import { PermissionGate } from "./permission-gate.ts";
+import { PermissionGate, permissionModes } from "./permission-gate.ts";
 import { EXIT_PLAN_MODE } from "./permissions.ts";
 import { pluginBuilderExtension } from "./plugin-tool.ts";
 import { bootstrap, type Runtime } from "./runtime.ts";
@@ -195,7 +195,7 @@ export class PrometheusHost {
 	static async create(options: PrometheusHostOptions): Promise<PrometheusHost> {
 		// Background subagents spawn a separate PI process and need to know where the package is.
 		ensureSubagentEnv();
-		const runtime = await bootstrap({ host: "server", dataDir: options.dataDir, cwd: options.cwd, builtinPlugins: options.builtinPlugins });
+		const runtime = await bootstrap({ host: "server", dataDir: options.dataDir, cwd: options.cwd, builtinPlugins: options.builtinPlugins, permissionMode: (id) => (id ? permissionModes.get(id) : undefined) });
 		const agentDir = getAgentDir();
 		// Shares PI's auth.json/models.json so `/login` credentials from the TUI work here too.
 		const modelRuntime = await ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath: join(agentDir, "models.json") });
@@ -299,6 +299,8 @@ export class PrometheusHost {
 		const id = session.sessionId;
 		sessionRef = session;
 		sessionIdRef = id;
+		gate.sessionId = id;
+		permissionModes.set(id, gate.mode);
 		subagents.restore(session.messages);
 		const bridge = new UIBridge({
 			request: (r) => this.listener.uiRequest(id, r),
@@ -388,6 +390,7 @@ export class PrometheusHost {
 		live.releaseChildExtensions();
 		live.session.dispose();
 		this.live.delete(sessionId);
+		permissionModes.delete(sessionId);
 	}
 
 	private async listSessions(): Promise<SessionSummary[]> {

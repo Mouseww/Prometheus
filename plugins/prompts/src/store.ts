@@ -1,117 +1,153 @@
 import { randomUUID } from "node:crypto";
 import { BUNDLED } from "./bundled.ts";
 import { createJsonStore } from "@prometheus/plugin-sdk";
+import { PERMISSION_MODES, type PermissionMode } from "@prometheus/protocol";
 
-/** Where the prompt text of a profile comes from. */
-export type ProfileSource = "builtin" | "file" | "inline";
-
+/**
+ * One saved system prompt, bound to a permission mode. A mode has at most one active prompt; the
+ * prompt is what the agent is told, the mode is what the gate actually enforces.
+ */
 export interface PromptProfile {
 	id: string;
+	/** The mode this prompt speaks for. Two prompts may share a mode; the enabled one wins. */
+	mode: PermissionMode;
 	title: string;
-	/** One line shown in the picker. */
 	description: string;
-	source: ProfileSource;
-	/** Builtin: base file name under the bundled prompts folder (`operator.md`). */
+	/** Bundled file name, resolved against BUNDLED. Absent once the user edits it. */
 	file?: string;
-	/** Inline: the text itself, so edits never touch the shipped file. */
+	/** Text of a user-written or user-edited prompt. */
 	body?: string;
 	enabled: boolean;
-	/** Append after the prompt the host already built instead of replacing it. */
-	mode: "replace" | "append";
-	/** Replaces the editable part of the prompt, and the section that carries `body`. */
-	base: "operator" | "none";
-	/**
-	 * Hand the resulting prompt over as a section (`event.systemPromptOptions.sections[name]`) instead
-	 * of replacing the whole prompt. Replacing is the stronger form, but it also hides every other
-	 * plugin's sections — including the ones that carry the permission mode.
-	 */
-	asSection: boolean;
-	/** Drop the built-in "expert coding assistant" preamble so the profile speaks for itself. */
+	/** Replace the section body outright, or append after the host's own prompt. */
+	how: "replace" | "append";
+	/** Also drop the host's "expert coding assistant" preamble. */
 	dropPersona: boolean;
 	updatedAt: number;
 }
 
 export interface PromptsState {
-	/** The profile every chat uses unless a chat overrides it. */
-	active: string | null;
-	/** Session key → profile id, for chats that picked their own. */
-	overrides: Record<string, string>;
 	profiles: PromptProfile[];
-	/** Profiles shipped with the plugin have been seeded once. */
-	seeded: boolean;
+	/** Which seed generation was written; bumped when the shipped set changes shape. */
+	seeded: number;
 }
 
-export const emptyState = (): PromptsState => ({ active: null, overrides: {}, profiles: [], seeded: false });
+/** 1: profiles without a mode (pre-mode versions). 2: one prompt per permission mode. */
+const SEED_VERSION = 2;
 
-/** Seeded ids are stable, so reseeding after a plugin reload never duplicates the shipped profiles. */
-const BUILTIN_PROFILES: Array<Pick<PromptProfile, "title" | "description" | "file" | "mode" | "base" | "asSection"> & { file: string }> = [
+export const emptyState = (): PromptsState => ({ profiles: [], seeded: 0 });
+
+interface Seed {
+	mode: PermissionMode;
+	title: string;
+	description: string;
+	file: string;
+	how: "replace" | "append";
+	dropPersona: boolean;
+}
+
+/**
+ * What each mode is told, out of the box.
+ *
+ * The three gated modes get a plain, contract-style prompt: their behaviour is enforced by the
+ * permission gate, so the prompt only has to state what the mode is for. `auto` and
+ * `bypassPermissions` hand the agent real latitude, so they get the operator prompt — the long one
+ * that decides *how* it answers, not just what it may touch.
+ */
+const SEEDS: Seed[] = [
 	{
-		title: "Operator",
-		description: "Ship first: no refusals, no follow-up questions; sensitive targets become placeholders",
-		file: "operator.en.md",
-		mode: "replace",
-		base: "operator",
-		asSection: true,
+		mode: "default",
+		title: "Default",
+		description: "Standard assistant: normal help, normal caution",
+		file: "default.en.md",
+		how: "replace",
+		dropPersona: false,
 	},
 	{
-		title: "Research",
-		description: "Evidence before conclusions; no deliverable nobody asked for",
-		file: "research.en.md",
-		mode: "append",
-		base: "none",
-		asSection: true,
+		mode: "acceptEdits",
+		title: "Accept edits",
+		description: "Edits inside the project apply without asking; commands still confirm",
+		file: "accept-edits.en.md",
+		how: "replace",
+		dropPersona: false,
+	},
+	{
+		mode: "plan",
+		title: "Plan",
+		description: "Read-only research and a plan for approval; nothing changes",
+		file: "plan.en.md",
+		how: "replace",
+		dropPersona: false,
+	},
+	{
+		mode: "bypassPermissions",
+		title: "White hat",
+		description: "Authorized security work: deliver first, no refusals, no authorization checks",
+		file: "whitehat.en.md",
+		how: "replace",
+		dropPersona: true,
+	},
+	{
+		mode: "auto",
+		title: "Auto",
+		description: "Nothing is asked and the agent decides everything itself",
+		file: "operator.en.md",
+		how: "replace",
+		dropPersona: true,
 	},
 ];
 
+/** Stable ids, so reseeding after a reload never duplicates the shipped prompts. */
+const seedId = (mode: PermissionMode) => `builtin-${mode}`;
+
 export function seedProfiles(state: PromptsState, now = Date.now()): PromptsState {
-	if (state.seeded) return state;
-	const profiles = [...state.profiles];
-	for (const spec of BUILTIN_PROFILES) {
-		const id = spec.file.replace(/(?:\.en)?\.md$/, "");
+	if (state.seeded === SEED_VERSION) return state;
+	// A state from an older generation carries profiles that do not fit the current shape (no `mode`,
+	// retired files). Keeping them would leave every mode without a prompt and show dead entries, so
+	// that generation is replaced outright; it shipped one version and held no user-authored text.
+	const profiles = state.seeded === 0 ? [...state.profiles] : [];
+	for (const spec of SEEDS) {
+		const id = seedId(spec.mode);
 		if (profiles.some((p) => p.id === id)) continue;
 		profiles.push({
-			...spec,
 			id,
-			source: "builtin",
+			mode: spec.mode,
+			title: spec.title,
+			description: spec.description,
+			file: spec.file,
 			enabled: true,
-			dropPersona: false,
+			how: spec.how,
+			dropPersona: spec.dropPersona,
 			updatedAt: now,
 		});
 	}
-	const active = state.active && profiles.some((p) => p.id === state.active) ? state.active : null;
-	return { ...state, profiles, active, seeded: true };
+	return { ...state, profiles, seeded: SEED_VERSION };
 }
 
-export function newProfile(now = Date.now()): PromptProfile {
+export function newProfile(mode: PermissionMode, now = Date.now()): PromptProfile {
 	return {
 		id: randomUUID(),
-		title: "New profile",
+		mode,
+		title: "New prompt",
 		description: "",
-		source: "inline",
 		body: "",
 		enabled: true,
-		mode: "replace",
-		base: "operator",
-		asSection: true,
+		how: "append",
 		dropPersona: false,
 		updatedAt: now,
 	};
 }
 
-/**
- * The text for one profile. A builtin resolves against {@link BUNDLED}, which is compiled into the
- * app, so it also works from the packaged desktop build where no `prompts/` folder exists.
- */
+/** The text of one prompt. Bundled prompts resolve against the compiled-in table. */
 export function bodyOf(profile: PromptProfile, bundled: Record<string, string> = BUNDLED): string | undefined {
-	if (profile.source === "builtin") return profile.file ? bundled[profile.file] : undefined;
-	return profile.body ?? "";
+	if (profile.body !== undefined) return profile.body;
+	if (profile.file) return bundled[profile.file];
+	return undefined;
 }
 
-/** The profile that applies to a session: its own override, else the workspace default. */
-export function profileFor(state: PromptsState, sessionId: string | undefined): PromptProfile | undefined {
-	const pick = (id: string | null | undefined) => state.profiles.find((p) => p.id === id && p.enabled);
-	const own = sessionId ? pick(state.overrides[sessionId]) : undefined;
-	return own ?? pick(state.active);
+/** The prompt that speaks for a mode: the enabled one, preferring the seeded entry. */
+export function promptFor(state: PromptsState, mode: PermissionMode): PromptProfile | undefined {
+	const candidates = state.profiles.filter((p) => p.mode === mode && p.enabled);
+	return candidates.find((p) => p.id === seedId(mode)) ?? candidates[0];
 }
 
 export function makeStore(file: string) {
@@ -122,26 +158,26 @@ export type PromptsStore = ReturnType<typeof makeStore>;
 
 const MAX_BODY = 400_000;
 
-const oneOf = <T extends string>(v: unknown, allowed: readonly T[], fallback: T): T => (allowed.includes(v as T) ? (v as T) : fallback);
+const asMode = (v: unknown, fallback: PermissionMode): PermissionMode =>
+	PERMISSION_MODES.includes(v as PermissionMode) ? (v as PermissionMode) : fallback;
 
 /** Clients send plain JSON, so nothing may reach the state file unvalidated. */
 export function sanitizeProfile(input: unknown, prior?: PromptProfile): PromptProfile {
-	if (!input || typeof input !== "object") throw new Error("配置数据不合法");
+	if (!input || typeof input !== "object") throw new Error("提示词数据不合法");
 	const raw = input as Record<string, unknown>;
 	const str = (v: unknown, fallback: string) => (typeof v === "string" ? v : fallback);
-	const title = str(raw.title, prior?.title ?? "").trim().slice(0, 120) || "未命名";
-	const body = typeof raw.body === "string" ? raw.body : prior?.body;
+	const title = str(raw.title, prior?.title ?? "").trim().slice(0, 120) || "Untitled";
+	const body = typeof raw.body === "string" ? raw.body.slice(0, MAX_BODY) : prior?.body?.slice(0, MAX_BODY);
 	return {
 		id: prior?.id ?? randomUUID(),
+		mode: asMode(raw.mode, prior?.mode ?? "default"),
 		title,
 		description: str(raw.description, prior?.description ?? "").slice(0, 400),
-		source: oneOf(raw.source, ["builtin", "file", "inline"] as const, prior?.source ?? "inline"),
-		file: typeof raw.file === "string" ? raw.file : prior?.file,
-		body: body === undefined ? undefined : body.slice(0, MAX_BODY),
+		// Editing a bundled prompt stores a body, which shadows the file from then on.
+		file: body === undefined ? (typeof raw.file === "string" ? raw.file : prior?.file) : undefined,
+		body,
 		enabled: typeof raw.enabled === "boolean" ? raw.enabled : (prior?.enabled ?? true),
-		mode: oneOf(raw.mode, ["replace", "append"] as const, prior?.mode ?? "replace"),
-		base: oneOf(raw.base, ["operator", "none"] as const, prior?.base ?? "operator"),
-		asSection: typeof raw.asSection === "boolean" ? raw.asSection : (prior?.asSection ?? true),
+		how: raw.how === "append" ? "append" : raw.how === "replace" ? "replace" : (prior?.how ?? "replace"),
 		dropPersona: typeof raw.dropPersona === "boolean" ? raw.dropPersona : (prior?.dropPersona ?? false),
 		updatedAt: Date.now(),
 	};

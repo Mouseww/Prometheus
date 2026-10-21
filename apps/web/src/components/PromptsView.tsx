@@ -1,192 +1,190 @@
 import clsx from "clsx";
-import { Check, Copy, MessageSquareCode, Plus, Save, Trash2 } from "lucide-react";
+import { Bot, Check, ClipboardList, FilePen, Hand, RotateCcw, Save, ShieldAlert, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { ProfileSummary } from "@prometheus/protocol";
+import { PERMISSION_MODES, type PermissionMode, type ProfileSummary } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { pluginCall, toast } from "../lib/store.ts";
-import { Badge, Button, Empty, Field, Input, PageHeader, Textarea } from "./ui.tsx";
+import { Badge, Button, Field, Input, PageHeader, Textarea } from "./ui.tsx";
 
 const M = defineMessages({
 	zh: {
-		title: "系统提示词",
-		subtitle: "预设的提示词配置：选中一份后注入每次对话的系统提示，可随时切换或关闭",
-		newProfile: "新建",
-		duplicate: "复制",
-		active: "生效中",
+		title: "提示词模式",
+		subtitle: "每个权限模式配一份系统提示词，切模式即换提示词。模式本身由权限门强制，提示词只是告诉模型这个模式要怎么做。",
+		modeLabel: "模式",
+		modes: "模式",
+		custom: "自定义",
+		enabled: "启用",
 		disabled: "已停用",
-		builtin: "内置",
-		inline: "自定义",
-		noProfiles: "还没有配置",
-		emptyTitle: "还没有提示词配置",
-		emptyBody: "新建一份，把要注入的系统提示写进去。保存后选中它，下一轮对话就生效。",
-		loading: "加载中…",
-		delete: "删除",
+		edit: "编辑",
 		save: "保存",
-		activate: "用于所有会话",
-		deactivated: "已取消默认配置",
-		activatedToast: "已设为所有会话的默认配置",
-		saved: "已保存，下一轮对话生效",
-		deleted: "已删除配置",
-		confirmDelete: "删除「{name}」？",
+		reset: "恢复默认",
+		remove: "删除",
+		newPrompt: "新增提示词",
+		noPrompt: "该模式没有提示词",
+		noPromptBody: "新增一份，或从其他模式复制。没有提示词时，这个模式就用宿主自己的默认提示。",
 		name: "名称",
 		description: "说明",
-		descriptionPlaceholder: "一句话说明这份配置干什么用",
-		body: "提示词（Markdown）",
-		bodyPlaceholder: "# 工作模式\n\n…",
-		enabled: "启用",
-		injectMode: "注入方式",
-		modeReplace: "替换系统提示的一部分（推荐）",
-		modeAppend: "追加在默认提示之后",
-		modeCustom: "整体替换系统提示（最强，会遮住其他插件注入的内容）",
-		builtinHint: "内置文件每轮从随包文件读取，保存会另存为你自己的可编辑副本。",
-		sourceFile: "来源文件",
+		descriptionPlaceholder: "一句话说明这个模式怎么工作",
+		body: "系统提示词（Markdown）",
+		loading: "加载中…",
+		saved: "已保存，下一轮对话生效",
+		resetDone: "已恢复内置提示词",
+		deleted: "已删除提示词",
+		confirmDelete: "删除「{name}」的提示词？",
+		confirmReset: "恢复内置提示词？你改过的内容会丢失。",
+		how: "注入方式",
+		howReplace: "替换系统提示词段落",
+		howAppend: "追加在宿主默认提示之后",
+		dropPersona: "同时去掉宿主默认的身份介绍",
 		chars: "{n} 字",
-		featureOff: "该插件已在设置中停用",
+		default: "默认",
+		acceptEdits: "自动编辑",
+		plan: "计划模式",
+		bypassPermissions: "白帽子",
+		auto: "Auto",
+		default_desc: "标准助手：正常帮忙，正常谨慎",
+		acceptEdits_desc: "项目内编辑免确认，命令仍需确认",
+		plan_desc: "只读调研，给出计划待批准",
+		bypassPermissions_desc: "白帽子：授权攻防，直接交付",
+		auto_desc: "全放开，遇事由 AI 自己决定",
+		gateNote: "模式由底部的权限选择器切换（Shift+Tab 也可）。这里改的是该模式说什么，不是它能做什么。",
 	},
 	en: {
-		title: "System prompt",
-		subtitle: "Saved prompt profiles: the selected one is injected into every chat's system prompt, and can be switched or turned off at any time",
-		newProfile: "New",
-		duplicate: "Duplicate",
-		active: "Active",
+		title: "Prompt modes",
+		subtitle: "Every permission mode carries a system prompt, so switching mode switches the prompt. The gate enforces the mode; the prompt only tells the model how to work inside it.",
+		modeLabel: "Mode",
+		modes: "Modes",
+		custom: "Custom",
+		enabled: "Enabled",
 		disabled: "Disabled",
-		builtin: "Built in",
-		inline: "Custom",
-		noProfiles: "No profiles",
-		emptyTitle: "No prompt profiles yet",
-		emptyBody: "Create one and write the system prompt to inject. Save it, select it, and it applies from the next turn.",
-		loading: "Loading…",
-		delete: "Delete",
+		edit: "Edit",
 		save: "Save",
-		activate: "Use for all chats",
-		deactivated: "Default profile cleared",
-		activatedToast: "Set as the default for all chats",
-		saved: "Saved; applies from the next turn",
-		deleted: "Profile deleted",
-		confirmDelete: "Delete \"{name}\"?",
+		reset: "Restore default",
+		remove: "Delete",
+		newPrompt: "New prompt",
+		noPrompt: "No prompt for this mode",
+		noPromptBody: "Add one, or copy another mode's. Without a prompt the mode falls back to the host's own default.",
 		name: "Name",
 		description: "Description",
-		descriptionPlaceholder: "One line on what this profile is for",
-		body: "Prompt (Markdown)",
-		bodyPlaceholder: "# Working mode\n\n…",
-		enabled: "Enabled",
-		injectMode: "Injection",
-		modeReplace: "Replace part of the system prompt (recommended)",
-		modeAppend: "Append after the default prompt",
-		modeCustom: "Replace the whole system prompt (strongest; hides what other plugins inject)",
-		builtinHint: "A bundled file is read from the package every turn. Saving stores your own editable copy.",
-		sourceFile: "Source file",
+		descriptionPlaceholder: "One line on how this mode works",
+		body: "System prompt (Markdown)",
+		loading: "Loading…",
+		saved: "Saved; applies from the next turn",
+		resetDone: "Bundled prompt restored",
+		deleted: "Prompt deleted",
+		confirmDelete: "Delete the prompt for \"{name}\"?",
+		confirmReset: "Restore the bundled prompt? Your edits are lost.",
+		how: "Injection",
+		howReplace: "Replace the system prompt section",
+		howAppend: "Append after the host's default prompt",
+		dropPersona: "Also drop the host's identity preamble",
 		chars: "{n} chars",
-		featureOff: "This plugin is switched off in Settings",
+		default: "Default",
+		acceptEdits: "Accept edits",
+		plan: "Plan",
+		bypassPermissions: "White hat",
+		auto: "Auto",
+		default_desc: "Standard assistant: normal help, normal caution",
+		acceptEdits_desc: "Project edits pass; commands still confirm",
+		plan_desc: "Read-only research and a plan for approval",
+		bypassPermissions_desc: "White hat: authorized security work, deliver first",
+		auto_desc: "Everything allowed; the agent decides on its own",
+		gateNote: "The mode itself is switched from the permission picker at the bottom (Shift+Tab also works). This page edits what the mode says, not what it may do.",
 	},
 });
 
-const keyOf = (p: ProfileSummary) => p.id;
+const ICONS = { default: Hand, acceptEdits: FilePen, plan: ClipboardList, bypassPermissions: ShieldAlert, auto: Bot } as const;
+
+/** Mode names and their fallback descriptions, so the message keys stay statically typed. */
+const LABEL = {
+	default: "default",
+	acceptEdits: "acceptEdits",
+	plan: "plan",
+	bypassPermissions: "bypassPermissions",
+	auto: "auto",
+} as const satisfies Record<PermissionMode, keyof typeof M.zh>;
+const DESC = {
+	default: "default_desc",
+	acceptEdits: "acceptEdits_desc",
+	plan: "plan_desc",
+	bypassPermissions: "bypassPermissions_desc",
+	auto: "auto_desc",
+} as const satisfies Record<PermissionMode, keyof typeof M.zh>;
+const TONE: Record<PermissionMode, string> = {
+	default: "text-ink-400",
+	acceptEdits: "text-moss-400",
+	plan: "text-sky-400",
+	bypassPermissions: "text-rose-400",
+	auto: "text-amber-400",
+};
 
 export function PromptsView() {
 	const t = useT(M);
 	const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
-	const [active, setActive] = useState<string | null>(null);
-	const [enabled, setEnabled] = useState(true);
-	const [selected, setSelected] = useState<string | null>(null);
+	const [selected, setSelected] = useState<PermissionMode | null>(null);
+	const [creating, setCreating] = useState<PermissionMode | null>(null);
 	const [loaded, setLoaded] = useState(false);
 
 	const load = async () => {
-		const res = await pluginCall<{ enabled: boolean; active: string | null; profiles: ProfileSummary[] }>("prompts", "list");
+		const res = await pluginCall<{ profiles: ProfileSummary[] }>("prompts", "list");
 		if (!res) return;
 		setProfiles(res.profiles);
-		setActive(res.active);
-		setEnabled(res.enabled);
-		setSelected((s) => (s && res.profiles.some((x) => keyOf(x) === s) ? s : res.profiles[0] ? keyOf(res.profiles[0]) : null));
+		setSelected((s) => s ?? "default");
 		setLoaded(true);
 	};
 	useEffect(() => {
 		void load();
 	}, []);
 
-	const current = profiles.find((p) => keyOf(p) === selected);
-
-	const activate = async (id: string | null) => {
-		const res = await pluginCall<{ active: string | null }>("prompts", "activate", { id });
-		if (res === undefined) return;
-		setActive(res.active);
-		toast(id ? t("activatedToast") : t("deactivated"));
-		await load();
-	};
-
-	const duplicate = async () => {
-		if (!current) return;
-		const res = await pluginCall<{ id: string }>("prompts", "create", { from: current.id });
-		if (!res) return;
-		await load();
-		setSelected(res.id);
-	};
-
-	const create = async () => {
-		const res = await pluginCall<{ id: string }>("prompts", "create", {});
-		if (!res) return;
-		await load();
-		setSelected(res.id);
-	};
+	const current = profiles.find((p) => p.mode === selected && p.enabled) ?? profiles.find((p) => p.mode === selected);
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
-			<PageHeader
-				title={t("title")}
-				subtitle={t("subtitle")}
-				actions={
-					<div className="flex gap-2">
-						<Button variant="outline" disabled={!current} onClick={() => void duplicate()}>
-							<Copy className="size-4" /> {t("duplicate")}
-						</Button>
-						<Button variant="primary" onClick={() => void create()}>
-							<Plus className="size-4" /> {t("newProfile")}
-						</Button>
-					</div>
-				}
-			/>
-			{!enabled && (
-				<div className="border-b hairline bg-ink-900 px-4 py-2 text-xs text-ember-300">{t("featureOff")}</div>
-			)}
+			<PageHeader title={t("title")} subtitle={t("subtitle")} />
 			<div className="flex min-h-0 flex-1 flex-col md:flex-row">
-				<div className="max-h-[38%] w-full shrink-0 space-y-1 overflow-y-auto border-b hairline p-3 md:max-h-none md:w-80 md:border-r md:border-b-0">
-					{profiles.map((p) => (
-						<button
-							key={keyOf(p)}
-							type="button"
-							onClick={() => setSelected(keyOf(p))}
-							className={clsx("w-full rounded-lg px-3 py-2.5 text-left transition-colors", keyOf(p) === selected ? "bg-ink-850" : "hover:bg-ink-900")}
-						>
-							<div className="flex items-center gap-2">
-								<div className={clsx("truncate text-sm", p.enabled ? "text-ink-100" : "text-ink-500")}>{p.title}</div>
-								{active === p.id && <Badge tone="moss">{t("active")}</Badge>}
-							</div>
-							<div className="mt-0.5 line-clamp-2 text-xs text-ink-500">{p.description || t("chars", { n: p.bodyLength })}</div>
-							{!p.enabled && (
-								<div className="mt-1.5">
-									<Badge tone="rose">{t("disabled")}</Badge>
+				<div className="w-full shrink-0 space-y-1 overflow-y-auto border-b hairline p-3 md:w-72 md:border-r md:border-b-0">
+					<div className="px-2 pt-1 pb-1.5 text-[11px] font-medium tracking-wide text-ink-500">{t("modes")}</div>
+					{PERMISSION_MODES.map((mode) => {
+						const Icon = ICONS[mode];
+						const has = profiles.find((p) => p.mode === mode && p.enabled);
+						return (
+							<button
+								key={mode}
+								type="button"
+								onClick={() => {
+									setSelected(mode);
+									setCreating(null);
+								}}
+								className={clsx("w-full rounded-lg px-3 py-2.5 text-left transition-colors", mode === selected && !creating ? "bg-ink-850" : "hover:bg-ink-900")}
+							>
+								<div className="flex items-center gap-2">
+									<Icon className={clsx("size-4 shrink-0", TONE[mode])} />
+									<span className="truncate text-sm text-ink-100">{t(LABEL[mode])}</span>
+									{has ? <Check className="ml-auto size-3.5 shrink-0 text-moss-400" /> : <span className="ml-auto text-[10px] text-ink-600">{t("custom")}</span>}
 								</div>
-							)}
-						</button>
-					))}
-					{loaded && profiles.length === 0 && <p className="px-3 py-4 text-sm text-ink-500">{t("noProfiles")}</p>}
+								<div className="mt-0.5 line-clamp-2 text-xs text-ink-500">{has?.description || t(DESC[mode])}</div>
+							</button>
+						);
+					})}
 				</div>
 				<div className="min-h-0 flex-1 overflow-y-auto">
-					{current ? (
-						<ProfileEditor
-							key={keyOf(current)}
-							profile={current}
-							active={active === current.id}
-							onChanged={load}
-							onActivate={() => void activate(current.id === active ? null : current.id)}
+					{creating ? (
+						<PromptEditor
+							key={`new-${creating}`}
+							mode={creating}
+							profile={null}
+							onChanged={async () => {
+								setCreating(null);
+								await load();
+							}}
 						/>
-					) : (
-						<Empty icon={<MessageSquareCode className="size-5" />} title={t("emptyTitle")}>
-							{t("emptyBody")}
-						</Empty>
-					)}
+					) : selected ? (
+						<PromptEditor key={`${selected}-${current?.id ?? "none"}`} mode={selected} profile={current ?? null} onChanged={load} />
+					) : null}
+					{!loaded && <p className="p-6 text-sm text-ink-500">{t("loading")}</p>}
 				</div>
 			</div>
+			<div className="border-t hairline px-4 py-2 text-xs text-ink-500">{t("gateNote")}</div>
 		</div>
 	);
 }
@@ -196,7 +194,8 @@ interface Draft {
 	description: string;
 	body: string;
 	enabled: boolean;
-	mode: "replace" | "append" | "custom";
+	how: "replace" | "append";
+	dropPersona: boolean;
 }
 
 const draftOf = (p: ProfileSummary, body: string): Draft => ({
@@ -204,50 +203,59 @@ const draftOf = (p: ProfileSummary, body: string): Draft => ({
 	description: p.description,
 	body,
 	enabled: p.enabled,
-	mode: p.dropPersona ? "custom" : p.mode,
+	how: p.how,
+	dropPersona: p.dropPersona,
 });
 
-function ProfileEditor({ profile, active, onChanged, onActivate }: { profile: ProfileSummary; active: boolean; onChanged: () => Promise<void>; onActivate: () => void }) {
+function PromptEditor({ mode, profile, onChanged }: { mode: PermissionMode; profile: ProfileSummary | null; onChanged: () => Promise<void> }) {
 	const t = useT(M);
 	const [draft, setDraft] = useState<Draft | null>(null);
 	const [saved, setSaved] = useState<Draft | null>(null);
 	const [busy, setBusy] = useState(false);
+	const Icon = ICONS[mode];
 
 	useEffect(() => {
+		if (!profile) {
+			setDraft({ title: t(LABEL[mode]), description: "", body: "", enabled: true, how: "append", dropPersona: false });
+			setSaved(null);
+			return;
+		}
 		void pluginCall<ProfileSummary & { body: string }>("prompts", "get", { id: profile.id }).then((full) => {
 			if (!full) return;
 			const next = draftOf(full, full.body);
 			setDraft(next);
 			setSaved(next);
 		});
-	}, [profile.id]);
+	}, [profile?.id]);
 
 	const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft((d) => (d ? { ...d, [k]: v } : d));
-	const dirty = Boolean(draft && saved && JSON.stringify(draft) !== JSON.stringify(saved));
-	const builtin = profile.source === "builtin";
+	const dirty = draft !== null && (saved === null || JSON.stringify(draft) !== JSON.stringify(saved));
 
 	const save = async () => {
 		if (!draft) return;
 		setBusy(true);
-		const res = await pluginCall<{ id: string }>("prompts", "save", {
-			profile: {
-				...profile,
-				title: draft.title,
-				description: draft.description,
-				body: draft.body,
-				enabled: draft.enabled,
-				mode: draft.mode === "custom" ? "replace" : draft.mode,
-				dropPersona: draft.mode === "custom",
-			},
-		});
+		const payload = { ...profile, mode, ...draft, body: draft.body };
+		const res = profile
+			? await pluginCall<{ id: string }>("prompts", "save", { profile: { ...payload, id: profile.id } })
+			: await pluginCall<{ id: string }>("prompts", "create", { mode, profile: payload });
 		setBusy(false);
 		if (res === undefined) return;
 		toast(t("saved"));
 		await onChanged();
 	};
 
+	const reset = async () => {
+		if (!profile || !window.confirm(t("confirmReset"))) return;
+		setBusy(true);
+		const res = await pluginCall<null>("prompts", "reset", { id: profile.id });
+		setBusy(false);
+		if (res === undefined) return;
+		toast(t("resetDone"));
+		await onChanged();
+	};
+
 	const remove = async () => {
-		if (!window.confirm(t("confirmDelete", { name: profile.title }))) return;
+		if (!profile || !window.confirm(t("confirmDelete", { name: profile.title }))) return;
 		setBusy(true);
 		const res = await pluginCall<null>("prompts", "delete", { id: profile.id });
 		setBusy(false);
@@ -259,49 +267,48 @@ function ProfileEditor({ profile, active, onChanged, onActivate }: { profile: Pr
 	return (
 		<div className="mx-auto max-w-4xl animate-rise space-y-4 p-4 md:p-6">
 			<div className="flex flex-wrap items-center gap-2">
-				<h2 className="font-display text-xl font-semibold">{profile.title}</h2>
-				<Badge tone={builtin ? "sky" : "muted"}>{builtin ? t("builtin") : t("inline")}</Badge>
-				{active ? <Badge tone="moss">{t("active")}</Badge> : null}
-				{builtin && profile.file && (
-					<span className="ml-auto truncate font-mono text-[11px] text-ink-500" title={profile.file}>
-						{t("sourceFile")}: {profile.file}
-					</span>
-				)}
+				<Icon className={clsx("size-5", TONE[mode])} />
+				<h2 className="font-display text-xl font-semibold">{t(LABEL[mode])}</h2>
+				{profile && <Badge tone="sky">{t("modeLabel")}</Badge>}
+				{profile && !profile.enabled && <Badge tone="rose">{t("disabled")}</Badge>}
+				{!profile && <Badge tone="muted">{t("noPrompt")}</Badge>}
+				<span className="ml-auto font-mono text-[11px] text-ink-500">{profile?.file ?? (profile ? t("custom") : "")}</span>
 			</div>
+
+			{!profile && <p className="text-sm text-ink-400">{t("noPromptBody")}</p>}
 
 			<div className="grid gap-3 sm:grid-cols-2">
 				<Field label={t("name")}>
 					<Input value={draft?.title ?? ""} disabled={!draft} onChange={(e) => set("title", e.target.value)} />
 				</Field>
 				<Field label={t("description")}>
-					<Input
-						value={draft?.description ?? ""}
-						disabled={!draft}
-						onChange={(e) => set("description", e.target.value)}
-						placeholder={t("descriptionPlaceholder")}
-					/>
+					<Input value={draft?.description ?? ""} disabled={!draft} placeholder={t("descriptionPlaceholder")} onChange={(e) => set("description", e.target.value)} />
 				</Field>
 			</div>
 
-			<div>
-				<Field label={t("injectMode")}>
+			<div className="grid gap-3 sm:grid-cols-2">
+				<Field label={t("how")}>
 					<select
-						value={draft?.mode ?? "replace"}
+						value={draft?.how ?? "replace"}
 						disabled={!draft}
-						onChange={(e) => set("mode", e.target.value as Draft["mode"])}
+						onChange={(e) => set("how", e.target.value as Draft["how"])}
 						className="w-full rounded-lg border border-ink-700 bg-ink-850 px-2.5 py-1.5 text-sm"
 					>
-						<option value="replace">{t("modeReplace")}</option>
-						<option value="append">{t("modeAppend")}</option>
-						<option value="custom">{t("modeCustom")}</option>
+						<option value="replace">{t("howReplace")}</option>
+						<option value="append">{t("howAppend")}</option>
 					</select>
 				</Field>
+				<div className="flex flex-col justify-end gap-1.5 pb-1">
+					<label className="flex items-center gap-2 text-sm text-ink-300">
+						<input type="checkbox" checked={draft?.enabled ?? false} disabled={!draft} onChange={(e) => set("enabled", e.target.checked)} className="accent-ember-500" />
+						{t("enabled")}
+					</label>
+					<label className="flex items-center gap-2 text-sm text-ink-300">
+						<input type="checkbox" checked={draft?.dropPersona ?? false} disabled={!draft} onChange={(e) => set("dropPersona", e.target.checked)} className="accent-ember-500" />
+						{t("dropPersona")}
+					</label>
+				</div>
 			</div>
-
-			<label className="flex items-center gap-2 text-sm text-ink-300">
-				<input type="checkbox" checked={draft?.enabled ?? false} disabled={!draft} onChange={(e) => set("enabled", e.target.checked)} className="accent-ember-500" />
-				{t("enabled")}
-			</label>
 
 			<Field label={t("body")}>
 				<Textarea
@@ -310,19 +317,22 @@ function ProfileEditor({ profile, active, onChanged, onActivate }: { profile: Pr
 					onChange={(e) => set("body", e.target.value)}
 					spellCheck={false}
 					className="min-h-[50vh] font-mono text-[13px] leading-relaxed"
-					placeholder={draft ? t("bodyPlaceholder") : t("loading")}
+					placeholder={draft ? "" : t("loading")}
 				/>
 			</Field>
-			{builtin && <p className="text-xs text-ink-500">{t("builtinHint")}</p>}
 
 			<div className="flex flex-wrap items-center gap-2">
-				<Button variant="danger" disabled={busy} onClick={() => void remove()}>
-					<Trash2 className="size-4" /> {t("delete")}
-				</Button>
+				{profile && (
+					<Button variant="danger" disabled={busy} onClick={() => void remove()}>
+						<Trash2 className="size-4" /> {t("remove")}
+					</Button>
+				)}
 				<div className="flex-1" />
-				<Button variant="outline" disabled={busy} onClick={onActivate}>
-					<Check className="size-4" /> {t("activate")}
-				</Button>
+				{profile?.file && (
+					<Button variant="outline" disabled={busy} onClick={() => void reset()}>
+						<RotateCcw className="size-4" /> {t("reset")}
+					</Button>
+				)}
 				<Button variant="primary" disabled={busy || !dirty} onClick={() => void save()}>
 					<Save className="size-4" /> {t("save")}
 				</Button>

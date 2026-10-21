@@ -13,6 +13,7 @@ export interface BootstrapOptions {
 	cwd?: string;
 	/** Plugins bundled by the app (e.g. knowledge-lancedb), loaded before user plugins. */
 	builtinPlugins?: PrometheusPlugin[];
+	permissionMode?: (sessionId: string | undefined) => string | undefined;
 }
 
 export interface Runtime {
@@ -42,6 +43,7 @@ export async function bootstrap(options: BootstrapOptions): Promise<Runtime> {
 		gateways: () => config.gateways(),
 		isDisabled: (id) => config.get().disabledPlugins.includes(id),
 		setDisabled: (id, disabled) => config.setPluginDisabled(id, disabled),
+		permissionMode: options.permissionMode,
 	});
 
 	const knowledge = new KnowledgeService({

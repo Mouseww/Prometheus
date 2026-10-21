@@ -12,6 +12,13 @@ const PLAN_GUIDELINES = [
 ];
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
+
+/**
+ * The live permission mode, for extensions that shape the prompt around it (the `prompts` plugin
+ * injects a different system prompt per mode). Keyed by session, since one process serves many.
+ * `PermissionGate` owns every entry; readers only look up.
+ */
+export const permissionModes = new Map<string, PermissionMode>();
 const text = (value: string) => ({ content: [{ type: "text" as const, text: value }], details: {} });
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 
@@ -91,9 +98,13 @@ export class PermissionGate {
 	ask: ((prompt: PermissionPrompt, signal?: AbortSignal) => Promise<string | undefined>) | undefined;
 	onModeChange: ((mode: PermissionMode) => void) | undefined;
 
+	/** Set by the host so the shared map is keyed by a stable session id. */
+	sessionId = "";
+
 	setMode(mode: PermissionMode): void {
 		if (mode === this.mode) return;
 		this.mode = mode;
+		if (this.sessionId) permissionModes.set(this.sessionId, mode);
 		this.onModeChange?.(mode);
 	}
 
@@ -119,8 +130,12 @@ export class PermissionGate {
 					},
 				});
 
-				pi.on("before_agent_start", (event) => {
+				pi.on("before_agent_start", (event, ctx) => {
 					applyPermissionPrompt(event, this.mode, this.unattended);
+					// Extensions on this same event read the mode from the shared map, so it must be
+					// current before they run; PI runs handlers in registration order and the gate is first.
+					const id = ctx?.sessionManager?.getSessionId();
+					if (id) permissionModes.set(id, this.mode);
 				});
 
 				// A reload resets the active tools, which would drop the plan-mode exit tool.

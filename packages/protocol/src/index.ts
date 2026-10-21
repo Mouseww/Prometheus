@@ -448,17 +448,19 @@ export interface SkillDocument {
 	content: string;
 }
 
-/** A system-prompt profile owned by the `prompts` plugin. */
+/** A system prompt bound to a permission mode, owned by the `prompts` plugin. */
 export interface ProfileSummary {
 	id: string;
+	/** The mode this prompt speaks for; the gate enforces the same mode. */
+	mode: PermissionMode;
 	title: string;
 	description: string;
-	/** `builtin` reads a shipped file every turn; `inline` is text saved by the user. */
-	source: "builtin" | "file" | "inline";
+	/** Bundled file name; absent once the user edits the text. */
 	file?: string;
 	enabled: boolean;
-	mode: "replace" | "append";
-	/** Replaces `customPrompt` entirely, the strongest form. */
+	/** Replace the prompt section, or append after the host's own prompt. */
+	how: "replace" | "append";
+	/** Also drop the host's "expert coding assistant" preamble. */
 	dropPersona: boolean;
 	updatedAt: number;
 	bodyLength: number;

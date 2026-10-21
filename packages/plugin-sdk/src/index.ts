@@ -117,6 +117,11 @@ export interface PluginContext {
 
 	/** Contribute a PI extension: tools, commands, providers, lifecycle hooks. */
 	extension(factory: ExtensionFactory): void;
+	/**
+	 * The live permission mode of a session (default, plan, auto, ...). The gate enforces the mode;
+	 * plugins that shape the system prompt read it here so the two never disagree.
+	 */
+	permissionMode?(sessionId: string | undefined): string | undefined;
 	/** Register a knowledge store backend under an id (e.g. "qdrant"). */
 	knowledgeStore(id: string, factory: KnowledgeStoreFactory): void;
 	/** Mount an HTTP route at /plugins/<name><path>. Server host only. */

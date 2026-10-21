@@ -7,7 +7,8 @@
 		".": "./src/index.ts"
 	},
 	"scripts": {
-		"typecheck": "tsc -p ."
+		"typecheck": "tsc -p .",
+		"embed": "node scripts/embed-prompts.mjs"
 	},
 	"dependencies": {
 		"@prometheus/plugin-sdk": "workspace:*",
