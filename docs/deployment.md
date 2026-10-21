@@ -62,5 +62,7 @@ docker run -p 7420:7420 -e PROMETHEUS_TOKEN=<至少16位随机串> \
 
 安卓版与桌面版一样有两种方式：**连接服务器**（填写服务器地址与密码/令牌）和 **本机模式**（APK 内置 Node 与服务端，首次启动时解压到应用私有目录，数据留在手机上）。发布时由 CI 构建 arm64 的 APK 并上传到 Release。
 
+本机模式的命令行工具：APK 内置 `node`、`npm`、`npx`、`git`、`bash`、`rg`（来自 Termux，版本固定在 `apps/desktop/scripts/android-termux.lock.json`，升级时运行 `node apps/desktop/scripts/android-runtime.ts --update-lock` 并提交）。安卓只允许执行原生库目录里的文件，所以这些程序都以 `lib*.so` 的名字放在 APK 里，启动时在应用目录建同名符号链接并加入 `PATH`。`npx` 是自带的精简版（系统没有 `/usr/bin/env`，原版无法启动包里的命令）。工作区默认放在 `/storage/emulated/0/Prometheus`，需要在系统设置里授予「所有文件访问」（首次启动会跳转）；未授权时回退到应用私有目录。应用会常驻一条前台服务通知，防止切到后台后本机服务被系统杀掉。限制：需要编译原生扩展的 npm 包装不了；Android 12+ 的「幽灵进程」限制可能杀掉子进程，可在开发者选项里关闭，或用 `adb shell device_config put activity_manager max_phantom_processes 2147483647`。
+
 本机模式的限制：知识库的向量检索（LanceDB）在安卓上不可用；其余功能不受影响。未配置发布签名密钥时，CI 会用临时密钥签名，文件名带 `-unofficial`，不能覆盖安装正式签名的版本；配置 `ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS` 三个仓库 Secret 后即为正式签名。本地调试需要 JDK 17、Android SDK 与 NDK，执行 `pnpm --filter @prometheus/desktop tauri android init`，再依次运行 `bundle-server:android` 与 `android-runtime`（需 Linux），最后 `tauri android dev`。
 

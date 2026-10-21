@@ -129,7 +129,15 @@ jobs:
           test -f "$res/mipmap-anydpi-v26/ic_launcher.xml"
           test -f "$res/mipmap-xxxhdpi/ic_launcher_foreground.png"
 
-      - name: Add Node and the server to the project
+      - name: Cache pinned Termux packages
+        uses: actions/cache@v4
+        with:
+          path: .termux-cache
+          key: termux-${{ hashFiles('apps/desktop/scripts/android-termux.lock.json') }}
+
+      - name: Add Node, npm, git and the server to the project
+        env:
+          TERMUX_CACHE: ${{ github.workspace }}/.termux-cache
         run: pnpm --filter @prometheus/desktop android-runtime
 
       - name: Signing key

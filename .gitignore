@@ -12,3 +12,4 @@ apps/desktop/src-tauri/gen/
 *.jks
 *.keystore
 .pi/
+.termux-cache/

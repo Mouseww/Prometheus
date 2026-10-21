@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 
 /** Oldest output is dropped past this many characters. */
 export const MAX_BUFFER = 400_000;
@@ -18,7 +19,9 @@ export function shellSpec(platform: NodeJS.Platform = process.platform, env: Nod
 			init: "[Console]::OutputEncoding=[Text.Encoding]::UTF8; $OutputEncoding=[Text.Encoding]::UTF8\n",
 		};
 	}
-	return { command: env.SHELL || "/bin/bash", args: [], init: "" };
+	// Android has no /bin/bash; its system shell is /system/bin/sh. Termux builds of Node report the platform as "android".
+	const fallback = platform === "android" || !existsSync("/bin/bash") ? "/system/bin/sh" : "/bin/bash";
+	return { command: env.SHELL || (existsSync(fallback) ? fallback : "sh"), args: [], init: "" };
 }
 
 export interface ReadResult {

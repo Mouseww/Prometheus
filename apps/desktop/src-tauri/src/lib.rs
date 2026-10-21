@@ -124,7 +124,7 @@ fn server_entry(app: &tauri::AppHandle) -> Option<PathBuf> {
 struct Launch {
     node: PathBuf,
     entry: PathBuf,
-    env: Vec<(&'static str, PathBuf)>,
+    env: Vec<(&'static str, std::ffi::OsString)>,
     cwd: Option<PathBuf>,
 }
 
@@ -140,22 +140,21 @@ fn launch_target(app: &tauri::AppHandle) -> Result<Launch, String> {
 fn launch_target(app: &tauri::AppHandle) -> Result<Launch, String> {
     let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let runtime = android::prepare(&data)?;
-    let (home, work, tmp) = (data.join("home"), data.join("workspace"), data.join("tmp"));
-    for d in [&home, &work, &tmp] {
+    let (home, tmp) = (data.join("home"), data.join("tmp"));
+    // Prefer shared storage so the user can see the files; that needs "all files access", which the app asks for on first launch.
+    let work = android::workspace_dir(&data);
+    for d in [&home, &tmp, &work] {
         std::fs::create_dir_all(d).map_err(|e| format!("无法创建目录：{e}"))?;
     }
-    Ok(Launch {
-        node: runtime.node,
-        entry: runtime.entry,
-        env: vec![
-            ("HOME", home),
-            ("TMPDIR", tmp),
-            ("PROMETHEUS_HOME", data.join("prometheus")),
-            ("PROMETHEUS_CWD", work.clone()),
-            ("LD_LIBRARY_PATH", runtime.lib_dir),
-        ],
-        cwd: Some(work),
-    })
+    let mut env: Vec<(&'static str, std::ffi::OsString)> = vec![
+        ("HOME", home.into()),
+        ("TMPDIR", tmp.into()),
+        ("PROMETHEUS_HOME", data.join("prometheus").into()),
+        ("PROMETHEUS_CWD", work.clone().into()),
+        ("LD_LIBRARY_PATH", runtime.lib_dir.clone().into()),
+    ];
+    env.extend(android::tool_env(&data, &runtime));
+    Ok(Launch { node: runtime.node, entry: runtime.entry, env, cwd: Some(work) })
 }
 
 fn spawn_backend(app: &tauri::AppHandle, backend: &Backend) -> Result<(), String> {
