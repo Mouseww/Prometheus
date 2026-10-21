@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { BarChart3, Blocks, Cable, Check, Copy, Globe, Laptop, MessageSquareCode, Mic, Moon, Network, Package, Plug, Sparkles, Sun, SlidersHorizontal } from "lucide-react";
+import { BarChart3, Blocks, Cable, Check, Copy, Globe, Laptop, Layers, Mic, Moon, Network, Package, Plug, Sparkles, Sun, SlidersHorizontal } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { isAndroid, isDesktopShell } from "../lib/backend.ts";
@@ -13,7 +13,7 @@ import { ConnectorsView } from "./ConnectorsView.tsx";
 import { McpView } from "./McpView.tsx";
 import { NetworkSettings } from "./NetworkSettings.tsx";
 import { PluginsView } from "./PluginsView.tsx";
-import { PromptsView } from "./PromptsView.tsx";
+import { ModesView } from "./ModesView.tsx";
 import { SkillsView } from "./SkillsView.tsx";
 import { Button, PageHeader } from "./ui.tsx";
 import { UsageView } from "./UsageView.tsx";
@@ -28,7 +28,7 @@ const M = defineMessages({
 		skills: "技能",
 		market: "PI 插件市场",
 		plugins: "Prometheus 插件",
-		prompts: "系统提示词",
+		modes: "模式",
 		voice: "语音输入",
 		network: "网络访问",
 		usage: "用量统计",
@@ -81,7 +81,7 @@ const M = defineMessages({
 		skills: "Skills",
 		market: "PI Marketplace",
 		plugins: "Prometheus Plugins",
-		prompts: "System prompt",
+		modes: "Modes",
 		voice: "Voice",
 		network: "Network access",
 		usage: "Usage",
@@ -344,7 +344,7 @@ const TABS: { id: SettingsTab; icon: typeof Network }[] = [
 	{ id: "mcp", icon: Cable },
 	{ id: "connectors", icon: Plug },
 	{ id: "skills", icon: Sparkles },
-	{ id: "prompts", icon: MessageSquareCode },
+	{ id: "modes", icon: Layers },
 	{ id: "market", icon: Package },
 	{ id: "plugins", icon: Blocks },
 	{ id: "voice", icon: Mic },
@@ -382,7 +382,7 @@ export function SettingsView() {
 				{tab === "market" && <MarketView />}
 				{tab === "voice" && <VoiceSettings />}
 				{tab === "network" && <NetworkSettings />}
-				{tab === "prompts" && <PromptsView />}
+				{tab === "modes" && <ModesView />}
 				{tab === "plugins" && <PluginsView />}
 				{tab === "usage" && <UsageView />}
 			</div>

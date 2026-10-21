@@ -448,8 +448,8 @@ export interface SkillDocument {
 	content: string;
 }
 
-/** A saved system prompt, owned by the `prompts` plugin. Independent of the permission mode. */
-export interface ProfileSummary {
+/** A saved agent mode, owned by the `modes` plugin: a system prompt plus the tools it may use. */
+export interface ModeSummary {
 	id: string;
 	title: string;
 	description: string;
@@ -460,6 +460,8 @@ export interface ProfileSummary {
 	how: "replace" | "append";
 	/** Also drop the host's "expert coding assistant" preamble. */
 	dropPersona: boolean;
+	/** Tools the mode may use; empty means every tool the host offers. Never grants. */
+	tools: string[];
 	updatedAt: number;
 	bodyLength: number;
 }

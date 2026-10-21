@@ -216,12 +216,12 @@ importers:
       '@prometheus/plugin-memory':
         specifier: workspace:*
         version: link:../memory
+      '@prometheus/plugin-modes':
+        specifier: workspace:*
+        version: link:../modes
       '@prometheus/plugin-packages':
         specifier: workspace:*
         version: link:../packages
-      '@prometheus/plugin-prompts':
-        specifier: workspace:*
-        version: link:../prompts
       '@prometheus/plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
@@ -316,11 +316,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/protocol
 
-  plugins/packages:
+  plugins/modes:
     dependencies:
-      '@earendil-works/pi-coding-agent':
-        specifier: 1.2.0
-        version: 1.2.0(@aws-sdk/credential-provider-node@3.972.86)(@smithy/signature-v4@5.7.4)(ws@8.22.0)
       '@prometheus/plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
@@ -328,8 +325,11 @@ importers:
         specifier: workspace:*
         version: link:../../packages/protocol
 
-  plugins/prompts:
+  plugins/packages:
     dependencies:
+      '@earendil-works/pi-coding-agent':
+        specifier: 1.2.0
+        version: 1.2.0(@aws-sdk/credential-provider-node@3.972.86)(@smithy/signature-v4@5.7.4)(ws@8.22.0)
       '@prometheus/plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk

@@ -136,7 +136,7 @@ function savedSort(): SubagentSort {
 	return v === "started" || v === "ended" ? v : "status";
 }
 
-export type SettingsTab = "general" | "gateways" | "mcp" | "connectors" | "skills" | "prompts" | "market" | "plugins" | "voice" | "network" | "usage";
+export type SettingsTab = "general" | "gateways" | "mcp" | "connectors" | "skills" | "modes" | "market" | "plugins" | "voice" | "network" | "usage";
 export type View = "chat" | "knowledge" | "memory" | "automations" | "git" | "settings" | { panel: string };
 
 interface State {

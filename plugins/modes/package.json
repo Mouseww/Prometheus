@@ -1,6 +1,6 @@
 {
-	"name": "@prometheus/plugin-prompts",
-	"version": "0.1.0",
+	"name": "@prometheus/plugin-modes",
+	"version": "0.4.0",
 	"private": true,
 	"type": "module",
 	"exports": {
@@ -8,7 +8,7 @@
 	},
 	"scripts": {
 		"typecheck": "tsc -p .",
-		"embed": "node scripts/embed-prompts.mjs"
+		"embed": "node scripts/embed-modes.mjs"
 	},
 	"dependencies": {
 		"@prometheus/plugin-sdk": "workspace:*",
