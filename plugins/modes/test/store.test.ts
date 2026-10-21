@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BUNDLED } from "../src/bundled.ts";
-import { allowedTools, bodyOf, makeStore, modeFor, newMode, sanitizeMode, seedModes, type ModesState } from "../src/store.ts";
+import { allowedTools, bodyOf, composeSystemPrompt, makeStore, modeFor, newMode, sanitizeMode, seedModes, stripHostPersona, type ModesState } from "../src/store.ts";
 
 let dir: string;
 
@@ -18,10 +18,30 @@ afterEach(async () => {
 const seed = (over: Partial<ModesState> = {}) => seedModes({ modes: [], selected: null, overrides: {}, seeded: 0, ...over });
 
 describe("seedModes", () => {
-	it("ships four modes, none selected", () => {
+	it("ships five modes, none selected", () => {
 		const state = seed();
-		expect(state.modes.map((m) => m.id).sort()).toEqual(["builtin-default", "builtin-operator", "builtin-research", "builtin-whitehat"]);
+		expect(state.modes.map((m) => m.id).sort()).toEqual([
+			"builtin-default",
+			"builtin-operator",
+			"builtin-purge",
+			"builtin-research",
+			"builtin-whitehat",
+		]);
 		expect(state.selected).toBeNull();
+	});
+
+	it("starts a fresh chat on the host prompt unless the default was switched on", () => {
+		const state = { ...seed(), selected: "builtin-whitehat" };
+		expect(modeFor(state, "new")).toBeUndefined();
+		expect(modeFor({ ...state, defaultEnabled: true }, "new")?.id).toBe("builtin-whitehat");
+		// A chat's own pick never depends on that switch.
+		expect(modeFor({ ...state, overrides: { a: "builtin-purge" } }, "a")?.id).toBe("builtin-purge");
+	});
+
+	it("gives Purge the strictest composition and every tool", () => {
+		const purge = seed().modes.find((m) => m.id === "builtin-purge")!;
+		expect(purge.compose).toBe("strict");
+		expect(purge.tools).toEqual([]);
 	});
 
 	it("points each mode at a bundled file that exists", () => {
@@ -66,7 +86,7 @@ describe("allowedTools", () => {
 });
 
 describe("modeFor", () => {
-	const base = { ...seed(), selected: "builtin-default", overrides: { s1: "builtin-whitehat" } };
+	const base = { ...seed(), selected: "builtin-default", defaultEnabled: true, overrides: { s1: "builtin-whitehat" } };
 
 	it("prefers the chat's own pick", () => {
 		expect(modeFor(base, "s1")?.id).toBe("builtin-whitehat");
@@ -101,6 +121,16 @@ describe("sanitizeMode", () => {
 		expect(out.tools).toEqual(["read", "bash"]);
 	});
 
+	it("honours the legacy `how` field when no compose mode is sent", () => {
+		expect(sanitizeMode({ how: "append" }, newMode()).compose).toBe("append");
+		expect(sanitizeMode({ how: "replace" }, newMode()).compose).toBe("replace");
+	});
+
+	it("keeps a valid compose mode", () => {
+		expect(sanitizeMode({ compose: "strict" }, newMode()).compose).toBe("strict");
+		expect(sanitizeMode({ compose: "nonsense" }, { ...newMode(), compose: "strict" }).compose).toBe("strict");
+	});
+
 	it("drops the file name once a body is present", () => {
 		const prior = { ...newMode(), file: "whitehat.en.md", body: undefined };
 		const out = sanitizeMode({ body: "custom" }, prior);
@@ -117,9 +147,38 @@ describe("sanitizeMode", () => {
 
 describe("migration", () => {
 	it("rebuilds a prompt-only state into modes", () => {
-		const v3 = { profiles: [{ id: "builtin-whitehat", title: "White hat", description: "", enabled: true, how: "replace", dropPersona: false, updatedAt: 0 }], seeded: 3 };
+		const v3 = {
+			profiles: [{ id: "builtin-whitehat", title: "White hat", description: "", enabled: true, how: "replace", dropPersona: false, updatedAt: 0 }],
+			seeded: 3,
+			// Generation 4+ carried a mode that generation 5 replaced.
+			modes: [{ ...newMode(), id: "builtin-operator", title: "Operator", file: "operator.en.md", how: "replace", dropPersona: true }],
+		};
 		const out = seedModes(v3 as unknown as ModesState);
-		expect(out.modes.map((m) => m.id).sort()).toEqual(["builtin-default", "builtin-operator", "builtin-research", "builtin-whitehat"]);
+		expect(out.modes.map((m) => m.id).sort()).toEqual([
+			"builtin-default",
+			"builtin-operator",
+			"builtin-purge",
+			"builtin-research",
+			"builtin-whitehat",
+		]);
+	});
+
+	it("replaces the generation-4 shape and keeps user-written modes", () => {
+		const v4 = {
+			modes: [
+				{ ...newMode(), id: "builtin-operator", title: "Operator", file: "operator.en.md", how: "replace", dropPersona: true },
+				{ ...newMode(), id: "mine", title: "Mine", body: "keep me" },
+			],
+			selected: "builtin-operator",
+			overrides: { a: "builtin-operator", b: "mine" },
+			seeded: 4,
+		};
+		const out = seedModes(v4 as unknown as ModesState);
+		expect(out.modes.find((m) => m.id === "mine")?.body).toBe("keep me");
+		expect(out.modes.find((m) => m.id === "builtin-operator")?.compose).toBe("replace");
+		// The rebuilds a mode the user had chosen only if that mode survived with its own text.
+		expect(out.overrides).toEqual({ a: "builtin-operator", b: "mine" });
+		expect(out.selected).toBe("builtin-operator");
 	});
 
 	it("leaves a current state untouched", () => {
@@ -137,7 +196,8 @@ describe("store", () => {
 });
 
 describe("knownTools", () => {
-	it("lists the tools PI and the plugins actually provide", async () => {
+	// Importing the tool factory pulls in the whole PI catalog, which takes seconds on a cold cache.
+	it("lists the tools PI and the plugins actually provide", { timeout: 30_000 }, async () => {
 		const { knownTools } = await import("../src/tools.ts");
 		const names = knownTools();
 		// Present on every platform, so a broken factory import cannot pass silently.
@@ -151,5 +211,55 @@ describe("knownTools", () => {
 		for (const mode of seed().modes) {
 			for (const tool of mode.tools) expect(names.has(tool), `${mode.id} names unknown tool ${tool}`).toBe(true);
 		}
+	});
+});
+describe("composeSystemPrompt", () => {
+	const NL = String.fromCharCode(10);
+	const HOST = [
+		"You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files.",
+		"",
+		"<tools>",
+		"- read: read a file",
+		"</tools>",
+		"",
+		"<docs>",
+		"Pi documentation (read only when the user asks about pi itself, its SDK, extensions):",
+		"- Main documentation: /pi/README.md",
+		"- Always read pi .md files completely (e.g., tui.md for TUI API details)",
+		"</docs>",
+	].join(NL);
+	const mode = (compose: "append" | "replace" | "strict") => ({ ...newMode(), compose });
+
+	it("append keeps the host prompt intact and puts the text first", () => {
+		const { text } = composeSystemPrompt(mode("append"), "PERSONA", HOST, "E:/w");
+		expect(text.startsWith("PERSONA" + NL + NL)).toBe(true);
+		expect(text).toContain("expert coding assistant");
+		expect(text).toContain("Pi documentation");
+	});
+
+	it("replace cuts the identity line and the docs section but keeps the rest", () => {
+		const { text, cut } = composeSystemPrompt(mode("replace"), "PERSONA", HOST, "E:/w");
+		expect(cut.identity).toBe(true);
+		expect(cut.docs).toBe(true);
+		expect(text).not.toContain("expert coding assistant");
+		expect(text).not.toContain("Pi documentation");
+		expect(text).toContain("<tools>");
+	});
+
+	it("strict sends only the persona and the working directory", () => {
+		const { text } = composeSystemPrompt(mode("strict"), "PERSONA", HOST, "E:" + String.fromCharCode(92) + "w");
+		expect(text).toBe("PERSONA" + NL + NL + "Current working directory: E:/w");
+	});
+
+	it("leaves an unrecognised prompt alone rather than cutting the wrong text", () => {
+		const other = "some other harness prompt";
+		const cut = stripHostPersona(other);
+		expect(cut.text).toBe(other);
+		expect(cut.identity).toBe(false);
+		expect(cut.docs).toBe(false);
+	});
+
+	it("a mode with no body composes nothing", () => {
+		expect(composeSystemPrompt(undefined, "", HOST, "E:/w").text).toBe(HOST);
 	});
 });

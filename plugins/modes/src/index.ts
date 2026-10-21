@@ -1,85 +1,99 @@
 import { join } from "node:path";
 import { definePlugin } from "@prometheus/plugin-sdk";
-import type { AgentMode, ModesState } from "./store.ts";
-import { allowedTools, bodyOf, makeStore, modeFor, newMode, sanitizeMode, seedModes } from "./store.ts";
+import type { AgentMode, LastCut, ModesState } from "./store.ts";
+import { allowedTools, bodyOf, composeSystemPrompt, makeStore, modeFor, newMode, sanitizeMode, seedModes } from "./store.ts";
 import { knownTools } from "./tools.ts";
-
-/** Section carrying the mode's prompt text; tagged so a later turn replaces exactly this. */
-const SECTION = "agent_mode";
-
-interface PromptEvent {
-	systemPromptOptions: { customPrompt?: string; sections: Record<string, string> };
-}
 
 type Params = Record<string, unknown>;
 
+interface PromptEvent {
+	systemPrompt: string;
+	systemPromptOptions: { cwd?: string; sections: Record<string, string> };
+}
+
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 const idOrNull = (v: unknown): string | null => (v === null || v === undefined || v === "" ? null : str(v));
+const same = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((n, i) => n === b[i]);
 
+/**
+ * Modes: a named system prompt plus the tool set it may reach.
+ *
+ * Switching is deliberately cheap. Changing *which mode* a chat uses never reloads anything: the
+ * extension reads the stored state at the start of every run, so the next message already runs
+ * under the new mode. Only editing a mode's text or tools touches the live chats, and even then
+ * nothing is reloaded while a chat is generating — it picks the change up on its next run.
+ */
 export default definePlugin({
 	name: "modes",
-	version: "0.4.0",
+	version: "0.6.0",
 	optional: true,
 	setup(ctx) {
 		const store = makeStore(join(ctx.dataDir, "modes.json"));
 
 		const read = async (): Promise<ModesState> => {
 			const current = await store.read();
-			if (current.seeded === 4) return current;
+			if (current.seeded === SEED_VERSION) return current;
 			return store.update((s) => seedModes(s));
 		};
 
-		const changed = async (): Promise<void> => {
-			ctx.notifyChanged();
-			await ctx.reloadSessions();
-		};
-
-		// ---------- applying a mode: prompt + tools ----------
+		/** Applied state per live session, so a chat can report what is actually in effect. */
+		const applied = new Map<string, { modeId: string | null; cut: LastCut }>();
 
 		ctx.extension((pi) => {
-			/** What the host offered before the mode narrowed it, so switching back restores everything. */
+			/** What the host offered before a mode narrowed it, so switching back restores everything. */
 			let hostTools: string[] | null = null;
-
-			const currentMode = async (sessionId: string | undefined) => {
-				const state = await read();
-				return modeFor(state, sessionId);
-			};
 
 			const applyTools = (mode: AgentMode | undefined) => {
 				hostTools ??= pi.getActiveTools();
 				const next = allowedTools(mode, hostTools);
 				// Re-applying the same set is a no-op; PI would otherwise re-declare the tool catalog
 				// every turn, which costs a cache miss for nothing.
-				const now = pi.getActiveTools();
-				if (next.length === now.length && next.every((n, i) => n === now[i])) return;
+				if (same(next, pi.getActiveTools())) return;
 				pi.setActiveTools(next);
 			};
 
-			// Tools must be settled before the run starts, and a reload resets them to the host default.
+			// A reload rebuilds the registry, so the host baseline has to be recorded again.
 			pi.on("session_start", async (_event, ext) => {
 				hostTools = null;
+				const id = ext?.sessionManager?.getSessionId();
+				if (id) applied.delete(id);
 				applyTools(await currentMode(ext?.sessionManager?.getSessionId()));
 			});
 
+			const currentMode = async (sessionId: string | undefined) => modeFor(await read(), sessionId);
+
 			pi.on("before_agent_start", async (event, ext) => {
-				const mode = await currentMode(ext?.sessionManager?.getSessionId());
+				const sessionId = ext?.sessionManager?.getSessionId();
+				const mode = await currentMode(sessionId);
 				applyTools(mode);
-				if (!mode) return;
-				const text = bodyOf(mode)?.trim();
-				if (!text) return;
+				const body = mode ? bodyOf(mode)?.trim() : undefined;
+				if (!mode || !body) {
+					if (sessionId) applied.delete(sessionId);
+					return;
+				}
+				// A `replace`/`strict` mode has to cut the host preamble, and sections can only be added
+				// or overwritten — never dropped — so the whole rendered prompt is the input. The event's
+				// getter already folds in whatever earlier extensions asked for.
 				const opts = (event as PromptEvent).systemPromptOptions;
-				if (mode.how === "append") opts.sections[`${SECTION}_extra`] = text;
-				else opts.sections[SECTION] = text;
+				const { text, cut } = composeSystemPrompt(mode, body, (event as PromptEvent).systemPrompt ?? "", str(opts.cwd) || ctx.cwd);
+				// Returning `systemPrompt` is the only way to put this text at the head of the request;
+				// writing it as a section instead would leave the original prompt in front of it.
+				if (sessionId) applied.set(sessionId, { modeId: mode.id, cut });
+				return { systemPrompt: text };
 			});
 		});
 
 		// ---------- api ----------
+
+		/** Nothing to reload: every chat reads this state at the start of its next run. */
+		const changed = (): void => ctx.notifyChanged();
 
 		ctx.rpc("list", async () => {
 			const state = await read();
 			return {
 				selected: state.selected,
 				overrides: state.overrides,
+				defaultEnabled: state.defaultEnabled === true,
 				modes: state.modes.map((m) => ({ ...m, bodyLength: bodyOf(m)?.length ?? 0 })),
 			};
 		});
@@ -88,6 +102,15 @@ export default definePlugin({
 			const state = await read();
 			const mode = pick(state, str(p.id));
 			return { ...mode, body: bodyOf(mode) ?? "" };
+		});
+
+		/** What a session is running right now: its own pick, else the workspace default. */
+		ctx.rpc("effective", async (p) => {
+			const state = await read();
+			const session = str(p.session);
+			const mode = modeFor(state, session || undefined);
+			const source = !mode ? "none" : session && state.overrides[session] === mode.id ? "session" : "workspace";
+			return { id: mode?.id ?? null, title: mode?.title ?? null, compose: mode?.compose ?? null, source, applied: applied.get(session) ?? null };
 		});
 
 		ctx.rpc("save", async (p) => {
@@ -99,7 +122,7 @@ export default definePlugin({
 				const seeded = seedModes(s);
 				return { ...seeded, modes: [...seeded.modes.filter((x) => x.id !== next.id), next] };
 			});
-			await changed();
+			changed();
 			return { id: next.id };
 		});
 
@@ -112,8 +135,7 @@ export default definePlugin({
 						...draft,
 						title: `${from.title} (copy)`,
 						description: from.description,
-						how: from.how,
-						dropPersona: from.dropPersona,
+						compose: from.compose,
 						tools: [...from.tools],
 						body: bodyOf(from) ?? "",
 					}
@@ -123,7 +145,7 @@ export default definePlugin({
 				const seeded = seedModes(s);
 				return { ...seeded, modes: [...seeded.modes, next] };
 			});
-			await changed();
+			changed();
 			return { id: next.id };
 		});
 
@@ -135,7 +157,7 @@ export default definePlugin({
 				...s,
 				modes: s.modes.map((x) => (x.id === mode.id ? { ...x, body: undefined, file: bundled, updatedAt: Date.now() } : x)),
 			}));
-			await changed();
+			changed();
 			return { id: mode.id };
 		});
 
@@ -150,7 +172,7 @@ export default definePlugin({
 					overrides: Object.fromEntries(Object.entries(seeded.overrides).filter(([, v]) => v !== id)),
 				};
 			});
-			await changed();
+			changed();
 			return { selected: state.selected };
 		});
 
@@ -161,10 +183,20 @@ export default definePlugin({
 			await store.update((s) => {
 				const seeded = seedModes(s);
 				if (id && !seeded.modes.some((x) => x.id === id)) throw new Error("模式不存在");
-				return { ...seeded, selected: id };
+				// Choosing a mode by hand is also the user saying "start here", so it switches the
+				// default on instead of leaving a selection that a new chat would silently ignore.
+				return { ...seeded, selected: id, defaultEnabled: id ? true : seeded.defaultEnabled };
 			});
-			await changed();
+			changed();
 			return { selected: id };
+		});
+
+		/** The mode a *new* chat starts in. Off means a fresh chat runs on the host prompt. */
+		ctx.rpc("default", async (p) => {
+			const on = p.enabled === true;
+			await store.update((s) => ({ ...seedModes(s), defaultEnabled: on }));
+			changed();
+			return { enabled: on };
 		});
 
 		/** One chat's own mode, overriding the workspace default without changing it. */
@@ -181,12 +213,13 @@ export default definePlugin({
 				else delete overrides[session];
 				return { ...seeded, overrides };
 			});
-			await changed();
+			changed();
 			return { session, id };
 		});
 
 		/** The tool names a mode may name, so the editor picks from real ones instead of guesses. */
 		ctx.rpc("tools", async () => ({ known: knownTools() }));
+
 	},
 });
 
@@ -196,10 +229,13 @@ function pick(state: ModesState, id: string): AgentMode {
 	return mode;
 }
 
+const SEED_VERSION = 5;
+
 /** Shipped file per seeded id, so `reset` can restore the bundled text. */
 const SEED_FILES: Record<string, string> = {
 	"builtin-default": "default.en.md",
 	"builtin-operator": "operator.en.md",
 	"builtin-whitehat": "whitehat.en.md",
+	"builtin-purge": "purge.en.md",
 	"builtin-research": "research.en.md",
 };

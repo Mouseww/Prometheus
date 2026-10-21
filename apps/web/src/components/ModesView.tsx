@@ -25,10 +25,11 @@ const M = defineMessages({
 		description: "说明",
 		descriptionPlaceholder: "一句话说明这个模式怎么工作",
 		body: "系统提示词（Markdown）",
-		how: "注入方式",
-		howReplace: "替换系统提示词段落",
-		howAppend: "追加在宿主默认提示之后",
-		dropPersona: "同时去掉宿主默认的身份介绍",
+		how: "提示词强度",
+		howAppend: "append · 只把人设放在宿主提示词前面",
+		howReplace: "replace · 人设 + 宿主提示词（去掉身份句与 pi 文档段）",
+		howStrict: "strict · 只发人设和工作目录，宿主提示词整段丢弃",
+		howHelp: "越往下宿主身份被去得越干净。strict 只留人设与工作目录，工具仍然可用。",
 		tools: "可用工具",
 		toolsAll: "全部工具（不限制）",
 		toolsSome: "仅限 {n} 个",
@@ -70,10 +71,11 @@ const M = defineMessages({
 		description: "Description",
 		descriptionPlaceholder: "One line on how this mode works",
 		body: "System prompt (Markdown)",
-		how: "Injection",
-		howReplace: "Replace the system prompt section",
-		howAppend: "Append after the host's default prompt",
-		dropPersona: "Also drop the host's identity preamble",
+		how: "Prompt strength",
+		howAppend: "append · persona in front of the host prompt",
+		howReplace: "replace · persona + host prompt without its identity line and pi docs",
+		howStrict: "strict · persona and the working directory only; the host prompt is dropped",
+		howHelp: "Further down means less host framing. strict keeps the persona and cwd alone; tools still work.",
 		tools: "Tools",
 		toolsAll: "All tools (no restriction)",
 		toolsSome: "{n} selected",
@@ -217,8 +219,7 @@ interface Draft {
 	description: string;
 	body: string;
 	enabled: boolean;
-	how: "replace" | "append";
-	dropPersona: boolean;
+	compose: "append" | "replace" | "strict";
 	tools: string[];
 }
 
@@ -227,8 +228,7 @@ const draftOf = (m: ModeSummary, body: string): Draft => ({
 	description: m.description,
 	body,
 	enabled: m.enabled,
-	how: m.how,
-	dropPersona: m.dropPersona,
+	compose: m.compose,
 	tools: [...m.tools],
 });
 
@@ -320,25 +320,22 @@ function ModeEditor({ mode, isCurrent, onChanged, onToggleDefault }: { mode: Mod
 			</div>
 
 			<div className="grid gap-3 sm:grid-cols-2">
-				<Field label={t("how")}>
+				<Field label={t("how")} hint={t("howHelp")}>
 					<select
-						value={draft?.how ?? "replace"}
+						value={draft?.compose ?? "replace"}
 						disabled={!draft}
-						onChange={(e) => set("how", e.target.value as Draft["how"])}
+						onChange={(e) => set("compose", e.target.value as Draft["compose"])}
 						className="w-full rounded-lg border border-ink-700 bg-ink-850 px-2.5 py-1.5 text-sm"
 					>
-						<option value="replace">{t("howReplace")}</option>
 						<option value="append">{t("howAppend")}</option>
+						<option value="replace">{t("howReplace")}</option>
+						<option value="strict">{t("howStrict")}</option>
 					</select>
 				</Field>
-				<div className="flex flex-col justify-end gap-1.5 pb-1">
+				<div className="flex flex-col justify-end pb-1">
 					<label className="flex items-center gap-2 text-sm text-ink-300">
 						<input type="checkbox" checked={draft?.enabled ?? false} disabled={!draft} onChange={(e) => set("enabled", e.target.checked)} className="accent-ember-500" />
 						{t("enabled")}
-					</label>
-					<label className="flex items-center gap-2 text-sm text-ink-300">
-						<input type="checkbox" checked={draft?.dropPersona ?? false} disabled={!draft} onChange={(e) => set("dropPersona", e.target.checked)} className="accent-ember-500" />
-						{t("dropPersona")}
 					</label>
 				</div>
 			</div>

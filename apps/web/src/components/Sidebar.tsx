@@ -7,6 +7,7 @@ import {
 	Brain,
 	ChevronDown,
 	ChevronRight,
+	ChevronsDownUp,
 	FolderOpen,
 	FolderSearch,
 	FolderPlus,
@@ -51,6 +52,10 @@ const M = defineMessages({
 		git: "Git",
 		settings: "设置",
 		workspaces: "工作区",
+		collapseEvery: "收起全部工作区",
+		showMore: "再显示 {n} 条",
+		showAll: "展开全部 {n} 条",
+		showLess: "收起",
 		openFolder: "打开项目目录",
 		newChat: "在此工作区新建对话",
 		newSession: "新会话",
@@ -79,6 +84,10 @@ const M = defineMessages({
 		git: "Git",
 		settings: "Settings",
 		workspaces: "Workspaces",
+		collapseEvery: "Collapse every workspace",
+		showMore: "Show {n} more",
+		showAll: "Show all {n}",
+		showLess: "Collapse",
 		openFolder: "Open project folder",
 		newChat: "New chat in this workspace",
 		newSession: "New chat",
@@ -217,23 +226,91 @@ function SessionRow({ s, active }: { s: SessionSummary; active: boolean }) {
 	);
 }
 
+/**
+ * Which workspaces are folded open.
+ *
+ * Kept in one module-level store rather than per-component state so the choice survives the sidebar
+ * re-rendering (it does on every session refresh) and so "collapse all" can reach every group.
+ * Only the workspace you are in starts open: everything else would push the rest of the list off
+ * screen as soon as it has history.
+ */
+const EXPANDED_KEY = "prometheus.expandedWorkspaces";
+
+function readExpanded(): Set<string> {
+	try {
+		const raw = JSON.parse(localStorage.getItem(EXPANDED_KEY) ?? "[]") as unknown;
+		return new Set(Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : []);
+	} catch {
+		return new Set();
+	}
+}
+
+const expanded = { ids: readExpanded() };
+const expandedListeners = new Set<() => void>();
+
+function writeExpanded(next: Set<string>): void {
+	expanded.ids = next;
+	try {
+		localStorage.setItem(EXPANDED_KEY, JSON.stringify([...next]));
+	} catch {
+		/* Private mode: the in-memory set still works for this run. */
+	}
+	for (const fn of expandedListeners) fn();
+}
+
+export function collapseAllWorkspaces(): void {
+	writeExpanded(new Set());
+}
+
+/** Open/closed state of one workspace, with the current chat's workspace forced open. */
+function useExpanded(id: string) {
+	const [isOpen, setOpen] = useState(() => expanded.ids.has(id));
+	useEffect(() => {
+		const sync = () => setOpen(expanded.ids.has(id));
+		expandedListeners.add(sync);
+		return () => {
+			expandedListeners.delete(sync);
+		};
+	}, [id]);
+	return {
+		isOpen,
+		toggle: () => {
+			const next = new Set(expanded.ids);
+			if (next.has(id)) next.delete(id);
+			else next.add(id);
+			writeExpanded(next);
+		},
+		show: () => {
+			if (expanded.ids.has(id)) return;
+			writeExpanded(new Set([...expanded.ids, id]));
+		},
+	};
+}
+
+/** How many chats a workspace shows before the "show more" step, so one big folder cannot bury the rest. */
+const PAGE = 8;
+
 function WorkspaceGroup({ w, sessions, activeId, current }: { w: WorkspaceInfo; sessions: SessionSummary[]; activeId?: string; current: boolean }) {
 	const t = useT(M);
-	const [open, setOpen] = useState(current);
 	const [showArchived, setShowArchived] = useState(false);
+	const [limit, setLimit] = useState(PAGE);
 	const live = sessions.filter((s) => !s.archived);
 	const archived = sessions.filter((s) => s.archived);
 	const menu = usePopover();
-
+	// One collapsed workspace at a time per app run (plus whichever is open), remembered per folder.
+	const open = useExpanded(w.id);
+	// Opening a chat in here is a request to see this workspace, not to leave it folded.
 	useEffect(() => {
-		if (current) setOpen(true);
+		if (current) open.show();
 	}, [current]);
+
+	const shown = live.length > limit ? live.slice(0, limit) : live;
 
 	return (
 		<div className="mb-1">
 			<div className="group flex items-center gap-1 rounded-lg px-1.5 py-1 hover:bg-ink-850">
-				<button type="button" onClick={() => setOpen(!open)} className="flex min-w-0 flex-1 items-center gap-1.5 text-left" title={w.path}>
-					{open ? <ChevronDown className="size-3.5 shrink-0 text-ink-500" /> : <ChevronRight className="size-3.5 shrink-0 text-ink-500" />}
+				<button type="button" onClick={() => open.toggle()} className="flex min-w-0 flex-1 items-center gap-1.5 text-left" title={w.path}>
+					{open.isOpen ? <ChevronDown className="size-3.5 shrink-0 text-ink-500" /> : <ChevronRight className="size-3.5 shrink-0 text-ink-500" />}
 					<FolderOpen className={clsx("size-4 shrink-0", current ? "text-ember-400" : "text-ink-400")} />
 					<span className="truncate text-[13px] font-medium text-ink-200">{w.name}</span>
 					{live.length > 0 && <span className="ml-1 font-mono text-[10px] text-ink-600">{live.length}</span>}
@@ -287,12 +364,21 @@ function WorkspaceGroup({ w, sessions, activeId, current }: { w: WorkspaceInfo; 
 					<Plus className="size-4" />
 				</button>
 			</div>
-			{open && (
+			{open.isOpen && (
 				<div className="mt-0.5 ml-3 space-y-0.5 border-l border-ink-800 pl-1.5">
 					{live.length === 0 && <div className="px-3 py-1.5 text-xs text-ink-600">{t("empty")}</div>}
-					{live.map((s) => (
+					{shown.map((s) => (
 						<SessionRow key={s.id} s={s} active={s.id === activeId} />
 					))}
+					{live.length > PAGE && (
+						<button
+							type="button"
+							onClick={() => setLimit(live.length > limit + PAGE * 4 ? live.length : limit + PAGE)}
+							className="w-full rounded-md px-3 py-1 text-left text-[11px] text-ink-500 hover:bg-ink-850 hover:text-ink-300"
+						>
+							{limit >= live.length ? t("showLess") : live.length - limit > PAGE * 4 ? t("showAll", { n: live.length }) : t("showMore", { n: Math.min(PAGE, live.length - limit) })}
+						</button>
+					)}
 					{archived.length > 0 && (
 						<>
 							<button type="button" onClick={() => setShowArchived(!showArchived)} className="flex items-center gap-1 px-2 py-1 text-[11px] text-ink-500 hover:text-ink-300">
@@ -365,9 +451,16 @@ export function Sidebar({ target, onDisconnect }: { target: BackendTarget; onDis
 			</div>
 			<div className="flex items-center justify-between px-3 pt-3 pb-1.5">
 				<span className="px-1 font-mono text-[10.5px] tracking-[0.18em] text-ink-500 uppercase">{t("workspaces")}</span>
-				<button type="button" onClick={() => setPicking(true)} className="rounded-md p-1 text-ink-400 hover:bg-ink-800 hover:text-ember-300" title={t("openFolder")}>
-					<FolderPlus className="size-4" />
-				</button>
+				<div className="flex items-center gap-0.5">
+					{workspaces.length > 1 && (
+						<button type="button" onClick={() => collapseAllWorkspaces()} className="rounded-md p-1 text-ink-500 hover:bg-ink-800 hover:text-ink-200" title={t("collapseEvery")}>
+							<ChevronsDownUp className="size-4" />
+						</button>
+					)}
+					<button type="button" onClick={() => setPicking(true)} className="rounded-md p-1 text-ink-400 hover:bg-ink-800 hover:text-ember-300" title={t("openFolder")}>
+						<FolderPlus className="size-4" />
+					</button>
+				</div>
 			</div>
 			<div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
 				{workspaces.length === 0 && (

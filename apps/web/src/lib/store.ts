@@ -487,13 +487,30 @@ function activate(snapshot: SessionSnapshot): void {
 }
 
 export async function refreshSessions(): Promise<void> {
-	const sessions = await call((c) => c.rpc("session.list", {}));
+	const sessions = await coalesce("sessions", () => call((c) => c.rpc("session.list", {})));
 	if (sessions) set({ sessions });
 }
 
 export async function refreshWorkspaces(): Promise<void> {
-	const workspaces = await call((c) => c.rpc("workspace.list", {}));
+	const workspaces = await coalesce("workspaces", () => call((c) => c.rpc("workspace.list", {})));
 	if (workspaces) set({ workspaces });
+}
+
+/**
+ * One in-flight request per key.
+ *
+ * `sessions.changed` fires on every run start and settle, and the handler used to refetch the whole
+ * session index each time — several full directory scans per turn, each re-rendering the sidebar.
+ * Sharing the running request keeps the list fresh without stacking scans.
+ */
+let inflight = new Map<string, Promise<unknown>>();
+
+function coalesce<T>(key: string, run: () => Promise<T | undefined>): Promise<T | undefined> {
+	const running = inflight.get(key) as Promise<T | undefined> | undefined;
+	if (running) return running;
+	const next = run().finally(() => inflight.delete(key));
+	inflight.set(key, next);
+	return next;
 }
 
 export async function refreshPlugins(): Promise<void> {

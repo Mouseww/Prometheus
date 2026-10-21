@@ -456,14 +456,26 @@ export interface ModeSummary {
 	/** Bundled file name; absent once the user edits the text. */
 	file?: string;
 	enabled: boolean;
-	/** Replace the prompt section, or append after the host's own prompt. */
-	how: "replace" | "append";
-	/** Also drop the host's "expert coding assistant" preamble. */
-	dropPersona: boolean;
+	/**
+	 * How the text meets the host prompt: `append` keeps all of it under the text, `replace` cuts the
+	 * host identity line and docs, `strict` sends the text alone.
+	 */
+	compose: "append" | "replace" | "strict";
 	/** Tools the mode may use; empty means every tool the host offers. Never grants. */
 	tools: string[];
 	updatedAt: number;
 	bodyLength: number;
+}
+
+/** Which mode a chat is actually running, and where that choice came from. */
+export interface ModeInEffect {
+	id: string | null;
+	title: string | null;
+	compose: ModeSummary["compose"] | null;
+	/** `session` when the chat picked its own mode, `workspace` when it inherits the default, `none` when it runs on the host prompt. */
+	source: "session" | "workspace" | "none";
+	/** What the mode removed on the last turn, so a status read can answer "did it take effect". */
+	applied: { identity: boolean; docs: boolean; at: number } | null;
 }
 
 export type PackageKind = "extensions" | "skills" | "prompts" | "themes";

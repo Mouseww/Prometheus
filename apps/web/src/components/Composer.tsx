@@ -7,6 +7,7 @@ import { fileToImage, IMAGE_ACCEPT, ImageError, imageSrc, MAX_IMAGES } from "../
 import { type SendMode, setPrefs, usePrefs } from "../lib/prefs.ts";
 import { abortRun, openSettings, pluginCall, sendPrompt, setModel, setPermissionMode, setThinking, toast, useStore } from "../lib/store.ts";
 import { ContextMeter } from "./ContextMeter.tsx";
+import { ModePicker } from "./ModePicker.tsx";
 import { nextPermissionMode, PermissionPicker } from "./PermissionPicker.tsx";
 import { VoiceButton } from "./VoiceButton.tsx";
 import { usePopover } from "./TitleBar.tsx";
@@ -712,6 +713,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 				</div>
 				<div className="flex items-center gap-1 border-t border-ink-800/70 px-2 py-1">
 					<PermissionPicker />
+					<ModePicker />
 					<div className="flex-1" />
 					<ContextMeter />
 				</div>

@@ -706,7 +706,8 @@ export class PrometheusHost {
 		"message.fork": ({ sessionId, ref }) => this.forkMessage(sessionId, ref),
 
 		"workspace.list": async () => {
-			await this.listSessions();
+			// Nothing here needs the session index: the store already knows which folders were used. Reading
+			// every session file to answer this made opening a workspace as slow as listing all history.
 			return this.workspaces.list();
 		},
 		"workspace.add": async ({ path, name }) => {
