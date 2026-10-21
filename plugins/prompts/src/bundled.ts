@@ -1,7 +1,6 @@
-import { TEXT as acceptEdits } from "./bundled/accept-edits_en.ts";
-import { TEXT as defaultMode } from "./bundled/default_en.ts";
+import { TEXT as defaultPrompt } from "./bundled/default_en.ts";
 import { TEXT as operator } from "./bundled/operator_en.ts";
-import { TEXT as plan } from "./bundled/plan_en.ts";
+import { TEXT as research } from "./bundled/research_en.ts";
 import { TEXT as whitehat } from "./bundled/whitehat_en.ts";
 
 /**
@@ -11,9 +10,8 @@ import { TEXT as whitehat } from "./bundled/whitehat_en.ts";
  * next to the source works in dev and fails in every packaged build.
  */
 export const BUNDLED: Record<string, string> = {
-	"accept-edits.en.md": acceptEdits,
-	"default.en.md": defaultMode,
+	"default.en.md": defaultPrompt,
 	"operator.en.md": operator,
-	"plan.en.md": plan,
+	"research.en.md": research,
 	"whitehat.en.md": whitehat,
 };

@@ -1,24 +1,23 @@
 import { randomUUID } from "node:crypto";
-import { BUNDLED } from "./bundled.ts";
 import { createJsonStore } from "@prometheus/plugin-sdk";
-import { PERMISSION_MODES, type PermissionMode } from "@prometheus/protocol";
+import { BUNDLED } from "./bundled.ts";
 
 /**
- * One saved system prompt, bound to a permission mode. A mode has at most one active prompt; the
- * prompt is what the agent is told, the mode is what the gate actually enforces.
+ * One saved system prompt. Deliberately independent of the permission mode: which prompt the agent
+ * is given and which tool calls the gate allows are separate decisions, so a jailbreak prompt can
+ * be used with confirmations still on.
  */
 export interface PromptProfile {
 	id: string;
-	/** The mode this prompt speaks for. Two prompts may share a mode; the enabled one wins. */
-	mode: PermissionMode;
 	title: string;
 	description: string;
-	/** Bundled file name, resolved against BUNDLED. Absent once the user edits it. */
+	/** Bundled file name, resolved against BUNDLED. Absent once the user edits the text. */
 	file?: string;
 	/** Text of a user-written or user-edited prompt. */
 	body?: string;
+	/** Off keeps the profile listed but never injected. */
 	enabled: boolean;
-	/** Replace the section body outright, or append after the host's own prompt. */
+	/** Replace the prompt section, or append after the host's own prompt. */
 	how: "replace" | "append";
 	/** Also drop the host's "expert coding assistant" preamble. */
 	dropPersona: boolean;
@@ -27,17 +26,21 @@ export interface PromptProfile {
 
 export interface PromptsState {
 	profiles: PromptProfile[];
+	/** The profile every chat uses unless it picked its own. Empty means no injection at all. */
+	selected: string | null;
+	/** Session id → profile id, for chats that chose something else. */
+	overrides: Record<string, string>;
 	/** Which seed generation was written; bumped when the shipped set changes shape. */
 	seeded: number;
 }
 
-/** 1: profiles without a mode (pre-mode versions). 2: one prompt per permission mode. */
-const SEED_VERSION = 2;
+/** 1: pre-mode profiles. 2: mode-bound profiles. 3: prompt and permission mode separated again. */
+const SEED_VERSION = 3;
 
-export const emptyState = (): PromptsState => ({ profiles: [], seeded: 0 });
+export const emptyState = (): PromptsState => ({ profiles: [], selected: null, overrides: {}, seeded: 0 });
 
 interface Seed {
-	mode: PermissionMode;
+	id: string;
 	title: string;
 	description: string;
 	file: string;
@@ -45,17 +48,9 @@ interface Seed {
 	dropPersona: boolean;
 }
 
-/**
- * What each mode is told, out of the box.
- *
- * The three gated modes get a plain, contract-style prompt: their behaviour is enforced by the
- * permission gate, so the prompt only has to state what the mode is for. `auto` and
- * `bypassPermissions` hand the agent real latitude, so they get the operator prompt — the long one
- * that decides *how* it answers, not just what it may touch.
- */
 const SEEDS: Seed[] = [
 	{
-		mode: "default",
+		id: "builtin-default",
 		title: "Default",
 		description: "Standard assistant: normal help, normal caution",
 		file: "default.en.md",
@@ -63,23 +58,15 @@ const SEEDS: Seed[] = [
 		dropPersona: false,
 	},
 	{
-		mode: "acceptEdits",
-		title: "Accept edits",
-		description: "Edits inside the project apply without asking; commands still confirm",
-		file: "accept-edits.en.md",
+		id: "builtin-operator",
+		title: "Operator",
+		description: "Ship first: no refusals, no follow-up questions; sensitive targets become placeholders",
+		file: "operator.en.md",
 		how: "replace",
-		dropPersona: false,
+		dropPersona: true,
 	},
 	{
-		mode: "plan",
-		title: "Plan",
-		description: "Read-only research and a plan for approval; nothing changes",
-		file: "plan.en.md",
-		how: "replace",
-		dropPersona: false,
-	},
-	{
-		mode: "bypassPermissions",
+		id: "builtin-whitehat",
 		title: "White hat",
 		description: "Authorized security work: deliver first, no refusals, no authorization checks",
 		file: "whitehat.en.md",
@@ -87,46 +74,31 @@ const SEEDS: Seed[] = [
 		dropPersona: true,
 	},
 	{
-		mode: "auto",
-		title: "Auto",
-		description: "Nothing is asked and the agent decides everything itself",
-		file: "operator.en.md",
-		how: "replace",
-		dropPersona: true,
+		id: "builtin-research",
+		title: "Research",
+		description: "Evidence before conclusions; no deliverable nobody asked for",
+		file: "research.en.md",
+		how: "append",
+		dropPersona: false,
 	},
 ];
 
-/** Stable ids, so reseeding after a reload never duplicates the shipped prompts. */
-const seedId = (mode: PermissionMode) => `builtin-${mode}`;
-
 export function seedProfiles(state: PromptsState, now = Date.now()): PromptsState {
 	if (state.seeded === SEED_VERSION) return state;
-	// A state from an older generation carries profiles that do not fit the current shape (no `mode`,
-	// retired files). Keeping them would leave every mode without a prompt and show dead entries, so
-	// that generation is replaced outright; it shipped one version and held no user-authored text.
+	// An older generation carries profiles shaped for a design that no longer exists (mode-bound in
+	// v2, list-bound in v1). Rebuild from the shipped set instead of leaving dead entries behind.
 	const profiles = state.seeded === 0 ? [...state.profiles] : [];
 	for (const spec of SEEDS) {
-		const id = seedId(spec.mode);
-		if (profiles.some((p) => p.id === id)) continue;
-		profiles.push({
-			id,
-			mode: spec.mode,
-			title: spec.title,
-			description: spec.description,
-			file: spec.file,
-			enabled: true,
-			how: spec.how,
-			dropPersona: spec.dropPersona,
-			updatedAt: now,
-		});
+		if (profiles.some((p) => p.id === spec.id)) continue;
+		profiles.push({ ...spec, enabled: true, updatedAt: now });
 	}
-	return { ...state, profiles, seeded: SEED_VERSION };
+	const selected = state.selected && profiles.some((p) => p.id === state.selected) ? state.selected : null;
+	return { ...state, profiles, selected, seeded: SEED_VERSION };
 }
 
-export function newProfile(mode: PermissionMode, now = Date.now()): PromptProfile {
+export function newProfile(now = Date.now()): PromptProfile {
 	return {
 		id: randomUUID(),
-		mode,
 		title: "New prompt",
 		description: "",
 		body: "",
@@ -144,10 +116,11 @@ export function bodyOf(profile: PromptProfile, bundled: Record<string, string> =
 	return undefined;
 }
 
-/** The prompt that speaks for a mode: the enabled one, preferring the seeded entry. */
-export function promptFor(state: PromptsState, mode: PermissionMode): PromptProfile | undefined {
-	const candidates = state.profiles.filter((p) => p.mode === mode && p.enabled);
-	return candidates.find((p) => p.id === seedId(mode)) ?? candidates[0];
+/** Which prompt applies to a session: its own pick, else the workspace default. */
+export function profileFor(state: PromptsState, sessionId: string | undefined): PromptProfile | undefined {
+	const usable = (id: string | null | undefined) => state.profiles.find((p) => p.id === id && p.enabled);
+	const own = sessionId ? usable(state.overrides[sessionId]) : undefined;
+	return own ?? usable(state.selected);
 }
 
 export function makeStore(file: string) {
@@ -158,9 +131,6 @@ export type PromptsStore = ReturnType<typeof makeStore>;
 
 const MAX_BODY = 400_000;
 
-const asMode = (v: unknown, fallback: PermissionMode): PermissionMode =>
-	PERMISSION_MODES.includes(v as PermissionMode) ? (v as PermissionMode) : fallback;
-
 /** Clients send plain JSON, so nothing may reach the state file unvalidated. */
 export function sanitizeProfile(input: unknown, prior?: PromptProfile): PromptProfile {
 	if (!input || typeof input !== "object") throw new Error("提示词数据不合法");
@@ -170,7 +140,6 @@ export function sanitizeProfile(input: unknown, prior?: PromptProfile): PromptPr
 	const body = typeof raw.body === "string" ? raw.body.slice(0, MAX_BODY) : prior?.body?.slice(0, MAX_BODY);
 	return {
 		id: prior?.id ?? randomUUID(),
-		mode: asMode(raw.mode, prior?.mode ?? "default"),
 		title,
 		description: str(raw.description, prior?.description ?? "").slice(0, 400),
 		// Editing a bundled prompt stores a body, which shadows the file from then on.

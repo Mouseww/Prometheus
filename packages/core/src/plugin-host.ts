@@ -27,8 +27,6 @@ export interface PluginRoute {
 
 export interface PluginHostOptions {
 	host: HostKind;
-	/** Live permission mode per session, so a plugin's prompt follows the mode the gate enforces. */
-	permissionMode?: (sessionId: string | undefined) => string | undefined;
 	dataDir: string;
 	agentDir: string;
 	cwd: string;
@@ -385,7 +383,6 @@ export class PluginHost {
 			extension: (factory) => {
 				reg.factories.push(factory);
 			},
-			permissionMode: (sessionId) => this.options.permissionMode?.(sessionId),
 			knowledgeStore: (id, factory) => {
 				if (this.stores.has(id)) throw new Error(`知识库存储 id 已被注册：${id}`);
 				this.stores.set(id, factory);

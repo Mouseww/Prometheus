@@ -1,10 +1,10 @@
 import { join } from "node:path";
-import type { PermissionMode } from "@prometheus/protocol";
 import { definePlugin } from "@prometheus/plugin-sdk";
-import { bodyOf, makeStore, newProfile, promptFor, sanitizeProfile, seedProfiles, type PromptProfile, type PromptsState } from "./store.ts";
+import type { PromptProfile, PromptsState } from "./store.ts";
+import { bodyOf, makeStore, newProfile, profileFor, sanitizeProfile, seedProfiles } from "./store.ts";
 
-/** Section carrying the prompt text; tagged so a later turn can replace exactly this. */
-const SECTION = "mode_prompt";
+/** Section carrying the prompt text; tagged so a later turn replaces exactly this. */
+const SECTION = "prompt_profile";
 
 interface PromptEvent {
 	systemPromptOptions: { customPrompt?: string; sections: Record<string, string> };
@@ -13,17 +13,18 @@ interface PromptEvent {
 type Params = Record<string, unknown>;
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
+const idOrNull = (v: unknown): string | null => (v === null || v === undefined || v === "" ? null : str(v));
 
 export default definePlugin({
 	name: "prompts",
-	version: "0.2.0",
+	version: "0.3.0",
 	optional: true,
 	setup(ctx) {
 		const store = makeStore(join(ctx.dataDir, "prompts.json"));
 
 		const read = async (): Promise<PromptsState> => {
 			const current = await store.read();
-			if (current.seeded) return current;
+			if (current.seeded === 3) return current;
 			return store.update((s) => seedProfiles(s));
 		};
 
@@ -32,14 +33,14 @@ export default definePlugin({
 			await ctx.reloadSessions();
 		};
 
-		// ---------- injection: the prompt follows the session's permission mode ----------
+		// ---------- injection ----------
 
 		ctx.extension((pi) => {
 			pi.on("before_agent_start", async (event, ext) => {
-				const sessionId = ext?.sessionManager?.getSessionId();
-				const mode = (ctx.permissionMode?.(sessionId) ?? "default") as PermissionMode;
+				// The prompt follows this chat's own choice, else the workspace default. It has nothing
+				// to do with the permission mode: which tools may run is the gate's decision alone.
 				const state = await read();
-				const profile = promptFor(state, mode);
+				const profile = profileFor(state, ext?.sessionManager?.getSessionId());
 				if (!profile) return;
 				const text = bodyOf(profile)?.trim();
 				if (!text) return;
@@ -51,14 +52,16 @@ export default definePlugin({
 
 		// ---------- api ----------
 
-		ctx.rpc("list", async (): Promise<{ profiles: (PromptProfile & { bodyLength: number })[] }> => {
+		ctx.rpc("list", async () => {
 			const state = await read();
 			return {
+				selected: state.selected,
+				overrides: state.overrides,
 				profiles: state.profiles.map((p) => ({ ...p, bodyLength: bodyOf(p)?.length ?? 0 })),
 			};
 		});
 
-		ctx.rpc("get", async (p): Promise<PromptProfile & { body: string }> => {
+		ctx.rpc("get", async (p) => {
 			const state = await read();
 			const profile = pick(state, str(p.id));
 			return { ...profile, body: bodyOf(profile) ?? "" };
@@ -71,11 +74,23 @@ export default definePlugin({
 			const next = sanitizeProfile(raw, prior);
 			await store.update((s) => {
 				const seeded = seedProfiles(s);
-				// Enabling a prompt switches off any sibling for the same mode: one prompt per mode.
-				const profiles = next.enabled
-					? seeded.profiles.map((x) => (x.mode === next.mode && x.id !== next.id ? { ...x, enabled: false } : x))
-					: seeded.profiles;
-				return { ...seeded, profiles: [...profiles.filter((x) => x.id !== next.id), next] };
+				return { ...seeded, profiles: [...seeded.profiles.filter((x) => x.id !== next.id), next] };
+			});
+			await changed();
+			return { id: next.id };
+		});
+
+		ctx.rpc("create", async (p) => {
+			const state = await read();
+			const from = p.from ? pick(state, str(p.from)) : undefined;
+			const draft = newProfile();
+			const seed: PromptProfile = from
+				? { ...draft, title: `${from.title} (copy)`, description: from.description, how: from.how, dropPersona: from.dropPersona, body: bodyOf(from) ?? "" }
+				: draft;
+			const next = sanitizeProfile({ ...seed, ...(p.profile as Params | undefined) }, seed);
+			await store.update((s) => {
+				const seeded = seedProfiles(s);
+				return { ...seeded, profiles: [...seeded.profiles, next] };
 			});
 			await changed();
 			return { id: next.id };
@@ -84,10 +99,10 @@ export default definePlugin({
 		ctx.rpc("reset", async (p) => {
 			const state = await read();
 			const profile = pick(state, str(p.id));
-			// Dropping the body and the file-name override restores the shipped text.
+			const bundled = SEED_FILES[profile.id] ?? profile.file;
 			await store.update((s) => ({
 				...s,
-				profiles: s.profiles.map((x) => (x.id === profile.id ? { ...x, body: undefined, file: seedFileFor(x.mode), updatedAt: Date.now() } : x)),
+				profiles: s.profiles.map((x) => (x.id === profile.id ? { ...x, body: undefined, file: bundled, updatedAt: Date.now() } : x)),
 			}));
 			await changed();
 			return { id: profile.id };
@@ -95,25 +110,48 @@ export default definePlugin({
 
 		ctx.rpc("delete", async (p) => {
 			const id = str(p.id);
-			await store.update((s) => {
+			const state = await store.update((s) => {
 				const seeded = seedProfiles(s);
-				return { ...seeded, profiles: seeded.profiles.filter((x) => x.id !== id) };
+				return {
+					...seeded,
+					profiles: seeded.profiles.filter((x) => x.id !== id),
+					selected: seeded.selected === id ? null : seeded.selected,
+					overrides: Object.fromEntries(Object.entries(seeded.overrides).filter(([, v]) => v !== id)),
+				};
 			});
 			await changed();
-			return { ok: true as const };
+			return { selected: state.selected };
 		});
 
-		ctx.rpc("create", async (p) => {
-			const state = await read();
-			const draft = newProfile((str(p.mode) || "default") as PermissionMode);
-			const next = sanitizeProfile({ ...draft, ...(p.profile as Params | undefined) }, draft);
+		/** The workspace default. Nothing is injected while this is null. */
+		ctx.rpc("select", async (p) => {
+			const id = idOrNull(p.id);
+			await read();
 			await store.update((s) => {
 				const seeded = seedProfiles(s);
-				const profiles = next.enabled ? seeded.profiles.map((x) => (x.mode === next.mode ? { ...x, enabled: false } : x)) : seeded.profiles;
-				return { ...seeded, profiles: [...profiles, next] };
+				if (id && !seeded.profiles.some((x) => x.id === id)) throw new Error("提示词不存在");
+				return { ...seeded, selected: id };
 			});
 			await changed();
-			return { id: next.id };
+			return { selected: id };
+		});
+
+		/** One chat's own choice, overriding the workspace default without changing it. */
+		ctx.rpc("override", async (p) => {
+			const session = str(p.session);
+			const id = idOrNull(p.id);
+			if (!session) throw new Error("缺少会话 id");
+			if (id) await read();
+			await store.update((s) => {
+				const seeded = seedProfiles(s);
+				if (id && !seeded.profiles.some((x) => x.id === id)) throw new Error("提示词不存在");
+				const overrides = { ...seeded.overrides };
+				if (id) overrides[session] = id;
+				else delete overrides[session];
+				return { ...seeded, overrides };
+			});
+			await changed();
+			return { session, id };
 		});
 	},
 });
@@ -124,15 +162,10 @@ function pick(state: PromptsState, id: string): PromptProfile {
 	return profile;
 }
 
-/** The shipped file for a mode, used by `reset` to fall back to the bundled text. */
-function seedFileFor(mode: PermissionMode): string {
-	return SEED_FILES[mode] ?? "default.en.md";
-}
-
-const SEED_FILES: Record<PermissionMode, string> = {
-	default: "default.en.md",
-	acceptEdits: "accept-edits.en.md",
-	plan: "plan.en.md",
-	bypassPermissions: "whitehat.en.md",
-	auto: "operator.en.md",
+/** Shipped file per seeded id, so `reset` can restore the bundled text. */
+const SEED_FILES: Record<string, string> = {
+	"builtin-default": "default.en.md",
+	"builtin-operator": "operator.en.md",
+	"builtin-whitehat": "whitehat.en.md",
+	"builtin-research": "research.en.md",
 };

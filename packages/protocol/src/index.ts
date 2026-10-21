@@ -448,11 +448,9 @@ export interface SkillDocument {
 	content: string;
 }
 
-/** A system prompt bound to a permission mode, owned by the `prompts` plugin. */
+/** A saved system prompt, owned by the `prompts` plugin. Independent of the permission mode. */
 export interface ProfileSummary {
 	id: string;
-	/** The mode this prompt speaks for; the gate enforces the same mode. */
-	mode: PermissionMode;
 	title: string;
 	description: string;
 	/** Bundled file name; absent once the user edits the text. */
