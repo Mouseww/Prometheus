@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { BarChart3, Blocks, Cable, Check, Copy, Globe, Laptop, Layers, Mic, Moon, Network, Package, Plug, Sparkles, Sun, SlidersHorizontal } from "lucide-react";
+import { BarChart3, Blocks, Cable, Check, Copy, FolderOpen, Globe, Laptop, Layers, Mic, Moon, Network, Package, Plug, Sparkles, Sun, SlidersHorizontal } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { isAndroid, isDesktopShell } from "../lib/backend.ts";
@@ -8,6 +8,7 @@ import { type Lang, SKINS, type SendMode, type Skin, setPrefs, type ThemeMode, u
 import { openSettings, type SettingsTab, toast, updateHostSettings, useStore } from "../lib/store.ts";
 import { checkForUpdate, showUpdate, updaterSupported, useUpdater } from "../lib/updater.ts";
 import { GatewaysView } from "./GatewaysView.tsx";
+import { FolderPicker } from "./FolderPicker.tsx";
 import { MarketView } from "./MarketView.tsx";
 import { ConnectorsView } from "./ConnectorsView.tsx";
 import { McpView } from "./McpView.tsx";
@@ -46,6 +47,12 @@ const M = defineMessages({
 		violet: "星云",
 		rose: "玫瑰",
 		language: "语言",
+		workspace: "工作区",
+		workspaceRoot: "默认根目录",
+		workspaceRootHint: "选择工作区时从这里开始，并可以直接在它下面新建文件夹作为新工作区。留空则使用服务端主目录。",
+		workspaceRootEmpty: "未设置（使用主目录）",
+		chooseRoot: "选择…",
+		clearRoot: "清除",
 		session: "会话",
 		window: "窗口",
 		closeToTray: "关闭时最小化到托盘",
@@ -99,6 +106,12 @@ const M = defineMessages({
 		violet: "Nebula",
 		rose: "Rose",
 		language: "Language",
+		workspace: "Workspace",
+		workspaceRoot: "Default root folder",
+		workspaceRootHint: "The workspace picker starts here and you can create new folders under it right from the dialog. Leave empty to use the server's home directory.",
+		workspaceRootEmpty: "Not set (home directory)",
+		chooseRoot: "Choose…",
+		clearRoot: "Clear",
 		session: "Session",
 		window: "Window",
 		closeToTray: "Minimize to tray on close",
@@ -206,6 +219,41 @@ function UpdateRow() {
 	);
 }
 
+function WorkspaceRootRow() {
+	const t = useT(M);
+	const host = useStore((s) => s.hostSettings);
+	const [picking, setPicking] = useState(false);
+	const root = host?.workspaceRoot ?? "";
+	return (
+		<>
+			<Row label={t("workspaceRoot")} hint={t("workspaceRootHint")}>
+				<div className="flex min-w-0 flex-wrap items-center gap-2">
+					<span className="max-w-72 min-w-0 truncate rounded-md bg-ink-950/60 px-2 py-1 font-mono text-xs text-ink-300" title={root}>
+						{root || <span className="text-ink-500">{t("workspaceRootEmpty")}</span>}
+					</span>
+					<Button variant="outline" disabled={!host} onClick={() => setPicking(true)}>
+						<FolderOpen className="size-4" /> {t("chooseRoot")}
+					</Button>
+					{root && (
+						<Button variant="ghost" onClick={() => void updateHostSettings({ workspaceRoot: "" })}>
+							{t("clearRoot")}
+						</Button>
+					)}
+				</div>
+			</Row>
+			{picking && (
+				<FolderPicker
+					onClose={() => setPicking(false)}
+					onPick={(path) => {
+						setPicking(false);
+						void updateHostSettings({ workspaceRoot: path });
+					}}
+				/>
+			)}
+		</>
+	);
+}
+
 function AboutRow() {
 	const t = useT(M);
 	const info = useStore((s) => s.hostInfo);
@@ -297,6 +345,10 @@ function GeneralSettings() {
 								]}
 							/>
 						</Row>
+					</Section>
+
+					<Section title={t("workspace")}>
+						<WorkspaceRootRow />
 					</Section>
 
 					<Section title={t("session")}>

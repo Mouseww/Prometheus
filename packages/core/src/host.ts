@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { rm } from "node:fs/promises";
+import { rm, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -640,7 +640,9 @@ export class PrometheusHost {
 
 	private listDirs(path: string | undefined): DirListing {
 		const home = homedir();
-		const dir = normalizeDir(path?.trim() || home);
+		// A configured workspace root only matters while it still exists; a stale path must not break the picker.
+		const configured = this.workspaceRoot();
+		const dir = normalizeDir(path?.trim() || configured || home);
 		if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new Error(`目录不存在：${dir}`);
 		const dirs = readdirSync(dir, { withFileTypes: true })
 			.filter((d) => {
@@ -660,7 +662,31 @@ export class PrometheusHost {
 			process.platform === "win32"
 				? [..."CDEFGHIJKLMNOPQRSTUVWXYZ"].map((l) => `${l}:\\`).filter((r) => existsSync(r))
 				: ["/"];
-		return { path: dir, parent: parent === dir ? null : parent, dirs, roots, home };
+		return { path: dir, parent: parent === dir ? null : parent, dirs, roots, home, ...(configured ? { workspaceRoot: configured } : {}) };
+	}
+
+	/** The configured default workspace root, or "" when unset or gone from this machine. */
+	private workspaceRoot(): string {
+		const root = this.runtime.config.get().workspaceRoot?.trim();
+		if (!root) return "";
+		try {
+			return existsSync(root) && statSync(root).isDirectory() ? normalizeDir(root) : "";
+		} catch {
+			return "";
+		}
+	}
+
+	/** Creates one new folder for a workspace; rejects traversal and existing names instead of nesting. */
+	private async createDir(parent: string, name: string): Promise<DirListing> {
+		const base = normalizeDir(parent?.trim() || this.cwd);
+		const clean = name?.trim();
+		if (!clean) throw new Error("文件夹名不能为空");
+		if (/[\\/]/.test(clean) || clean === "." || clean === "..") throw new Error(`文件夹名不合法：${clean}`);
+		if (!existsSync(base) || !statSync(base).isDirectory()) throw new Error(`目录不存在：${base}`);
+		const target = join(base, clean);
+		if (existsSync(target)) throw new Error(`已存在同名文件夹：${clean}`);
+		await mkdir(target, { recursive: false });
+		return this.listDirs(base);
 	}
 
 	// ---------- RPC handlers ----------
@@ -755,16 +781,22 @@ export class PrometheusHost {
 			return null;
 		},
 		"fs.dirs": ({ path }) => this.listDirs(path),
+		"fs.mkdir": ({ parent, name }) => this.createDir(parent, name),
 
-		"settings.get": () => ({ autoCompaction: this.settings().getCompactionEnabled() }),
-		"settings.set": async ({ autoCompaction }) => {
+		"settings.get": () => ({ autoCompaction: this.settings().getCompactionEnabled(), workspaceRoot: this.workspaceRoot() }),
+		"settings.set": async ({ autoCompaction, workspaceRoot }) => {
 			if (typeof autoCompaction === "boolean") {
 				this.settings().setCompactionEnabled(autoCompaction);
 				await this.settings().flush();
 				// Live sessions cache their own SettingsManager.
 				for (const { session } of this.live.values()) session.setAutoCompactionEnabled(autoCompaction);
 			}
-			return { autoCompaction: this.settings().getCompactionEnabled() };
+			if (typeof workspaceRoot === "string") {
+				const next = workspaceRoot.trim();
+				if (next && (!existsSync(next) || !statSync(next).isDirectory())) throw new Error(`目录不存在：${next}`);
+				await this.runtime.config.setWorkspaceRoot(next);
+			}
+			return { autoCompaction: this.settings().getCompactionEnabled(), workspaceRoot: this.workspaceRoot() };
 		},
 		"session.stats": ({ sessionId }) => {
 			const s = this.require(sessionId).session;

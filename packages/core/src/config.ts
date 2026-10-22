@@ -26,6 +26,8 @@ export interface PrometheusConfig {
 	disabledPlugins: string[];
 	pluginSettings: Record<string, Record<string, unknown>>;
 	network: NetworkConfig;
+	/** Default parent directory for workspaces: the folder picker opens here and new workspaces are created inside it. */
+	workspaceRoot: string;
 }
 
 function normalizeNetwork(raw: Partial<NetworkConfig> | undefined): NetworkConfig {
@@ -43,7 +45,7 @@ export function defaultDataDir(): string {
 	return process.env.PROMETHEUS_HOME || join(homedir(), ".prometheus");
 }
 
-const EMPTY: PrometheusConfig = { gateways: [], plugins: [], disabledPlugins: [], pluginSettings: {}, network: normalizeNetwork(undefined) };
+const EMPTY: PrometheusConfig = { gateways: [], plugins: [], disabledPlugins: [], pluginSettings: {}, network: normalizeNetwork(undefined), workspaceRoot: "" };
 
 /** config.json holds API keys, so it is always written owner-only. */
 export class ConfigStore {
@@ -67,6 +69,7 @@ export class ConfigStore {
 				disabledPlugins: Array.isArray(raw.disabledPlugins) ? raw.disabledPlugins : [],
 				pluginSettings: raw.pluginSettings ?? {},
 				network: normalizeNetwork(raw.network),
+				workspaceRoot: typeof raw.workspaceRoot === "string" ? raw.workspaceRoot : "",
 			};
 		} catch (err) {
 			if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
@@ -88,6 +91,12 @@ export class ConfigStore {
 
 	async setNetwork(next: NetworkConfig): Promise<void> {
 		this.config.network = normalizeNetwork(next);
+		await this.persist();
+	}
+
+	/** Empty string clears the setting, falling back to the server's home directory. */
+	async setWorkspaceRoot(path: string): Promise<void> {
+		this.config.workspaceRoot = path.trim();
 		await this.persist();
 	}
 

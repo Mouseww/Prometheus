@@ -170,6 +170,8 @@ export interface DirListing {
 	/** Filesystem roots (drive letters on Windows). */
 	roots: string[];
 	home: string;
+	/** The configured default workspace root, when it exists on this machine. */
+	workspaceRoot?: string;
 }
 
 /** Identifies a message by its position in the session snapshot; role + timestamp guard against stale lists. */
@@ -185,6 +187,8 @@ export type PromptDisposition = "started" | "queued" | "handled";
 export interface HostSettings {
 	/** PI auto-compaction (shared with the TUI through PI's settings.json). */
 	autoCompaction: boolean;
+	/** Where the folder picker starts and where new workspaces are created; empty means the server's home directory. */
+	workspaceRoot: string;
 }
 
 // ---------- Subagents ----------
@@ -806,6 +810,8 @@ export interface RpcMethods {
 	/** Reveal the workspace folder in the OS file manager of the machine running the server. */
 	"workspace.open": { params: { id: string }; result: null };
 	"fs.dirs": { params: { path?: string }; result: DirListing };
+	/** Create a folder for a new workspace; the returned listing is the parent, refreshed. */
+	"fs.mkdir": { params: { parent: string; name: string }; result: DirListing };
 
 	"settings.get": { params: Record<string, never>; result: HostSettings };
 	"settings.set": { params: Partial<HostSettings>; result: HostSettings };
