@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { Globe, LoaderCircle, Monitor, Server } from "lucide-react";
 import { useEffect, useState } from "react";
-import { isTauri, localSupported, passwordLogin, saveMode, saveRemote, saveSameOriginToken, saveSession, startLocal, targetFromUrl } from "../lib/backend.ts";
+import { isTauri, localSupported, passwordLogin, forgetServer, loadServerHistory, saveMode, saveRemote, saveSameOriginToken, saveSession, startLocal, targetFromUrl } from "../lib/backend.ts";
 import type { BackendTarget } from "../lib/client.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { Button, Field, Flame, Input } from "./ui.tsx";
@@ -56,8 +56,9 @@ export function ConnectScreen({ unauthorized, error, onConnect, wantsPassword = 
 	const sameOrigin = !isTauri() && location.protocol.startsWith("http");
 	const [canLocal, setCanLocal] = useState(false);
 	const [mode, setMode] = useState<"choose" | "remote">(isTauri() ? "choose" : "remote");
-	const [url, setUrl] = useState(sameOrigin ? location.origin : "https://");
-	const [token, setToken] = useState("");
+	const [url, setUrl] = useState(() => loadServerHistory()[0]?.url ?? (sameOrigin ? location.origin : "https://"));
+	const [history, setHistory] = useState(loadServerHistory);
+	const [token, setToken] = useState(() => loadServerHistory()[0]?.token ?? "");
 	const [login, setLogin] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [message, setMessage] = useState<string | null>(error ?? null);
@@ -162,6 +163,18 @@ export function ConnectScreen({ unauthorized, error, onConnect, wantsPassword = 
 
 				{mode === "remote" && (
 					<form onSubmit={submit} className="space-y-5">
+						{history.length > 0 && (
+							<div className="flex flex-wrap gap-2">
+								{history.map((h) => (
+									<span key={h.url} className={clsx("flex items-center rounded-full border text-xs", url === h.url ? "border-ember-500/60 text-ember-300" : "border-ink-700 text-ink-300")}>
+										<button type="button" className="max-w-[14rem] truncate py-1 pr-1 pl-2.5" onClick={() => { setUrl(h.url); setToken(h.token ?? ""); }}>
+											{h.url.replace(/^https?:\/\//, "")}
+										</button>
+										<button type="button" aria-label="remove" className="px-2 py-1 text-ink-500 hover:text-rose-400" onClick={() => { forgetServer(h.url); setHistory(loadServerHistory()); }}>×</button>
+									</span>
+								))}
+							</div>
+						)}
 						<Field label={t("url")}>
 							<Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://agent.example.com" required />
 						</Field>

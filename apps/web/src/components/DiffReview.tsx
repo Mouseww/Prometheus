@@ -112,7 +112,7 @@ export function DiffReview({
 	const totals = (files ?? []).reduce((a, f) => ({ added: a.added + f.added, deleted: a.deleted + f.deleted }), { added: 0, deleted: 0 });
 
 	return createPortal(
-		<div className="fixed inset-0 z-[60] grid place-items-center bg-ink-950/60 backdrop-blur-sm md:p-6" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+		<div className="fixed inset-0 z-[60] grid place-items-center bg-ink-950/60 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] backdrop-blur-sm md:p-6" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
 			<div role="dialog" aria-modal className="@container flex h-full w-full max-w-6xl animate-rise flex-col overflow-hidden border-ink-700 bg-ink-900 shadow-2xl shadow-black/60 md:max-h-[52rem] md:rounded-2xl md:border">
 				<header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b hairline px-4 py-3">
 					<div className="min-w-0 flex-1">

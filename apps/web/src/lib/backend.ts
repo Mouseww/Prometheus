@@ -39,12 +39,38 @@ export function loadRemote(): RemoteConfig | null {
 	}
 }
 
+const HISTORY_KEY = "prometheus.serverHistory";
+
+/** Servers connected to before, most recent first; tokens/sessions are kept so switching back needs no re-login. */
+export function loadServerHistory(): RemoteConfig[] {
+	try {
+		const list = JSON.parse(localStorage.getItem(HISTORY_KEY) ?? "[]") as RemoteConfig[];
+		return Array.isArray(list) ? list.filter((x) => x && typeof x.url === "string") : [];
+	} catch {
+		return [];
+	}
+}
+
+export function rememberServer(config: RemoteConfig): void {
+	const rest = loadServerHistory().filter((x) => x.url !== config.url);
+	const prev = loadServerHistory().find((x) => x.url === config.url);
+	const entry = { url: config.url, token: config.token ?? prev?.token };
+	localStorage.setItem(HISTORY_KEY, JSON.stringify([entry, ...rest].slice(0, 10)));
+}
+
+export function forgetServer(url: string): void {
+	localStorage.setItem(HISTORY_KEY, JSON.stringify(loadServerHistory().filter((x) => x.url !== url)));
+}
+
 export function saveRemote(config: RemoteConfig | null): void {
-	if (config) localStorage.setItem(REMOTE_KEY, JSON.stringify(config));
-	else localStorage.removeItem(REMOTE_KEY);
+	if (config) {
+		localStorage.setItem(REMOTE_KEY, JSON.stringify(config));
+		rememberServer(config);
+	} else localStorage.removeItem(REMOTE_KEY);
 }
 
 export function saveSameOriginToken(token: string | null): void {
+	if (token && !isTauri() && location.protocol.startsWith("http")) rememberServer({ url: location.origin, token });
 	if (token) localStorage.setItem(TOKEN_KEY, token);
 	else localStorage.removeItem(TOKEN_KEY);
 }
@@ -87,7 +113,11 @@ export async function discoverBackend(): Promise<BackendTarget | null> {
 	if (isTauri()) {
 		if (mode === "local") return startLocal();
 		const remote = loadRemote();
-		return mode === "remote" && remote ? targetFromUrl(remote.url, remote.token) : null;
+		if (mode === "remote") {
+			const r = remote ?? loadServerHistory()[0];
+			return r ? targetFromUrl(r.url, r.token) : null;
+		}
+		return null;
 	}
 	const remote = loadRemote();
 	if (remote) return targetFromUrl(remote.url, remote.token);
@@ -139,6 +169,7 @@ export function saveSession(target: BackendTarget, token: string): void {
 /** Forget the saved session of the server this page is connected to. */
 export function clearSession(target: BackendTarget): void {
 	if (target.httpBase === location.origin) saveSameOriginToken(null);
+	localStorage.setItem(HISTORY_KEY, JSON.stringify(loadServerHistory().map((x) => (x.url === target.httpBase ? { url: x.url } : x))));
 	const remote = loadRemote();
 	if (remote && new URL(remote.url).origin === target.httpBase) saveRemote({ url: remote.url });
 }

@@ -620,6 +620,8 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 				</div>
 			)}
 
+			<SessionChanges />
+
 			<div className="mb-2 px-1">
 				{newChat ? (
 					<WorkspacePicker>
@@ -632,7 +634,6 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 					</div>
 				)}
 			</div>
-			<SessionChanges />
 
 			<div
 				className={clsx(
