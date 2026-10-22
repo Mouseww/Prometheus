@@ -358,7 +358,8 @@ function TurnBody({
 		}),
 	);
 	const render = (mode: BlockMode) =>
-		group.map((g) => (
+		// In "final" mode only the last message holds the reply; the others would be empty boxes that each add a flex gap.
+		(mode === "final" ? group.slice(-1) : group).map((g) => (
 			<AssistantBlock
 				key={`${mode}${g.index}`}
 				message={g.message}
