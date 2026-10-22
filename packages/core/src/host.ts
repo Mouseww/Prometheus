@@ -43,7 +43,7 @@ import {
 	type ChatMessage,
 } from "@prometheus/protocol";
 import { slimEvent, toModelRef } from "./events.ts";
-import { pickFolderNative } from "./native-dialog.ts";
+import { openUrlNative, pickFolderNative } from "./native-dialog.ts";
 import { checkImages, imageOnlyTitle, skipPiImageAutoResize } from "./images.ts";
 import { PermissionGate } from "./permission-gate.ts";
 import { EXIT_PLAN_MODE } from "./permissions.ts";
@@ -812,6 +812,10 @@ export class PrometheusHost {
 		"fs.pick": async ({ start }) => {
 			const from = start && existsSync(start) ? start : undefined;
 			return { path: await pickFolderNative(from) };
+		},
+		"system.open": async ({ url }) => {
+			await openUrlNative(url);
+			return { ok: true as const };
 		},
 		"fs.mkdir": ({ parent, name }) => this.createDir(parent, name),
 

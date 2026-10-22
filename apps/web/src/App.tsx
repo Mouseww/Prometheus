@@ -3,6 +3,7 @@ import { AutomationsView } from "./components/AutomationsView.tsx";
 import { ChatView } from "./components/ChatView.tsx";
 import { ConnectScreen } from "./components/ConnectScreen.tsx";
 import { AppDialogHost } from "./components/AppDialog.tsx";
+import { ContextMenuHost } from "./components/ContextMenuHost.tsx";
 import { DialogHost } from "./components/DialogHost.tsx";
 import { GitView } from "./components/GitView.tsx";
 import { KnowledgeView } from "./components/KnowledgeView.tsx";
@@ -167,6 +168,7 @@ export function App() {
 			</div>
 			<DialogHost />
 			<AppDialogHost />
+			<ContextMenuHost />
 			<UpdateDialog remote={target.label !== "local"} />
 			<Toasts />
 		</div>

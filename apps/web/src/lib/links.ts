@@ -1,4 +1,12 @@
-import { isAndroid, isTauri } from "./backend.ts";
+import { isAndroid, isLoopbackHost, isTauri } from "./backend.ts";
+import { useStore } from "./store.ts";
+import { defineMessages, tr } from "./i18n.ts";
+import { showContextMenu } from "./contextMenu.ts";
+
+const M = defineMessages({
+	zh: { openLink: "在默认浏览器中打开", copyLink: "复制链接" },
+	en: { openLink: "Open in default browser", copyLink: "Copy link" },
+});
 
 /** Opens a link outside Prometheus (system default browser) so the app itself never navigates away. */
 export async function openExternal(url: string): Promise<void> {
@@ -15,7 +23,16 @@ export async function openExternal(url: string): Promise<void> {
 			await invoke(isAndroid() ? "plugin:opener|open_url" : "open_external", { url: u.href });
 			return;
 		} catch {
-			// fall through to the browser path
+			// older shell without the command: let a local server open it instead
+		}
+		const client = useStore.getState().client;
+		if (client && isLoopbackHost(client.target.httpBase)) {
+			try {
+				await client.rpc("system.open", { url: u.href });
+				return;
+			} catch {
+				// fall through
+			}
 		}
 	}
 	window.open(u.href, "_blank", "noopener,noreferrer");
@@ -38,6 +55,15 @@ export function installGlobalGuards(): void {
 	);
 	document.addEventListener("auxclick", (e) => {
 		if (e.button === 1 && (e.target as Element | null)?.closest?.("a[href]")) e.preventDefault();
+	});
+	document.addEventListener("contextmenu", (e) => {
+		const a = (e.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+		if (!a || e.defaultPrevented || a.getAttribute("href")?.startsWith("#")) return;
+		e.preventDefault();
+		showContextMenu(e.clientX, e.clientY, [
+			{ label: tr(M, "openLink"), run: () => void openExternal(a.href) },
+			{ label: tr(M, "copyLink"), run: () => void navigator.clipboard?.writeText(a.href) },
+		]);
 	});
 	// Components with their own menu call preventDefault themselves; everything else gets no browser menu.
 	// Text fields keep a way to cut/copy/paste through the keyboard, and the menu stays available in dev builds.

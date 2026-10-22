@@ -823,6 +823,7 @@ export interface RpcMethods {
 	"workspace.open": { params: { id: string }; result: null };
 	"fs.dirs": { params: { path?: string }; result: DirListing };
 	/** Open the operating system's native folder chooser on the machine running the server; path is null when cancelled. */
+	"system.open": { params: { url: string }; result: { ok: true } };
 	"fs.pick": { params: { start?: string }; result: { path: string | null } };
 	/** Create a folder for a new workspace; the returned listing is the parent, refreshed. */
 	"fs.mkdir": { params: { parent: string; name: string }; result: DirListing };

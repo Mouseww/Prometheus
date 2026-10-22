@@ -15,6 +15,7 @@ const M = defineMessages({
 	zh: {
 		thinkingLive: "思考中…",
 		thinking: "思考过程",
+		stepsDone: "已完成 {n} 个步骤",
 		chars: "{n} 字",
 		aborted: "— 已中断",
 		compacted: "上下文已压缩",
@@ -31,6 +32,7 @@ const M = defineMessages({
 	en: {
 		thinkingLive: "Thinking…",
 		thinking: "Thoughts",
+		stepsDone: "{n} steps completed",
 		chars: "{n} chars",
 		aborted: "— Stopped",
 		compacted: "Context compacted",
@@ -209,13 +211,31 @@ function ToolCard({ call, run, result }: { call: ToolCallContent; run?: ToolRun;
 	);
 }
 
-function AssistantBlock({ message, live, tools, results }: { message: AssistantMessage; live: boolean; tools: Record<string, ToolRun>; results: Map<string, ToolResultMessage> }) {
+type BlockMode = "all" | "steps" | "final";
+
+function AssistantBlock({
+	message,
+	live,
+	tools,
+	results,
+	mode = "all",
+	finalAt = -1,
+}: {
+	message: AssistantMessage;
+	live: boolean;
+	tools: Record<string, ToolRun>;
+	results: Map<string, ToolResultMessage>;
+	mode?: BlockMode;
+	finalAt?: number;
+}) {
 	const t = useT(M);
 	const last = message.content.length - 1;
 	return (
 		<div className="space-y-3">
 			{message.content.map((block, i) => {
 				if (!block) return null;
+				if (mode === "steps" && i === finalAt) return null;
+				if (mode === "final" && i !== finalAt) return null;
 				if (block.type === "thinking") return block.thinking.trim() ? <ThinkingBlock key={i} text={block.thinking} live={live && i === last} /> : null;
 				if (block.type === "toolCall") {
 					const card = <ToolCard key={block.id || i} call={block} run={tools[block.id]} result={results.get(block.id)} />;
@@ -228,10 +248,10 @@ function AssistantBlock({ message, live, tools, results }: { message: AssistantM
 				);
 			})}
 			{live && message.content.length === 0 && <Pondering />}
-			{message.stopReason === "error" && message.errorMessage && (
-				<div className="rounded-lg border border-rose-400/25 bg-rose-400/8 px-3 py-2 text-sm text-rose-400">{message.errorMessage}</div>
+			{mode !== "steps" && message.stopReason === "error" && message.errorMessage && (
+				<div className="rounded-lg border border-rose-400/25 bg-rose-400/8 px-3 py-2 min-w-0 text-sm break-words whitespace-pre-wrap text-rose-400 [overflow-wrap:anywhere]">{message.errorMessage}</div>
 			)}
-			{message.stopReason === "aborted" && <div className="text-xs text-ink-500">{t("aborted")}</div>}
+			{mode !== "steps" && message.stopReason === "aborted" && <div className="text-xs text-ink-500">{t("aborted")}</div>}
 		</div>
 	);
 }
@@ -300,6 +320,85 @@ function Actions({ index, indices, text, canRetry, align, onEdit }: { index: num
 	);
 }
 
+/** A finished turn: intermediate steps fold away, only the closing answer stays visible. */
+function TurnBody({
+	group,
+	live,
+	awaitingNext,
+	streaming,
+	lastIndex,
+	tools,
+	results,
+}: {
+	group: { message: AssistantMessage; index: number }[];
+	live: boolean;
+	awaitingNext: boolean;
+	streaming: boolean;
+	lastIndex: number;
+	tools: Record<string, ToolRun>;
+	results: Map<string, ToolResultMessage>;
+}) {
+	const t = useT(M);
+	const [open, setOpen] = useState(false);
+	const lastMsg = group[group.length - 1]?.message;
+	let finalAt = -1;
+	if (lastMsg && lastMsg.stopReason !== "error" && lastMsg.stopReason !== "aborted") {
+		for (let i = lastMsg.content.length - 1; i >= 0; i--) {
+			const b = lastMsg.content[i];
+			if (b?.type === "text" && b.text.trim()) finalAt = i;
+			if (b?.type === "text" || !b) continue;
+			break;
+		}
+	}
+	let steps = 0;
+	group.forEach((g) =>
+		g.message.content.forEach((b, i) => {
+			if (!b || (g === group[group.length - 1] && i === finalAt)) return;
+			if (b.type === "toolCall" || (b.type === "thinking" && b.thinking.trim()) || (b.type === "text" && b.text.trim())) steps++;
+		}),
+	);
+	const render = (mode: BlockMode) =>
+		group.map((g) => (
+			<AssistantBlock
+				key={`${mode}${g.index}`}
+				message={g.message}
+				live={streaming && g.index === lastIndex}
+				tools={tools}
+				results={results}
+				mode={mode}
+				finalAt={g === group[group.length - 1] ? finalAt : -1}
+			/>
+		));
+	if (live || finalAt < 0 || steps === 0) {
+		return (
+			<div className="flex flex-col gap-3">
+				{render("all")}
+				{live && awaitingNext && <Pondering />}
+			</div>
+		);
+	}
+	return (
+		<div className="flex flex-col gap-3">
+			<div>
+				<button
+					type="button"
+					onClick={() => setOpen(!open)}
+					aria-expanded={open}
+					className="flex w-full items-center gap-2 rounded-xl border border-ink-800 bg-ink-900/50 px-3.5 py-2 text-left text-xs text-ink-400 transition-colors hover:text-ink-200"
+				>
+					<Check className="size-3.5 text-moss-400" />
+					<span>{t("stepsDone", { n: steps })}</span>
+					<ChevronRight className={clsx("ml-auto size-3.5 transition-transform", open && "rotate-90")} />
+				</button>
+				<Collapse open={open}>
+					<div className="flex flex-col gap-3 pt-3">{render("steps")}</div>
+				</Collapse>
+			</div>
+			{render("final")}
+		</div>
+	);
+}
+
 export function MessageList({
 	messages,
 	tools,
@@ -351,12 +450,7 @@ export function MessageList({
 						<div key={i} className="group/msg flex gap-3">
 							<Avatar />
 							<div className="min-w-0 flex-1">
-								<div className="flex flex-col gap-3">
-									{group.map((g) => (
-										<AssistantBlock key={g.index} message={g.message} live={streaming && g.index === lastIndex} tools={tools} results={results} />
-									))}
-									{live && awaitingNext && <Pondering />}
-								</div>
+								<TurnBody group={group} live={live} awaitingNext={awaitingNext} streaming={streaming} lastIndex={lastIndex} tools={tools} results={results} />
 								{!live && (
 									<Actions
 										index={lastInGroup}

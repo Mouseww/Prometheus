@@ -397,18 +397,19 @@ function GeneralSettings() {
 }
 
 const TABS: { id: SettingsTab; icon: typeof Network }[] = [
+	// 基础 → 智能体能力 → 外部连接 → 扩展 → 网络与多端 → 统计
 	{ id: "general", icon: SlidersHorizontal },
 	{ id: "gateways", icon: Network },
+	{ id: "modes", icon: Layers },
+	{ id: "skills", icon: Sparkles },
 	{ id: "mcp", icon: Cable },
 	{ id: "connectors", icon: Plug },
-	{ id: "skills", icon: Sparkles },
-	{ id: "modes", icon: Layers },
+	{ id: "ssh", icon: Terminal },
 	{ id: "market", icon: Package },
 	{ id: "plugins", icon: Blocks },
 	{ id: "voice", icon: Mic },
 	{ id: "network", icon: Globe },
 	{ id: "platforms", icon: Server },
-	{ id: "ssh", icon: Terminal },
 	{ id: "usage", icon: BarChart3 },
 ];
 

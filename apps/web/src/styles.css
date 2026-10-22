@@ -10,16 +10,16 @@
 @custom-variant nohover (@media (hover: none));
 
 /* Reduced motion: decorative loops stop; spinners keep turning (essential feedback). */
-.collapse-grid { transition: grid-template-rows 0.22s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.2s ease-out; }
-
 @media (prefers-reduced-motion: reduce) {
-	.collapse-grid { transition: none; }
 	:root {
 		--animate-flicker: none;
 		--animate-breathe: none;
 		--animate-pulse: none;
 	}
 }
+
+/* Expand/collapse motion is a short state cue, so it stays even when the OS asks for reduced motion. */
+.collapse-grid { transition: grid-template-rows 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.22s ease-out; }
 
 /* Brand tokens: fork these to re-skin Prometheus. */
 @theme {

@@ -26,7 +26,7 @@ const M = defineMessages({
 		newFolderPlaceholder: "文件夹名称",
 		create: "创建",
 		cancelCreate: "取消创建",
-		system: "系统选择框",
+		system: "系统文件管理器",
 		systemTitle: "用系统自带的文件夹选择框选择",
 	},
 	en: {
@@ -47,7 +47,7 @@ const M = defineMessages({
 		newFolderPlaceholder: "Folder name",
 		create: "Create",
 		cancelCreate: "Cancel",
-		system: "System dialog",
+		system: "System file manager",
 		systemTitle: "Choose with the operating system's folder dialog",
 	},
 });
