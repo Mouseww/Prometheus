@@ -58,6 +58,10 @@ Only clients on the same machine can change these settings; devices logged in ov
 
 The reverse proxy must preserve the `Upgrade` header and should use HTTPS; see the settings page for examples. If a browser on the same machine also goes through that reverse proxy, it is treated as external access and will require a password.
 
+### Bundled Node runtime
+
+The desktop installer ships the official Node (`bundle-node` downloads the newest 22.x for the build host's platform/arch at packaging time, verifies its SHA256 and places it in the `node/` resource directory), so it needs no Node install or `PATH` on the user's machine. Apps launched from Finder on macOS do not inherit the terminal `PATH`, which used to cause "No such file or directory". Lookup order: `PROMETHEUS_NODE` -> bundled Node -> `PATH` and common install locations (Homebrew, nvm, volta, asdf, fnm; only reached by dev builds or installs without the bundled runtime). `NODE_MAJOR` and `NODE_BUNDLE_ARCH` select the bundled major version and architecture. npm and npx are bundled too, appended to the end of the child `PATH` so tools the user installed take precedence. Releases build macOS twice, Apple Silicon (`macos-latest`) and Intel (`macos-15-intel`); the Intel build has no LanceDB native binding, so knowledge-base vector search is unavailable there and everything else works.
+
 ### Android
 
 Like desktop, the Android build has two modes: **connect to server** (enter the server address and password/token) and **local mode** (the APK bundles Node and the server; they are extracted to the app's private directory on first launch and data stays on the phone). CI builds an arm64 APK on release and uploads it to the Release.

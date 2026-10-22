@@ -1,6 +1,6 @@
 {
   "name": "@prometheus/desktop",
-  "version": "0.6.6",
+  "version": "0.6.7",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,6 +9,7 @@
     "build": "tauri build --config src-tauri/tauri.bundle.json",
     "icons": "tauri icon app-icon.svg",
     "bundle-server": "node scripts/bundle-server.ts",
+    "bundle-node": "node scripts/bundle-node.ts",
     "bundle-server:android": "node scripts/bundle-server.ts --android",
     "android-runtime": "node scripts/android-runtime.ts"
   },

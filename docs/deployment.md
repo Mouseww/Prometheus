@@ -19,7 +19,7 @@ pnpm install
 | Web 服务 | `pnpm --filter @prometheus/web build && pnpm dev:server` | 访问 http://127.0.0.1:7420 |
 | Web 开发 | `pnpm dev:server` + `pnpm dev:web` | Vite 热更新，代理到 7420 |
 | 桌面 GUI | `pnpm dev:desktop` | Tauri 窗口，自动拉起本地服务端 |
-| 桌面打包 | `pnpm --filter @prometheus/desktop build` | 生成安装包（内置服务端，需本机 Node） |
+| 桌面打包 | `pnpm --filter @prometheus/desktop build` | 生成安装包（内置服务端与 Node 运行时，用户无需安装 Node） |
 
 ### 服务器部署
 
@@ -59,6 +59,10 @@ docker run -p 7420:7420 -e PROMETHEUS_TOKEN=<至少16位随机串> \
 只有本机上的客户端能修改这些设置；通过局域网或域名登录的设备只能查看。修改密码或点「登出所有设备」会让已登录的设备全部失效。密码连续输错会被限速。若通过环境变量 `PROMETHEUS_HOST` 绑定了非回环地址部署，则沿用上面的令牌方式，这些设置不生效（桌面端内置服务只绑定本机并使用令牌，设置仍可修改）。
 
 反向代理要保留 `Upgrade` 头并建议用 HTTPS，示例见设置页。若本机浏览器也经由同一反向代理访问，会被当作外部访问而要求密码。
+
+### 内置 Node 运行时
+
+桌面安装包自带官方 Node（`bundle-node` 在打包时按构建机的平台/架构下载最新的 22.x，并校验 SHA256，放进 `node/` 资源目录），不依赖用户机器上的 Node 或 `PATH`——从 Finder 启动的 macOS 应用拿不到终端的 `PATH`，这正是过去报「No such file or directory」的原因。查找顺序：`PROMETHEUS_NODE` → 内置 Node → `PATH` 与常见安装位置（Homebrew、nvm、volta、asdf、fnm；仅开发构建等没有内置 Node 时才会走到）。`NODE_MAJOR`、`NODE_BUNDLE_ARCH` 环境变量可指定打包的 Node 大版本与架构。同时内置 npm 与 npx（追加在子进程 `PATH` 末尾，用户自己安装的同名工具优先）。发布时 macOS 同时构建 Apple Silicon（`macos-latest`）与 Intel（`macos-15-intel`）两个包；Intel 包没有 LanceDB 原生库，知识库向量检索不可用，其余功能不受影响。
 
 ### 安卓
 

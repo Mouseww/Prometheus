@@ -19,7 +19,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-22.04, macos-latest]
+        # macos-latest is Apple Silicon; macos-15-intel builds the x64 app natively so npm installs x64 native deps and the x64 Node.
+        os: [windows-latest, ubuntu-22.04, macos-latest, macos-15-intel]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

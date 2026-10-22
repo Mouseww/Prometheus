@@ -14,6 +14,8 @@ const out = join(root, android ? "dist/server-bundle-android" : "dist/server-bun
 const readPkg = (p: string) => JSON.parse(readFileSync(join(root, p, "package.json"), "utf8"));
 // Drags in onnxruntime-node and sharp (~700 MB) with no Android binary; the plugin imports it lazily and reports it unavailable.
 const NOT_ON_ANDROID = new Set(["@lancedb/lancedb"]);
+// LanceDB publishes no darwin-x64 binding either, so Intel Mac builds ship without vector search too.
+const noLancedb = android || (process.platform === "darwin" && process.arch === "x64");
 
 const sources = [
 	"apps/server",
@@ -34,7 +36,7 @@ const sources = [
 const dependencies: Record<string, string> = {};
 for (const dir of sources) {
 	for (const [name, version] of Object.entries<string>(readPkg(dir).dependencies ?? {})) {
-		if (!version.startsWith("workspace:") && !(android && NOT_ON_ANDROID.has(name))) dependencies[name] = version;
+		if (!version.startsWith("workspace:") && !(noLancedb && NOT_ON_ANDROID.has(name))) dependencies[name] = version;
 	}
 }
 

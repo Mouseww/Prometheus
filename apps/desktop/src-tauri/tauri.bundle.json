@@ -1,11 +1,12 @@
 {
   "build": {
-    "beforeBuildCommand": "pnpm --filter @prometheus/web build && pnpm --filter @prometheus/desktop bundle-server"
+    "beforeBuildCommand": "pnpm --filter @prometheus/web build && pnpm --filter @prometheus/desktop bundle-server && pnpm --filter @prometheus/desktop bundle-node"
   },
   "bundle": {
     "createUpdaterArtifacts": true,
     "resources": {
-      "../../../dist/server-bundle/": "server/"
+      "../../../dist/server-bundle/": "server/",
+      "../../../dist/node-runtime/": "node/"
     }
   }
 }
