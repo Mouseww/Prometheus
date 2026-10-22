@@ -48,6 +48,7 @@ const M = defineMessages({
 		testOk: "连接成功",
 		testFail: "连接失败",
 		newHost: "新建服务器",
+		editHost: "编辑服务器",
 		hostKeyHint: "首次连接会自动信任并记住主机指纹（accept-new）",
 	},
 	en: {
@@ -79,6 +80,7 @@ const M = defineMessages({
 		testOk: "Connected",
 		testFail: "Connection failed",
 		newHost: "New server",
+		editHost: "Edit server",
 		hostKeyHint: "The host key is trusted and remembered on first connect (accept-new)",
 	},
 });
@@ -142,6 +144,7 @@ export function SshView() {
 						key={editing.id || "new"}
 						initial={editing}
 						onClose={() => setEditing(null)}
+						onSaved={(saved) => setEditing({ ...saved })}
 						onChanged={async () => {
 							await load();
 						}}
@@ -152,12 +155,22 @@ export function SshView() {
 	);
 }
 
-function HostEditor({ initial, onClose, onChanged }: { initial: SshHost; onClose: () => void; onChanged: () => Promise<void> }) {
+function HostEditor({
+	initial,
+	onClose,
+	onSaved,
+	onChanged,
+}: {
+	initial: SshHost;
+	onClose: () => void;
+	onSaved: (saved: SshHost) => void;
+	onChanged: () => Promise<void>;
+}) {
 	const t = useT(M);
-	const isNew = !initial.id;
 	const [h, setH] = useState<SshHost>(initial);
 	const [busy, setBusy] = useState(false);
 	const [test, setTest] = useState<{ ok: boolean; latencyMs: number; message: string } | null>(null);
+	const isNew = !h.id;
 	const patch = (p: Partial<SshHost>) => setH((x) => ({ ...x, ...p }));
 
 	const save = async (): Promise<SshHost | undefined> => {
@@ -168,6 +181,9 @@ function HostEditor({ initial, onClose, onChanged }: { initial: SshHost; onClose
 		setH(saved);
 		toast(t("saved", { name: saved.name }));
 		await onChanged();
+		// 新建保存成功后立即切到编辑态：避免标题仍为“新建服务器”、看不到删除按钮，
+		// 也避免用户以为还在新增、再次点保存时重复创建一条记录
+		onSaved(saved);
 		return saved;
 	};
 
@@ -194,7 +210,16 @@ function HostEditor({ initial, onClose, onChanged }: { initial: SshHost; onClose
 		<div className="min-h-0 flex-1 overflow-y-auto">
 			<div className="mx-auto max-w-2xl space-y-5 p-4 @3xl:p-6">
 				<div className="flex items-center justify-between">
-					<h2 className="font-display text-xl font-semibold">{isNew ? t("newHost") : h.name}</h2>
+					<h2 className="font-display text-xl font-semibold">
+						{isNew ? (
+							t("newHost")
+						) : (
+							<>
+								<span className="text-ink-500">{t("editHost")} · </span>
+								{h.name}
+							</>
+						)}
+					</h2>
 					<Button onClick={onClose}>{t("close")}</Button>
 				</div>
 
