@@ -1,8 +1,8 @@
 import clsx from "clsx";
-import { FolderOpen, FolderTree, Minus, PanelLeft, PanelRight, Square, SquareTerminal, Wrench, X } from "lucide-react";
+import { Code, ExternalLink, FolderOpen, FolderTree, Minus, PanelLeft, PanelRight, Square, SquareTerminal, Wrench, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ToolInfo } from "@prometheus/protocol";
-import { isDesktopShell } from "../lib/backend.ts";
+import { isDesktopShell, isLoopbackHost } from "../lib/backend.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { call, closeWorkbenchTab, NO_SUBAGENTS, openFolderTab, openTerminalTab, pluginActive, toggleSubagentPanel, useStore } from "../lib/store.ts";
 import { Flame } from "./ui.tsx";
@@ -22,6 +22,7 @@ const M = defineMessages({
 		knowledge: "知识库",
 		memory: "记忆",
 		settings: "设置",
+		openIn: "在其他应用中打开",
 	},
 	en: {
 		tools: "Tools",
@@ -37,6 +38,7 @@ const M = defineMessages({
 		knowledge: "Knowledge",
 		memory: "Memory",
 		settings: "Settings",
+		openIn: "Open in…",
 	},
 });
 
@@ -161,6 +163,48 @@ function FolderToggle() {
 	);
 }
 
+/** Hands the workspace folder to the file manager or an installed editor. Only offered when the server is this machine. */
+function OpenInMenu() {
+	const t = useT(M);
+	const client = useStore((s) => s.client);
+	const path = useStore((s) => s.workspaces.find((w) => w.id === s.session?.workspaceId)?.path);
+	const local = client ? isLoopbackHost(client.target.httpBase) : false;
+	const { open, setOpen, ref } = usePopover();
+	const [apps, setApps] = useState<{ id: string; label: string }[]>([]);
+
+	useEffect(() => {
+		if (open && local) void call((c) => c.rpc("system.apps", {})).then((list) => list && setApps(list));
+	}, [open, local]);
+
+	if (!local || !path) return null;
+	return (
+		<div ref={ref} className="relative">
+			<button type="button" onClick={() => setOpen(!open)} className="rounded-md p-1.5 text-ink-400 hover:bg-ink-800 hover:text-ink-100" title={t("openIn")} aria-label={t("openIn")}>
+				<ExternalLink className="size-4" />
+			</button>
+			{open && (
+				<div className="absolute top-full right-0 z-40 mt-2 w-52 animate-rise rounded-xl border border-ink-700 bg-ink-900/97 p-1.5 shadow-2xl shadow-black/40 backdrop-blur">
+					<div className="px-2.5 pt-1 pb-1.5 font-mono text-[10.5px] tracking-widest text-ink-500 uppercase">{t("openIn")}</div>
+					{apps.map((a) => (
+						<button
+							key={a.id}
+							type="button"
+							onClick={async () => {
+								setOpen(false);
+								await call((c) => c.rpc("system.openIn", { app: a.id, path }));
+							}}
+							className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-ink-200 hover:bg-ink-800"
+						>
+							{a.id === "files" ? <FolderOpen className="size-4 text-ember-400" /> : <Code className="size-4 text-sky-400" />}
+							{a.label}
+						</button>
+					))}
+				</div>
+			)}
+		</div>
+	);
+}
+
 function SessionTools() {
 	const session = useStore((s) => s.session);
 	if (!session) return null;
@@ -171,6 +215,7 @@ function SessionTools() {
 					{v}
 				</span>
 			))}
+			<OpenInMenu />
 			<FolderToggle />
 			<TerminalToggle />
 			<SubagentToggle />

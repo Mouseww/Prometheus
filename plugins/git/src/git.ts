@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
-import type { GitBranch, GitCommit, GitDiff, GitFileChange, GitStatus } from "@prometheus/protocol";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { isAbsolute, join, relative, resolve } from "node:path";
+import type { GitBranch, GitChangedFile, GitCommit, GitDiff, GitFileChange, GitRange, GitStatus } from "@prometheus/protocol";
 
 const MAX_OUTPUT = 4 * 1024 * 1024;
 const MAX_DIFF = 200_000;
@@ -178,6 +178,130 @@ export async function diff(dir: string, path: string, staged: boolean, untracked
 export async function show(dir: string, hash: string): Promise<GitDiff> {
 	if (!/^[0-9a-f]{7,40}$/i.test(hash)) throw new GitError("提交号不合法");
 	return clip(await git(dir, ["show", "--no-color", "--stat", "--patch", "--format=fuller", hash, "--"]));
+}
+
+// ---------- change sets (commit / branch range / working tree) ----------
+
+const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+const MAX_UNTRACKED = 1_000_000;
+
+/** Files changed between the given `git diff` revision arguments, with per-file added/deleted line counts. */
+async function changedFiles(dir: string, rev: string[]): Promise<GitChangedFile[]> {
+	const [names, nums] = await Promise.all([
+		git(dir, ["diff", "--no-color", "--no-renames", "--relative", "--name-status", "-z", ...rev, "--"]),
+		git(dir, ["diff", "--no-color", "--no-renames", "--relative", "--numstat", "-z", ...rev, "--"]),
+	]);
+	const status = new Map<string, string>();
+	const parts = names.split("\0");
+	for (let i = 0; i + 1 < parts.length; i += 2) if (parts[i]) status.set(parts[i + 1] as string, (parts[i] as string).charAt(0));
+	const files: GitChangedFile[] = [];
+	for (const rec of nums.split("\0")) {
+		const m = /^(\d+|-)\t(\d+|-)\t(.+)$/s.exec(rec);
+		if (!m) continue;
+		const path = m[3] as string;
+		const binary = m[1] === "-";
+		files.push({ path, status: status.get(path) ?? "M", added: binary ? 0 : Number(m[1]), deleted: binary ? 0 : Number(m[2]), binary });
+	}
+	return files.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+async function hasCommit(dir: string, rev: string): Promise<boolean> {
+	return (await runGit(dir, ["rev-parse", "--verify", "--quiet", `${rev}^{commit}`])).code === 0;
+}
+
+function checkHash(hash: string): string {
+	if (!/^[0-9a-f]{7,40}$/i.test(hash)) throw new GitError("提交号不合法");
+	return hash;
+}
+
+async function commitRev(dir: string, hash: string): Promise<string[]> {
+	checkHash(hash);
+	return [(await hasCommit(dir, `${hash}^`)) ? `${hash}^` : EMPTY_TREE, hash];
+}
+
+export async function commitFiles(dir: string, hash: string): Promise<GitChangedFile[]> {
+	return changedFiles(dir, await commitRev(dir, hash));
+}
+
+export async function commitDiff(dir: string, hash: string, path: string): Promise<GitDiff> {
+	checkPathspec(path);
+	return clip(await git(dir, ["diff", "--no-color", "--no-renames", "--relative", ...(await commitRev(dir, hash)), "--", path]));
+}
+
+/** The branch a feature branch is usually compared against: origin's default, else main/master/develop, else the upstream. */
+export async function defaultBase(dir: string): Promise<string | null> {
+	const current = (await runGit(dir, ["branch", "--show-current"])).stdout.trim();
+	const head = (await runGit(dir, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"])).stdout.trim();
+	for (const c of [head, "main", "master", "develop", "origin/main", "origin/master"]) {
+		if (c && c !== current && (await hasCommit(dir, c))) return c;
+	}
+	const up = (await runGit(dir, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"])).stdout.trim();
+	return up && (await hasCommit(dir, up)) ? up : null;
+}
+
+/** Files this branch changed compared with where it forked from `base` (`base...HEAD`). */
+export async function rangeFiles(dir: string, base: string): Promise<GitRange> {
+	const b = base ? checkRef(base) : await defaultBase(dir);
+	if (!b) throw new GitError("找不到可对比的基线分支，请手动选择");
+	return { base: b, files: await changedFiles(dir, [`${b}...HEAD`]) };
+}
+
+export async function rangeDiff(dir: string, base: string, path: string): Promise<GitDiff> {
+	checkPathspec(path);
+	return clip(await git(dir, ["diff", "--no-color", "--no-renames", "--relative", `${checkRef(base)}...HEAD`, "--", path]));
+}
+
+const norm = (p: string) => p.split("\\").join("/");
+
+async function untrackedFiles(dir: string): Promise<string[]> {
+	const r = await runGit(dir, ["ls-files", "--others", "--exclude-standard", "-z"]);
+	return r.code === 0 ? r.stdout.split("\0").filter(Boolean) : [];
+}
+
+/**
+ * Uncommitted changes against HEAD (plus untracked files), optionally limited to `only` paths.
+ * `only` may be absolute or relative to `cwd`; paths outside the workspace are ignored.
+ */
+export async function changes(dir: string, only?: string[], cwd?: string): Promise<GitChangedFile[]> {
+	const base = (await hasCommit(dir, "HEAD")) ? "HEAD" : EMPTY_TREE;
+	const [tracked, fresh] = await Promise.all([changedFiles(dir, [base]), untrackedFiles(dir)]);
+	const all = [...tracked];
+	const seen = new Set(tracked.map((f) => f.path));
+	for (const rel of fresh) {
+		if (seen.has(rel)) continue;
+		let added = 0;
+		let binary = false;
+		try {
+			const abs = join(dir, rel);
+			if (statSync(abs).size > MAX_UNTRACKED) binary = true;
+			else {
+				const buf = readFileSync(abs);
+				binary = buf.includes(0);
+				if (!binary) added = buf.length === 0 ? 0 : buf.toString("utf8").split("\n").length - (buf[buf.length - 1] === 0x0a ? 1 : 0);
+			}
+		} catch {
+			continue;
+		}
+		all.push({ path: norm(rel), status: "A", added, deleted: 0, binary });
+	}
+	if (!only) return all.sort((a, b) => a.path.localeCompare(b.path));
+	const fold = (p: string) => (process.platform === "win32" ? p.toLowerCase() : p);
+	const want = new Set<string>();
+	for (const p of only) {
+		if (typeof p !== "string" || !p) continue;
+		const rel = norm(relative(dir, isAbsolute(p) ? p : resolve(cwd && isAbsolute(cwd) ? cwd : dir, p)));
+		if (rel && !rel.startsWith("..") && !isAbsolute(rel)) want.add(fold(rel));
+	}
+	return all.filter((f) => want.has(fold(f.path))).sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/** Diff of one file against HEAD, including files git does not track yet. */
+export async function fileDiff(dir: string, path: string): Promise<GitDiff> {
+	checkPathspec(path);
+	const tracked = (await runGit(dir, ["ls-files", "--error-unmatch", "--", path])).code === 0;
+	if (!tracked && existsSync(join(dir, path))) return diff(dir, path, false, true);
+	const base = (await hasCommit(dir, "HEAD")) ? "HEAD" : EMPTY_TREE;
+	return clip(await git(dir, ["diff", "--no-color", "--no-renames", "--relative", base, "--", path]));
 }
 
 // ---------- mutations ----------

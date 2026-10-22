@@ -1,7 +1,8 @@
 import { LoaderCircle, RotateCcw } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { useStore } from "../lib/store.ts";
+import { ChatWidthControls } from "./ChatWidthControls.tsx";
 import { Composer } from "./Composer.tsx";
 import { MessageList } from "./MessageList.tsx";
 import { TaskPanel } from "./TaskPanel.tsx";
@@ -27,7 +28,7 @@ function Widgets({ placement }: { placement: string }) {
 	const list = Object.entries(widgets ?? {}).filter(([, w]) => w.placement === placement);
 	if (!list.length) return null;
 	return (
-		<div className="mx-auto mb-2 w-full max-w-3xl space-y-1.5 px-5">
+		<div className="chat-col mx-auto mb-2 w-full space-y-1.5 px-5">
 			{list.map(([key, w]) => (
 				<pre key={key} className="overflow-x-auto rounded-lg border border-ink-800 bg-ink-900/70 px-3 py-2 font-mono text-xs text-ink-300">
 					{w.lines.join("\n")}
@@ -38,6 +39,16 @@ function Widgets({ placement }: { placement: string }) {
 }
 
 export function ChatView() {
+	const [box, setBox] = useState<HTMLDivElement | null>(null);
+	return (
+		<div ref={setBox} className="relative flex min-h-0 flex-1 flex-col">
+			<ChatBody />
+			<ChatWidthControls container={box} />
+		</div>
+	);
+}
+
+function ChatBody() {
 	const t = useT(M);
 	const session = useStore((s) => s.session);
 	const booted = useStore((s) => s.booted);

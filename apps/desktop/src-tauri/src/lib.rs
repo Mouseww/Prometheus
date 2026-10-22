@@ -459,6 +459,7 @@ pub fn run() {
     let builder = builder
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| tray::show_main(app)))
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_opener::init())
         .manage(tray::TrayState::new())
         .on_window_event(tray::on_window_event)
         .setup(|app| {

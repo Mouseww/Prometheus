@@ -705,6 +705,20 @@ export interface GitBranch {
 	upstream?: string;
 }
 
+/** One file in a change set (a commit, a branch range, or the working tree). `status` is M/A/D/T. */
+export interface GitChangedFile {
+	path: string;
+	status: string;
+	added: number;
+	deleted: number;
+	binary: boolean;
+}
+
+export interface GitRange {
+	base: string;
+	files: GitChangedFile[];
+}
+
 export interface GitDiff {
 	text: string;
 	truncated: boolean;
@@ -823,6 +837,8 @@ export interface RpcMethods {
 	"workspace.open": { params: { id: string }; result: null };
 	"fs.dirs": { params: { path?: string }; result: DirListing };
 	/** Open the operating system's native folder chooser on the machine running the server; path is null when cancelled. */
+	"system.apps": { params: Record<string, never>; result: { id: string; label: string }[] };
+	"system.openIn": { params: { app: string; path: string }; result: { ok: true } };
 	"system.open": { params: { url: string }; result: { ok: true } };
 	"fs.pick": { params: { start?: string }; result: { path: string | null } };
 	/** Create a folder for a new workspace; the returned listing is the parent, refreshed. */

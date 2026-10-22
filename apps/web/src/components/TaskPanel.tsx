@@ -17,6 +17,7 @@ export function TaskPanel() {
 	const messages = useStore((s) => s.session?.messages);
 	const enabled = useStore((s) => pluginActive(s.plugins, "todos"));
 	const sessionId = useStore((s) => s.session?.id);
+	const streaming = useStore((s) => s.session?.isStreaming ?? false);
 	const todos = useMemo(() => (enabled && messages ? latestTodos(messages) : []), [enabled, messages]);
 	// Remember the collapsed state per conversation, not globally.
 	const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -28,7 +29,7 @@ export function TaskPanel() {
 	const closed = collapsed[sessionId ?? ""] ?? false;
 
 	return (
-		<div className="mx-auto mb-2 w-full max-w-3xl px-3 md:px-5">
+		<div className="chat-col mx-auto mb-2 w-full px-3 md:px-5">
 			<div className="overflow-hidden rounded-xl border border-ink-800 bg-ink-900/70 backdrop-blur">
 				<button
 					type="button"
@@ -55,7 +56,7 @@ export function TaskPanel() {
 									{item.status === "completed" ? (
 										<Check className="size-3.5 text-moss-400" strokeWidth={3} />
 									) : item.status === "in_progress" ? (
-										<LoaderCircle className="size-3.5 animate-spin text-ember-400" />
+										<LoaderCircle className={clsx("size-3.5 text-ember-400", streaming ? "animate-spin" : "opacity-50")} />
 									) : (
 										<span className="size-2.5 rounded-full border border-ink-600" />
 									)}

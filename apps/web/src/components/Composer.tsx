@@ -11,7 +11,9 @@ import { ModePicker } from "./ModePicker.tsx";
 import { nextPermissionMode, PermissionPicker } from "./PermissionPicker.tsx";
 import { VoiceButton } from "./VoiceButton.tsx";
 import { usePopover } from "./TitleBar.tsx";
-import { WorkspacePicker } from "./WorkspacePicker.tsx";
+import { BranchPicker } from "./BranchPicker.tsx";
+import { SessionChanges } from "./SessionChanges.tsx";
+import { WorkspaceChip, WorkspacePicker } from "./WorkspacePicker.tsx";
 
 const M = defineMessages({
 	zh: {
@@ -537,7 +539,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 
 	return (
 		<div
-			className="relative mx-auto w-full max-w-3xl px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:px-5 md:pb-5"
+			className="chat-col relative mx-auto w-full px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:px-5 md:pb-5"
 			onDragOver={(e) => {
 				if (![...e.dataTransfer.types].includes("Files")) return;
 				e.preventDefault();
@@ -618,11 +620,19 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 				</div>
 			)}
 
-			{newChat && (
-				<div className="mb-2 px-1">
-					<WorkspacePicker />
-				</div>
-			)}
+			<div className="mb-2 px-1">
+				{newChat ? (
+					<WorkspacePicker>
+						<BranchPicker />
+					</WorkspacePicker>
+				) : (
+					<div className="flex min-w-0 items-center gap-2">
+						<WorkspaceChip />
+						<BranchPicker />
+					</div>
+				)}
+			</div>
+			<SessionChanges />
 
 			<div
 				className={clsx(

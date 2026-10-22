@@ -1,11 +1,12 @@
 import clsx from "clsx";
 import { confirmDialog, promptDialog } from "../lib/dialogs.ts";
-import { ArrowDown, ArrowUp, GitBranch, GitCommitHorizontal, LoaderCircle, Minus, Plus, RefreshCw, Undo2 } from "lucide-react";
+import { ArrowDown, ArrowUp, GitBranch, GitCommitHorizontal, GitCompareArrows, LoaderCircle, Minus, Plus, RefreshCw, Undo2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { GitBranch as Branch, GitCommit, GitDiff, GitFileChange, GitStatus } from "@prometheus/protocol";
+import type { GitBranch as Branch, GitChangedFile, GitCommit, GitDiff, GitFileChange, GitRange, GitStatus } from "@prometheus/protocol";
 import { defineMessages, relativeTime, useT } from "../lib/i18n.ts";
 import { usePrefs } from "../lib/prefs.ts";
 import { onPluginChange, pluginCall, toast, useStore } from "../lib/store.ts";
+import { DiffReview, DiffView } from "./DiffReview.tsx";
 import { Badge, Button, Empty, PageHeader, Select, Textarea } from "./ui.tsx";
 
 const M = defineMessages({
@@ -48,6 +49,11 @@ const M = defineMessages({
 		ahead: "领先 {n}",
 		behind: "落后 {n}",
 		busy: "处理中…",
+		branchChanges: "分支变更",
+		branchChangesHint: "查看此分支相对基线的变更文件",
+		compareWith: "对比基线",
+		autoBase: "自动（main/master）",
+		viewCommit: "查看此提交的变更文件",
 	},
 	en: {
 		title: "Git",
@@ -88,33 +94,80 @@ const M = defineMessages({
 		ahead: "ahead {n}",
 		behind: "behind {n}",
 		busy: "Working…",
+		branchChanges: "Branch changes",
+		branchChangesHint: "Files this branch changed against its base",
+		compareWith: "Compare with",
+		autoBase: "Auto (main/master)",
+		viewCommit: "View files changed in this commit",
 	},
 });
 
 const LETTER: Record<string, string> = { M: "text-ember-300", A: "text-moss-400", D: "text-rose-400", R: "text-sky-400", C: "text-sky-400", U: "text-rose-400", "?": "text-moss-400" };
 
-function DiffView({ diff }: { diff: GitDiff | null }) {
-	const t = useT(M);
-	if (!diff) return <p className="p-4 text-sm text-ink-500">{t("loading")}</p>;
-	if (!diff.text.trim()) return <p className="p-4 text-sm text-ink-500">{t("noDiff")}</p>;
+type Call = (method: string, params?: Record<string, unknown>) => Promise<unknown>;
+
+function CommitReview({ commit, call, onClose }: { commit: GitCommit; call: Call; onClose: () => void }) {
+	const [files, setFiles] = useState<GitChangedFile[] | null>(null);
+	useEffect(() => {
+		let live = true;
+		void call("commitFiles", { hash: commit.hash }).then((r) => live && setFiles((r as GitChangedFile[] | undefined) ?? []));
+		return () => {
+			live = false;
+		};
+	}, [call, commit.hash]);
+	const loadDiff = useCallback((path: string) => call("commitDiff", { hash: commit.hash, path }) as Promise<GitDiff | undefined>, [call, commit.hash]);
 	return (
-		<pre className="min-h-0 flex-1 overflow-auto p-3 font-mono text-xs leading-relaxed">
-			{diff.text.split("\n").map((line, i) => (
-				<div
-					key={i}
-					className={clsx(
-						"whitespace-pre px-1",
-						line.startsWith("+") && !line.startsWith("+++") && "bg-moss-400/10 text-moss-400",
-						line.startsWith("-") && !line.startsWith("---") && "bg-rose-400/10 text-rose-400",
-						line.startsWith("@@") && "text-sky-400",
-						(line.startsWith("diff ") || line.startsWith("index ") || line.startsWith("+++") || line.startsWith("---")) && "text-ink-500",
-					)}
-				>
-					{line || " "}
-				</div>
-			))}
-			{diff.truncated && <div className="px-1 pt-2 text-ink-500">{t("truncated")}</div>}
-		</pre>
+		<DiffReview
+			title={commit.subject}
+			subtitle={
+				<span className="font-mono">
+					{commit.short} · {commit.author}
+				</span>
+			}
+			files={files}
+			loadDiff={loadDiff}
+			onClose={onClose}
+		/>
+	);
+}
+
+function BranchReview({ current, branches, call, onClose }: { current?: string; branches: Branch[]; call: Call; onClose: () => void }) {
+	const t = useT(M);
+	const [base, setBase] = useState("");
+	const [range, setRange] = useState<GitRange | null>(null);
+	useEffect(() => {
+		let live = true;
+		setRange(null);
+		void call("rangeFiles", { base }).then((r) => live && setRange((r as GitRange | undefined) ?? { base, files: [] }));
+		return () => {
+			live = false;
+		};
+	}, [call, base]);
+	const used = range?.base || base;
+	const loadDiff = useCallback((path: string) => call("rangeDiff", { base: used, path }) as Promise<GitDiff | undefined>, [call, used]);
+	return (
+		<DiffReview
+			title={t("branchChanges")}
+			subtitle={<span className="font-mono">{used ? `${used}...${current ?? "HEAD"}` : current}</span>}
+			toolbar={
+				<label className="flex items-center gap-2 text-xs text-ink-400">
+					{t("compareWith")}
+					<Select value={base} onChange={(e) => setBase(e.target.value)} className="w-44 py-1 text-xs">
+						<option value="">{t("autoBase")}</option>
+						{branches
+							.filter((b) => b.name !== current)
+							.map((b) => (
+								<option key={`${b.remote}${b.name}`} value={b.name}>
+									{b.name}
+								</option>
+							))}
+					</Select>
+				</label>
+			}
+			files={range?.files ?? null}
+			loadDiff={loadDiff}
+			onClose={onClose}
+		/>
 	);
 }
 
@@ -131,6 +184,7 @@ export function GitView() {
 	const [busy, setBusy] = useState(false);
 	const [picked, setPicked] = useState<{ file: GitFileChange; staged: boolean } | null>(null);
 	const [diff, setDiff] = useState<GitDiff | null>(null);
+	const [review, setReview] = useState<{ commit: GitCommit } | "branch" | null>(null);
 
 	// Default to the workspace of the open chat, else the newest one.
 	useEffect(() => {
@@ -304,6 +358,11 @@ export function GitView() {
 									<option value="__new">{t("newBranch")}</option>
 								</Select>
 							)}
+							{!status.detached && (
+								<button type="button" title={t("branchChangesHint")} aria-label={t("branchChanges")} className="rounded p-1 text-ink-400 hover:bg-ink-700 hover:text-ink-100" onClick={() => setReview("branch")}>
+									<GitCompareArrows className="size-4" />
+								</button>
+							)}
 							{status.ahead > 0 && (
 								<span className="flex items-center font-mono text-[11px] text-ink-400" title={t("ahead", { n: status.ahead })}>
 									<ArrowUp className="size-3" />
@@ -359,14 +418,22 @@ export function GitView() {
 								) : (
 									<ul>
 										{commits.map((c) => (
-											<li key={c.hash} className="flex items-start gap-2 rounded-md px-2 py-1 text-[13px] hover:bg-ink-850" title={`${c.author} · ${c.hash}`}>
-												<GitCommitHorizontal className="mt-0.5 size-3.5 shrink-0 text-ink-500" />
-												<span className="min-w-0 flex-1">
-													<span className="block truncate text-ink-200">{c.subject}</span>
-													<span className="block truncate font-mono text-[10.5px] text-ink-500">
-														{c.short} · {c.author} · {relativeTime(c.date, lang)}
+											<li key={c.hash}>
+												<button
+													type="button"
+													onClick={() => setReview({ commit: c })}
+													className="flex w-full items-start gap-2 rounded-md px-2 py-1 text-left text-[13px] hover:bg-ink-850"
+													title={`${c.author} · ${c.hash}
+${t("viewCommit")}`}
+												>
+													<GitCommitHorizontal className="mt-0.5 size-3.5 shrink-0 text-ink-500" />
+													<span className="min-w-0 flex-1">
+														<span className="block truncate text-ink-200">{c.subject}</span>
+														<span className="block truncate font-mono text-[10.5px] text-ink-500">
+															{c.short} · {c.author} · {relativeTime(c.date, lang)}
+														</span>
 													</span>
-												</span>
+												</button>
 											</li>
 										))}
 									</ul>
@@ -416,6 +483,8 @@ export function GitView() {
 					</div>
 				</div>
 			)}
+			{review && review !== "branch" && <CommitReview commit={review.commit} call={call} onClose={() => setReview(null)} />}
+			{review === "branch" && <BranchReview current={status?.branch} branches={branches} call={call} onClose={() => setReview(null)} />}
 		</div>
 	);
 }

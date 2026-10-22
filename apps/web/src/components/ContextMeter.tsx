@@ -1,5 +1,6 @@
 import clsx from "clsx";
 import { Minimize2 } from "lucide-react";
+import { useState } from "react";
 import type { ContextBreakdown } from "@prometheus/protocol";
 import { cacheRate, fmtPercent, fmtTokens } from "../lib/format.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
@@ -76,6 +77,7 @@ export function ContextMeter() {
 	const t = useT(M);
 	const session = useStore((s) => s.session);
 	const { open, setOpen, ref } = usePopover();
+	const [starting, setStarting] = useState(false);
 	const stats = session?.stats;
 	if (!session || !stats) return null;
 
@@ -86,10 +88,13 @@ export function ContextMeter() {
 	const gap = stats.contextEstimated ? 0 : Math.max(used - sum, 0);
 	const shown = parts.map((p) => (p.key === "unattributed" ? { ...p, tokens: gap } : p)).filter((p) => p.tokens > 0);
 	const total = used;
+	const compacting = starting || session.banner?.kind === "compaction";
 	const width = (tokens: number) => (window_ > 0 ? Math.min(100, (tokens / window_) * 100) : 0);
 
 	const compact = async () => {
-		const ok = await call((c) => c.rpc("chat.compact", { sessionId: session.id }));
+		if (starting || session.banner?.kind === "compaction") return;
+		setStarting(true);
+		const ok = await call((c) => c.rpc("chat.compact", { sessionId: session.id })).finally(() => setStarting(false));
 		if (ok === undefined) return;
 		toast(t("compacting"));
 		setOpen(false);
@@ -153,7 +158,7 @@ export function ContextMeter() {
 						})}
 					</p>
 
-					<Button variant="outline" className="mt-3 w-full" disabled={session.isStreaming} title={session.isStreaming ? t("busy") : undefined} onClick={() => void compact()}>
+					<Button variant="outline" className="mt-3 w-full" disabled={session.isStreaming || compacting} title={session.isStreaming ? t("busy") : compacting ? t("compacting") : undefined} onClick={() => void compact()}>
 						<Minimize2 className="size-4" /> {t("compact")}
 					</Button>
 				</div>

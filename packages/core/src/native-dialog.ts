@@ -1,4 +1,6 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 const TIMEOUT_MS = 10 * 60_000;
 
@@ -125,4 +127,80 @@ export async function openUrlNative(url: string): Promise<void> {
 		process.platform === "win32" ? ["rundll32", ["url.dll,FileProtocolHandler", url]] : process.platform === "darwin" ? ["open", [url]] : ["xdg-open", [url]];
 	const r = await run(cmd as string, args as string[]);
 	if (r.code !== 0) throw new Error("could not open the default browser");
+}
+
+// ---------- open a folder in an external app ----------
+
+export interface ExternalApp {
+	id: string;
+	label: string;
+}
+
+const EDITORS: { id: string; label: string; win: string[]; mac: string; bin: string }[] = [
+	{
+		id: "vscode",
+		label: "VS Code",
+		win: ["%LOCALAPPDATA%/Programs/Microsoft VS Code/Code.exe", "%ProgramFiles%/Microsoft VS Code/Code.exe", "%ProgramFiles(x86)%/Microsoft VS Code/Code.exe"],
+		mac: "Visual Studio Code",
+		bin: "code",
+	},
+	{ id: "cursor", label: "Cursor", win: ["%LOCALAPPDATA%/Programs/cursor/Cursor.exe", "%ProgramFiles%/Cursor/Cursor.exe"], mac: "Cursor", bin: "cursor" },
+	{ id: "windsurf", label: "Windsurf", win: ["%LOCALAPPDATA%/Programs/Windsurf/Windsurf.exe"], mac: "Windsurf", bin: "windsurf" },
+];
+
+const expandEnv = (p: string) => p.replace(/%([^%]+)%/g, (_, k: string) => process.env[k] ?? "");
+
+async function onPath(bin: string): Promise<string | null> {
+	const r = await run(process.platform === "win32" ? "where.exe" : "which", [bin]);
+	return r.code === 0 ? (r.stdout.split(/\r?\n/).find((l) => l.trim()) ?? null) : null;
+}
+
+/** Where an editor's launcher lives on this machine, or null when it isn't installed. */
+async function findEditor(e: (typeof EDITORS)[number]): Promise<string | null> {
+	if (process.platform === "win32") {
+		for (const c of e.win) {
+			const exe = expandEnv(c);
+			if (exe && !exe.startsWith("\\") && existsSync(exe)) return exe;
+		}
+		// `code.cmd` sits in <install>\bin; the real executable is one level up.
+		const cmd = await onPath(e.bin);
+		if (cmd) {
+			const exe = join(dirname(dirname(cmd.trim())), `${e.win[0]?.split("/").pop() ?? ""}`);
+			if (existsSync(exe)) return exe;
+		}
+		return null;
+	}
+	if (process.platform === "darwin") return existsSync(`/Applications/${e.mac}.app`) || existsSync(join(process.env.HOME ?? "", "Applications", `${e.mac}.app`)) ? e.mac : null;
+	return onPath(e.bin);
+}
+
+/** Apps that can open a workspace folder here: the file manager always, editors only when installed. */
+export async function listExternalApps(): Promise<ExternalApp[]> {
+	const manager = process.platform === "win32" ? "资源管理器" : process.platform === "darwin" ? "Finder" : "文件管理器";
+	const apps: ExternalApp[] = [{ id: "files", label: manager }];
+	const found = await Promise.all(EDITORS.map(async (e) => ((await findEditor(e)) ? { id: e.id, label: e.label } : null)));
+	for (const f of found) if (f) apps.push(f);
+	return apps;
+}
+
+function launch(cmd: string, args: string[]): void {
+	const child = spawn(cmd, args, { detached: true, stdio: "ignore", windowsHide: false });
+	child.on("error", () => {});
+	child.unref();
+}
+
+/** Opens a folder in the chosen app. The caller must already have checked that `path` is a workspace. */
+export async function openInExternalApp(app: string, path: string): Promise<void> {
+	if (!existsSync(path)) throw new Error("目录不存在");
+	if (app === "files") {
+		if (process.platform === "win32") launch("explorer.exe", [path]);
+		else launch(process.platform === "darwin" ? "open" : "xdg-open", [path]);
+		return;
+	}
+	const editor = EDITORS.find((e) => e.id === app);
+	if (!editor) throw new Error("不支持的应用");
+	const found = await findEditor(editor);
+	if (!found) throw new Error(`未检测到 ${editor.label}`);
+	if (process.platform === "darwin") launch("open", ["-a", found, path]);
+	else launch(found, [path]);
 }

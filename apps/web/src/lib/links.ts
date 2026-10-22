@@ -1,11 +1,11 @@
 import { isAndroid, isLoopbackHost, isTauri } from "./backend.ts";
-import { useStore } from "./store.ts";
+import { toast, useStore } from "./store.ts";
 import { defineMessages, tr } from "./i18n.ts";
 import { showContextMenu } from "./contextMenu.ts";
 
 const M = defineMessages({
-	zh: { openLink: "在默认浏览器中打开", copyLink: "复制链接" },
-	en: { openLink: "Open in default browser", copyLink: "Copy link" },
+	zh: { openLink: "在默认浏览器中打开", copyLink: "复制链接", failed: "无法打开链接，已复制到剪贴板：{u}" },
+	en: { openLink: "Open in default browser", copyLink: "Copy link", failed: "Could not open the link, copied to clipboard: {u}" },
 });
 
 /** Opens a link outside Prometheus (system default browser) so the app itself never navigates away. */
@@ -19,11 +19,14 @@ export async function openExternal(url: string): Promise<void> {
 	if (u.protocol !== "http:" && u.protocol !== "https:" && u.protocol !== "mailto:") return;
 	if (isTauri()) {
 		const { invoke } = await import("@tauri-apps/api/core");
-		try {
-			await invoke(isAndroid() ? "plugin:opener|open_url" : "open_external", { url: u.href });
-			return;
-		} catch {
-			// older shell without the command: let a local server open it instead
+		// Two native routes (own command, then the opener plugin), then a local server, each tried only if the one before failed.
+		for (const cmd of isAndroid() ? ["plugin:opener|open_url"] : ["open_external", "plugin:opener|open_url"]) {
+			try {
+				await invoke(cmd, { url: u.href });
+				return;
+			} catch {
+				// try the next route
+			}
 		}
 		const client = useStore.getState().client;
 		if (client && isLoopbackHost(client.target.httpBase)) {
@@ -34,6 +37,10 @@ export async function openExternal(url: string): Promise<void> {
 				// fall through
 			}
 		}
+		// A webview cannot open a browser window itself; say so instead of failing silently.
+		void navigator.clipboard?.writeText(u.href).catch(() => undefined);
+		toast(tr(M, "failed", { u: u.href }), "error");
+		return;
 	}
 	window.open(u.href, "_blank", "noopener,noreferrer");
 }

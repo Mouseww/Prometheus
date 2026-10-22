@@ -43,7 +43,7 @@ import {
 	type ChatMessage,
 } from "@prometheus/protocol";
 import { slimEvent, toModelRef } from "./events.ts";
-import { openUrlNative, pickFolderNative } from "./native-dialog.ts";
+import { listExternalApps, openInExternalApp, openUrlNative, pickFolderNative } from "./native-dialog.ts";
 import { checkImages, imageOnlyTitle, skipPiImageAutoResize } from "./images.ts";
 import { PermissionGate } from "./permission-gate.ts";
 import { EXIT_PLAN_MODE } from "./permissions.ts";
@@ -812,6 +812,14 @@ export class PrometheusHost {
 		"fs.pick": async ({ start }) => {
 			const from = start && existsSync(start) ? start : undefined;
 			return { path: await pickFolderNative(from) };
+		},
+		"system.apps": () => listExternalApps(),
+		"system.openIn": async ({ app, path }) => {
+			// Only folders the user added as workspaces: a client must not be able to launch arbitrary paths.
+			const norm = (p: string) => (process.platform === "win32" ? p.toLowerCase() : p).replace(/[\\/]+$/, "");
+			if (!(await this.workspaces.list()).some((w) => norm(w.path) === norm(path))) throw new Error("该目录不是已添加的工作区");
+			await openInExternalApp(app, path);
+			return { ok: true as const };
 		},
 		"system.open": async ({ url }) => {
 			await openUrlNative(url);

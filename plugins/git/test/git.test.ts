@@ -110,6 +110,34 @@ describe("against a real repository", () => {
 		await expect(g.show(dir, "--output=x")).rejects.toThrow(/不合法/);
 	});
 
+	it("lists change sets for commits, branches and the working tree", async () => {
+		const latest = (await g.log(dir, 1))[0]!;
+		const files = await g.commitFiles(dir, latest.hash);
+		expect(files.length).toBeGreaterThan(0);
+		expect((await g.commitDiff(dir, latest.hash, files[0]!.path)).text).toContain("@@");
+
+		run(dir, "switch", "-c", "topic-cs");
+		writeFileSync(join(dir, "feat.txt"), "x\ny\n");
+		run(dir, "add", ".");
+		run(dir, "commit", "-m", "feat");
+		const range = await g.rangeFiles(dir, "");
+		expect(range.base).toBe("main");
+		expect(range.files).toContainEqual({ path: "feat.txt", status: "A", added: 2, deleted: 0, binary: false });
+		expect((await g.rangeDiff(dir, "main", "feat.txt")).text).toContain("+y");
+
+		writeFileSync(join(dir, "feat.txt"), "x\nz\n");
+		writeFileSync(join(dir, "untracked.txt"), "1\n2\n3\n");
+		const all = await g.changes(dir);
+		expect(all).toEqual(expect.arrayContaining([expect.objectContaining({ path: "feat.txt", added: 1, deleted: 1 }), expect.objectContaining({ path: "untracked.txt", added: 3, status: "A" })]));
+		const only = await g.changes(dir, [join(dir, "untracked.txt"), "../outside.txt"], dir);
+		expect(only.map((f) => f.path)).toEqual(["untracked.txt"]);
+		expect((await g.fileDiff(dir, "untracked.txt")).text).toContain("+3");
+		expect((await g.fileDiff(dir, "feat.txt")).text).toContain("-y");
+		run(dir, "checkout", "--", "feat.txt");
+		rmSync(join(dir, "untracked.txt"));
+		run(dir, "switch", "main");
+	});
+
 	it("detects a plain folder and can init it", async () => {
 		const plain = mkdtempSync(join(tmpdir(), "plain-"));
 		expect(await g.status(plain)).toMatchObject({ isRepo: false, files: [] });

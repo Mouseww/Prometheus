@@ -418,7 +418,7 @@ export function MessageList({
 	const waitingOnReply = Boolean(pending) || (streaming && messages[lastIndex]?.role === "user");
 
 	return (
-		<div className="mx-auto w-full max-w-3xl space-y-5 px-3 py-5 md:px-5 md:py-8">
+		<div className="chat-col mx-auto w-full space-y-5 px-3 py-5 md:px-5 md:py-8">
 			{messages.map((m, i) => {
 				if (m.role === "user") {
 					const text = userText(m);

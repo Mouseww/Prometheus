@@ -19,6 +19,7 @@ export function problem(todos: TodoItem[]): string | undefined {
 const GUIDELINES = [
 	`Use ${TODO_TOOL} to plan any task with three or more distinct steps, and when the user hands you several things at once. Skip it for a single trivial step.`,
 	`${TODO_TOOL} replaces the whole list each call, so always send every item. Keep exactly one item in_progress, mark it completed the moment it is done, and add follow-up items as you discover them.`,
+	`The panel only changes when you call ${TODO_TOOL}. Call it again right after finishing each item (completed, and the next one in_progress), before the final reply, and never leave the list stale when you stop.`,
 	`Only mark an item completed when the work is really finished and verified, not when you merely started or hit an error.`,
 ];
 
@@ -50,7 +51,11 @@ export default definePlugin({
 					const todos = parseTodos(params);
 					const bad = problem(todos);
 					if (bad) throw new Error(bad);
-					return { content: [{ type: "text", text: `Task list updated (${summarize(todos)}). Carry on with the current item.` }], details: { todos } };
+					const mark = { completed: "[x]", in_progress: "[>]", pending: "[ ]" } as const;
+					const lines = todos.map((t, i) => `${i + 1}. ${mark[t.status]} ${t.content}`).join("\n");
+					const left = todos.some((t) => t.status !== "completed");
+					const next = left ? `Carry on with the current item, and call ${TODO_TOOL} again as soon as it is done.` : "All items are completed.";
+					return { content: [{ type: "text", text: `Task list updated (${summarize(todos)}).\n${lines}\n${next}` }], details: { todos } };
 				},
 			});
 		});

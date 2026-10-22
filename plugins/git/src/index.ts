@@ -24,6 +24,13 @@ export default definePlugin({
 		ctx.rpc("diff", async (p) => g.diff(await dirOf(p), str(p.path), p.staged === true, p.untracked === true));
 		ctx.rpc("show", async (p) => g.show(await dirOf(p), str(p.hash)));
 
+		ctx.rpc("commitFiles", async (p) => g.commitFiles(await dirOf(p), str(p.hash)));
+		ctx.rpc("commitDiff", async (p) => g.commitDiff(await dirOf(p), str(p.hash), str(p.path)));
+		ctx.rpc("rangeFiles", async (p) => g.rangeFiles(await dirOf(p), str(p.base)));
+		ctx.rpc("rangeDiff", async (p) => g.rangeDiff(await dirOf(p), str(p.base), str(p.path)));
+		ctx.rpc("changes", async (p) => g.changes(await dirOf(p), Array.isArray(p.paths) ? strs(p.paths) : undefined, str(p.cwd) || undefined));
+		ctx.rpc("fileDiff", async (p) => g.fileDiff(await dirOf(p), str(p.path)));
+
 		ctx.rpc("stage", async (p) => void (await g.stage(await dirOf(p), strs(p.paths))));
 		ctx.rpc("unstage", async (p) => void (await g.unstage(await dirOf(p), strs(p.paths))));
 		ctx.rpc("discard", async (p) => {

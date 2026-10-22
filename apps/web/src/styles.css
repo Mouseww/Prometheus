@@ -21,6 +21,11 @@
 /* Expand/collapse motion is a short state cue, so it stays even when the OS asks for reduced motion. */
 .collapse-grid { transition: grid-template-rows 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.22s ease-out; }
 
+/* The chat column's width comes from --chat-width (set by ChatWidthControls); 48rem is the pre-JS fallback. */
+.chat-col { max-width: var(--chat-width, 48rem); transition: max-width 0.2s ease-out; }
+html[data-chat-resizing] .chat-col { transition: none; }
+html[data-chat-resizing] { cursor: col-resize; user-select: none; }
+
 /* Brand tokens: fork these to re-skin Prometheus. */
 @theme {
 	--font-display: "Bricolage Grotesque Variable", "IBM Plex Sans", sans-serif;

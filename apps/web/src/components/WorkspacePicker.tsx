@@ -20,7 +20,7 @@ const M = defineMessages({
 });
 
 /** Workspace chooser shown above the composer on the new-chat page; the last entry opens the folder browser. */
-export function WorkspacePicker() {
+export function WorkspacePicker({ children }: { children?: React.ReactNode }) {
 	const t = useT(M);
 	const workspaces = useStore((s) => s.workspaces);
 	const currentId = useStore((s) => s.session?.workspaceId);
@@ -44,6 +44,7 @@ export function WorkspacePicker() {
 				<span className="truncate">{active?.name ?? t("pick")}</span>
 				<ChevronDown className="size-3 shrink-0 opacity-60" />
 			</button>
+			{children}
 			{active && (
 				<span className="min-w-0 truncate font-mono text-[11px] text-ink-500" title={active.path}>
 					{active.path}
@@ -98,5 +99,17 @@ export function WorkspacePicker() {
 				/>
 			)}
 		</div>
+	);
+}
+
+/** Read-only workspace label for an existing conversation (the workspace can't change mid-chat). */
+export function WorkspaceChip() {
+	const active = useStore((s) => s.workspaces.find((w) => w.id === s.session?.workspaceId));
+	if (!active) return null;
+	return (
+		<span className="flex max-w-52 shrink-0 items-center gap-1.5 px-2 py-1 text-xs text-ink-400" title={active.path}>
+			<FolderOpen className="size-3.5 shrink-0" />
+			<span className="truncate">{active.name}</span>
+		</span>
 	);
 }
