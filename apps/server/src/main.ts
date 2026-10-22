@@ -200,9 +200,7 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, kind: Kind)
 	if (url.pathname === "/api/logout" && req.method === "POST") return json(res, 200, { ok: true }, { "set-cookie": cookieHeader("", req, 0) });
 
 	if (url.pathname.startsWith("/plugins/")) {
-		// The built-in 隐私面罩 (veil) plugin is internal and needs no login.
-		const open = url.pathname.startsWith("/plugins/veil/");
-		if (!open && !httpAuthorized(req, kind)) return json(res, 401, { error: "unauthorized" });
+		if (!httpAuthorized(req, kind)) return json(res, 401, { error: "unauthorized" });
 		const route = host.runtime.plugins.routes.find((r) => r.method === req.method && r.path === url.pathname);
 		if (!route) return json(res, 404, { error: "not found" });
 		await route.handler(req, res);

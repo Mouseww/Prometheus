@@ -137,7 +137,7 @@ function savedSort(): SubagentSort {
 }
 
 export type SettingsTab = "general" | "gateways" | "mcp" | "connectors" | "skills" | "modes" | "market" | "plugins" | "voice" | "network" | "usage";
-export type View = "chat" | "knowledge" | "memory" | "automations" | "git" | "settings" | { panel: string };
+export type View = "chat" | "knowledge" | "memory" | "automations" | "git" | "veil" | "settings" | { panel: string };
 
 interface State {
 	client: PrometheusClient | null;

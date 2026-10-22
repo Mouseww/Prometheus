@@ -4,7 +4,7 @@
 
 ## 两个独立开关
 
-侧栏「隐私面罩」面板里分三页：**隐私保护**、**出口代理**、**规则**。
+侧栏「隐私面罩」分三页：**隐私保护**、**出口代理**、**规则**。界面是 Prometheus 自己的原生 React 视图（`apps/web/src/components/VeilView.tsx`），跟记忆、Git 等页面同款组件与主题；插件端只提供 RPC，不产出任何 HTML。
 
 | 开关 | 作用 | 实现 |
 |---|---|---|
@@ -62,9 +62,14 @@ src/
   proxy/
     transport.ts   HTTP CONNECT / SOCKS5 隧道
     relay.ts       转发 + 脱敏 + 还原 + SSE
-  index.ts       插件主体
-  panel.ts       面板页面
+  index.ts       插件主体（只有 RPC，不挂任何 HTTP 路由）
 ```
+
+界面不在插件里：`apps/web/src/components/VeilView.tsx` 用原生组件画那三页，通过 `plugin.call({ plugin: "veil", method })` 调上面的 RPC。所以它继承本体的 ink/ember 配色、亮暗主题与换肤，不需要额外传主题参数。
+
+> 插件 SDK 目前只给了 `ctx.panel()`（iframe）这一种界面能力。veil 之所以走原生视图，是因为它被硬编码进了侧栏与 `App.tsx`，跟其余 15 个内置插件的方式一致；第三方插件想有原生界面仍需改 Prometheus 源码。
+
+插件不开任何 HTTP 面：没有 `ctx.route`、没有 `ctx.panel`。界面的全部通信都走已鉴权的 WebSocket（`plugin.call`），所以它既不需要自己的令牌，也不会因为某个 URL 前缀被放行而泄漏数据。
 
 ## 测试
 

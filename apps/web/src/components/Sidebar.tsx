@@ -18,6 +18,7 @@ import {
 	Plus,
 	PuzzleIcon,
 	Settings,
+	Shield,
 	Trash2,
 	X,
 } from "lucide-react";
@@ -50,6 +51,7 @@ const M = defineMessages({
 		memory: "记忆",
 		automations: "自动化",
 		git: "Git",
+		veil: "隐私面罩",
 		settings: "设置",
 		workspaces: "工作区",
 		collapseEvery: "收起全部工作区",
@@ -82,6 +84,7 @@ const M = defineMessages({
 		memory: "Memory",
 		automations: "Automations",
 		git: "Git",
+		veil: "Privacy Mask",
 		settings: "Settings",
 		workspaces: "Workspaces",
 		collapseEvery: "Collapse every workspace",
@@ -426,6 +429,7 @@ export function Sidebar({ target, onDisconnect }: { target: BackendTarget; onDis
 	const tools = [
 		...(pluginActive(plugins, "automations") ? [{ view: "automations" as const, label: t("automations"), icon: AlarmClock }] : []),
 		...(pluginActive(plugins, "git") ? [{ view: "git" as const, label: t("git"), icon: GitBranch }] : []),
+		...(pluginActive(plugins, "veil") ? [{ view: "veil" as const, label: t("veil"), icon: Shield }] : []),
 	];
 
 	return (

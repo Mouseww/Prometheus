@@ -9,19 +9,15 @@
  *
  * Neither touches Prometheus' own code: everything happens through extension hooks, RPC and routes.
  */
-import { definePlugin } from "@prometheus/plugin-sdk";
+import { definePlugin, type RpcHandler } from "@prometheus/plugin-sdk";
 import { ConfigFile, type VeilConfig } from "./config.ts";
 import { RuleSet, builtinRules, validateRule, type Rule } from "./engine/rules.ts";
 import { MappingStore } from "./engine/store.ts";
-import { desensitizeJson, desensitizeString, parseJson, restoreJson, restoreString } from "./engine/walk.ts";
-import { restoreEventStream } from "./proxy/relay.ts";
+import { desensitizeJson, desensitizeString, parseJson } from "./engine/walk.ts";
 import { VeilRelay } from "./proxy/relay.ts";
 import { parseProxyUrl, type ProxySettings } from "./proxy/transport.ts";
-import { RestoreWindow } from "./engine/sliding.ts";
-import { renderPanel } from "./panel.ts";
-import { rpcHandler, rpcRoute, sendHtml, type Handler } from "./http-rpc.ts";
 
-/** What the panel needs to draw itself. Never includes secrets. */
+/** What the native view needs to draw itself. Never includes secrets. */
 export interface PanelState {
 	config: {
 		redaction: boolean;
@@ -223,7 +219,7 @@ export default definePlugin({
 		 * One table drives both surfaces: `plugin.call` for in-app callers and `POST /rpc/<method>`
 		 * for the sandboxed panel, which has no WebSocket of its own.
 		 */
-		const handlers: Record<string, Handler> = {
+		const handlers: Record<string, RpcHandler> = {
 			state: () => state(),
 
 			setFlags: async (params) =>
@@ -346,22 +342,18 @@ export default definePlugin({
 		};
 
 		for (const [method, handler] of Object.entries(handlers)) {
-			const wrapped: Handler = async (params) => {
+			const wrapped: RpcHandler = async (params) => {
 				const result = await handler(params);
 				ctx.notifyChanged();
 				return result;
 			};
+			// `plugin.call` only: the view is native and rides the authenticated WebSocket, so the
+			// plugin exposes no HTTP surface of its own and needs no separate credential.
 			ctx.rpc(method, wrapped);
-			ctx.route("POST", rpcRoute(method), rpcHandler(wrapped));
 		}
 
-		// ---------- panel page ----------
-
-		ctx.route("GET", "/panel", async (_req, res) => {
-			sendHtml(res, renderPanel());
-		});
-
-		ctx.panel({ id: "veil", title: "隐私面罩", icon: "shield", path: "/panel" });
+		// No `ctx.panel()` either: the view lives in the app as a native React page
+		// (`apps/web/src/components/VeilView.tsx`), so it inherits the host's skin and theme directly.
 
 		ctx.onDispose(async () => {
 			await relay.stop();

@@ -14,6 +14,7 @@ import { WorkbenchPanel } from "./components/WorkbenchPanel.tsx";
 import { Toasts } from "./components/Toasts.tsx";
 import { Modal } from "./components/ui.tsx";
 import { UpdateDialog } from "./components/UpdateDialog.tsx";
+import { VeilView } from "./components/VeilView.tsx";
 import type { BackendTarget } from "./lib/client.ts";
 import { PrometheusClient } from "./lib/client.ts";
 import { clearSession, discoverBackend, establishCookie, isDesktopShell, saveMode, saveSession } from "./lib/backend.ts";
@@ -47,7 +48,12 @@ export function App() {
 	// A view whose plugin was just switched off would render against RPCs that no longer exist.
 	useEffect(() => {
 		if (!plugins.length) return;
-		if ((view === "automations" && !pluginActive(plugins, "automations")) || (view === "git" && !pluginActive(plugins, "git"))) setView("chat");
+		if (
+			(view === "automations" && !pluginActive(plugins, "automations")) ||
+			(view === "git" && !pluginActive(plugins, "git")) ||
+			(view === "veil" && !pluginActive(plugins, "veil"))
+		)
+			setView("chat");
 	}, [view, plugins]);
 
 	useEffect(() => {
@@ -136,6 +142,7 @@ export function App() {
 							{view === "memory" && <MemoryView />}
 							{view === "automations" && <AutomationsView />}
 							{view === "git" && <GitView />}
+							{view === "veil" && <VeilView />}
 							{view === "settings" && <SettingsView />}
 							{typeof view === "object" && <PanelFrame target={target} url={view.panel} />}
 						</Modal>
@@ -162,6 +169,42 @@ function Shell({ children }: { children: React.ReactNode }) {
 	);
 }
 
+/**
+ * Tracks the resolved theme of the app shell. `apply()` in lib/prefs.ts already resolves "system"
+ * onto `<html data-theme>`, so watching that attribute keeps the panel in step with the shell
+ * without duplicating the media-query logic.
+ */
+function useResolvedTheme(): { theme: string; skin: string } {
+	const theme = usePrefs((p) => p.theme);
+	const skin = usePrefs((p) => p.skin);
+	const [resolved, setResolved] = useState<{ theme: string; skin: string }>({ theme: "dark", skin });
+	useEffect(() => {
+		const read = () => {
+			const root = document.documentElement;
+			setResolved({ theme: root.dataset.theme === "light" ? "light" : "dark", skin: root.dataset.skin ?? "ember" });
+		};
+		read();
+		const observer = new MutationObserver(read);
+		observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-skin"] });
+		return () => observer.disconnect();
+	}, [theme, skin]);
+	return resolved;
+}
+
+/**
+ * A plugin panel is an iframe sandboxed without `allow-same-origin`, so it cannot read the app's
+ * stylesheet or storage. The active theme and skin therefore travel in the URL; a change of either
+ * changes the `src`, which reloads the frame so the panel re-skins immediately.
+ */
 function PanelFrame({ target, url }: { target: BackendTarget; url: string }) {
-	return <iframe title="plugin panel" src={`${target.httpBase}${url}`} sandbox="allow-scripts allow-forms" className="h-full w-full border-0 bg-ink-900" />;
+	const { theme, skin } = useResolvedTheme();
+	const sep = url.includes("?") ? "&" : "?";
+	return (
+		<iframe
+			title="plugin panel"
+			src={`${target.httpBase}${url}${sep}theme=${theme}&skin=${skin}`}
+			sandbox="allow-scripts allow-forms"
+			className="h-full w-full border-0 bg-ink-900"
+		/>
+	);
 }
