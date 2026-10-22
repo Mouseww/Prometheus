@@ -1,4 +1,6 @@
 import clsx from "clsx";
+import { Collapse } from "./ui.tsx";
+import { confirmDialog } from "../lib/dialogs.ts";
 import { Brain, Check, Eye, ChevronDown, ChevronRight, CircleAlert, Copy, GitBranch, LoaderCircle, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import type { AssistantMessage, ChatMessage, ImageContent, ToolCallContent, ToolResultMessage, UserMessage } from "@prometheus/protocol";
@@ -129,7 +131,9 @@ function ThinkingBlock({ text, live }: { text: string; live: boolean }) {
 				<span className="font-mono text-ink-600">{t("chars", { n: text.length })}</span>
 				{open ? <ChevronDown className="ml-auto size-3.5" /> : <ChevronRight className="ml-auto size-3.5" />}
 			</button>
-			{open && <div className="border-t border-ink-800 px-3.5 py-3 text-[13px] leading-relaxed whitespace-pre-wrap text-ink-400 italic">{text}</div>}
+			<Collapse open={open}>
+				<div className="border-t border-ink-800 px-3.5 py-3 text-[13px] leading-relaxed whitespace-pre-wrap text-ink-400 italic">{text}</div>
+			</Collapse>
 		</div>
 	);
 }
@@ -194,13 +198,13 @@ function ToolCard({ call, run, result }: { call: ToolCallContent; run?: ToolRun;
 				{run?.durationMs !== undefined && <span className="shrink-0 font-mono text-[11px] text-ink-600">{(run.durationMs / 1000).toFixed(1)}s</span>}
 				{open ? <ChevronDown className="size-3.5 shrink-0 text-ink-500" /> : <ChevronRight className="size-3.5 shrink-0 text-ink-500" />}
 			</button>
-			{open && (
+			<Collapse open={open}>
 				<div className="space-y-2 border-t border-ink-800 px-3 py-3">
 					<pre className="max-h-[35dvh] overflow-auto rounded-lg bg-ink-950 p-2.5 font-mono text-[11.5px] text-ink-300 md:max-h-48">{JSON.stringify(call.arguments, null, 2)}</pre>
 					{output && <pre className="max-h-[45dvh] overflow-auto rounded-lg bg-ink-950 p-2.5 font-mono text-[11.5px] break-words whitespace-pre-wrap text-ink-300 md:max-h-80">{output}</pre>}
 					<ImageStrip images={pictures} />
 				</div>
-			)}
+			</Collapse>
 		</div>
 	);
 }
@@ -288,7 +292,7 @@ function Actions({ index, indices, text, canRetry, align, onEdit }: { index: num
 				className={clsx(btn, "hover:text-rose-400")}
 				title={t("delete")}
 				disabled={!canRetry}
-				onClick={() => confirm(t("confirmDelete")) && void removeAll(indices ?? [index])}
+				onClick={() => void confirmDialog(t("confirmDelete")).then((ok) => { if (ok) void removeAll(indices ?? [index]); })}
 			>
 				<Trash2 className="size-3.5" />
 			</button>

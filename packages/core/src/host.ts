@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { rm, mkdir } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -18,7 +18,7 @@ import {
 	SettingsManager,
 	VERSION as PI_VERSION,
 } from "@earendil-works/pi-coding-agent";
-import { listModels, mergeGatewayUpdate, redactGateway, toProviderConfig } from "@prometheus/gateway";
+import { DEFAULT_CATALOG_URL, listModels, matchModelDefaults, mergeGatewayUpdate, type ModelCatalog, parseModelCatalog, parsePiModels, redactGateway, toProviderConfig } from "@prometheus/gateway";
 import type { AgentRunOptions, AgentRunResult, PrometheusPlugin } from "@prometheus/plugin-sdk";
 import {
 	type CommandInfo,
@@ -43,6 +43,7 @@ import {
 	type ChatMessage,
 } from "@prometheus/protocol";
 import { slimEvent, toModelRef } from "./events.ts";
+import { pickFolderNative } from "./native-dialog.ts";
 import { checkImages, imageOnlyTitle, skipPiImageAutoResize } from "./images.ts";
 import { PermissionGate } from "./permission-gate.ts";
 import { EXIT_PLAN_MODE } from "./permissions.ts";
@@ -216,6 +217,33 @@ export class PrometheusHost {
 	}
 
 	// ---------- gateways ----------
+
+	private readonly catalogs = new Map<string, { at: number; catalog: ModelCatalog }>();
+
+	/** Gateways declared in the PI agent's own models.json (the file PI's /login and manual setups use). */
+	private async readPiGateways(): Promise<ReturnType<typeof parsePiModels>> {
+		let raw: string;
+		try {
+			raw = await readFile(join(this.agentDir, "models.json"), "utf8");
+		} catch {
+			return [];
+		}
+		const auth = await readFile(join(this.agentDir, "auth.json"), "utf8").then(
+			(a) => {
+				try {
+					return JSON.parse(a) as unknown;
+				} catch {
+					return undefined;
+				}
+			},
+			() => undefined,
+		);
+		try {
+			return parsePiModels(JSON.parse(raw), process.env, auth);
+		} catch {
+			throw new Error("PI 的 models.json 不是合法 JSON");
+		}
+	}
 
 	private syncGateways(): void {
 		const next = new Set<string>();
@@ -781,6 +809,10 @@ export class PrometheusHost {
 			return null;
 		},
 		"fs.dirs": ({ path }) => this.listDirs(path),
+		"fs.pick": async ({ start }) => {
+			const from = start && existsSync(start) ? start : undefined;
+			return { path: await pickFolderNative(from) };
+		},
 		"fs.mkdir": ({ parent, name }) => this.createDir(parent, name),
 
 		"settings.get": () => ({ autoCompaction: this.settings().getCompactionEnabled(), workspaceRoot: this.workspaceRoot() }),
@@ -983,6 +1015,58 @@ export class PrometheusHost {
 				if (hit) out[id] = hit;
 			}
 			return out;
+		},
+
+		"gateway.defaults": async ({ models, url }) => {
+			const source = (url ?? "").trim() || DEFAULT_CATALOG_URL;
+			if (!/^https?:\/\//i.test(source)) throw new Error("地址必须是 http(s)");
+			const cached = this.catalogs.get(source);
+			let catalog: ModelCatalog;
+			if (cached && Date.now() - cached.at < 10 * 60_000) catalog = cached.catalog;
+			else {
+				const res = await fetch(source, { signal: AbortSignal.timeout(20_000), headers: { accept: "application/json" } });
+				if (!res.ok) throw new Error(`拉取失败：HTTP ${res.status}`);
+				catalog = parseModelCatalog(await res.json());
+				if (!catalog.count) throw new Error("该地址没有可识别的模型数据");
+				this.catalogs.set(source, { at: Date.now(), catalog });
+			}
+			return { source, defaults: matchModelDefaults(catalog, models) };
+		},
+		"gateway.piList": async () => {
+			const existing = new Set(this.runtime.config.gateways().map((g) => g.id));
+			return (await this.readPiGateways()).map(({ gateway: g, missingKey }) => ({
+				id: g.id,
+				name: g.name,
+				baseUrl: g.baseUrl,
+				format: g.format,
+				models: g.models.length,
+				exists: existing.has(g.id),
+				missingKey,
+			}));
+		},
+		"gateway.piImport": async ({ ids }) => {
+			const existing = new Set(this.runtime.config.gateways().map((g) => g.id));
+			const wanted = ids ? new Set(ids) : undefined;
+			const imported: string[] = [];
+			const skipped: { id: string; reason: string }[] = [];
+			for (const { gateway, missingKey } of await this.readPiGateways()) {
+				if (wanted && !wanted.has(gateway.id)) continue;
+				if (existing.has(gateway.id)) skipped.push({ id: gateway.id, reason: "已存在" });
+				else if (missingKey) skipped.push({ id: gateway.id, reason: "API Key 无法读取（命令或未设置的环境变量），请手动添加" });
+				else {
+					try {
+						await this.runtime.config.saveGateway(gateway);
+						imported.push(gateway.id);
+					} catch (err) {
+						skipped.push({ id: gateway.id, reason: err instanceof Error ? err.message : String(err) });
+					}
+				}
+			}
+			if (imported.length) {
+				this.syncGateways();
+				this.listener.gatewaysChanged();
+			}
+			return { imported, skipped };
 		},
 
 		"kb.list": () => this.runtime.knowledge.list(),

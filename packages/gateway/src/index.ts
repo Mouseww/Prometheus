@@ -379,3 +379,4 @@ async function safeText(res: Response): Promise<string> {
 		return "";
 	}
 }
+export * from "./external.ts";

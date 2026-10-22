@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { X } from "lucide-react";
-import { createContext, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes, useContext, useEffect } from "react";
+import { type ComponentProps, createContext, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes, useContext, useEffect, useState } from "react";
 import { useStore } from "../lib/store.ts";
 
 const ModalClose = createContext<(() => void) | null>(null);
@@ -16,7 +16,7 @@ export function Modal({ onClose, children, floatingClose }: { onClose: () => voi
 
 	return (
 		<div className="absolute inset-0 z-20 grid place-items-center bg-ink-950/60 backdrop-blur-sm md:p-6" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-			<div role="dialog" aria-modal className="relative flex h-full w-full max-w-6xl animate-rise flex-col overflow-hidden border-ink-700 bg-ink-900 shadow-2xl shadow-black/60 md:max-h-[52rem] md:rounded-2xl md:border">
+			<div role="dialog" aria-modal className="@container relative flex h-full w-full max-w-6xl animate-rise flex-col overflow-hidden border-ink-700 bg-ink-900 shadow-2xl shadow-black/60 md:max-h-[52rem] md:rounded-2xl md:border">
 				{floatingClose && <CloseButton onClose={onClose} className="absolute top-2.5 right-2.5 z-10" />}
 				<ModalClose.Provider value={onClose}>{children}</ModalClose.Provider>
 			</div>
@@ -57,7 +57,7 @@ function CloseButton({ onClose, className }: { onClose: () => void; className?: 
 	);
 }
 
-export function Button({ variant = "ghost", className, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "ghost" | "danger" | "outline" }) {
+export function Button({ variant = "ghost", className, ...props }: ComponentProps<"button"> & { variant?: "primary" | "ghost" | "danger" | "outline" | "destructive" }) {
 	return (
 		<button
 			type="button"
@@ -69,6 +69,7 @@ export function Button({ variant = "ghost", className, ...props }: ButtonHTMLAtt
 				variant === "ghost" && "text-ink-300 hover:bg-ink-800 hover:text-ink-100",
 				variant === "outline" && "border border-ink-700 text-ink-200 hover:border-ink-500 hover:bg-ink-850",
 				variant === "danger" && "text-rose-400 hover:bg-rose-400/10",
+				variant === "destructive" && "bg-rose-400 text-ink-950 hover:bg-rose-400/85",
 				className,
 			)}
 		/>
@@ -103,13 +104,13 @@ export function Field({ label, hint, children }: { label: string; hint?: ReactNo
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: ReactNode }) {
 	const onClose = useContext(ModalClose);
 	return (
-		<header className="flex flex-wrap items-end gap-x-4 gap-y-2 border-b hairline px-4 pt-4 pb-3 md:px-8 md:pt-6 md:pb-4">
-			<div className="order-1 min-w-0 flex-1">
-				<h1 className="font-display text-xl font-semibold tracking-tight md:text-2xl">{title}</h1>
+		<header className="flex flex-wrap items-end gap-x-4 gap-y-2 border-b hairline px-4 pt-4 pb-3 @3xl:px-8 @3xl:pt-6 @3xl:pb-4">
+			<div className="order-1 min-w-[min(100%,15rem)] flex-1">
+				<h1 className="font-display text-xl font-semibold tracking-tight @3xl:text-2xl">{title}</h1>
 				{subtitle && <p className="mt-1 text-sm text-ink-400">{subtitle}</p>}
 			</div>
-			{actions && <div className="order-2 flex items-center gap-2 max-md:order-3 max-md:w-full max-md:justify-end">{actions}</div>}
-			{onClose && <CloseButton onClose={onClose} className="order-3 self-start max-md:order-2 md:-mr-3" />}
+			{actions && <div className="order-2 flex items-center gap-2 @max-3xl:order-3 @max-3xl:w-full @max-3xl:justify-end">{actions}</div>}
+			{onClose && <CloseButton onClose={onClose} className="order-3 self-start @max-3xl:order-2 @3xl:-mr-3" />}
 		</header>
 	);
 }
@@ -157,5 +158,35 @@ export function Flame({ className }: { className?: string }) {
 			/>
 			<rect x="8" y="27" width="16" height="2.2" rx="1.1" fill="#ff7a2f" opacity=".55" />
 		</svg>
+	);
+}
+
+/**
+ * Height + fade transition for content that appears and disappears. The children stay mounted until the
+ * closing animation has finished, so the content never pops out.
+ */
+export function Collapse({ open, children, className }: { open: boolean; children: ReactNode; className?: string }) {
+	const [mounted, setMounted] = useState(open);
+	const [shown, setShown] = useState(open);
+	useEffect(() => {
+		if (open) {
+			setMounted(true);
+			// Two frames: the collapsed state must be painted once or the browser skips the transition.
+			let b = 0;
+			const a = requestAnimationFrame(() => (b = requestAnimationFrame(() => setShown(true))));
+			return () => {
+				cancelAnimationFrame(a);
+				cancelAnimationFrame(b);
+			};
+		}
+		setShown(false);
+		const timer = setTimeout(() => setMounted(false), 240);
+		return () => clearTimeout(timer);
+	}, [open]);
+	if (!mounted) return null;
+	return (
+		<div className={clsx("collapse-grid grid", shown ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0", className)}>
+			<div className="min-h-0 overflow-hidden">{children}</div>
+		</div>
 	);
 }

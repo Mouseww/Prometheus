@@ -407,6 +407,34 @@ fn stop_local_backend(state: tauri::State<'_, Backend>) {
     state.set(Status::Idle);
 }
 
+/// Opens an http(s) link in the system's default browser; anything else is refused.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[tauri::command]
+fn open_external(url: String) -> Result<(), String> {
+    if !(url.starts_with("http://") || url.starts_with("https://")) || url.chars().any(|c| c.is_control() || c == ' ') {
+        return Err("only http(s) links can be opened".into());
+    }
+    #[cfg(target_os = "windows")]
+    let mut cmd = {
+        let mut c = std::process::Command::new("rundll32");
+        c.args(["url.dll,FileProtocolHandler", &url]);
+        c
+    };
+    #[cfg(target_os = "macos")]
+    let mut cmd = {
+        let mut c = std::process::Command::new("open");
+        c.arg(&url);
+        c
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut cmd = {
+        let mut c = std::process::Command::new("xdg-open");
+        c.arg(&url);
+        c
+    };
+    cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn relaunch_app(app: tauri::AppHandle, state: tauri::State<'_, Backend>) {
     state.kill();
@@ -441,6 +469,7 @@ pub fn run() {
             start_local_backend,
             stop_local_backend,
             relaunch_app,
+            open_external,
             local_supported,
             tray::set_close_to_tray,
             tray::show_main_window,

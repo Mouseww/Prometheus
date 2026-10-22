@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { confirmDialog } from "../lib/dialogs.ts";
 import { Plus, RefreshCw, Shield, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { defineMessages, useT } from "../lib/i18n.ts";
@@ -467,7 +468,7 @@ export function VeilView() {
 								<Button
 									variant="danger"
 									onClick={async () => {
-										if (!window.confirm(t("confirmClearMappings"))) return;
+										if (!(await confirmDialog(t("confirmClearMappings")))) return;
 										if (await pluginCall("veil", "clearMappings", {})) {
 											toast(t("mappingsCleared"));
 											await Promise.all([load(), loadMappings()]);

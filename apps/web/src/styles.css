@@ -10,7 +10,10 @@
 @custom-variant nohover (@media (hover: none));
 
 /* Reduced motion: decorative loops stop; spinners keep turning (essential feedback). */
+.collapse-grid { transition: grid-template-rows 0.22s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.2s ease-out; }
+
 @media (prefers-reduced-motion: reduce) {
+	.collapse-grid { transition: none; }
 	:root {
 		--animate-flicker: none;
 		--animate-breathe: none;
@@ -24,17 +27,17 @@
 	--font-sans: "IBM Plex Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
 	--font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
 
-	--color-ink-950: #0d0b09;
-	--color-ink-900: #15120f;
-	--color-ink-850: #1b1714;
-	--color-ink-800: #221d19;
-	--color-ink-700: #2e2722;
-	--color-ink-600: #3f362f;
-	--color-ink-500: #5c5048;
-	--color-ink-400: #8a7d72;
-	--color-ink-300: #b4a698;
-	--color-ink-200: #d9cdbf;
-	--color-ink-100: #f2e9df;
+	--color-ink-950: #1c1814;
+	--color-ink-900: #242019;
+	--color-ink-850: #2b261f;
+	--color-ink-800: #342e27;
+	--color-ink-700: #443c34;
+	--color-ink-600: #574d43;
+	--color-ink-500: #7a6d62;
+	--color-ink-400: #a09387;
+	--color-ink-300: #c0b4a7;
+	--color-ink-200: #d7ccbf;
+	--color-ink-100: #e9e0d5;
 
 	--color-ember-600: #e0420f;
 	--color-ember-500: #ff5a1f;

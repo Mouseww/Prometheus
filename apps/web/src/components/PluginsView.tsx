@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { confirmDialog } from "../lib/dialogs.ts";
 import { Blocks, CircleAlert, FolderSearch, Info, RefreshCw, Sparkles, Trash2 } from "lucide-react";
 import { useState } from "react";
 import type { PluginInfo } from "@prometheus/protocol";
@@ -195,7 +196,7 @@ export function PluginsView() {
 							variant="danger"
 							className="ml-auto px-2.5 py-1 text-xs"
 							disabled={working}
-							onClick={() => confirm(t("confirmRemove", { name: p.name })) && void act(p.id, () => call((c) => c.rpc("plugin.remove", { id: p.id })), t("removed", { name: p.name }))}
+							onClick={() => void confirmDialog(t("confirmRemove", { name: p.name })).then((ok) => { if (ok) void act(p.id, () => call((c) => c.rpc("plugin.remove", { id: p.id })), t("removed", { name: p.name })); })}
 						>
 							<Trash2 className="size-3.5" /> {t("remove")}
 						</Button>
@@ -221,9 +222,9 @@ export function PluginsView() {
 					</div>
 				}
 			/>
-			<div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
+			<div className="min-h-0 flex-1 overflow-y-auto p-4 @3xl:p-6">
 				<div className="mx-auto max-w-4xl space-y-8">
-					{plugins.length === 0 ? <Empty icon={<Blocks className="size-5" />} title={t("empty")} /> : <div className="grid gap-3 md:grid-cols-2">{plugins.map(row)}</div>}
+					{plugins.length === 0 ? <Empty icon={<Blocks className="size-5" />} title={t("empty")} /> : <div className="grid gap-3 @3xl:grid-cols-2">{plugins.map(row)}</div>}
 
 					<section className="rounded-2xl border border-ink-800 bg-ink-900/40 p-6">
 						<h3 className="font-display text-lg font-semibold">{t("howTitle")}</h3>

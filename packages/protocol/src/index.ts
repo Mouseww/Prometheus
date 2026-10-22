@@ -333,6 +333,18 @@ export interface GatewayModel {
 	cost?: ModelPricing;
 }
 
+export interface PiGatewayInfo {
+	id: string;
+	name: string;
+	baseUrl: string;
+	format: GatewayFormat;
+	models: number;
+	/** A gateway with this id already exists in Prometheus. */
+	exists: boolean;
+	/** The API key is a shell command or unset variable and must be entered by hand. */
+	missingKey: boolean;
+}
+
 export interface GatewayConfig {
 	id: string;
 	name: string;
@@ -810,6 +822,8 @@ export interface RpcMethods {
 	/** Reveal the workspace folder in the OS file manager of the machine running the server. */
 	"workspace.open": { params: { id: string }; result: null };
 	"fs.dirs": { params: { path?: string }; result: DirListing };
+	/** Open the operating system's native folder chooser on the machine running the server; path is null when cancelled. */
+	"fs.pick": { params: { start?: string }; result: { path: string | null } };
 	/** Create a folder for a new workspace; the returned listing is the parent, refreshed. */
 	"fs.mkdir": { params: { parent: string; name: string }; result: DirListing };
 
@@ -843,6 +857,12 @@ export interface RpcMethods {
 	"gateway.models": { params: { gateway: GatewayConfig }; result: GatewayModel[] };
 	/** Look up official list prices (PI's built-in catalogue) by model id; ids without a match are omitted. */
 	"gateway.pricing": { params: { models: string[] }; result: Record<string, ModelPricing> };
+	/** Fetch a models.dev style catalogue (default https://models.opencode.ai/api.json) and return default settings for the given model ids; unmatched ids are omitted. */
+	"gateway.defaults": { params: { models: string[]; url?: string }; result: { source: string; defaults: Record<string, Omit<GatewayModel, "id" | "xhigh" | "max">> } };
+	/** Gateways found in the installed PI agent's models.json, for a one-click import. */
+	"gateway.piList": { params: Record<string, never>; result: PiGatewayInfo[] };
+	/** Import the named PI providers (all importable ones when `ids` is omitted); returns the ids imported. */
+	"gateway.piImport": { params: { ids?: string[] }; result: { imported: string[]; skipped: { id: string; reason: string }[] } };
 
 	"kb.list": { params: Record<string, never>; result: KnowledgeBaseInfo[] };
 	"kb.create": { params: { name: string; description?: string; store?: string; embedding: { gatewayId: string; model: string } }; result: KnowledgeBaseInfo };

@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { confirmDialog } from "../lib/dialogs.ts";
 import { Cable, Plus, Trash2, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { McpExposure, McpProbeResult, McpServerInfo, McpServerSpec } from "@prometheus/protocol";
@@ -138,13 +139,13 @@ export function McpView() {
 				}
 			/>
 			<div className="flex min-h-0 flex-1">
-				<div className={clsx("min-h-0 overflow-y-auto p-4 md:p-6", editing ? "hidden w-96 shrink-0 border-r hairline lg:block" : "flex-1")}>
+				<div className={clsx("min-h-0 overflow-y-auto p-4 @3xl:p-6", editing ? "hidden w-96 shrink-0 border-r hairline @4xl:block" : "flex-1")}>
 					{list.length === 0 ? (
 						<Empty icon={<Cable className="size-5" />} title={t("emptyTitle")}>
 							{t("emptyBody")}
 						</Empty>
 					) : (
-						<div className={clsx("grid gap-3", !editing && "md:grid-cols-2 xl:grid-cols-3")}>
+						<div className={clsx("grid gap-3", !editing && "@3xl:grid-cols-2 @5xl:grid-cols-3")}>
 							{list.map((s) => (
 								<button
 									key={`${s.source}:${s.name}`}
@@ -192,7 +193,7 @@ function PairRows({ rows, onChange, keyPlaceholder, label }: { rows: Pairs; onCh
 	return (
 		<div className="space-y-2">
 			{rows.map(([k, v], i) => (
-				<div key={i} className="flex gap-2 max-sm:flex-wrap">
+				<div key={i} className="flex gap-2 @max-xl:flex-wrap">
 					<Input value={k} placeholder={keyPlaceholder} onChange={(e) => onChange(rows.map((r, j) => (j === i ? [e.target.value, r[1]] : r)))} className="font-mono" />
 					<Input value={v} placeholder={t("valuePlaceholder")} onChange={(e) => onChange(rows.map((r, j) => (j === i ? [r[0], e.target.value] : r)))} className="font-mono" />
 					<Button variant="danger" onClick={() => onChange(rows.filter((_, j) => j !== i))} aria-label={t("delete")}>
@@ -259,7 +260,7 @@ function McpEditor({ initial, isNew, onClose, onSaved }: { initial: McpServerInf
 	};
 
 	const remove = async () => {
-		if (!window.confirm(t("confirmDelete", { name: initial.name }))) return;
+		if (!(await confirmDialog(t("confirmDelete", { name: initial.name })))) return;
 		setBusy(true);
 		const res = await pluginCall<null>("mcp", "delete", { name: initial.name });
 		setBusy(false);
@@ -281,7 +282,7 @@ function McpEditor({ initial, isNew, onClose, onSaved }: { initial: McpServerInf
 
 	return (
 		<div className="min-h-0 flex-1 overflow-y-auto">
-			<div className="mx-auto max-w-2xl space-y-6 p-4 md:p-6">
+			<div className="mx-auto max-w-2xl space-y-6 p-4 @3xl:p-6">
 				<div className="flex items-center justify-between gap-2">
 					<h2 className="flex items-center gap-2 font-display text-xl font-semibold">
 						{isNew ? t("newServer") : initial.name}
@@ -347,7 +348,7 @@ function McpEditor({ initial, isNew, onClose, onSaved }: { initial: McpServerInf
 						<Textarea rows={2} value={spec.description ?? ""} onChange={(e) => patch({ description: e.target.value })} placeholder={t("descriptionPlaceholder")} />
 					</Field>
 
-					<div className="grid gap-4 sm:grid-cols-2">
+					<div className="grid gap-4 @xl:grid-cols-2">
 						<Field label={t("exposure")}>
 							<Select value={spec.exposure ?? "codemode"} onChange={(e) => patch({ exposure: e.target.value as McpExposure })}>
 								{EXPOSURE.map((x) => (

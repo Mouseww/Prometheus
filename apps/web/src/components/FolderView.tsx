@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { Collapse } from "./ui.tsx";
 import { ChevronRight, File, Folder, FolderOpen, LoaderCircle, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { FolderListing } from "@prometheus/protocol";
@@ -75,7 +76,7 @@ export function FolderView({ cwd }: { cwd: string }) {
 								{open.has(e.path) ? <FolderOpen className="size-3.5 shrink-0 text-ember-400" /> : <Folder className="size-3.5 shrink-0 text-ember-400" />}
 								<span className="truncate">{e.name}</span>
 							</button>
-							{open.has(e.path) && render(e.path, depth + 1)}
+							<Collapse open={open.has(e.path)}>{render(e.path, depth + 1)}</Collapse>
 						</div>
 					) : (
 						<button key={e.path} type="button" onClick={() => openFile(e.path, cwd)} className="flex w-full items-center gap-1.5 rounded px-2 py-[3px] text-left text-[13px] text-ink-300 hover:bg-ink-800 hover:text-ink-100" style={{ paddingLeft: 8 + depth * 14 + 16 }} title={e.path}>

@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { confirmDialog, promptDialog } from "../lib/dialogs.ts";
 import { ArrowDown, ArrowUp, GitBranch, GitCommitHorizontal, LoaderCircle, Minus, Plus, RefreshCw, Undo2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { GitBranch as Branch, GitCommit, GitDiff, GitFileChange, GitStatus } from "@prometheus/protocol";
@@ -224,7 +225,7 @@ export function GitView() {
 								className="rounded p-1 text-ink-400 hover:bg-rose-400/10 hover:text-rose-400"
 								onClick={() => {
 									const untracked = f.index === "?";
-									if (confirm(t(untracked ? "confirmDiscardNew" : "confirmDiscard", { path: f.path }))) void act(() => call("discard", { files: [{ path: f.path, untracked }] }));
+									void confirmDialog(t(untracked ? "confirmDiscardNew" : "confirmDiscard", { path: f.path })).then((ok) => { if (ok) void act(() => call("discard", { files: [{ path: f.path, untracked }] })); });
 								}}
 							>
 								<Undo2 className="size-3.5" />
@@ -291,8 +292,7 @@ export function GitView() {
 									onChange={(e) => {
 										const name = e.target.value;
 										if (name === "__new") {
-											const n = prompt(t("branchName"));
-											if (n?.trim()) void act(() => call("checkout", { name: n.trim(), create: true }), t("switched", { name: n.trim() }));
+											void promptDialog(t("branchName")).then((n) => { if (n) void act(() => call("checkout", { name: n, create: true }), t("switched", { name: n })); });
 										} else void act(() => call("checkout", { name }), t("switched", { name }));
 									}}
 								>

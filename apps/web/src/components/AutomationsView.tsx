@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { confirmDialog } from "../lib/dialogs.ts";
 import { AlarmClock, CircleAlert, CircleCheck, Clock, LoaderCircle, MessageSquare, Pencil, Play, Plus, Square, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { AutomationInput, AutomationRun, AutomationSchedule, AutomationTask, RunAccess } from "@prometheus/protocol";
@@ -377,7 +378,7 @@ export function AutomationsView() {
 											<Button variant="ghost" aria-label={t("edit")} onClick={() => setEditing({ id: task.id, name: task.name, prompt: task.prompt, workspaceId: task.workspaceId, schedule: task.schedule, access: task.access, enabled: task.enabled, model: task.model })}>
 												<Pencil className="size-4" />
 											</Button>
-											<Button variant="danger" aria-label={t("delete")} onClick={() => confirm(t("confirmDelete", { name: task.name })) && void call("remove", { id: task.id })}>
+											<Button variant="danger" aria-label={t("delete")} onClick={() => void confirmDialog(t("confirmDelete", { name: task.name })).then((ok) => { if (ok) void call("remove", { id: task.id }); })}>
 												<Trash2 className="size-4" />
 											</Button>
 										</div>

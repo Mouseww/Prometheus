@@ -1,8 +1,9 @@
 import clsx from "clsx";
-import { CloudDownload, Coins, ExternalLink, LoaderCircle, Network, Plus, Search, SlidersHorizontal, Trash2, X, Zap } from "lucide-react";
+import { confirmDialog } from "../lib/dialogs.ts";
+import { CloudDownload, Coins, DatabaseZap, Download, ExternalLink, LoaderCircle, Network, Plus, Search, SlidersHorizontal, Trash2, X, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
 import { GATEWAY_PRESETS } from "@prometheus/protocol";
-import type { GatewayAuth, GatewayConfig, GatewayFormat, GatewayModel, GatewayPreset, ModelPricing } from "@prometheus/protocol";
+import type { GatewayAuth, GatewayConfig, GatewayFormat, GatewayModel, GatewayPreset, ModelPricing, PiGatewayInfo } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { usePrefs } from "../lib/prefs.ts";
 import { call, refreshModels, toast } from "../lib/store.ts";
@@ -75,6 +76,20 @@ const M = defineMessages({
 		getKey: "获取 API Key",
 		advanced: "高级设置",
 		simpleHint: "地址、协议与模型已按官方配置预填，填入 API Key 即可使用。",
+		loadDefaults: "加载模型默认设置",
+		defaultsUrl: "默认设置来源（models.dev 格式的 api.json，留空使用默认）",
+		defaultsDone: "已为 {n} 个模型加载默认设置（上下文、思考、视觉、价格）",
+		defaultsNone: "来源中没有匹配的模型",
+		importPi: "导入 PI 网关",
+		piTitle: "导入已安装 PI Agent 的网关",
+		piHint: "读取 PI 的 models.json 中自定义的服务商（缺少的 API Key 会从 auth.json 补全），导入后可在这里统一管理。",
+		piEmpty: "没有在 PI 的 models.json 中找到自定义网关",
+		piImportAll: "一键导入全部可用",
+		piImportOne: "导入",
+		piExists: "已存在",
+		piMissingKey: "需手动填写 Key",
+		piDone: "已导入 {n} 个网关",
+		piSkipped: "跳过：{list}",
 	},
 	en: {
 		hintCompletions: "/v1/chat/completions, works with most proxies and local inference",
@@ -142,6 +157,20 @@ const M = defineMessages({
 		getKey: "Get an API key",
 		advanced: "Advanced settings",
 		simpleHint: "URL, protocol and models are prefilled from the official setup. Enter your API key to start.",
+		loadDefaults: "Load model defaults",
+		defaultsUrl: "Defaults source (models.dev style api.json; blank for default)",
+		defaultsDone: "Loaded defaults for {n} models (context, reasoning, vision, price)",
+		defaultsNone: "No matching models in that source",
+		importPi: "Import from PI",
+		piTitle: "Import gateways from the installed PI agent",
+		piHint: "Reads the custom providers in PI's models.json; missing API keys are filled in from auth.json. Once imported you can manage them here.",
+		piEmpty: "No custom gateways found in PI's models.json",
+		piImportAll: "Import all available",
+		piImportOne: "Import",
+		piExists: "Already added",
+		piMissingKey: "Key needed",
+		piDone: "Imported {n} gateways",
+		piSkipped: "Skipped: {list}",
 	},
 });
 type MsgKey = keyof typeof M.zh;
@@ -183,6 +212,7 @@ export function GatewaysView() {
 	const [list, setList] = useState<GatewayConfig[]>([]);
 	const [editing, setEditing] = useState<{ gateway: GatewayConfig; isNew: boolean; preset?: GatewayPreset } | null>(null);
 	const [picking, setPicking] = useState(false);
+	const [piOpen, setPiOpen] = useState(false);
 
 	const load = async () => {
 		const gateways = await call((c) => c.rpc("gateway.list", {}));
@@ -198,31 +228,45 @@ export function GatewaysView() {
 				title={t("title")}
 				subtitle={t("subtitle")}
 				actions={
-					<Button
-						variant="primary"
-						onClick={() => {
-							setEditing(null);
-							setPicking(true);
-						}}
-					>
-						<Plus className="size-4" /> {t("addGateway")}
-					</Button>
+					<div className="flex gap-2">
+						<Button
+							variant="outline"
+							onClick={() => {
+								setEditing(null);
+								setPicking(false);
+								setPiOpen(true);
+							}}
+						>
+							<Download className="size-4" /> {t("importPi")}
+						</Button>
+						<Button
+							variant="primary"
+							onClick={() => {
+								setEditing(null);
+								setPiOpen(false);
+								setPicking(true);
+							}}
+						>
+							<Plus className="size-4" /> {t("addGateway")}
+						</Button>
+					</div>
 				}
 			/>
 			<div className="flex min-h-0 flex-1">
-				<div className={clsx("min-h-0 overflow-y-auto p-4 md:p-6", editing || picking ? "hidden w-96 shrink-0 border-r hairline lg:block" : "flex-1")}>
+				<div className={clsx("min-h-0 overflow-y-auto p-4 @3xl:p-6", editing || picking || piOpen ? "hidden w-96 shrink-0 border-r hairline @4xl:block" : "flex-1")}>
 					{list.length === 0 ? (
 						<Empty icon={<Network className="size-5" />} title={t("emptyTitle")}>
 							{t("emptyBody")}
 						</Empty>
 					) : (
-						<div className={clsx("grid gap-3", !editing && !picking && "md:grid-cols-2 xl:grid-cols-3")}>
+						<div className={clsx("grid gap-3", !editing && !picking && !piOpen && "@3xl:grid-cols-2 @5xl:grid-cols-3")}>
 							{list.map((g) => (
 								<button
 									key={g.id}
 									type="button"
 									onClick={() => {
 										setPicking(false);
+										setPiOpen(false);
 										setEditing({ gateway: structuredClone(g), isNew: false });
 									}}
 									className={clsx(
@@ -246,6 +290,15 @@ export function GatewaysView() {
 						</div>
 					)}
 				</div>
+				{piOpen && (
+					<PiImport
+						onClose={() => setPiOpen(false)}
+						onDone={async () => {
+							await load();
+							await refreshModels();
+						}}
+					/>
+				)}
 				{picking && (
 					<PresetPicker
 						existing={list}
@@ -274,13 +327,77 @@ export function GatewaysView() {
 	);
 }
 
+function PiImport({ onClose, onDone }: { onClose: () => void; onDone: () => Promise<void> }) {
+	const t = useT(M);
+	const [list, setList] = useState<PiGatewayInfo[] | null>(null);
+	const [busy, setBusy] = useState(false);
+	useEffect(() => {
+		void call((c) => c.rpc("gateway.piList", {})).then((r) => setList(r ?? []));
+	}, []);
+	const importable = (list ?? []).filter((g) => !g.exists && !g.missingKey);
+	const run = async (ids?: string[]) => {
+		setBusy(true);
+		const r = await call((c) => c.rpc("gateway.piImport", { ids }));
+		setBusy(false);
+		if (!r) return;
+		toast(t("piDone", { n: r.imported.length }) + (r.skipped.length ? " · " + t("piSkipped", { list: r.skipped.map((x) => `${x.id} (${x.reason})`).join("; ") }) : ""));
+		await onDone();
+		const next = await call((c) => c.rpc("gateway.piList", {}));
+		if (next) setList(next);
+	};
+	return (
+		<div className="min-h-0 flex-1 overflow-y-auto">
+			<div className="mx-auto max-w-2xl space-y-5 p-4 @3xl:p-6">
+				<div className="flex items-center justify-between">
+					<div>
+						<h2 className="font-display text-xl font-semibold">{t("piTitle")}</h2>
+						<p className="mt-1 text-sm text-ink-500">{t("piHint")}</p>
+					</div>
+					<Button onClick={onClose}>{t("close")}</Button>
+				</div>
+				{list === null && <LoaderCircle className="mx-auto size-5 animate-spin text-ink-500" />}
+				{list?.length === 0 && <p className="py-8 text-center text-sm text-ink-500">{t("piEmpty")}</p>}
+				{list && list.length > 0 && (
+					<>
+						<Button variant="primary" disabled={busy || importable.length === 0} onClick={() => void run()}>
+							{busy ? <LoaderCircle className="size-4 animate-spin" /> : <Download className="size-4" />} {t("piImportAll")} ({importable.length})
+						</Button>
+						<div className="space-y-2">
+							{list.map((g) => (
+								<div key={g.id} className="flex items-center gap-3 rounded-xl border border-ink-800 bg-ink-900/60 p-3">
+									<div className="min-w-0 flex-1">
+										<div className="flex items-center gap-2">
+											<span className="font-display font-semibold">{g.name}</span>
+											<span className="font-mono text-[11px] text-ink-500">{g.id}</span>
+										</div>
+										<div className="truncate font-mono text-xs text-ink-500">{g.baseUrl}</div>
+										<div className="mt-1.5 flex flex-wrap gap-1.5">
+											<Badge tone="ember">{g.format}</Badge>
+											<Badge tone="sky">{t("modelCount", { n: g.models })}</Badge>
+											{g.exists && <Badge tone="moss">{t("piExists")}</Badge>}
+											{g.missingKey && <Badge>{t("piMissingKey")}</Badge>}
+										</div>
+									</div>
+									<Button variant="outline" disabled={busy || g.exists || g.missingKey} onClick={() => void run([g.id])}>
+										{t("piImportOne")}
+									</Button>
+								</div>
+							))}
+						</div>
+					</>
+				)}
+			</div>
+		</div>
+	);
+}
+
 function PresetPicker({ existing, onPick, onClose }: { existing: GatewayConfig[]; onPick: (preset: GatewayPreset | null) => void; onClose: () => void }) {
 	const t = useT(M);
 	const taken = new Set(existing.map((g) => g.id));
 	const lang = usePrefs((s) => s.lang);
 	return (
 		<div className="min-h-0 flex-1 overflow-y-auto">
-			<div className="mx-auto max-w-2xl space-y-5 p-4 md:p-6">
+			<div className="mx-auto max-w-2xl space-y-5 p-4 @3xl:p-6">
 				<div className="flex items-center justify-between">
 					<div>
 						<h2 className="font-display text-xl font-semibold">{t("pickTitle")}</h2>
@@ -288,7 +405,7 @@ function PresetPicker({ existing, onPick, onClose }: { existing: GatewayConfig[]
 					</div>
 					<Button onClick={onClose}>{t("close")}</Button>
 				</div>
-				<div className="grid gap-3 sm:grid-cols-2">
+				<div className="grid gap-3 @xl:grid-cols-2">
 					{GATEWAY_PRESETS.map((p) => (
 						<button
 							key={p.id}
@@ -359,6 +476,23 @@ function GatewayEditor({ initial, isNew, preset, onClose, onSaved }: { initial: 
 		toast(n ? t("pricesDone", { n }) : t("pricesNone"));
 	};
 
+	const [defaultsUrl, setDefaultsUrl] = useState(() => localStorage.getItem("prometheus.modelDefaultsUrl") ?? "");
+	const [loadingDefaults, setLoadingDefaults] = useState(false);
+	const loadDefaults = async () => {
+		const ids = g.models.map((m) => m.id.trim()).filter(Boolean);
+		if (!ids.length) return;
+		const url = defaultsUrl.trim();
+		if (url) localStorage.setItem("prometheus.modelDefaultsUrl", url);
+		else localStorage.removeItem("prometheus.modelDefaultsUrl");
+		setLoadingDefaults(true);
+		const r = await call((c) => c.rpc("gateway.defaults", { models: ids, url: url || undefined }));
+		setLoadingDefaults(false);
+		if (!r) return;
+		const n = Object.keys(r.defaults).length;
+		if (n) setG((x) => ({ ...x, models: x.models.map((m) => (r.defaults[m.id.trim()] ? { ...m, ...r.defaults[m.id.trim()], name: m.name || r.defaults[m.id.trim()]?.name } : m)) }));
+		toast(n ? t("defaultsDone", { n }) : t("defaultsNone"));
+	};
+
 	const toggleModel = (m: GatewayModel) =>
 		setG((x) => {
 			const kept = x.models.filter((y) => y.id.trim());
@@ -386,7 +520,7 @@ function GatewayEditor({ initial, isNew, preset, onClose, onSaved }: { initial: 
 	};
 
 	const remove = async () => {
-		if (!confirm(t("confirmDelete", { name: g.name }))) return;
+		if (!(await confirmDialog(t("confirmDelete", { name: g.name })))) return;
 		const ok = await call((c) => c.rpc("gateway.delete", { id: g.id }));
 		if (ok !== undefined) {
 			await onSaved();
@@ -396,7 +530,7 @@ function GatewayEditor({ initial, isNew, preset, onClose, onSaved }: { initial: 
 
 	return (
 		<div className="min-h-0 flex-1 overflow-y-auto">
-			<div className="mx-auto max-w-2xl space-y-6 p-4 md:p-6">
+			<div className="mx-auto max-w-2xl space-y-6 p-4 @3xl:p-6">
 				<div className="flex items-center justify-between">
 					<h2 className="font-display text-xl font-semibold">{isNew ? t("newGateway") : g.name}</h2>
 					<Button onClick={onClose}>{t("close")}</Button>
@@ -426,7 +560,7 @@ function GatewayEditor({ initial, isNew, preset, onClose, onSaved }: { initial: 
 
 				{advanced && (
 				<>
-				<div className="grid gap-4 sm:grid-cols-2">
+				<div className="grid gap-4 @xl:grid-cols-2">
 					<Field label="ID" hint={t("idHint")}>
 						<Input value={g.id} disabled={!isNew} onChange={(e) => patch({ id: e.target.value })} placeholder="my-gateway" />
 					</Field>
@@ -457,7 +591,7 @@ function GatewayEditor({ initial, isNew, preset, onClose, onSaved }: { initial: 
 					<Input value={g.baseUrl} onChange={(e) => patch({ baseUrl: e.target.value })} className="font-mono" />
 				</Field>
 
-				<div className="grid gap-4 sm:grid-cols-2">
+				<div className="grid gap-4 @xl:grid-cols-2">
 					<Field label={t("auth")}>
 						<Select
 							value={g.auth.type}
@@ -481,7 +615,7 @@ function GatewayEditor({ initial, isNew, preset, onClose, onSaved }: { initial: 
 				</div>
 
 				{g.auth.type === "header" && (
-					<div className="grid gap-4 sm:grid-cols-2">
+					<div className="grid gap-4 @xl:grid-cols-2">
 						<Field label={t("headerName")}>
 							<Input value={g.auth.header} onChange={(e) => patch({ auth: { type: "header", header: e.target.value, prefix: g.auth.type === "header" ? g.auth.prefix : "" } })} className="font-mono" />
 						</Field>
@@ -539,7 +673,7 @@ function GatewayEditor({ initial, isNew, preset, onClose, onSaved }: { initial: 
 									</label>
 								))}
 								</div>
-								<div className="grid w-full basis-full grid-cols-2 gap-2 text-xs text-ink-500 sm:grid-cols-4">
+								<div className="grid w-full basis-full grid-cols-2 gap-2 text-xs text-ink-500 @xl:grid-cols-4">
 									<span className="col-span-full">{t("priceUnit")}</span>
 									{(["input", "output", "cacheRead", "cacheWrite"] as const).map((k) => (
 										<label key={k} className="flex min-w-0 flex-col gap-1 whitespace-nowrap">
@@ -557,10 +691,14 @@ function GatewayEditor({ initial, isNew, preset, onClose, onSaved }: { initial: 
 							<Button variant="outline" disabled={!g.models.some((m) => m.id.trim())} onClick={() => void fetchPrices()}>
 								<Coins className="size-3.5" /> {t("fetchPrices")}
 							</Button>
+							<Button variant="outline" disabled={loadingDefaults || !g.models.some((m) => m.id.trim())} onClick={() => void loadDefaults()}>
+								{loadingDefaults ? <LoaderCircle className="size-3.5 animate-spin" /> : <DatabaseZap className="size-3.5" />} {t("loadDefaults")}
+							</Button>
 							<Button variant="outline" disabled={loadingModels || !g.baseUrl} onClick={() => void loadModels()}>
 								{loadingModels ? <LoaderCircle className="size-3.5 animate-spin" /> : <CloudDownload className="size-3.5" />} {t("loadModels")}
 							</Button>
 						</div>
+						<Input value={defaultsUrl} onChange={(e) => setDefaultsUrl(e.target.value)} placeholder="https://models.opencode.ai/api.json" aria-label={t("defaultsUrl")} title={t("defaultsUrl")} className="font-mono text-xs" spellCheck={false} />
 						{catalogue && <ModelCatalogue list={catalogue} selected={g.models} onToggle={toggleModel} onClose={() => setCatalogue(null)} />}
 					</div>
 				</Field>
@@ -621,7 +759,7 @@ function ModelCatalogue({ list, selected, onToggle, onClose }: { list: GatewayMo
 					<label key={m.id} className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 hover:bg-ink-850">
 						<input type="checkbox" checked={chosen.has(m.id)} onChange={() => onToggle(m)} className="accent-ember-500" />
 						<span className="min-w-0 flex-1 truncate font-mono text-[13px] text-ink-100">{m.id}</span>
-						{m.name && m.name !== m.id && <span className="hidden max-w-40 truncate text-xs text-ink-500 sm:inline">{m.name}</span>}
+						{m.name && m.name !== m.id && <span className="hidden max-w-40 truncate text-xs text-ink-500 @xl:inline">{m.name}</span>}
 						{m.reasoning && <Badge tone="sky">{t("reasoning")}</Badge>}
 						{m.vision && <Badge tone="moss">{t("vision")}</Badge>}
 						{m.contextWindow && <span className="font-mono text-[10.5px] text-ink-600">{Math.round(m.contextWindow / 1000)}k</span>}

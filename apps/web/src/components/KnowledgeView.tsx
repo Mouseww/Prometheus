@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { confirmDialog } from "../lib/dialogs.ts";
 import { BookOpen, FileText, Plus, RefreshCw, Search, Settings2, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { GatewayConfig, KnowledgeBaseInfo, KnowledgeDocumentInfo, KnowledgeHit } from "@prometheus/protocol";
@@ -378,7 +379,7 @@ function BaseDetail({ base, onChanged }: { base: KnowledgeBaseInfo; onChanged: (
 	};
 
 	const removeBase = async () => {
-		if (!confirm(t("confirmDelete", { name: base.name }))) return;
+		if (!(await confirmDialog(t("confirmDelete", { name: base.name })))) return;
 		const ok = await call((c) => c.rpc("kb.delete", { id: base.id }));
 		if (ok !== undefined) await onChanged();
 	};

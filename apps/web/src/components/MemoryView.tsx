@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { confirmDialog } from "../lib/dialogs.ts";
 import { Brain, Pencil, Pin, PinOff, Plus, Search, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { MemoryEntry, MemoryScope } from "@prometheus/protocol";
@@ -168,7 +169,7 @@ export function MemoryView() {
 	};
 
 	const removeSelected = async () => {
-		if (!window.confirm(t("confirmDeleteSelected", { n: picked.size }))) return;
+		if (!(await confirmDialog(t("confirmDeleteSelected", { n: picked.size })))) return;
 		if (await mutate("delete", { ids: [...picked] }, t("deletedSelected", { n: picked.size }))) setPicked(new Set());
 	};
 
@@ -349,7 +350,7 @@ function MemoryCard({
 							title={t("delete")}
 							aria-label={t("delete")}
 							onClick={() => {
-								if (window.confirm(t("confirmDelete"))) void mutate("delete", { id: e.id }, t("deleted"));
+								void confirmDialog(t("confirmDelete")).then((ok) => { if (ok) void mutate("delete", { id: e.id }, t("deleted")); });
 							}}
 						>
 							<Trash2 className="size-4" />

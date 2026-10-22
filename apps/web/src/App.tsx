@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { AutomationsView } from "./components/AutomationsView.tsx";
 import { ChatView } from "./components/ChatView.tsx";
 import { ConnectScreen } from "./components/ConnectScreen.tsx";
+import { AppDialogHost } from "./components/AppDialog.tsx";
 import { DialogHost } from "./components/DialogHost.tsx";
 import { GitView } from "./components/GitView.tsx";
 import { KnowledgeView } from "./components/KnowledgeView.tsx";
@@ -19,6 +20,7 @@ import type { BackendTarget } from "./lib/client.ts";
 import { PrometheusClient } from "./lib/client.ts";
 import { clearSession, discoverBackend, establishCookie, isDesktopShell, saveMode, saveSession } from "./lib/backend.ts";
 import { bindClient, openSession, pluginActive, setView, useStore } from "./lib/store.ts";
+import { CONNECT_EVENT } from "./lib/platforms.ts";
 import { usePrefs } from "./lib/prefs.ts";
 import { checkForUpdate } from "./lib/updater.ts";
 import { useIsMobile } from "./lib/viewport.ts";
@@ -83,6 +85,18 @@ export function App() {
 			useStore.setState({ client: null, session: null, conn: "idle", booted: false });
 		};
 	}, [target]);
+
+	// The platform switcher announces a new server; replacing the target tears down the old connection.
+	useEffect(() => {
+		const onConnect = (e: Event) => {
+			setBootError(null);
+			setWantsPassword(false);
+			setTarget((e as CustomEvent<BackendTarget>).detail);
+			setView("chat");
+		};
+		window.addEventListener(CONNECT_EVENT, onConnect);
+		return () => window.removeEventListener(CONNECT_EVENT, onConnect);
+	}, []);
 
 	useEffect(() => {
 		void checkForUpdate(true);
@@ -152,6 +166,7 @@ export function App() {
 				<SubagentPanel />
 			</div>
 			<DialogHost />
+			<AppDialogHost />
 			<UpdateDialog remote={target.label !== "local"} />
 			<Toasts />
 		</div>

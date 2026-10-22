@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { confirmDialog } from "../lib/dialogs.ts";
 import { Plus, Power, Save, Sparkles, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { SkillDocument, SkillInfo } from "@prometheus/protocol";
@@ -133,8 +134,8 @@ export function SkillsView() {
 					</Button>
 				}
 			/>
-			<div className="flex min-h-0 flex-1 flex-col md:flex-row">
-				<div className="max-h-[38%] w-full shrink-0 space-y-4 overflow-y-auto border-b hairline p-3 md:max-h-none md:w-80 md:border-r md:border-b-0">
+			<div className="flex min-h-0 flex-1 flex-col @3xl:flex-row">
+				<div className="max-h-[38%] w-full shrink-0 space-y-4 overflow-y-auto border-b hairline p-3 @3xl:max-h-none @3xl:w-80 @3xl:border-r @3xl:border-b-0">
 					{SCOPES.map(({ scope, title }) => {
 						const items = skills.filter((s) => s.scope === scope);
 						if (items.length === 0) return null;
@@ -205,7 +206,7 @@ function ReadOnlySkill({ skill, onChanged }: { skill: SkillInfo; onChanged: () =
 		await onChanged();
 	};
 	return (
-		<div className="mx-auto max-w-2xl animate-rise space-y-5 p-4 md:p-8">
+		<div className="mx-auto max-w-2xl animate-rise space-y-5 p-4 @3xl:p-8">
 			<div className="flex items-center gap-2">
 				<h2 className="font-mono text-xl font-semibold">{skill.name}</h2>
 				<Badge tone="sky">{skill.scope === "builtin" ? t("builtin") : skill.scope === "user" ? t("user") : t("project")}</Badge>
@@ -256,7 +257,7 @@ function SkillEditor({ skill, onChanged }: { skill: SkillInfo; onChanged: () => 
 	};
 
 	const remove = async () => {
-		if (!window.confirm(t("confirmDelete", { name: skill.name }))) return;
+		if (!(await confirmDialog(t("confirmDelete", { name: skill.name })))) return;
 		await run("delete", { name: skill.name }, t("deleted", { name: skill.name }));
 	};
 
@@ -321,7 +322,7 @@ function CreateSkill({ onDone }: { onDone: (name?: string) => Promise<void> }) {
 	};
 
 	return (
-		<form onSubmit={submit} className="mx-auto max-w-2xl animate-rise space-y-5 p-4 md:p-8">
+		<form onSubmit={submit} className="mx-auto max-w-2xl animate-rise space-y-5 p-4 @3xl:p-8">
 			<h2 className="font-display text-xl font-semibold">{t("newSkill")}</h2>
 			<Field label={t("name")} hint={form.name && !nameOk ? <span className="text-rose-400">{t("nameInvalid")}</span> : t("nameHint")}>
 				<Input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="pdf-tools" className="font-mono" />

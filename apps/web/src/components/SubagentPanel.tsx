@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { Collapse } from "./ui.tsx";
 import { Bot, Brain, Check, ChevronDown, ChevronRight, CircleAlert, Clock, ListTree, LoaderCircle, Square, Wrench, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { sortSubagents, type SubagentDetail, type SubagentRun, type SubagentState, type SubagentStep } from "@prometheus/protocol";
@@ -263,7 +264,7 @@ function StepView({ step }: { step: SubagentStep }) {
 				<span className="min-w-0 flex-1 truncate font-mono text-[11px] text-ink-500">{oneLine(step.args ?? "")}</span>
 				{hasMore && (open ? <ChevronDown className="size-3 shrink-0 text-ink-500" /> : <ChevronRight className="size-3 shrink-0 text-ink-500" />)}
 			</button>
-			{open && (
+			<Collapse open={open}>
 				<div className="space-y-1.5 border-t border-ink-800 px-2.5 py-2">
 					{step.args && (
 						<div>
@@ -278,7 +279,7 @@ function StepView({ step }: { step: SubagentStep }) {
 						</div>
 					)}
 				</div>
-			)}
+			</Collapse>
 		</div>
 	);
 }

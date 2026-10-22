@@ -1,4 +1,6 @@
 import clsx from "clsx";
+import { Collapse } from "./ui.tsx";
+import { confirmDialog, promptDialog } from "../lib/dialogs.ts";
 import {
 	Archive,
 	ArchiveRestore,
@@ -28,6 +30,7 @@ import { clearSession, saveMode, saveRemote } from "../lib/backend.ts";
 import type { BackendTarget } from "../lib/client.ts";
 import { defineMessages, relativeTime, useT } from "../lib/i18n.ts";
 import { usePrefs } from "../lib/prefs.ts";
+import { PlatformSwitcher } from "./PlatformSwitcher.tsx";
 import {
 	addWorkspace,
 	archiveSession,
@@ -157,7 +160,7 @@ function SessionMenu({ s, onRename }: { s: SessionSummary; onRename: () => void 
 						className={clsx(menuItem, "text-rose-400 hover:bg-rose-400/10")}
 						onClick={() => {
 							setOpen(false);
-							if (confirm(t("confirmDelete", { name: title }))) void deleteSession(s.id);
+							void confirmDialog(t("confirmDelete", { name: title })).then((ok) => { if (ok) void deleteSession(s.id); });
 						}}
 					>
 						<Trash2 className="size-3.5" /> {t("delete")}
@@ -344,8 +347,7 @@ function WorkspaceGroup({ w, sessions, activeId, current }: { w: WorkspaceInfo; 
 								className={clsx(menuItem, "text-ink-200 hover:bg-ink-800")}
 								onClick={() => {
 									menu.setOpen(false);
-									const name = prompt(t("renameWorkspace"), w.name);
-									if (name?.trim()) void call((c) => c.rpc("workspace.rename", { id: w.id, name: name.trim() }));
+									void promptDialog(t("renameWorkspace"), w.name).then((name) => { if (name) void call((c) => c.rpc("workspace.rename", { id: w.id, name })); });
 								}}
 							>
 								<Pencil className="size-3.5" /> {t("rename")}
@@ -355,7 +357,7 @@ function WorkspaceGroup({ w, sessions, activeId, current }: { w: WorkspaceInfo; 
 								className={clsx(menuItem, "text-rose-400 hover:bg-rose-400/10")}
 								onClick={() => {
 									menu.setOpen(false);
-									if (confirm(t("confirmRemove", { name: w.name }))) void call((c) => c.rpc("workspace.remove", { id: w.id }));
+									void confirmDialog(t("confirmRemove", { name: w.name })).then((ok) => { if (ok) void call((c) => c.rpc("workspace.remove", { id: w.id })); });
 								}}
 							>
 								<X className="size-3.5" /> {t("removeWorkspace")}
@@ -367,7 +369,7 @@ function WorkspaceGroup({ w, sessions, activeId, current }: { w: WorkspaceInfo; 
 					<Plus className="size-4" />
 				</button>
 			</div>
-			{open.isOpen && (
+			<Collapse open={open.isOpen}>
 				<div className="mt-0.5 ml-3 space-y-0.5 border-l border-ink-800 pl-1.5">
 					{live.length === 0 && <div className="px-3 py-1.5 text-xs text-ink-600">{t("empty")}</div>}
 					{shown.map((s) => (
@@ -388,11 +390,15 @@ function WorkspaceGroup({ w, sessions, activeId, current }: { w: WorkspaceInfo; 
 								{showArchived ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
 								<Archive className="size-3" /> {t("archived", { n: archived.length })}
 							</button>
-							{showArchived && archived.map((s) => <SessionRow key={s.id} s={s} active={s.id === activeId} />)}
+							<Collapse open={showArchived}>
+								{archived.map((s) => (
+									<SessionRow key={s.id} s={s} active={s.id === activeId} />
+								))}
+							</Collapse>
 						</>
 					)}
 				</div>
-			)}
+			</Collapse>
 		</div>
 	);
 }
@@ -507,7 +513,7 @@ export function Sidebar({ target, onDisconnect }: { target: BackendTarget; onDis
 			<div className="flex items-center justify-between border-t hairline px-4 py-2.5 text-xs text-ink-500">
 				<span className="flex min-w-0 items-center gap-1.5" title={target.httpBase}>
 					<span className={clsx("size-1.5 shrink-0 rounded-full", conn === "open" ? "bg-moss-400" : "animate-breathe bg-ember-400")} />
-					<span className="truncate">{target.label === "local" ? t("local") : target.label}</span>
+					<PlatformSwitcher target={target} />
 					<button type="button" onClick={() => openSettings("general")} className="shrink-0 font-mono text-[11px] text-ink-600 hover:text-ink-300" title={t("about")}>
 						v{__APP_VERSION__}
 					</button>

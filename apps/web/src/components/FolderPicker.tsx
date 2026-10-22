@@ -1,8 +1,9 @@
-import { ArrowUp, ChevronRight, Clock, CornerLeftUp, Folder, FolderPlus, HardDrive, Home, LoaderCircle, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, ChevronRight, Clock, CornerLeftUp, Folder, FolderPlus, HardDrive, Home, LoaderCircle, MonitorUp, TriangleAlert, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { DirListing } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
+import { isLoopbackHost } from "../lib/backend.ts";
 import { useStore } from "../lib/store.ts";
 import { Button, Input } from "./ui.tsx";
 
@@ -25,6 +26,8 @@ const M = defineMessages({
 		newFolderPlaceholder: "文件夹名称",
 		create: "创建",
 		cancelCreate: "取消创建",
+		system: "系统选择框",
+		systemTitle: "用系统自带的文件夹选择框选择",
 	},
 	en: {
 		title: "Open a project folder",
@@ -44,6 +47,8 @@ const M = defineMessages({
 		newFolderPlaceholder: "Folder name",
 		create: "Create",
 		cancelCreate: "Cancel",
+		system: "System dialog",
+		systemTitle: "Choose with the operating system's folder dialog",
 	},
 });
 
@@ -63,6 +68,24 @@ export function FolderPicker({ onPick, onClose }: { onPick: (path: string) => vo
 	const [name, setName] = useState<string | null>(null);
 	const [creating, setCreating] = useState(false);
 	const req = useRef(0);
+	const [picking, setPicking] = useState(false);
+	// The native dialog opens on the machine running the server, so it only helps when that is this machine.
+	const canNative = useStore((s) => (s.client ? isLoopbackHost(s.client.target.httpBase) : false));
+
+	const pickNative = async () => {
+		const client = useStore.getState().client;
+		if (!client) return;
+		setPicking(true);
+		setError(null);
+		try {
+			const { path } = await client.rpc("fs.pick", { start: listing?.path });
+			if (path) onPick(path);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : t("loadFailed"));
+		} finally {
+			setPicking(false);
+		}
+	};
 
 	/** Resolves to false when the server rejected the path, so callers can fall back to home. */
 	const load = async (path?: string): Promise<boolean> => {
@@ -163,6 +186,11 @@ export function FolderPicker({ onPick, onClose }: { onPick: (path: string) => vo
 					<Button variant="outline" className="px-2 py-1 text-xs" disabled={!listing || creating} onClick={() => setName(name === null ? "" : null)}>
 						<FolderPlus className="size-3.5" /> {t("newFolder")}
 					</Button>
+					{canNative && (
+						<Button variant="outline" className="px-2 py-1 text-xs" disabled={picking} title={t("systemTitle")} onClick={() => void pickNative()}>
+							{picking ? <LoaderCircle className="size-3.5 animate-spin" /> : <MonitorUp className="size-3.5" />} {t("system")}
+						</Button>
+					)}
 					{loading && <LoaderCircle className="ml-auto size-4 animate-spin text-ink-500" />}
 				</div>
 

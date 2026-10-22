@@ -173,7 +173,7 @@ export function NetworkSettings() {
 		return (
 			<div className="flex min-h-0 flex-1 flex-col">
 				<PageHeader title={t("title")} subtitle={t("subtitle")} />
-				<div className="p-4 md:p-8">{error ? <p className="text-sm text-rose-400">{error}</p> : <LoaderCircle className="size-5 animate-spin text-ink-500" />}</div>
+				<div className="p-4 @3xl:p-8">{error ? <p className="text-sm text-rose-400">{error}</p> : <LoaderCircle className="size-5 animate-spin text-ink-500" />}</div>
 			</div>
 		);
 	}
@@ -189,7 +189,7 @@ export function NetworkSettings() {
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
 			<PageHeader title={t("title")} subtitle={t("subtitle")} />
-			<div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-8">
+			<div className="min-h-0 flex-1 overflow-y-auto p-4 @3xl:p-8">
 				<div className="max-w-2xl space-y-5">
 					{status.managed && <p className="rounded-xl border border-ink-700 bg-ink-900/60 px-4 py-3 text-sm text-ink-300">{t("managed")}</p>}
 					{!status.managed && !editable && (
@@ -239,7 +239,7 @@ export function NetworkSettings() {
 						<div className={clsx("text-xs", status.passwordSet ? "text-moss-400" : "text-ember-300")}>{status.passwordSet ? t("passwordSet") : t("passwordNotSet")}</div>
 						{editable && (
 							<>
-								<div className="grid gap-3 sm:grid-cols-2">
+								<div className="grid gap-3 @xl:grid-cols-2">
 									<Field label={t("newPassword")}>
 										<Input type="password" value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} autoComplete="new-password" />
 									</Field>

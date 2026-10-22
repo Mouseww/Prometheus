@@ -1,11 +1,11 @@
 import clsx from "clsx";
-import { BarChart3, Blocks, Cable, Check, Copy, FolderOpen, Globe, Laptop, Layers, Mic, Moon, Network, Package, Plug, Sparkles, Sun, SlidersHorizontal } from "lucide-react";
+import { BarChart3, Blocks, Cable, Check, Copy, FolderOpen, Globe, Laptop, Layers, Mic, Moon, Network, Package, Plug, Server, Sparkles, Sun, SlidersHorizontal, Terminal } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { isAndroid, isDesktopShell } from "../lib/backend.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { type Lang, SKINS, type SendMode, type Skin, setPrefs, type ThemeMode, usePrefs } from "../lib/prefs.ts";
-import { openSettings, type SettingsTab, toast, updateHostSettings, useStore } from "../lib/store.ts";
+import { openSettings, pluginActive, type SettingsTab, toast, updateHostSettings, useStore } from "../lib/store.ts";
 import { checkForUpdate, showUpdate, updaterSupported, useUpdater } from "../lib/updater.ts";
 import { GatewaysView } from "./GatewaysView.tsx";
 import { FolderPicker } from "./FolderPicker.tsx";
@@ -13,6 +13,8 @@ import { MarketView } from "./MarketView.tsx";
 import { ConnectorsView } from "./ConnectorsView.tsx";
 import { McpView } from "./McpView.tsx";
 import { NetworkSettings } from "./NetworkSettings.tsx";
+import { PlatformsView } from "./PlatformsView.tsx";
+import { SshView } from "./SshView.tsx";
 import { PluginsView } from "./PluginsView.tsx";
 import { ModesView } from "./ModesView.tsx";
 import { SkillsView } from "./SkillsView.tsx";
@@ -32,6 +34,8 @@ const M = defineMessages({
 		modes: "模式",
 		voice: "语音输入",
 		network: "网络访问",
+		platforms: "多平台",
+		ssh: "SSH",
 		usage: "用量统计",
 		title: "通用设置",
 		subtitle: "外观、语言与会话行为",
@@ -91,6 +95,8 @@ const M = defineMessages({
 		modes: "Modes",
 		voice: "Voice",
 		network: "Network access",
+		platforms: "Platforms",
+		ssh: "SSH",
 		usage: "Usage",
 		title: "General",
 		subtitle: "Appearance, language and session behaviour",
@@ -401,22 +407,26 @@ const TABS: { id: SettingsTab; icon: typeof Network }[] = [
 	{ id: "plugins", icon: Blocks },
 	{ id: "voice", icon: Mic },
 	{ id: "network", icon: Globe },
+	{ id: "platforms", icon: Server },
+	{ id: "ssh", icon: Terminal },
 	{ id: "usage", icon: BarChart3 },
 ];
 
 export function SettingsView() {
 	const t = useT(M);
 	const tab = useStore((s) => s.settingsTab);
+	const plugins = useStore((s) => s.plugins);
+	const tabs = TABS.filter((x) => x.id !== "ssh" || pluginActive(plugins, "ssh"));
 	return (
-		<div className="flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row">
-			<nav className="flex shrink-0 gap-1 overflow-x-auto border-b hairline p-2 md:block md:w-48 md:space-y-0.5 md:overflow-x-visible md:border-r md:border-b-0 md:p-3">
-				{TABS.map(({ id, icon: Icon }) => (
+		<div className="@container flex min-h-0 flex-1 flex-col overflow-hidden @2xl:flex-row">
+			<nav className="flex shrink-0 gap-1 overflow-x-auto border-b hairline p-2 @2xl:block @2xl:w-44 @2xl:space-y-0.5 @2xl:overflow-x-visible @2xl:border-r @2xl:border-b-0 @2xl:p-3">
+				{tabs.map(({ id, icon: Icon }) => (
 					<button
 						key={id}
 						type="button"
 						onClick={() => openSettings(id)}
 						className={clsx(
-							"flex shrink-0 items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm whitespace-nowrap transition-colors md:w-full",
+							"flex shrink-0 items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm whitespace-nowrap transition-colors @2xl:w-full",
 							tab === id ? "bg-ink-800 text-ink-100" : "text-ink-400 hover:bg-ink-850 hover:text-ink-100",
 						)}
 					>
@@ -425,7 +435,7 @@ export function SettingsView() {
 					</button>
 				))}
 			</nav>
-			<div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+			<div className="@container flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
 				{tab === "general" && <GeneralSettings />}
 				{tab === "gateways" && <GatewaysView />}
 				{tab === "mcp" && <McpView />}
@@ -435,6 +445,8 @@ export function SettingsView() {
 				{tab === "voice" && <VoiceSettings />}
 				{tab === "network" && <NetworkSettings />}
 				{tab === "modes" && <ModesView />}
+				{tab === "platforms" && <PlatformsView />}
+				{tab === "ssh" && <SshView />}
 				{tab === "plugins" && <PluginsView />}
 				{tab === "usage" && <UsageView />}
 			</div>

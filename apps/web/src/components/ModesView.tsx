@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { confirmDialog } from "../lib/dialogs.ts";
 import { Check, Copy, Layers, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ModeSummary } from "@prometheus/protocol";
@@ -163,8 +164,8 @@ export function ModesView() {
 					</div>
 				}
 			/>
-			<div className="flex min-h-0 flex-1 flex-col md:flex-row">
-				<div className="max-h-[38%] w-full shrink-0 space-y-1 overflow-y-auto border-b hairline p-3 md:max-h-none md:w-80 md:border-r md:border-b-0">
+			<div className="flex min-h-0 flex-1 flex-col @3xl:flex-row">
+				<div className="max-h-[38%] w-full shrink-0 space-y-1 overflow-y-auto border-b hairline p-3 @3xl:max-h-none @3xl:w-80 @3xl:border-r @3xl:border-b-0">
 					<button
 						type="button"
 						onClick={() => void setDefault(null)}
@@ -278,7 +279,7 @@ function ModeEditor({ mode, isCurrent, onChanged, onToggleDefault }: { mode: Mod
 	};
 
 	const reset = async () => {
-		if (!window.confirm(t("confirmReset"))) return;
+		if (!(await confirmDialog(t("confirmReset")))) return;
 		setBusy(true);
 		const res = await pluginCall<null>("modes", "reset", { id: mode.id });
 		setBusy(false);
@@ -288,7 +289,7 @@ function ModeEditor({ mode, isCurrent, onChanged, onToggleDefault }: { mode: Mod
 	};
 
 	const remove = async () => {
-		if (!window.confirm(t("confirmDelete", { name: mode.title }))) return;
+		if (!(await confirmDialog(t("confirmDelete", { name: mode.title })))) return;
 		setBusy(true);
 		const res = await pluginCall<null>("modes", "delete", { id: mode.id });
 		setBusy(false);
@@ -301,7 +302,7 @@ function ModeEditor({ mode, isCurrent, onChanged, onToggleDefault }: { mode: Mod
 	const shown = pool.filter((n) => !filter || n.toLowerCase().includes(filter.toLowerCase()));
 
 	return (
-		<div className="mx-auto max-w-4xl animate-rise space-y-4 p-4 md:p-6">
+		<div className="mx-auto max-w-4xl animate-rise space-y-4 p-4 @3xl:p-6">
 			<div className="flex flex-wrap items-center gap-2">
 				<h2 className="font-display text-xl font-semibold">{mode.title}</h2>
 				<Badge tone={builtin ? "sky" : "muted"}>{builtin ? t("builtin") : t("custom")}</Badge>
@@ -310,7 +311,7 @@ function ModeEditor({ mode, isCurrent, onChanged, onToggleDefault }: { mode: Mod
 				<span className="ml-auto font-mono text-[11px] text-ink-500">{mode.file ?? ""}</span>
 			</div>
 
-			<div className="grid gap-3 sm:grid-cols-2">
+			<div className="grid gap-3 @xl:grid-cols-2">
 				<Field label={t("name")}>
 					<Input value={draft?.title ?? ""} disabled={!draft} onChange={(e) => set("title", e.target.value)} />
 				</Field>
@@ -319,7 +320,7 @@ function ModeEditor({ mode, isCurrent, onChanged, onToggleDefault }: { mode: Mod
 				</Field>
 			</div>
 
-			<div className="grid gap-3 sm:grid-cols-2">
+			<div className="grid gap-3 @xl:grid-cols-2">
 				<Field label={t("how")} hint={t("howHelp")}>
 					<select
 						value={draft?.compose ?? "replace"}

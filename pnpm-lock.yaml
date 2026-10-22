@@ -228,6 +228,9 @@ importers:
       '@prometheus/plugin-skills':
         specifier: workspace:*
         version: link:../skills
+      '@prometheus/plugin-ssh':
+        specifier: workspace:*
+        version: link:../ssh
       '@prometheus/plugin-terminal':
         specifier: workspace:*
         version: link:../terminal
@@ -354,6 +357,15 @@ importers:
       '@prometheus/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+
+  plugins/ssh:
+    dependencies:
+      '@earendil-works/pi-ai':
+        specifier: 1.2.0
+        version: 1.2.0(@aws-sdk/credential-provider-node@3.972.86)(@smithy/signature-v4@5.7.4)(undici@8.10.2)(ws@8.22.0)
+      '@prometheus/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
 
   plugins/terminal:
     dependencies:

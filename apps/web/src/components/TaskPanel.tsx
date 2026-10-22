@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { Collapse } from "./ui.tsx";
 import { Check, ChevronDown, ChevronUp, ListChecks, LoaderCircle } from "lucide-react";
 import { useMemo, useState } from "react";
 import { latestTodos } from "@prometheus/protocol";
@@ -46,7 +47,7 @@ export function TaskPanel() {
 					</span>
 					{closed ? <ChevronUp className="size-3.5 shrink-0 text-ink-500" /> : <ChevronDown className="size-3.5 shrink-0 text-ink-500" />}
 				</button>
-				{!closed && (
+				<Collapse open={!closed}>
 					<ul className="max-h-[30dvh] space-y-0.5 overflow-y-auto border-t border-ink-800 px-3.5 py-2 md:max-h-48">
 						{todos.map((item, i) => (
 							<li key={i} className="flex items-start gap-2 py-0.5 text-[13px]">
@@ -65,7 +66,7 @@ export function TaskPanel() {
 							</li>
 						))}
 					</ul>
-				)}
+				</Collapse>
 			</div>
 		</div>
 	);

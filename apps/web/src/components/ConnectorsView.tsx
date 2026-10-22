@@ -1,4 +1,6 @@
 import { Copy, Loader2, Plug, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { openExternal } from "../lib/links.ts";
+import { confirmDialog } from "../lib/dialogs.ts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { pluginCall, toast, useStore } from "../lib/store.ts";
@@ -150,7 +152,7 @@ export function ConnectorsView() {
 	};
 
 	const remove = async (c: Connection) => {
-		if (!window.confirm(t("confirmRemove", { name: c.label }))) return;
+		if (!(await confirmDialog(t("confirmRemove", { name: c.label })))) return;
 		if ((await pluginCall("connectors", "remove", { id: c.id })) === undefined) return;
 		toast(t("removed"));
 		await load();
@@ -171,13 +173,13 @@ export function ConnectorsView() {
 					</Button>
 				}
 			/>
-			<div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
+			<div className="min-h-0 flex-1 overflow-y-auto p-4 @3xl:p-6">
 				{list.length === 0 ? (
 					<Empty icon={<Plug className="size-5" />} title={t("emptyTitle")}>
 						{t("emptyBody")}
 					</Empty>
 				) : (
-					<div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+					<div className="grid gap-3 @3xl:grid-cols-2 @5xl:grid-cols-3">
 						{list.map((c) => {
 							const p = byId(c.provider);
 							return (
@@ -286,7 +288,7 @@ function AddDialog({ providers, onClose, onDone }: { providers: ProviderInfo[]; 
 			const r = await pluginCall<{ flowId: string; kind: "device" | "code"; userCode?: string; verificationUri?: string; intervalSec?: number; url?: string }>("connectors", "oauthStart", { ...common, redirectUri });
 			if (!r) return;
 			if (r.kind === "code" && r.url) {
-				window.open(r.url, "_blank", "noopener");
+				void openExternal(r.url);
 				void poll(r.flowId, 2);
 			} else if (r.userCode) {
 				setDevice({ flowId: r.flowId, userCode: r.userCode, verificationUri: r.verificationUri ?? "", intervalSec: r.intervalSec ?? 5 });
@@ -385,7 +387,7 @@ function AddDialog({ providers, onClose, onDone }: { providers: ProviderInfo[]; 
 						<Button variant="outline" onClick={() => void navigator.clipboard.writeText(device.userCode)}>
 							<Copy className="size-3.5" /> {t("copyCode")}
 						</Button>
-						<Button variant="primary" onClick={() => window.open(device.verificationUri, "_blank", "noopener")}>
+						<Button variant="primary" onClick={() => void openExternal(device.verificationUri)}>
 							{t("openPage")}
 						</Button>
 					</div>

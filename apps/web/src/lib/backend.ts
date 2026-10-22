@@ -153,3 +153,13 @@ export async function establishCookie(target: BackendTarget): Promise<void> {
 		credentials: "include",
 	}).catch(() => {});
 }
+
+/** True when the URL points at this very machine, where server-side native dialogs are visible to the user. */
+export function isLoopbackHost(url: string): boolean {
+	try {
+		const h = new URL(url).hostname.replace(/^\[|\]$/g, "");
+		return h === "localhost" || h === "127.0.0.1" || h === "::1" || h.startsWith("127.");
+	} catch {
+		return false;
+	}
+}

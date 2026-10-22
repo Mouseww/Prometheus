@@ -151,8 +151,8 @@ export function UsageView() {
 					</Empty>
 				) : (
 					stats && (
-						<div className={`mx-auto max-w-4xl space-y-8 p-4 md:p-8 transition-opacity ${loading ? "opacity-50" : ""}`}>
-							<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+						<div className={`mx-auto max-w-4xl space-y-8 p-4 @3xl:p-8 transition-opacity ${loading ? "opacity-50" : ""}`}>
+							<div className="grid gap-3 @xl:grid-cols-2 @4xl:grid-cols-5">
 								<Stat label={t("requests")} value={fmt(stats.totals.requests)} />
 								<Stat label={t("input")} value={fmt(stats.totals.input)} />
 								<Stat label={t("output")} value={fmt(stats.totals.output)} />
