@@ -454,11 +454,35 @@ fn extract_zip(file: &Path, out: &Path, strip: usize, em: &Emitter2, cancel: &At
 fn client() -> Result<reqwest::Client, String> {
     // reqwest is built without a bundled TLS backend; install the ring provider once (a second install is a harmless Err).
     let _ = rustls::crypto::ring::default_provider().install_default();
-    reqwest::Client::builder()
-        .user_agent(concat!("Prometheus/", env!("CARGO_PKG_VERSION")))
-        .connect_timeout(Duration::from_secs(15))
-        .build()
-        .map_err(|e| e.to_string())
+    let builder = reqwest::Client::builder().user_agent(concat!("Prometheus/", env!("CARGO_PKG_VERSION"))).connect_timeout(Duration::from_secs(15));
+    // rustls-platform-verifier needs a JNI setup that Tauri does not do on Android (it aborts the process), so
+    // trust the system's own CA directory directly instead.
+    #[cfg(target_os = "android")]
+    let builder = {
+        let certs = android_ca_certs();
+        if certs.is_empty() {
+            return Err("读取不到系统的 CA 证书，无法建立 HTTPS 连接".into());
+        }
+        builder.tls_certs_only(certs)
+    };
+    builder.build().map_err(|e| e.to_string())
+}
+
+/// DER certificates from Android's trust store (the conscrypt APEX on new releases, /system on older ones).
+#[cfg(target_os = "android")]
+fn android_ca_certs() -> Vec<reqwest::Certificate> {
+    for dir in ["/apex/com.android.conscrypt/cacerts", "/system/etc/security/cacerts"] {
+        let Ok(entries) = fs::read_dir(dir) else { continue };
+        let certs: Vec<_> = entries
+            .flatten()
+            .filter_map(|e| fs::read(e.path()).ok())
+            .filter_map(|bytes| reqwest::Certificate::from_der(&bytes).or_else(|_| reqwest::Certificate::from_pem(&bytes)).ok())
+            .collect();
+        if !certs.is_empty() {
+            return certs;
+        }
+    }
+    Vec::new()
 }
 
 async fn fetch_text(client: &reqwest::Client, url: &str) -> Result<String, String> {
