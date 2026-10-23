@@ -10,7 +10,7 @@ An open-source, fork-friendly AI agent workbench: one kernel, four entry points 
 [![Stars](https://img.shields.io/github/stars/Mouseww/Prometheus?style=for-the-badge&logo=github&color=ff5a1f)](https://github.com/Mouseww/Prometheus/stargazers)
 [![Release](https://img.shields.io/github/v/release/Mouseww/Prometheus?style=for-the-badge&color=ffc061)](https://github.com/Mouseww/Prometheus/releases)
 [![Issues](https://img.shields.io/github/issues/Mouseww/Prometheus?style=for-the-badge)](https://github.com/Mouseww/Prometheus/issues)
-[![License](https://img.shields.io/badge/license-PPUL%20v1.0%20%C2%B7%20free%20for%20personal%20use%2C%20commercial%20needs%20a%20license-blue?style=for-the-badge)](LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-blue?style=for-the-badge)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A5%2022.19-339933?style=for-the-badge&logo=node.js&logoColor=white)](#quick-start)
 
 [Quick start](#quick-start) · [Features](#features) · [Architecture](#architecture) · [Write a plugin](#write-a-plugin) · [Deployment](docs/en/deployment.md) · [Architecture doc](docs/en/architecture.md) · [中文](README.md)
@@ -208,12 +208,10 @@ Issues and pull requests are welcome.
 
 ## License
 
-This project uses the [Prometheus Personal Use License (PPUL) v1.0](LICENSE):
+This project is licensed under the [GNU AGPL-3.0](LICENSE):
 
-- **Personal use, learning, research**: free; you may modify and self-host.
-- **Commercial use** (company business, paid resale, hosted services, embedding into a commercial product, etc.): requires prior authorization — contact the author through the GitHub repository.
-
-Note: because the license restricts commercial use, this is "source-available", not an OSI-approved open-source license.
+- Individuals, organizations and companies may use, modify and self-host it.
+- Derivative works must keep the copyright and license notices and mark changes; if you distribute a modified version or offer it to others over a network, you must publish its complete corresponding source under AGPL-3.0.
 
 ## Star History
 

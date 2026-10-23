@@ -10,7 +10,7 @@
 [![Stars](https://img.shields.io/github/stars/Mouseww/Prometheus?style=for-the-badge&logo=github&color=ff5a1f)](https://github.com/Mouseww/Prometheus/stargazers)
 [![Release](https://img.shields.io/github/v/release/Mouseww/Prometheus?style=for-the-badge&color=ffc061)](https://github.com/Mouseww/Prometheus/releases)
 [![Issues](https://img.shields.io/github/issues/Mouseww/Prometheus?style=for-the-badge)](https://github.com/Mouseww/Prometheus/issues)
-[![License](https://img.shields.io/badge/license-PPUL%20v1.0%20%C2%B7%20%E4%B8%AA%E4%BA%BA%E5%85%8D%E8%B4%B9%20%2F%20%E5%95%86%E7%94%A8%E9%9C%80%E6%8E%88%E6%9D%83-blue?style=for-the-badge)](LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-blue?style=for-the-badge)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A5%2022.19-339933?style=for-the-badge&logo=node.js&logoColor=white)](#快速开始)
 
 [快速开始](#快速开始) · [功能](#功能一览) · [隐私面罩](#隐私面罩veil) · [架构](#架构) · [写一个插件](#写一个插件) · [部署文档](docs/deployment.md) · [架构文档](docs/architecture.md) · [English](README.en.md)
@@ -212,12 +212,10 @@ pnpm test
 
 ## 许可证
 
-本项目采用 [Prometheus Personal Use License (PPUL) v1.0](LICENSE)：
+本项目采用 [GNU AGPL-3.0](LICENSE) 开源许可证：
 
-- **个人使用、学习、研究**：免费，可修改与自行部署。
-- **商业使用**（公司业务、收费出售、对外提供托管服务、集成进商业产品等）：需事先获得授权，请通过 GitHub 仓库联系作者。
-
-注意：该许可证限制商业使用，属于“源码公开”，不是 OSI 定义的开源许可证。
+- 个人、组织、公司均可使用、修改、自行部署。
+- 二次开发须保留版权与许可证声明、标注修改；分发或通过网络对外提供修改版本时，须以 AGPL-3.0 公开对应的完整源码。
 
 ## Star History
 
