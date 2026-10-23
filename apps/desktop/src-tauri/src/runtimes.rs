@@ -468,16 +468,35 @@ fn client() -> Result<reqwest::Client, String> {
     builder.build().map_err(|e| e.to_string())
 }
 
-/// DER certificates from Android's trust store (the conscrypt APEX on new releases, /system on older ones).
-#[cfg(target_os = "android")]
+/// Certificates from Android's trust store (the conscrypt APEX on new releases, /system on older ones). The files are PEM
+/// (with a text dump after the block). reqwest only parses certificates when it builds the client, where a single bad one
+/// fails everything with a bare "builder error", so each one is checked here and bad ones are dropped.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
 fn android_ca_certs() -> Vec<reqwest::Certificate> {
-    for dir in ["/apex/com.android.conscrypt/cacerts", "/system/etc/security/cacerts"] {
+    certs_from_dirs(&["/apex/com.android.conscrypt/cacerts", "/system/etc/security/cacerts"])
+}
+
+fn certs_from_dirs(dirs: &[&str]) -> Vec<reqwest::Certificate> {
+    use rustls_pki_types::{pem::PemObject, CertificateDer};
+    for dir in dirs {
         let Ok(entries) = fs::read_dir(dir) else { continue };
-        let certs: Vec<_> = entries
-            .flatten()
-            .filter_map(|e| fs::read(e.path()).ok())
-            .filter_map(|bytes| reqwest::Certificate::from_der(&bytes).or_else(|_| reqwest::Certificate::from_pem(&bytes)).ok())
-            .collect();
+        let mut store = rustls::RootCertStore::empty();
+        let mut certs = Vec::new();
+        for entry in entries.flatten() {
+            let Ok(bytes) = fs::read(entry.path()) else { continue };
+            let ders: Vec<CertificateDer<'static>> = if bytes.starts_with(b"-----") || bytes.windows(10).any(|w| w == b"-----BEGIN") {
+                CertificateDer::pem_slice_iter(&bytes).flatten().collect()
+            } else {
+                vec![CertificateDer::from(bytes)]
+            };
+            for der in ders {
+                if store.add(der.clone()).is_ok() {
+                    if let Ok(c) = reqwest::Certificate::from_der(der.as_ref()) {
+                        certs.push(c);
+                    }
+                }
+            }
+        }
         if !certs.is_empty() {
             return certs;
         }
@@ -1361,6 +1380,28 @@ mod tests {
         write_gnu_config(&dir, &plan).unwrap();
         let body = fs::read_to_string(dir.join("cargo/config.toml")).unwrap();
         assert!(body.contains("[target.x86_64-pc-windows-gnu]") && body.contains("linker = \"C:/a b/bin/clang.exe\""), "{body}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    const ROOT_PEM: &str = "-----BEGIN CERTIFICATE-----\nMIIH0zCCBbugAwIBAgIIXsO3pkN/pOAwDQYJKoZIhvcNAQEFBQAwQjESMBAGA1UE\nAwwJQUNDVlJBSVoxMRAwDgYDVQQLDAdQS0lBQ0NWMQ0wCwYDVQQKDARBQ0NWMQsw\nCQYDVQQGEwJFUzAeFw0xMTA1MDUwOTM3MzdaFw0zMDEyMzEwOTM3MzdaMEIxEjAQ\nBgNVBAMMCUFDQ1ZSQUlaMTEQMA4GA1UECwwHUEtJQUNDVjENMAsGA1UECgwEQUND\nVjELMAkGA1UEBhMCRVMwggIiMA0GCSqGSIb3DQEBAQUAA4ICDwAwggIKAoICAQCb\nqau/YUqXry+XZpp0X9DZlv3P4uRm7x8fRzPCRKPfmt4ftVTdFXxpNRFvu8gMjmoY\nHtiP2Ra8EEg2XPBjs5BaXCQ316PWywlxufEBcoSwfdtNgM3802/J+Nq2DoLSRYWo\nG2ioPej0RGy9ocLLA76MPhMAhN9KSMDjIgro6TenGEyxCQ0jVn8ETdkXhBilyNpA\nlHPrzg5XPAOBOp0KoVdDaaxXbXmQeOW1tDvYvEyNKKGno6e6Ak4l0Squ7a4DIrhr\nIA8wKFSVf+DuzgpmndFALW4ir50awQUZ0m/A8p/4e7MCQvtQqR0tkw8jq8bBD5L/\n0KIV9VMJcRz/RROE5iZe+OCIHAr8Fraocwa48GOEAqDGWuzndN9wrqODJerWx5eH\nk6fGioozl2A3ED6XPm4pFdahD9GILBKfb6qkxkLrQaLjlUPTAYVtjrs78yM2x/47\n4KElB0iryYl0/wiPgL/AlmXz7uxLaL2diMMxs0Dx6M/2OLuc5NF/1OVYm3z61PMO\nm3WR5LpSLhl+0fXNWhn8ugb2+1KoS5kE3fj5tItQo05iifCHJPqDQsGH+tUtKSpa\ncXpkatcnYGMN285J9Y0fkIkyF/hzQ7jSWpOGYdbhdQrqeWZ2iE9x6wQl1gpaepPl\nuUsXQA+xtrn13k/c4LOsOxFwYIRKQ26ZIMApcQrAZQIDAQABo4ICyzCCAscwfQYI\nKwYBBQUHAQEEcTBvMEwGCCsGAQUFBzAChkBodHRwOi8vd3d3LmFjY3YuZXMvZmls\nZWFkbWluL0FyY2hpdm9zL2NlcnRpZmljYWRvcy9yYWl6YWNjdjEuY3J0MB8GCCsG\nAQUFBzABhhNodHRwOi8vb2NzcC5hY2N2LmVzMB0GA1UdDgQWBBTSh7Tj3zcnk1X2\nVuqB5TbMjB4/vTAPBgNVHRMBAf8EBTADAQH/MB8GA1UdIwQYMBaAFNKHtOPfNyeT\nVfZW6oHlNsyMHj+9MIIBcwYDVR0gBIIBajCCAWYwggFiBgRVHSAAMIIBWDCCASIG\nCCsGAQUFBwICMIIBFB6CARAAQQB1AHQAbwByAGkAZABhAGQAIABkAGUAIABDAGUA\ncgB0AGkAZgBpAGMAYQBjAGkA8wBuACAAUgBhAO0AegAgAGQAZQAgAGwAYQAgAEEA\nQwBDAFYAIAAoAEEAZwBlAG4AYwBpAGEAIABkAGUAIABUAGUAYwBuAG8AbABvAGcA\n7QBhACAAeQAgAEMAZQByAHQAaQBmAGkAYwBhAGMAaQDzAG4AIABFAGwAZQBjAHQA\ncgDzAG4AaQBjAGEALAAgAEMASQBGACAAUQA0ADYAMAAxADEANQA2AEUAKQAuACAA\nQwBQAFMAIABlAG4AIABoAHQAdABwADoALwAvAHcAdwB3AC4AYQBjAGMAdgAuAGUA\nczAwBggrBgEFBQcCARYkaHR0cDovL3d3dy5hY2N2LmVzL2xlZ2lzbGFjaW9uX2Mu\naHRtMFUGA1UdHwROMEwwSqBIoEaGRGh0dHA6Ly93d3cuYWNjdi5lcy9maWxlYWRt\naW4vQXJjaGl2b3MvY2VydGlmaWNhZG9zL3JhaXphY2N2MV9kZXIuY3JsMA4GA1Ud\nDwEB/wQEAwIBBjAXBgNVHREEEDAOgQxhY2N2QGFjY3YuZXMwDQYJKoZIhvcNAQEF\nBQADggIBAJcxAp/n/UNnSEQU5CmH7UwoZtCPNdpNYbdKl02125DgBS4OxnnQ8pdp\nD70ER9m+27Up2pvZrqmZ1dM8MJP1jaGo/AaNRPTKFpV8M9xii6g3+CfYCS0b78gU\nJyCpZET/LtZ1qmxNYEAZSUNUY9rizLpm5U9EelvZaoErQNV/+QEnWCzI7UiRfD+m\nAM/EKXMRNt6GGT6d7hmKG9Ww7Y49nCrADdg9ZuM8Db3VlFzi4qc1GwQA9j9ajepD\nvV+JHanBsMyZ4k0ACtrJJ1vnE5Bc5PUzolVt3OAJTS+xJlsndQAJxGJ3KQhfnlms\ntn6tn1QwIgPBHnFk/vk4CpYY3QIUrCPLBhwepH2NDd4nQeit2hW3sCPdK6jT2iWH\n7ehVRE2I9DZ+hJp4rPcOVkkO1jMl1oRQQmwgEh0q1b688nCBpHBgvgW1m54ERL5h\nI6zppSSMEYCUWqKiuUnSwdzRp+0xESyeGabu4VXhwOrPDYTkF7eifKXeVSUG7szA\nh1xA2syVP1XgNce4hL60Xc16gwFy7ofmXx2utYXGJt/mwZrpHgJHnyqobalbz+xF\nd3+YJ5oyXSrjhO7FmGYvliAd3djDJ9ew+f7Zfc3Qn48LFFhRny+Lwzgt3uiP1o2H\npPVWQxaZLPSkVrQ0uGE3ycJYgBugl6H8WY3pEfbRD0tVNEYqi4Y7\n-----END CERTIFICATE-----\n";
+
+    #[test]
+    fn ca_dir_skips_garbage_and_reads_pem() {
+        let dir = std::env::temp_dir().join(format!("prom-ca-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        // a real root, as PEM followed by a text dump like Android's files
+        let pem = format!("{ROOT_PEM}Certificate:\n    Data: dump\n");
+        fs::write(dir.join("good.0"), pem).unwrap();
+        fs::write(dir.join("bad.0"), b"-----BEGIN CERTIFICATE-----
+AAAA
+-----END CERTIFICATE-----
+").unwrap();
+        fs::write(dir.join("junk.0"), b"not a cert").unwrap();
+        let certs = certs_from_dirs(&[dir.to_str().unwrap()]);
+        assert_eq!(certs.len(), 1);
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        reqwest::Client::builder().tls_certs_only(certs).build().expect("client builds with the filtered roots");
         let _ = fs::remove_dir_all(&dir);
     }
 

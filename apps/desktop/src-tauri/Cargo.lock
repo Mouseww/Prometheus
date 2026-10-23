@@ -2791,7 +2791,7 @@ dependencies = [
 
 [[package]]
 name = "prometheus-desktop"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "base64 0.22.1",
  "flate2",
@@ -2799,6 +2799,7 @@ dependencies = [
  "getrandom 0.3.4",
  "reqwest",
  "rustls",
+ "rustls-pki-types",
  "serde",
  "serde_json",
  "sha2",
