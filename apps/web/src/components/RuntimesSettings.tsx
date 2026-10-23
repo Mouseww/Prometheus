@@ -12,6 +12,7 @@ import {
 	installMsvc,
 	installRuntime,
 	jobFraction,
+	refreshRuntimes,
 	restartApp,
 	type RuntimeItem,
 	type RuntimeJob,
@@ -275,6 +276,7 @@ export function RuntimesSettings() {
 	const t = useT(M);
 	const items = useRuntimes((s) => s.items);
 	const restartNeeded = useRuntimes((s) => s.restartNeeded);
+	const loadError = useRuntimes((s) => s.loadError);
 	useEffect(() => {
 		void initRuntimes();
 	}, []);
@@ -282,6 +284,15 @@ export function RuntimesSettings() {
 		<div className="flex min-h-0 flex-1 flex-col overflow-hidden">
 			<PageHeader title={t("title")} subtitle={t("subtitle")} />
 			<div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 @3xl:p-8">
+				{loadError && (
+					<div className="space-y-2 rounded-2xl border border-rose-400/40 bg-rose-400/10 p-4 text-sm text-ink-200">
+						<p className="break-words">{loadError}</p>
+						<Button variant="outline" onClick={() => void initRuntimes().then(refreshRuntimes)}>
+							<RotateCw className="size-4" />
+							{t("retry")}
+						</Button>
+					</div>
+				)}
 				{restartNeeded && (
 					<div className="flex flex-wrap items-center gap-3 rounded-2xl border border-ember-400/40 bg-ember-400/10 p-4 text-sm text-ink-200">
 						<span className="min-w-0 flex-1">{t("restart")}</span>

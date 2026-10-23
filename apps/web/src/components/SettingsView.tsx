@@ -468,7 +468,7 @@ export function SettingsView() {
 	const tab = useStore((s) => s.settingsTab);
 	const plugins = useStore((s) => s.plugins);
 	// Runtimes install into this machine, so the tab exists only where the shell can do that (local mode).
-	const localShell = useRuntimes((s) => s.available);
+	const localShell = useRuntimes((s) => s.available || s.loadError !== null);
 	useEffect(() => {
 		void initRuntimes();
 	}, []);

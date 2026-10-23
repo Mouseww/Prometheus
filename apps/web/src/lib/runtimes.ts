@@ -62,13 +62,15 @@ interface RuntimesState {
 	requests: Record<string, RuntimeRequest>;
 	/** True when this shell can install runtimes (Tauri, local mode). */
 	available: boolean;
+	/** Why the runtime list could not be loaded (shown on the settings page). */
+	loadError: string | null;
 	items: RuntimeItem[];
 	jobs: Record<string, RuntimeJob>;
 	/** A runtime was installed or removed since the local server started; new PATH needs a restart. */
 	restartNeeded: boolean;
 }
 
-export const useRuntimes = create<RuntimesState>(() => ({ requests: {}, available: false, items: [], jobs: {}, restartNeeded: false }));
+export const useRuntimes = create<RuntimesState>(() => ({ requests: {}, available: false, loadError: null, items: [], jobs: {}, restartNeeded: false }));
 
 const MAX_LOG = 300;
 let started = false;
@@ -82,9 +84,9 @@ export async function refreshRuntimes(): Promise<void> {
 	try {
 		const items = await invoke<RuntimeItem[]>("runtime_list");
 		// In remote mode the agent runs elsewhere, so installing here would change nothing it can see.
-		useRuntimes.setState({ items, available: loadMode() !== "remote" });
-	} catch {
-		useRuntimes.setState({ available: false });
+		useRuntimes.setState({ items, available: loadMode() !== "remote", loadError: null });
+	} catch (err) {
+		useRuntimes.setState({ available: false, loadError: String(err) });
 	}
 }
 
@@ -132,8 +134,9 @@ export async function initRuntimes(): Promise<void> {
 	try {
 		const { listen } = await import("@tauri-apps/api/event");
 		await listen<ProgressEvent>("runtime://progress", (ev) => onEvent(ev.payload));
-	} catch {
+	} catch (err) {
 		started = false;
+		useRuntimes.setState({ loadError: `event: ${String(err)}` });
 		return;
 	}
 	await refreshRuntimes();
