@@ -71,7 +71,7 @@ Add a gateway in settings to use your own proxy, a relay, or an official endpoin
 - **Auto-folded steps**: once a turn finishes, intermediate tool calls fold away and only the final reply stays visible.
 - **`@` file mentions**: search and reference workspace files from the composer.
 - Adjustable chat width; links open in your default browser, with a context menu to copy.
-- **Subagents**: Settings → Subagents edits the description, prompt mode, prompt, model, tools and context limits of built-in and custom subagents (built on pi-subagents, shared with the PI terminal). The "Subagent boost" mode makes the main agent delegate to them first.
+- **Subagents**: Settings → Subagents edits the description, prompt mode, prompt, model, tools and context limits of built-in and custom subagents ; the app ships its own subagent runtime with parallel and background runs, and each subagent can run on PI, the Claude Code CLI or the Codex CLI. The "Subagent boost" mode makes the main agent delegate to them first.
 - **Modes**: Default / Subagent boost / Operator / White hat / Purge / Research, each with its own system prompt and tool set; switching does not reload the session.
 
 ### Veil: privacy shield

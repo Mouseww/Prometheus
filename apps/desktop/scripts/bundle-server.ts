@@ -23,6 +23,7 @@ const sources = [
 	"packages/knowledge",
 	"packages/gateway",
 	"packages/plugin-sdk",
+	"packages/subagents",
 	"plugins/knowledge-lancedb",
 	"plugins/mcp",
 	"plugins/skills",

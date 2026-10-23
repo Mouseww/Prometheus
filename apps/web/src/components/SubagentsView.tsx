@@ -3,19 +3,25 @@ import { Bot, Copy, Plus, Power, RotateCcw, Save, Trash2, TriangleAlert } from "
 import { useEffect, useMemo, useState } from "react";
 import { confirmDialog, promptDialog } from "../lib/dialogs.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { onPluginChange, openSettings, pluginCall, toast, useStore } from "../lib/store.ts";
+import { onPluginChange, pluginCall, toast, useStore } from "../lib/store.ts";
 import { Badge, Button, Empty, Field, Input, PageHeader, Select, Textarea } from "./ui.tsx";
 
 const M = defineMessages({
 	zh: {
 		title: "子代理",
-		subtitle: "配置主代理可以委派任务的子代理：说明、提示词、模型、工具与上下文。定义保存为 pi-subagents 的标准文件，PI 终端里看到的是同一批代理。",
+		subtitle: "配置主代理可以委派任务的子代理：说明、提示词、模型、工具与上下文，并选择由 PI、Claude Code 还是 Codex 来执行。",
 		newAgent: "新建子代理",
 		duplicate: "复制",
 		namePrompt: "子代理名称（小写字母、数字、- _ .）",
-		missingTitle: "还没有安装 pi-subagents",
-		missingBody: "子代理由 pi-subagents 扩展包运行。到「PI 插件市场」安装后，这里的配置才会生效。",
-		goMarket: "前往 PI 插件市场",
+		cliMissing: "本机没有找到 {cli} 命令行工具，这个子代理暂时无法运行。请先安装并登录。",
+		runner: "执行方式",
+		runnerPi: "PI（本应用内）",
+		runnerClaude: "Claude Code 命令行",
+		runnerCodex: "Codex 命令行",
+		runnerHint: "命令行类子代理使用本机已登录的 CLI；提示词作为任务说明一并发给它，工具和提示词模式由 CLI 自己决定。",
+		writable: "允许修改工作区文件",
+		writableHint: "关闭时命令行只能读取和分析；开启后可以编辑文件和执行命令。",
+		cliModelHint: "命令行的模型名，例如 sonnet、opus；留空使用 CLI 自己的默认值。",
 		builtin: "内置",
 		custom: "自定义",
 		shadows: "覆盖内置",
@@ -40,7 +46,7 @@ const M = defineMessages({
 		toolsLabel: "可用工具",
 		toolsAll: "PI 默认工具",
 		toolsSome: "仅限 {n} 个",
-		toolsHint: "子代理的工具是严格白名单；留空使用 PI 默认工具。扩展提供的工具还需要在子代理里加载对应扩展才可用。",
+		toolsHint: "子代理的工具是严格白名单；留空使用 PI 默认工具（read、bash、edit、write）。插件提供的工具暂不会传给子代理。",
 		addTool: "添加工具名",
 		contextSection: "上下文限制",
 		contextStart: "起始上下文",
@@ -51,7 +57,7 @@ const M = defineMessages({
 		inheritGlobal: "继承全局指令（~/.pi/agent/AGENTS.md，需同时继承项目指令）",
 		inheritSkills: "可见技能目录",
 		timeout: "单次运行时限（分钟）",
-		timeoutHint: "0 表示使用默认值。内置子代理的时限由 pi-subagents 管理，请复制为自定义子代理后设置。",
+		timeoutHint: "0 表示使用默认值。内置子代理的时限固定为 30 分钟，请复制为自定义子代理后设置。",
 		advertise: "在主代理的提示词中公布这个子代理",
 		advertiseHint: "公布后主代理无需先查询列表就知道它的存在。公布数量和长度有上限。",
 		save: "保存",
@@ -72,13 +78,19 @@ const M = defineMessages({
 	},
 	en: {
 		title: "Subagents",
-		subtitle: "Configure the agents the main agent can delegate to: description, prompt, model, tools and context. Definitions are stored in pi-subagents' own format, so the PI terminal sees the same agents.",
+		subtitle: "Configure the agents the main agent can delegate to: description, prompt, model, tools and context. Each agent runs on PI itself, Claude Code or Codex.",
 		newAgent: "New subagent",
 		duplicate: "Duplicate",
 		namePrompt: "Subagent name (lowercase letters, digits, - _ .)",
-		missingTitle: "pi-subagents is not installed",
-		missingBody: "Subagents are run by the pi-subagents package. Install it from the PI Marketplace for these settings to take effect.",
-		goMarket: "Open PI Marketplace",
+		cliMissing: "The {cli} command-line tool was not found on this machine, so this subagent cannot run yet. Install it and sign in first.",
+		runner: "Runs on",
+		runnerPi: "PI (inside this app)",
+		runnerClaude: "Claude Code CLI",
+		runnerCodex: "Codex CLI",
+		runnerHint: "CLI agents use the locally signed-in tool; the prompt is sent along with the task, and the CLI decides its own tools and prompt handling.",
+		writable: "May modify workspace files",
+		writableHint: "Off: the CLI can only read and analyze. On: it can edit files and run commands.",
+		cliModelHint: "The CLI's own model name, such as sonnet or opus; empty uses the CLI default.",
 		builtin: "Built in",
 		custom: "Custom",
 		shadows: "Overrides built-in",
@@ -103,7 +115,7 @@ const M = defineMessages({
 		toolsLabel: "Tools",
 		toolsAll: "PI default tools",
 		toolsSome: "{n} selected",
-		toolsHint: "A subagent's tools are a strict allowlist; empty uses PI's default tools. Extension tools also need their extension loaded into the child.",
+		toolsHint: "A subagent's tools are a strict allowlist; empty uses PI's default tools. Plugin tools are not passed to subagents yet.",
 		addTool: "Add a tool name",
 		contextSection: "Context limits",
 		contextStart: "Starting context",
@@ -114,7 +126,7 @@ const M = defineMessages({
 		inheritGlobal: "Inherit global instructions (~/.pi/agent/AGENTS.md; needs project instructions too)",
 		inheritSkills: "See the skills catalog",
 		timeout: "Run time limit (minutes)",
-		timeoutHint: "0 uses the default. Built-in agents' limits are managed by pi-subagents; duplicate one as a custom agent to set it.",
+		timeoutHint: "0 uses the default. Built-in agents are fixed at 30 minutes; duplicate one as a custom agent to set it.",
 		advertise: "Advertise this subagent in the main agent's prompt",
 		advertiseHint: "An advertised agent is known without listing first. The count and length of the catalog are capped.",
 		save: "Save",
@@ -135,6 +147,8 @@ const M = defineMessages({
 	},
 });
 
+type Runner = "pi" | "claude-code" | "codex";
+
 type Summary = {
 	name: string;
 	description: string;
@@ -143,11 +157,13 @@ type Summary = {
 	modified: boolean;
 	disabled: boolean;
 	advertise: boolean;
+	runner: Runner;
 	promptLength: number;
 	file?: string;
 };
 
 interface Draft {
+	runner: Runner;
 	description: string;
 	mode: "replace" | "append";
 	prompt: string;
@@ -160,6 +176,7 @@ interface Draft {
 	inheritSkills: boolean;
 	timeoutMin: number;
 	advertise: boolean;
+	writable: boolean;
 }
 
 type Full = Draft & Summary;
@@ -179,20 +196,22 @@ const draftOf = (a: Full): Draft => ({
 	inheritSkills: a.inheritSkills,
 	timeoutMin: a.timeoutMin,
 	advertise: a.advertise,
+	runner: a.runner,
+	writable: a.writable,
 });
 
 export function SubagentsView() {
 	const t = useT(M);
 	const [agents, setAgents] = useState<Summary[]>([]);
-	const [installed, setInstalled] = useState(true);
+	const [clis, setClis] = useState<Record<string, boolean>>({});
 	const [picked, setPicked] = useState<string | null>(null);
 	const [loaded, setLoaded] = useState(false);
 
 	const load = async () => {
-		const res = await pluginCall<{ installed: boolean; agents: Summary[] }>("subagents", "list");
+		const res = await pluginCall<{ clis: Record<string, boolean>; agents: Summary[] }>("subagents", "list");
 		if (!res) return;
 		setAgents(res.agents);
-		setInstalled(res.installed);
+		setClis(res.clis);
 		setPicked((s) => (s && res.agents.some((a) => a.name === s) ? s : (res.agents[0]?.name ?? null)));
 		setLoaded(true);
 	};
@@ -222,17 +241,6 @@ export function SubagentsView() {
 					</Button>
 				}
 			/>
-			{!installed && (
-				<div className="flex flex-wrap items-center gap-3 border-b hairline bg-ember-500/10 px-4 py-3 text-sm text-ember-200 @3xl:px-8">
-					<TriangleAlert className="size-4 shrink-0" />
-					<div className="min-w-0 flex-1">
-						<b>{t("missingTitle")}</b> · {t("missingBody")}
-					</div>
-					<Button variant="outline" onClick={() => openSettings("market")}>
-						{t("goMarket")}
-					</Button>
-				</div>
-			)}
 			<div className="flex min-h-0 flex-1 flex-col @3xl:flex-row">
 				<div className="max-h-[34%] w-full shrink-0 space-y-1 overflow-y-auto border-b hairline p-3 @3xl:max-h-none @3xl:w-72 @3xl:border-r @3xl:border-b-0">
 					{agents.map((a) => (
@@ -249,7 +257,7 @@ export function SubagentsView() {
 				</div>
 				<div className="min-h-0 flex-1 overflow-y-auto">
 					{picked ? (
-						<AgentEditor key={picked} name={picked} onChanged={load} onDuplicate={(a) => void create(a)} onRemoved={() => setPicked(null)} />
+						<AgentEditor key={picked} name={picked} clis={clis} onChanged={load} onDuplicate={(a) => void create(a)} onRemoved={() => setPicked(null)} />
 					) : (
 						<Empty icon={<Bot className="size-5" />} title={t("emptyTitle")}>
 							{t("emptyBody")}
@@ -270,7 +278,7 @@ function Check({ checked, onChange, children }: { checked: boolean; onChange: (v
 	);
 }
 
-function AgentEditor({ name, onChanged, onDuplicate, onRemoved }: { name: string; onChanged: () => Promise<void>; onDuplicate: (a: Full) => void; onRemoved: () => void }) {
+function AgentEditor({ name, clis, onChanged, onDuplicate, onRemoved }: { name: string; clis: Record<string, boolean>; onChanged: () => Promise<void>; onDuplicate: (a: Full) => void; onRemoved: () => void }) {
 	const t = useT(M);
 	const models = useStore((s) => s.models);
 	const [full, setFull] = useState<Full | null>(null);
@@ -296,6 +304,7 @@ function AgentEditor({ name, onChanged, onDuplicate, onRemoved }: { name: string
 	const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft((d) => (d ? { ...d, [k]: v } : d));
 	const dirty = Boolean(draft && saved && JSON.stringify(draft) !== JSON.stringify(saved));
 	const custom = full?.source === "custom";
+	const cli = draft ? draft.runner !== "pi" : false;
 
 	const modelOptions = useMemo(() => {
 		const ids = models.map((m) => `${m.provider}/${m.id}`);
@@ -359,6 +368,20 @@ function AgentEditor({ name, onChanged, onDuplicate, onRemoved }: { name: string
 				{draft.advertise && <Badge tone="moss">{t("advertised")}</Badge>}
 			</div>
 
+			<Field label={t("runner")} hint={cli ? t("runnerHint") : undefined}>
+				<Select value={draft.runner} onChange={(e) => set("runner", e.target.value as Draft["runner"])}>
+					<option value="pi">{t("runnerPi")}</option>
+					<option value="claude-code">{t("runnerClaude")}</option>
+					<option value="codex">{t("runnerCodex")}</option>
+				</Select>
+			</Field>
+			{cli && clis[draft.runner] === false && (
+				<div className="flex items-center gap-2 rounded-lg bg-ember-500/10 px-3 py-2 text-sm text-ember-200">
+					<TriangleAlert className="size-4 shrink-0" />
+					{t("cliMissing", { cli: draft.runner === "codex" ? "codex" : "claude" })}
+				</div>
+			)}
+
 			<Field label={t("description")} hint={t("descriptionHint")}>
 				<Input value={draft.description} onChange={(e) => set("description", e.target.value)} />
 			</Field>
@@ -368,13 +391,18 @@ function AgentEditor({ name, onChanged, onDuplicate, onRemoved }: { name: string
 			</Field>
 
 			<div className="grid gap-3 @xl:grid-cols-3">
-				<Field label={t("promptMode")}>
-					<Select value={draft.mode} onChange={(e) => set("mode", e.target.value as Draft["mode"])}>
-						<option value="replace">{t("modeReplace")}</option>
-						<option value="append">{t("modeAppend")}</option>
-					</Select>
-				</Field>
-				<Field label={t("model")}>
+				{!cli && (
+					<Field label={t("promptMode")}>
+						<Select value={draft.mode} onChange={(e) => set("mode", e.target.value as Draft["mode"])}>
+							<option value="replace">{t("modeReplace")}</option>
+							<option value="append">{t("modeAppend")}</option>
+						</Select>
+					</Field>
+				)}
+				<Field label={t("model")} hint={cli ? t("cliModelHint") : undefined}>
+					{cli ? (
+						<Input value={draft.model} onChange={(e) => set("model", e.target.value)} placeholder="sonnet" className="font-mono" />
+					) : (
 					<Select value={draft.model} onChange={(e) => set("model", e.target.value)}>
 						<option value="">{t("modelInherit")}</option>
 						{modelOptions.map((m) => (
@@ -383,6 +411,7 @@ function AgentEditor({ name, onChanged, onDuplicate, onRemoved }: { name: string
 							</option>
 						))}
 					</Select>
+					)}
 				</Field>
 				<Field label={t("thinking")}>
 					<Select value={draft.thinking} onChange={(e) => set("thinking", e.target.value)}>
@@ -396,6 +425,16 @@ function AgentEditor({ name, onChanged, onDuplicate, onRemoved }: { name: string
 				</Field>
 			</div>
 
+			{cli && (
+				<div className="space-y-1">
+					<Check checked={draft.writable} onChange={(v) => set("writable", v)}>
+						{t("writable")}
+					</Check>
+					<p className="pl-6 text-xs text-ink-500">{t("writableHint")}</p>
+				</div>
+			)}
+
+			{!cli && (<>
 			<Field label={`${t("toolsLabel")} · ${draft.tools.length ? t("toolsSome", { n: draft.tools.length }) : t("toolsAll")}`} hint={t("toolsHint")}>
 				<div className="space-y-2">
 					<div className="flex flex-wrap gap-1.5 rounded-lg border border-ink-800 p-2">
@@ -450,6 +489,8 @@ function AgentEditor({ name, onChanged, onDuplicate, onRemoved }: { name: string
 					</Check>
 				</div>
 			</section>
+
+			</>)}
 
 			<div className="space-y-1">
 				<Check checked={draft.advertise} onChange={(v) => set("advertise", v)}>

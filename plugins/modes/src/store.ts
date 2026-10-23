@@ -53,7 +53,7 @@ export interface ModesState {
 }
 
 /** 1-2: prompt-only. 3: prompts, decoupled from permissions. 4: per-mode tools. 5: purge-strength compose modes. 6: subagent boost. */
-const SEED_VERSION = 6;
+const SEED_VERSION = 7;
 
 export const emptyState = (): ModesState => ({ modes: [], selected: null, overrides: {}, seeded: 0 });
 

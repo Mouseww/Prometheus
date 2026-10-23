@@ -1,19 +1,15 @@
 import { definePlugin } from "@prometheus/plugin-sdk";
-import { AgentStore } from "./agents.ts";
+import { AgentStore, cliAvailable, PI_CHILD_TOOLS } from "@prometheus/subagents";
 
 type Params = Record<string, unknown>;
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 
-/** Tools a child agent can be limited to. Plugin tools only reach a child that also loads their provider. */
-const CHILD_TOOLS = ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor", "web_search", "fetch_content", "get_search_content", "source_check", "knowledge_search", "memory_search", "todo_write", "subagent"];
-
 /**
  * Subagents: configure the agents the `subagent` tool can delegate to.
  *
- * The runtime is the pi-subagents PI package (installed from the PI Marketplace); this plugin is the
- * editor for its agent definitions — description, prompt, prompt mode, model, tools and how much
- * context a child is given. Definitions are stored in pi-subagents' own formats (markdown files and
- * `settings.json` overrides), so the PI TUI sees exactly the same agents.
+ * The runtime lives in @prometheus/subagents and is started by the host with every chat; this plugin
+ * is the editor for the agent definitions: description, prompt, prompt mode, model, tools, context
+ * and which runner executes the agent (PI itself, Claude Code or Codex).
  */
 export default definePlugin({
 	name: "subagents",
@@ -22,20 +18,17 @@ export default definePlugin({
 	setup(ctx) {
 		const store = new AgentStore(ctx.agentDir);
 
-		/** pi-subagents reads definitions when a session starts, so live chats pick edits up after a reload. */
-		const changed = async (): Promise<void> => {
-			ctx.notifyChanged();
-			await ctx.reloadSessions().catch((err) => ctx.log.warn(`reload after subagent change failed: ${String(err)}`));
-		};
+		/** The runtime reads definitions each time it launches an agent, so no reload is needed. */
+		const changed = async (): Promise<void> => ctx.notifyChanged();
 
 		ctx.rpc("list", async () => ({
-			installed: await store.packageInstalled(),
+			clis: { "claude-code": cliAvailable("claude-code"), codex: cliAvailable("codex") },
 			agents: (await store.list()).map(({ prompt, ...rest }) => ({ ...rest, promptLength: prompt.length })),
 		}));
 
 		ctx.rpc("get", async (p: Params) => store.get(str(p.name)));
 
-		ctx.rpc("tools", async () => ({ known: CHILD_TOOLS }));
+		ctx.rpc("tools", async () => ({ known: PI_CHILD_TOOLS }));
 
 		ctx.rpc("create", async (p: Params) => {
 			const name = str(p.name);

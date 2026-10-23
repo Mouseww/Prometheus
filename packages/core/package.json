@@ -16,6 +16,7 @@
     "@prometheus/gateway": "workspace:*",
     "@prometheus/knowledge": "workspace:*",
     "@prometheus/plugin-sdk": "workspace:*",
-    "@prometheus/protocol": "workspace:*"
+    "@prometheus/protocol": "workspace:*",
+    "@prometheus/subagents": "workspace:*"
   }
 }

@@ -11,6 +11,7 @@
 		"typecheck": "tsc -p ."
 	},
 	"dependencies": {
-		"@prometheus/plugin-sdk": "workspace:*"
+		"@prometheus/plugin-sdk": "workspace:*",
+		"@prometheus/subagents": "workspace:*"
 	}
 }

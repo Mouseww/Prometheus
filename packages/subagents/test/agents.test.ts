@@ -7,12 +7,6 @@ import { AgentStore, defFromFile, diffOverride, parseAgentFile, serializeAgent }
 let dir: string;
 beforeEach(async () => {
 	dir = await mkdtemp(join(tmpdir(), "subagents-test-"));
-	const bundled = join(dir, "npm", "node_modules", "pi-subagents", "agents");
-	await mkdir(bundled, { recursive: true });
-	await writeFile(
-		join(bundled, "scout.md"),
-		"---\nname: scout\ndescription: Fast recon\ntools: read, grep, find\nthinking: low\nsystemPromptMode: replace\ninheritProjectContext: true\n---\n\nYou scout.\n",
-	);
 });
 afterEach(async () => {
 	await rm(dir, { recursive: true, force: true });
@@ -43,7 +37,7 @@ describe("frontmatter", () => {
 describe("AgentStore", () => {
 	it("lists bundled agents and stores only the difference as an override", async () => {
 		const store = new AgentStore(dir);
-		expect((await store.list()).map((a) => a.name)).toEqual(["scout"]);
+		expect((await store.list()).map((a) => a.name)).toContain("scout");
 		const a = await store.get("scout");
 		await store.save("scout", { ...a, model: "gw/fast", prompt: a.prompt });
 		expect((await settings()).subagents.agentOverrides.scout).toEqual({ model: "gw/fast" });
@@ -95,7 +89,7 @@ describe("AgentStore", () => {
 		const shadow = await store.get("scout");
 		expect(shadow.shadows).toBe(true);
 		await store.reset("scout");
-		expect((await store.get("scout")).description).toBe("Fast recon");
+		expect((await store.get("scout")).description).toBe("Fast read-only codebase recon; returns compressed context another agent can act on");
 	});
 
 	it("rejects unsafe names and bad thinking levels", async () => {
@@ -108,5 +102,34 @@ describe("AgentStore", () => {
 	it("diffOverride is empty for an unchanged definition", () => {
 		const d = defFromFile("a", parseAgentFile("---\nname: a\n---\n\nx"));
 		expect(diffOverride(d, d)).toEqual({});
+	});
+});
+
+describe("runner", () => {
+	it("keeps the runner and access of a custom CLI agent in its file", async () => {
+		const store = new AgentStore(dir);
+		await store.create("cc", { description: "d", prompt: "p", runner: "claude-code", writable: true });
+		const a = await store.get("cc");
+		expect(a.runner).toBe("claude-code");
+		expect(a.writable).toBe(true);
+		expect(await readFile(join(dir, "agents", "cc.md"), "utf8")).toContain("runner: claude-code");
+		expect(await readFile(join(dir, "agents", "cc.md"), "utf8")).toContain("access: write");
+	});
+
+	it("ships Claude Code and Codex agents, read-only unless named writer", async () => {
+		const list = await new AgentStore(dir).list();
+		const by = (n: string) => list.find((a) => a.name === n);
+		expect(by("claude-code")).toMatchObject({ runner: "claude-code", writable: false });
+		expect(by("claude-code-writer")).toMatchObject({ runner: "claude-code", writable: true });
+		expect(by("codex")).toMatchObject({ runner: "codex", writable: false });
+		expect(by("scout")?.runner).toBe("pi");
+	});
+
+	it("stores a runner change on a bundled agent as an override", async () => {
+		const store = new AgentStore(dir);
+		const a = await store.get("scout");
+		await store.save("scout", { ...a, runner: "codex" });
+		expect((await settings()).subagents.agentOverrides.scout).toEqual({ runner: "codex" });
+		expect((await store.get("scout")).runner).toBe("codex");
 	});
 });

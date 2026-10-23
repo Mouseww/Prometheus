@@ -51,7 +51,7 @@ import { PermissionGate } from "./permission-gate.ts";
 import { EXIT_PLAN_MODE } from "./permissions.ts";
 import { pluginBuilderExtension } from "./plugin-tool.ts";
 import { bootstrap, type Runtime } from "./runtime.ts";
-import { ensureSubagentEnv, requireChildExtension, SubagentTracker, writeChildGatewayExtension } from "./subagents.ts";
+import { AgentStore, createPiRunner, runClaude, runCodex, SubagentRuntime } from "@prometheus/subagents";
 import { UIBridge } from "./ui-bridge.ts";
 import { collectUsage } from "./usage.ts";
 import { normalizeDir, WorkspaceStore, workspaceId } from "./workspaces.ts";
@@ -158,9 +158,8 @@ interface LiveSession {
 	session: AgentSession;
 	bridge: UIBridge;
 	gate: PermissionGate;
-	subagents: SubagentTracker;
+	subagents: SubagentRuntime;
 	unsubscribe: () => void;
-	releaseChildExtensions: () => void;
 }
 
 type Handlers = { [M in Exclude<RpcMethod, ServerRpcMethod>]: (params: RpcParams<M>) => Promise<RpcResult<M>> | RpcResult<M> };
@@ -175,8 +174,6 @@ export class PrometheusHost {
 	private readonly opening = new Map<string, Promise<LiveSession>>();
 	private readonly paths = new Map<string, string>();
 	private registered = new Set<string>();
-	/** Extension that gives subagent child processes the same gateways; undefined if it could not be written. */
-	private childGateways: string | undefined;
 	private readonly pendingReload = new Set<string>();
 	private readonly listener: HostListener;
 	private readonly workspaces: WorkspaceStore;
@@ -196,8 +193,6 @@ export class PrometheusHost {
 	}
 
 	static async create(options: PrometheusHostOptions): Promise<PrometheusHost> {
-		// Background subagents spawn a separate PI process and need to know where the package is.
-		ensureSubagentEnv();
 		const runtime = await bootstrap({ host: "server", dataDir: options.dataDir, cwd: options.cwd, builtinPlugins: options.builtinPlugins });
 		const agentDir = getAgentDir();
 		// Shares PI's auth.json/models.json so `/login` credentials from the TUI work here too.
@@ -249,13 +244,11 @@ export class PrometheusHost {
 
 	private syncGateways(): void {
 		const next = new Set<string>();
-		const providers: Record<string, unknown> = {};
 		for (const g of this.runtime.config.gateways()) {
 			if (g.enabled === false) continue;
 			try {
 				const config = toProviderConfig(g);
 				this.modelRuntime.registerProvider(g.id, config as Parameters<ModelRuntime["registerProvider"]>[1]);
-				providers[g.id] = config;
 				next.add(g.id);
 			} catch (err) {
 				console.warn(`[prometheus] 网关注册失败 ${g.id}: ${err instanceof Error ? err.message : err}`);
@@ -263,11 +256,6 @@ export class PrometheusHost {
 		}
 		for (const id of this.registered) if (!next.has(id)) this.modelRuntime.unregisterProvider(id);
 		this.registered = next;
-		try {
-			this.childGateways = writeChildGatewayExtension(join(this.runtime.dataDir, "subagents"), providers);
-		} catch (err) {
-			console.warn(`[prometheus] 子代理网关扩展写入失败: ${err instanceof Error ? err.message : err}`);
-		}
 	}
 
 	// ---------- sessions ----------
@@ -294,12 +282,14 @@ export class PrometheusHost {
 	}
 
 	/** One loader per session: its extension runtime is invalidated when that session is disposed or reloaded, so sharing it would break sibling sessions. */
-	private async loader(cwd: string, gate: PermissionGate, subagents: SubagentTracker): Promise<DefaultResourceLoader> {
+	private async loader(cwd: string, gate: PermissionGate, subagents: SubagentRuntime): Promise<DefaultResourceLoader> {
 		const loader = new DefaultResourceLoader({
 			cwd,
 			agentDir: this.agentDir,
 			// PI's own built-ins (MCP client, codemode, tool search) come first, as in the TUI.
 			extensionFactories: [...builtInExtensions, this.runtime.dynamicExtension(), pluginBuilderExtension(this.runtime.plugins), gate.extension(), subagents.extension()],
+			// The app has its own `subagent` tool; the pi-subagents package would register a second one under the same name.
+			extensionsOverride: (base) => ({ ...base, extensions: base.extensions.filter((x) => !/pi-subagents/i.test(`${x.path} ${x.resolvedPath}`)) }),
 		});
 		await loader.reload();
 		return loader;
@@ -310,9 +300,20 @@ export class PrometheusHost {
 		const gate = new PermissionGate();
 		let sessionRef: AgentSession | undefined;
 		let sessionIdRef = "";
-		const subagents = new SubagentTracker({
+		const subagents = new SubagentRuntime({
+			store: new AgentStore(this.agentDir),
+			cwd: () => cwd,
 			emit: (runs) => this.listener.event(sessionIdRef, { type: "subagents_update", runs }),
-			parentFile: () => sessionRef?.sessionFile,
+			runners: {
+				pi: createPiRunner({
+					modelRuntime: this.modelRuntime,
+					agentDir: this.agentDir,
+					parentModel: () => (sessionRef?.model ? `${sessionRef.model.provider}/${sessionRef.model.id}` : undefined),
+					parentThinking: () => sessionRef?.thinkingLevel as "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | undefined,
+				}),
+				"claude-code": runClaude,
+				codex: runCodex,
+			},
 		});
 		const settingsManager = SettingsManager.create(cwd, this.agentDir);
 		// PI auto-resize needs Photon WASM. A failed load drops every picture with
@@ -344,8 +345,6 @@ export class PrometheusHost {
 			this.listener.event(id, { type: "permission_mode_changed", mode });
 		};
 		const unsubscribe = session.subscribe((e) => {
-			// Subagent progress is read from the raw event: slimming caps payloads and would cut its details.
-			subagents.observe(e);
 			const slim = slimEvent(e);
 			if (slim) this.listener.event(id, slim);
 			if (e.type === "agent_start" || e.type === "agent_settled" || e.type === "session_info_changed") this.listener.sessionsChanged();
@@ -364,16 +363,7 @@ export class PrometheusHost {
 			mode: "rpc",
 			onError: (err) => bridge.context().notify(encodeError(new AppError("extensionError", { error: String(err.error) })), "error"),
 		});
-		// Subagent children are separate PI processes: without this they cannot resolve `<gateway>/<model>`.
-		let releaseChildExtensions = () => {};
-		if (this.childGateways) {
-			try {
-				releaseChildExtensions = requireChildExtension(id, "prometheus-gateways", this.childGateways);
-			} catch (err) {
-				console.warn(`[prometheus] 子代理网关扩展注册失败: ${err instanceof Error ? err.message : err}`);
-			}
-		}
-		const live = { session, bridge, gate, subagents, unsubscribe, releaseChildExtensions };
+		const live = { session, bridge, gate, subagents, unsubscribe };
 		this.live.set(id, live);
 		const file = session.sessionFile;
 		if (file) this.paths.set(id, file);
@@ -415,7 +405,6 @@ export class PrometheusHost {
 		if (live.session.isStreaming) await live.session.abort().catch(() => {});
 		live.unsubscribe();
 		live.subagents.dispose();
-		live.releaseChildExtensions();
 		live.session.dispose();
 		this.live.delete(sessionId);
 	}
@@ -940,7 +929,7 @@ export class PrometheusHost {
 
 		"subagent.detail": ({ sessionId, id }) => this.require(sessionId).subagents.detail(id),
 		"subagent.stop": async ({ sessionId, id }) => {
-			await this.require(sessionId).subagents.stop(id);
+			this.require(sessionId).subagents.stop(id);
 			return null;
 		},
 

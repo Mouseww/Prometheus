@@ -1,16 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { BUNDLED_AGENTS } from "./bundled.ts";
 
 /**
- * Subagent definitions as pi-subagents understands them.
- *
- * Nothing here invents a second store: a custom agent is a markdown file under `<agentDir>/agents`,
- * and a change to one of the bundled agents is an entry in `settings.json` →
- * `subagents.agentOverrides`. That is exactly where the PI TUI and `/agents` look, so an agent
- * edited here behaves identically from the command line.
+ * Subagent definitions. A custom agent is a markdown file under `<agentDir>/agents` (the format PI
+ * agents already use), and a change to one of the bundled agents is an entry in `settings.json` →
+ * `subagents.agentOverrides`.
  */
+
+/** What actually runs the agent: PI itself inside this process, or another coding CLI. */
+export type RunnerKind = "pi" | "claude-code" | "codex";
+export const RUNNERS: readonly RunnerKind[] = ["pi", "claude-code", "codex"];
 
 export type PromptMode = "replace" | "append";
 export type ContextDefault = "" | "fresh" | "fork";
@@ -38,6 +39,9 @@ export interface AgentDef {
 	timeoutMin: number;
 	/** Listed in the parent's prompt so the main agent knows to reach for it. */
 	advertise: boolean;
+	runner: RunnerKind;
+	/** External CLIs only: may edit files in the workspace. Read-only otherwise. */
+	writable: boolean;
 }
 
 export interface AgentView extends AgentDef {
@@ -121,11 +125,17 @@ export function defFromFile(name: string, parsed: Parsed): AgentDef {
 		inheritSkills: flag(v("inheritSkills")) ?? false,
 		timeoutMin: Math.round((Number(v("timeoutMs")) || 0) / 60_000),
 		advertise: flag(v("advertise")) ?? false,
+		runner: parseRunner(v("runner")),
+		writable: v("access") === "write",
 	};
 }
 
+export function parseRunner(v: unknown): RunnerKind {
+	return RUNNERS.includes(v as RunnerKind) ? (v as RunnerKind) : "pi";
+}
+
 /** Frontmatter keys this plugin owns; every other key in an existing file is written back untouched. */
-const MANAGED = ["name", "description", "tools", "model", "thinking", "systemPromptMode", "inheritProjectContext", "inheritGlobalContext", "inheritSkills", "defaultContext", "timeoutMs", "advertise"];
+const MANAGED = ["name", "description", "tools", "model", "thinking", "systemPromptMode", "inheritProjectContext", "inheritGlobalContext", "inheritSkills", "defaultContext", "timeoutMs", "advertise", "runner", "access"];
 
 const oneLine = (s: string) => s.replace(/\s+/g, " ").trim();
 
@@ -143,6 +153,8 @@ export function serializeAgent(def: AgentDef, prior?: Parsed): string {
 		["defaultContext", def.context || undefined],
 		["timeoutMs", def.timeoutMin > 0 ? String(Math.round(def.timeoutMin * 60_000)) : undefined],
 		["advertise", def.advertise ? "true" : undefined],
+		["runner", def.runner === "pi" ? undefined : def.runner],
+		["access", def.runner !== "pi" && def.writable ? "write" : undefined],
 	]);
 	const lines: string[] = [];
 	const written = new Set<string>();
@@ -192,6 +204,8 @@ export function sanitizeDef(input: unknown, name: string): AgentDef {
 		inheritSkills: r.inheritSkills === true,
 		timeoutMin: Number.isFinite(timeout) && timeout > 0 ? Math.min(Math.round(timeout), 24 * 60) : 0,
 		advertise: r.advertise === true,
+		runner: parseRunner(r.runner),
+		writable: r.writable === true,
 	};
 }
 
@@ -218,7 +232,7 @@ async function writeJson(file: string, value: Json): Promise<void> {
 }
 
 /** Override fields this plugin writes; `output`, `skills` and the like are left as the user set them. */
-const OVERRIDE_KEYS = ["description", "model", "thinking", "systemPromptMode", "inheritProjectContext", "inheritGlobalContext", "inheritSkills", "defaultContext", "tools", "systemPrompt", "advertise"] as const;
+const OVERRIDE_KEYS = ["description", "model", "thinking", "systemPromptMode", "inheritProjectContext", "inheritGlobalContext", "inheritSkills", "defaultContext", "tools", "systemPrompt", "advertise", "runner", "access"] as const;
 
 /** The override fields that differ between a draft and its bundled base. */
 export function diffOverride(base: AgentDef, draft: AgentDef): Json {
@@ -234,6 +248,8 @@ export function diffOverride(base: AgentDef, draft: AgentDef): Json {
 	if (draft.tools.join(",") !== base.tools.join(",")) out.tools = draft.tools.length ? draft.tools : "inherit";
 	if (draft.prompt.trim() !== base.prompt.trim()) out.systemPrompt = draft.prompt;
 	if (draft.advertise !== base.advertise) out.advertise = draft.advertise;
+	if (draft.runner !== base.runner) out.runner = draft.runner;
+	if (draft.writable !== base.writable) out.access = draft.writable ? "write" : "read";
 	return out;
 }
 
@@ -254,6 +270,8 @@ export function applyOverride(base: AgentDef, o: Json | undefined): AgentDef {
 	else if (o.tools === "inherit" || o.tools === false) next.tools = [];
 	if (typeof o.systemPrompt === "string") next.prompt = o.systemPrompt;
 	if (typeof o.advertise === "boolean") next.advertise = o.advertise;
+	if (typeof o.runner === "string") next.runner = parseRunner(o.runner);
+	if (o.access === "write" || o.access === "read") next.writable = o.access === "write";
 	return next;
 }
 
@@ -273,35 +291,9 @@ export class AgentStore {
 		return join(this.agentDir, "settings.json");
 	}
 
-	/** Directories that may hold pi-subagents' bundled agents, most likely first. */
-	async builtinDirs(): Promise<string[]> {
-		const found: string[] = [];
-		const add = (d: string) => existsSync(d) && !found.includes(d) && found.push(d);
-		add(join(this.agentDir, "npm", "node_modules", "pi-subagents", "agents"));
-		add(join(this.agentDir, "extensions", "subagent", "agents"));
-		// Packages installed from git live under git/<host>/<owner>/<repo>.
-		const gitRoot = join(this.agentDir, "git");
-		const walk = async (dir: string, depth: number): Promise<void> => {
-			if (depth > 3) return;
-			let names: string[];
-			try {
-				names = await readdir(dir);
-			} catch {
-				return;
-			}
-			if (names.includes("package.json") && names.includes("agents")) {
-				try {
-					const pkg = JSON.parse(await readFile(join(dir, "package.json"), "utf8")) as { name?: string };
-					if (pkg.name === "pi-subagents") add(join(dir, "agents"));
-				} catch {
-					// not a readable manifest
-				}
-				return;
-			}
-			for (const n of names) if (!n.startsWith(".") && n !== "node_modules") await walk(join(dir, n), depth + 1);
-		};
-		await walk(gitRoot, 0);
-		return found;
+	/** The agents that ship with the app. */
+	private bundled(): { name: string; def: AgentDef }[] {
+		return Object.entries(BUNDLED_AGENTS).map(([name, text]) => ({ name, def: defFromFile(name, parseAgentFile(text)) }));
 	}
 
 	private async readDir(dir: string, depth = 0): Promise<{ name: string; file: string; parsed: Parsed }[]> {
@@ -352,18 +344,9 @@ export class AgentStore {
 		await writeJson(this.settingsFile, out);
 	}
 
-	async packageInstalled(): Promise<boolean> {
-		if ((await this.builtinDirs()).length) return true;
-		const settings = await readJson(this.settingsFile).catch(() => ({}) as Json);
-		return Array.isArray(settings.packages) && settings.packages.some((p) => typeof p === "string" && /pi-subagents/.test(p));
-	}
-
 	/** Every agent the user can see: bundled ones, custom files, with edits and disabled flags applied. */
 	async list(): Promise<AgentView[]> {
-		const bundled = new Map<string, AgentDef>();
-		for (const dir of await this.builtinDirs()) {
-			for (const e of await this.readDir(dir)) if (!bundled.has(e.name)) bundled.set(e.name, defFromFile(e.name, e.parsed));
-		}
+		const bundled = new Map<string, AgentDef>(this.bundled().map((b) => [b.name, b.def]));
 		const custom = new Map<string, { def: AgentDef; file: string }>();
 		for (const e of await this.readDir(this.userDir)) custom.set(e.name, { def: defFromFile(e.name, e.parsed), file: e.file });
 		const { all } = await this.overrides();
@@ -417,18 +400,16 @@ export class AgentStore {
 			return;
 		}
 		// Bundled agent: only what differs from the shipped definition is stored.
-		const bundledBase = await this.bundledBase(name);
+		const bundledBase = this.bundledBase(name);
 		const { all } = await this.overrides();
 		const kept = Object.fromEntries(Object.entries(all[name] ?? {}).filter(([k]) => !(OVERRIDE_KEYS as readonly string[]).includes(k)));
 		await this.writeOverride(name, { ...kept, ...diffOverride(bundledBase, def) });
 	}
 
-	private async bundledBase(name: string): Promise<AgentDef> {
-		for (const dir of await this.builtinDirs()) {
-			const hit = (await this.readDir(dir)).find((e) => e.name === name);
-			if (hit) return defFromFile(name, hit.parsed);
-		}
-		throw new Error("找不到内置子代理的原始定义，请确认已安装 pi-subagents");
+	private bundledBase(name: string): AgentDef {
+		const hit = this.bundled().find((b) => b.name === name);
+		if (!hit) throw new Error("找不到内置子代理的原始定义");
+		return hit.def;
 	}
 
 	async setDisabled(name: string, disabled: boolean): Promise<void> {
