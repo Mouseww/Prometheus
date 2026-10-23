@@ -2,6 +2,7 @@ import { createHmac, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import { isIP } from "node:net";
 import { networkInterfaces } from "node:os";
+import { AppError } from "@prometheus/protocol";
 import { TAURI_ORIGINS } from "./security.ts";
 
 export const MIN_PASSWORD = 8;
@@ -20,9 +21,9 @@ function derive(password: string, salt: Buffer, n: number): Promise<Buffer> {
 }
 
 export function checkPasswordRules(password: unknown): string {
-	if (typeof password !== "string") throw new Error("密码格式不正确");
-	if (password.length < MIN_PASSWORD) throw new Error(`密码至少需要 ${MIN_PASSWORD} 个字符`);
-	if (password.length > MAX_PASSWORD) throw new Error(`密码不能超过 ${MAX_PASSWORD} 个字符`);
+	if (typeof password !== "string") throw new AppError("passwordFormat");
+	if (password.length < MIN_PASSWORD) throw new AppError("passwordTooShort", { min: MIN_PASSWORD });
+	if (password.length > MAX_PASSWORD) throw new AppError("passwordTooLong", { max: MAX_PASSWORD });
 	return password;
 }
 
@@ -139,17 +140,17 @@ const HOST_PATTERN = new RegExp(`^(\\*\\.)?${LABEL}(\\.${LABEL})*$`);
 
 /** Validates the allow-list the user typed: `example.com` or `*.example.com`; a port is ignored. */
 export function normalizeHosts(input: unknown): string[] {
-	if (!Array.isArray(input)) throw new Error("域名白名单格式不正确");
+	if (!Array.isArray(input)) throw new AppError("allowlistFormat");
 	const out = new Set<string>();
 	for (const raw of input) {
-		if (typeof raw !== "string") throw new Error("域名白名单格式不正确");
+		if (typeof raw !== "string") throw new AppError("allowlistFormat");
 		let h = raw.trim().toLowerCase().replace(/:\d{1,5}$/, "");
 		if (h.endsWith(".")) h = h.slice(0, -1);
 		if (!h) continue;
-		if (h.length > 253 || !HOST_PATTERN.test(h) || h === "*" || isIP(h)) throw new Error(`域名格式不正确：${raw.trim()}（只填域名，如 example.com 或 *.example.com）`);
+		if (h.length > 253 || !HOST_PATTERN.test(h) || h === "*" || isIP(h)) throw new AppError("allowlistHostInvalid", { host: raw.trim() });
 		out.add(h);
 	}
-	if (out.size > MAX_HOSTS) throw new Error(`域名最多 ${MAX_HOSTS} 个`);
+	if (out.size > MAX_HOSTS) throw new AppError("allowlistTooMany", { max: MAX_HOSTS });
 	return [...out];
 }
 

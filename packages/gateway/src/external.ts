@@ -1,5 +1,5 @@
 import type { GatewayConfig, GatewayFormat, GatewayModel, ModelPricing } from "@prometheus/protocol";
-import { GATEWAY_FORMATS } from "@prometheus/protocol";
+import { AppError, GATEWAY_FORMATS } from "@prometheus/protocol";
 
 export const DEFAULT_CATALOG_URL = "https://models.opencode.ai/api.json";
 
@@ -23,7 +23,7 @@ export interface ModelCatalog {
  */
 export function parseModelCatalog(json: unknown): ModelCatalog {
 	const catalog: ModelCatalog = { exact: new Map(), loose: new Map(), count: 0 };
-	if (!isRecord(json)) throw new Error("模型目录格式不正确");
+	if (!isRecord(json)) throw new AppError("catalogInvalid");
 	for (const provider of Object.values(json)) {
 		if (!isRecord(provider) || !isRecord(provider.models)) continue;
 		for (const [key, raw] of Object.entries(provider.models)) {

@@ -1,4 +1,4 @@
-import { GATEWAY_FORMATS, type GatewayConfig, type GatewayFormat, type GatewayModel } from "@prometheus/protocol";
+import { AppError, encodeError, GATEWAY_FORMATS, type GatewayConfig, type GatewayFormat, type GatewayModel } from "@prometheus/protocol";
 
 /** Structural mirror of PI's ProviderConfig (only the fields Prometheus emits). */
 export interface PiProviderConfig {
@@ -32,25 +32,25 @@ const PLACEHOLDER_KEY = "prometheus-no-auth";
 
 export function validateGateway(g: GatewayConfig): string[] {
 	const errors: string[] = [];
-	if (!ID_PATTERN.test(g.id)) errors.push("id 只能包含小写字母、数字、- 和 _，且不超过 48 个字符");
-	if (!g.name?.trim()) errors.push("name 不能为空");
-	if (!GATEWAY_FORMATS.includes(g.format)) errors.push(`不支持的 format：${g.format}`);
+	if (!ID_PATTERN.test(g.id)) errors.push(encodeError(new AppError("gatewayFieldId")));
+	if (!g.name?.trim()) errors.push(encodeError(new AppError("gatewayFieldName")));
+	if (!GATEWAY_FORMATS.includes(g.format)) errors.push(encodeError(new AppError("gatewayFieldFormat", { format: g.format })));
 	try {
 		const url = new URL(g.baseUrl);
-		if (url.protocol !== "http:" && url.protocol !== "https:") errors.push("baseUrl 必须是 http(s) 地址");
+		if (url.protocol !== "http:" && url.protocol !== "https:") errors.push(encodeError(new AppError("gatewayFieldBaseUrlScheme")));
 	} catch {
-		errors.push("baseUrl 不是合法 URL");
+		errors.push(encodeError(new AppError("gatewayFieldBaseUrl")));
 	}
-	if (g.auth.type === "header" && !HEADER_PATTERN.test(g.auth.header)) errors.push("自定义鉴权头名不合法");
-	if (g.auth.type !== "none" && !g.apiKey) errors.push("该鉴权类型需要提供 API Key / Token");
+	if (g.auth.type === "header" && !HEADER_PATTERN.test(g.auth.header)) errors.push(encodeError(new AppError("gatewayFieldAuthHeader")));
+	if (g.auth.type !== "none" && !g.apiKey) errors.push(encodeError(new AppError("gatewayFieldApiKey")));
 	for (const name of Object.keys(g.headers ?? {})) {
-		if (!HEADER_PATTERN.test(name)) errors.push(`请求头名不合法：${name}`);
+		if (!HEADER_PATTERN.test(name)) errors.push(encodeError(new AppError("gatewayFieldHeader", { name })));
 	}
-	if (!g.models.length) errors.push("至少配置一个模型");
+	if (!g.models.length) errors.push(encodeError(new AppError("gatewayFieldModels")));
 	const seen = new Set<string>();
 	for (const m of g.models) {
-		if (!m.id.trim()) errors.push("模型 id 不能为空");
-		if (seen.has(m.id)) errors.push(`模型 id 重复：${m.id}`);
+		if (!m.id.trim()) errors.push(encodeError(new AppError("gatewayFieldModelId")));
+		if (seen.has(m.id)) errors.push(encodeError(new AppError("gatewayFieldModelDuplicate", { id: m.id })));
 		seen.add(m.id);
 	}
 	return errors;
@@ -208,7 +208,7 @@ export async function embed(g: GatewayConfig, model: string, inputs: string[], o
 	const base = g.baseUrl.replace(/\/+$/, "");
 
 	if (g.format === "anthropic-messages") {
-		throw new Error("Anthropic 协议不提供 Embedding 接口，请为知识库选择 OpenAI 或 Gemini 格式的网关");
+		throw new AppError("embeddingUnsupported");
 	}
 
 	if (g.format === "google-generative-ai") {
@@ -219,7 +219,7 @@ export async function embed(g: GatewayConfig, model: string, inputs: string[], o
 			body: JSON.stringify({ requests: inputs.map((text) => ({ model: modelPath, content: { parts: [{ text }] } })) }),
 			signal: options.signal,
 		});
-		if (!res.ok) throw new Error(`Embedding 请求失败：HTTP ${res.status} ${await safeText(res)}`);
+		if (!res.ok) throw new AppError("embeddingFailed", { status: res.status, detail: await safeText(res) });
 		const json = (await res.json()) as { embeddings: { values: number[] }[] };
 		return json.embeddings.map((e) => e.values);
 	}
@@ -230,7 +230,7 @@ export async function embed(g: GatewayConfig, model: string, inputs: string[], o
 		body: JSON.stringify({ model, input: inputs }),
 		signal: options.signal,
 	});
-	if (!res.ok) throw new Error(`Embedding 请求失败：HTTP ${res.status} ${await safeText(res)}`);
+	if (!res.ok) throw new AppError("embeddingFailed", { status: res.status, detail: await safeText(res) });
 	const json = (await res.json()) as { data: { index: number; embedding: number[] }[] };
 	return [...json.data].sort((a, b) => a.index - b.index).map((d) => d.embedding);
 }
@@ -260,7 +260,7 @@ export async function transcribe(g: GatewayConfig, model: string, audio: Uint8Ar
 	const mime = baseMime(mimeType) || "audio/webm";
 
 	if (g.format === "anthropic-messages") {
-		throw new Error("Anthropic 协议不支持语音转文字，请选择 OpenAI 或 Gemini 格式的网关");
+		throw new AppError("transcribeUnsupported");
 	}
 
 	if (g.format === "google-generative-ai") {
@@ -274,7 +274,7 @@ export async function transcribe(g: GatewayConfig, model: string, audio: Uint8Ar
 			}),
 			signal: options.signal,
 		});
-		if (!res.ok) throw new Error(`语音转写失败：HTTP ${res.status} ${await safeText(res)}`);
+		if (!res.ok) throw new AppError("transcribeFailed", { status: res.status, detail: await safeText(res) });
 		const json = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
 		return (json.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("").trim();
 	}
@@ -287,7 +287,7 @@ export async function transcribe(g: GatewayConfig, model: string, audio: Uint8Ar
 	// No content-type header: fetch adds the multipart boundary itself.
 	const { "content-type": _ignored, ...headers } = authHeaders(g);
 	const res = await doFetch(`${base}/audio/transcriptions`, { method: "POST", headers, body: form, signal: options.signal });
-	if (!res.ok) throw new Error(`语音转写失败：HTTP ${res.status} ${await safeText(res)}`);
+	if (!res.ok) throw new AppError("transcribeFailed", { status: res.status, detail: await safeText(res) });
 	const json = (await res.json()) as { text?: string };
 	return (json.text ?? "").trim();
 }
@@ -329,7 +329,7 @@ export async function listModels(g: GatewayConfig, options: EmbedOptions = {}): 
 	const headers = catalogueHeaders(g);
 	const get = async (url: string) => {
 		const res = await doFetch(url, { headers, signal: options.signal });
-		if (!res.ok) throw new Error(`获取模型列表失败：HTTP ${res.status} ${await safeText(res)}`);
+		if (!res.ok) throw new AppError("fetchFailed", { status: res.status });
 		return (await res.json()) as Record<string, unknown>;
 	};
 

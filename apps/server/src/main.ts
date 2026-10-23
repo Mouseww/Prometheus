@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { builtinPlugins } from "@prometheus/builtin-plugins";
 import { DEFAULT_LAN_PORT, PrometheusHost } from "@prometheus/core";
-import { type ClientFrame, type NetworkPatch, type NetworkStatus, PROTOCOL_VERSION, type ServerFrame } from "@prometheus/protocol";
+import { AppError, type ClientFrame, encodeError, type NetworkPatch, type NetworkStatus, PROTOCOL_VERSION, type ServerFrame } from "@prometheus/protocol";
 import { WebSocket, WebSocketServer } from "ws";
 import {
 	type Access,
@@ -140,15 +140,15 @@ type LoginResult = { ok: true; token: string } | { ok: false; message: string; r
 async function tryLogin(req: IncomingMessage, password: unknown): Promise<LoginResult> {
 	const key = clientKey(req);
 	const wait = Math.max(byAddress.wait(key), global.wait("*"));
-	if (wait > 0) return { ok: false, message: `尝试次数过多，请 ${wait} 秒后再试`, retryAfter: wait };
+	if (wait > 0) return { ok: false, message: encodeError(new AppError("loginTooMany", { wait })), retryAfter: wait };
 	const stored = config.network().passwordHash;
 	const secret = config.network().secret;
-	if (!stored || !secret) return { ok: false, message: "尚未设置登录密码" };
+	if (!stored || !secret) return { ok: false, message: encodeError(new AppError("loginNoPassword")) };
 	// Count the attempt before the slow hash so a burst of parallel guesses cannot all slip past the limiter.
 	byAddress.fail(key);
 	global.fail("*");
 	const ok = typeof password === "string" && (await verifyPassword(password, stored));
-	if (!ok) return { ok: false, message: "密码不正确" };
+	if (!ok) return { ok: false, message: encodeError(new AppError("loginWrongPassword")) };
 	byAddress.reset(key);
 	global.refund("*");
 	return { ok: true, token: signSession(secret) };
@@ -161,7 +161,7 @@ async function readJson(req: IncomingMessage, limit = 64 * 1024): Promise<unknow
 	const chunks: Buffer[] = [];
 	for await (const chunk of req) {
 		size += (chunk as Buffer).length;
-		if (size > limit) throw new Error("请求体过大");
+		if (size > limit) throw new AppError("bodyTooLarge");
 		chunks.push(chunk as Buffer);
 	}
 	return JSON.parse(Buffer.concat(chunks).toString("utf8"));
@@ -273,7 +273,7 @@ function startNetwork(): Promise<void> {
 		const server = makeServer("network");
 		netError = undefined;
 		server.once("error", (err: NodeJS.ErrnoException) => {
-			netError = err.code === "EADDRINUSE" ? `端口 ${n.port} 已被占用` : err.code === "EACCES" ? `没有权限监听端口 ${n.port}` : err.message;
+			netError = err.code === "EADDRINUSE" ? encodeError(new AppError("portInUse", { port: n.port })) : err.code === "EACCES" ? encodeError(new AppError("portDenied", { port: n.port })) : err.message;
 			net = undefined;
 			done();
 		});
@@ -294,7 +294,7 @@ async function applyNetwork(): Promise<void> {
 }
 
 async function updateNetwork(patch: NetworkPatch): Promise<NetworkStatus> {
-	if (MANAGED) throw new Error("监听地址由环境变量管理，请在服务端环境变量中配置");
+	if (MANAGED) throw new AppError("listenManaged");
 	const cur = config.network();
 	let { passwordHash, secret } = cur;
 	if (patch.password !== undefined) {
@@ -303,11 +303,11 @@ async function updateNetwork(patch: NetworkPatch): Promise<NetworkStatus> {
 	}
 	if (patch.revokeSessions) secret = newSecret();
 	const lan = patch.lan ?? cur.lan;
-	if (lan && !passwordHash) throw new Error("开启局域网访问前，请先设置登录密码");
+	if (lan && !passwordHash) throw new AppError("lanNeedsPassword");
 	let port = cur.port;
 	if (patch.port !== undefined) {
-		if (!Number.isInteger(patch.port) || patch.port < 1024 || patch.port > 65535) throw new Error("端口需在 1024–65535 之间");
-		if (patch.port === mainPort) throw new Error("该端口已被本机服务占用");
+		if (!Number.isInteger(patch.port) || patch.port < 1024 || patch.port > 65535) throw new AppError("portRange");
+		if (patch.port === mainPort) throw new AppError("portOccupiedBySelf");
 		port = patch.port;
 	}
 	const allowedHosts = patch.allowedHosts === undefined ? cur.allowedHosts : normalizeHosts(patch.allowedHosts);
@@ -339,7 +339,7 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage, kind: Kind) => {
 		try {
 			frame = JSON.parse(raw.toString()) as ClientFrame;
 		} catch {
-			return send(client, { type: "error", message: "无效的 JSON 帧" });
+			return send(client, { type: "error", message: encodeError(new AppError("invalidJsonFrame")) });
 		}
 
 		if (!client.authed) {
@@ -378,7 +378,7 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage, kind: Kind) => {
 					if (frame.method === "network.get") data = networkStatus(access.local);
 					else if (frame.method === "network.set") {
 						// Only the machine itself, with nothing in between, may open or reshape network access.
-						if (!access.local) throw new Error("只能在本机上修改网络访问设置");
+						if (!access.local) throw new AppError("networkLocalOnly");
 						data = await updateNetwork(frame.params as NetworkPatch);
 					} else {
 						data = await host.call(frame.method, frame.params as never);
@@ -386,12 +386,12 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage, kind: Kind) => {
 					}
 					send(client, { type: "response", id: frame.id, ok: true, data });
 				} catch (err) {
-					send(client, { type: "response", id: frame.id, ok: false, error: err instanceof Error ? err.message : String(err) });
+					send(client, { type: "response", id: frame.id, ok: false, error: encodeError(err) });
 				}
 				return;
 			}
 			default:
-				send(client, { type: "error", message: "未知帧类型" });
+				send(client, { type: "error", message: encodeError(new AppError("unknownFrameType")) });
 		}
 	});
 });

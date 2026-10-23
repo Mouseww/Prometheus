@@ -66,7 +66,7 @@ export const imageSrc = (i: Pick<ImageContent, "data" | "mimeType">): string => 
 function readBase64(blob: Blob): Promise<string> {
 	return new Promise((resolve, reject) => {
 		const reader = new FileReader();
-		reader.onerror = () => reject(new Error("读取图片失败"));
+		reader.onerror = () => reject(new ImageError("decode"));
 		reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
 		reader.readAsDataURL(blob);
 	});

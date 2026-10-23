@@ -51,7 +51,7 @@ describe("PluginHost hot management", () => {
 	it("keeps the working version when an update fails to load", async () => {
 		const { host, dataDir } = await makeHost();
 		await host.install({ name: "alpha", files: [plugin("alpha", "", "1.0.0")] });
-		await expect(host.install({ name: "alpha", files: [plugin("alpha", "throw new Error('boom');", "2.0.0")] })).rejects.toThrow(/已保持原状.*boom/);
+		await expect(host.install({ name: "alpha", files: [plugin("alpha", "throw new Error('boom');", "2.0.0")] })).rejects.toThrow(/pluginLoadError.*boom/);
 		expect(await host.rpcs.get("alpha/hi")?.({})).toBe("1.0.0");
 		expect(host.list().find((p) => p.name === "alpha")?.status).toBe("loaded");
 		expect(await readFile(join(dataDir, "plugins", "alpha", "index.js"), "utf8")).toContain("1.0.0");
@@ -60,14 +60,14 @@ describe("PluginHost hot management", () => {
 
 	it("leaves nothing behind when a first install fails", async () => {
 		const { host, dataDir } = await makeHost();
-		await expect(host.install({ name: "bad", files: [{ path: "index.js", content: "export default 42" }] })).rejects.toThrow(/已保持原状/);
+		await expect(host.install({ name: "bad", files: [{ path: "index.js", content: "export default 42" }] })).rejects.toThrow(/pluginLoadError/);
 		expect(host.list()).toEqual([]);
 		expect(await stat(join(dataDir, "plugins", "bad")).catch(() => null)).toBeNull();
 	});
 
 	it("rejects an entry whose declared name differs from the install name", async () => {
 		const { host } = await makeHost();
-		await expect(host.install({ name: "alpha", files: [plugin("other")] })).rejects.toThrow(/必须与安装名/);
+		await expect(host.install({ name: "alpha", files: [plugin("other")] })).rejects.toThrow(/pluginNameMismatch/);
 		expect(host.rpcs.has("other/hi")).toBe(false);
 	});
 
@@ -112,8 +112,8 @@ describe("PluginHost hot management", () => {
 	it("refuses to disable or remove built-ins", async () => {
 		const { host } = await makeHost();
 		await host.load({ name: "core-thing", setup() {} }, "builtin");
-		await expect(host.setEnabled("builtin:core-thing", false)).rejects.toThrow(/不能停用/);
-		await expect(host.remove("builtin:core-thing")).rejects.toThrow(/只能删除/);
+		await expect(host.setEnabled("builtin:core-thing", false)).rejects.toThrow(/pluginBuiltinLocked/);
+		await expect(host.remove("builtin:core-thing")).rejects.toThrow(/pluginDirectoryOnly/);
 	});
 
 	it("lets a built-in marked optional be switched off", async () => {
@@ -175,11 +175,11 @@ describe("PluginHost hot management", () => {
 		const tui = new PluginHost({ host: "tui", dataDir: await mkdtemp(join(tmpdir(), "plugtui-")), agentDir: "x", cwd: "x", settings: () => ({}), gateways: () => [] });
 		const r1 = await tui.install({ name: "alpha", files: [plugin("alpha")] });
 		expect(r1.hot).toBe(false);
-		expect(r1.restartReasons[0]).toMatch(/TUI/);
+		expect(r1.restartReasons[0]).toBe("i18n:pluginHotReloadTui");
 
 		await host.install({ name: "beta", files: [plugin("beta"), { path: "lib/util.js", content: "export const x = 1;" }] });
 		const r2 = await host.install({ name: "beta", files: [plugin("beta"), { path: "lib/util.js", content: "export const x = 2;" }] });
-		expect(r2.restartReasons.join()).toMatch(/重启/);
+		expect(r2.restartReasons.join()).toBe("i18n:pluginMultiFileReload");
 		expect(host.list().find((p) => p.name === "beta")?.notes.length).toBe(1);
 	});
 });
@@ -195,9 +195,9 @@ describe("validateFiles", () => {
 		}
 	});
 	it("requires an index.js entry and rejects duplicates, oversize and empty input", () => {
-		expect(() => validateFiles([{ path: "main.js", content: "" }])).toThrow(/index\.js/);
-		expect(() => validateFiles([ok, { path: "./index.js", content: "" }])).toThrow(/重复/);
-		expect(() => validateFiles([{ path: "index.js", content: "x".repeat(500_000) }])).toThrow(/过大/);
+		expect(() => validateFiles([{ path: "main.js", content: "" }])).toThrow(/pluginEntryMissing/);
+		expect(() => validateFiles([ok, { path: "./index.js", content: "" }])).toThrow(/pluginFileDuplicate/);
+		expect(() => validateFiles([{ path: "index.js", content: "x".repeat(500_000) }])).toThrow(/pluginFileTooLarge/);
 		expect(() => validateFiles([])).toThrow();
 	});
 });

@@ -31,8 +31,8 @@ describe("password hashing", () => {
 	});
 
 	it("enforces the length rules", () => {
-		expect(() => checkPasswordRules("short")).toThrow(/至少/);
-		expect(() => checkPasswordRules("x".repeat(201))).toThrow(/不能超过/);
+		expect(() => checkPasswordRules("short")).toThrow(/passwordTooShort/);
+		expect(() => checkPasswordRules("x".repeat(201))).toThrow(/passwordTooLong/);
 		expect(() => checkPasswordRules(123)).toThrow();
 		expect(checkPasswordRules("long enough")).toBe("long enough");
 	});
@@ -112,10 +112,10 @@ describe("normalizeHosts", () => {
 	});
 
 	it("rejects schemes, paths, wildcards-only, IPs and junk", () => {
-		for (const bad of ["https://a.com", "a.com/x", "*", "a b.com", "-a.com", "a..com", "1.2.3.4", "user@a.com", "*.*.a.com"]) expect(() => normalizeHosts([bad])).toThrow(/域名格式不正确/);
+		for (const bad of ["https://a.com", "a.com/x", "*", "a b.com", "-a.com", "a..com", "1.2.3.4", "user@a.com", "*.*.a.com"]) expect(() => normalizeHosts([bad])).toThrow(/allowlistHostInvalid/);
 		expect(() => normalizeHosts("a.com")).toThrow();
 		expect(() => normalizeHosts([5])).toThrow();
-		expect(() => normalizeHosts(Array.from({ length: 51 }, (_, i) => `h${i}.com`))).toThrow(/最多/);
+		expect(() => normalizeHosts(Array.from({ length: 51 }, (_, i) => `h${i}.com`))).toThrow(/allowlistTooMany/);
 	});
 });
 

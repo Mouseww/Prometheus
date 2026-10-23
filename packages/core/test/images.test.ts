@@ -3,7 +3,7 @@ import { checkImages, imageOnlyTitle, MAX_IMAGES, skipPiImageAutoResize } from "
 
 describe("imageOnlyTitle", () => {
 	it("replaces PI's empty placeholder only for chats that have messages", () => {
-		expect(imageOnlyTitle("(no messages)", 3)).toBe("[图片]");
+		expect(imageOnlyTitle("(no messages)", 3)).toBe("i18n:imageOnlyTitle");
 		expect(imageOnlyTitle("(no messages)", 0)).toBe("(no messages)");
 		expect(imageOnlyTitle("hello", 3)).toBe("hello");
 	});
@@ -32,18 +32,18 @@ describe("checkImages", () => {
 	});
 
 	it("refuses other mime types, including SVG which can carry script", () => {
-		for (const mimeType of ["image/svg+xml", "text/html", "application/pdf", "image/png; x=1"]) expect(() => checkImages([img({ mimeType })])).toThrow(/PNG/);
+		for (const mimeType of ["image/svg+xml", "text/html", "application/pdf", "image/png; x=1"]) expect(() => checkImages([img({ mimeType })])).toThrow("imageType");
 	});
 
 	it("refuses data that is not base64, or empty", () => {
-		expect(() => checkImages([img({ data: "not base64!" })])).toThrow(/base64/);
-		expect(() => checkImages([img({ data: "" })])).toThrow(/base64/);
-		expect(() => checkImages([img({ data: "data:image/png;base64,QUJD" })])).toThrow(/base64/);
+		expect(() => checkImages([img({ data: "not base64!" })])).toThrow("imageBadBase64");
+		expect(() => checkImages([img({ data: "" })])).toThrow("imageBadBase64");
+		expect(() => checkImages([img({ data: "data:image/png;base64,QUJD" })])).toThrow("imageBadBase64");
 	});
 
 	it("refuses too many images and malformed entries", () => {
-		expect(() => checkImages(Array.from({ length: MAX_IMAGES + 1 }, () => img()))).toThrow(/最多/);
-		expect(() => checkImages([{ type: "text" } as never])).toThrow(/格式/);
-		expect(() => checkImages([null as never])).toThrow(/格式/);
+		expect(() => checkImages(Array.from({ length: MAX_IMAGES + 1 }, () => img()))).toThrow("imagesTooMany");
+		expect(() => checkImages([{ type: "text" } as never])).toThrow("imagesInvalid");
+		expect(() => checkImages([null as never])).toThrow("imagesInvalid");
 	});
 });

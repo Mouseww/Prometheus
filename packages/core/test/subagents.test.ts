@@ -178,7 +178,7 @@ describe("SubagentTracker (background)", () => {
 		const apply = (nodes: unknown[]) => (tracker as unknown as { applySnapshot(n: unknown[]): void }).applySnapshot(nodes);
 		for (let i = 0; i < 4; i++) apply([]);
 		tracker.dispose();
-		expect(tracker.list()[0]).toMatchObject({ state: "stopped", error: expect.stringContaining("状态未知") });
+		expect(tracker.list()[0]).toMatchObject({ state: "stopped", error: expect.stringContaining("subagentUnknownState") });
 	});
 });
 

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { SessionSummary } from "@prometheus/protocol";
 import { discoverBackend } from "../lib/backend.ts";
 import { PrometheusClient } from "../lib/client.ts";
+import { localizeError } from "../lib/errors.ts";
 import { defineMessages, relativeTime, useT } from "../lib/i18n.ts";
 import { usePrefs } from "../lib/prefs.ts";
 import { Flame } from "./ui.tsx";
@@ -105,7 +106,7 @@ export function PanelApp() {
 						>
 							<span className="size-2 shrink-0 animate-breathe rounded-full bg-moss-400" />
 							<span className="min-w-0 flex-1">
-								<span className="block truncate text-[13px] text-ink-100">{s.name || s.firstMessage || t("untitled")}</span>
+								<span className="block truncate text-[13px] text-ink-100">{s.name || localizeError(s.firstMessage ?? "") || t("untitled")}</span>
 								<span className="block truncate text-[10.5px] text-ink-500">
 									{baseName(s.cwd)} · {relativeTime(s.modified, lang)}
 								</span>

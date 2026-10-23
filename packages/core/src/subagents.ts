@@ -4,7 +4,7 @@ import { readFile, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { InlineExtension } from "@earendil-works/pi-coding-agent";
-import type { SubagentDetail, SubagentRun, SubagentState, SubagentStep } from "@prometheus/protocol";
+import { AppError, encodeError, type SubagentDetail, type SubagentRun, type SubagentState, type SubagentStep } from "@prometheus/protocol";
 
 /** Tool of the pi-subagents package; everything here is derived from its events and public RPC. */
 export const SUBAGENT_TOOL = "subagent";
@@ -243,7 +243,7 @@ export class SubagentTracker {
 			this.apply(callId, details, true, when, true);
 			for (const e of this.runs.values()) {
 				if (e.callId !== callId || isDone(e.state)) continue;
-				if (m.isError === true) e.error ??= "调用失败";
+				if (m.isError === true) e.error ??= encodeError(new AppError("subagentCallFailed"));
 				this.settle(e, m.isError === true ? "failed" : "stopped", when);
 			}
 		}
@@ -276,7 +276,7 @@ export class SubagentTracker {
 	/** Call the package's in-process RPC (`status`, `interrupt`, `stop`, `spawn`, ...). */
 	request(method: string, params: Rec): Promise<unknown> {
 		const bus = this.events;
-		if (!bus) return Promise.reject(new Error("子代理扩展未就绪"));
+		if (!bus) return Promise.reject(new AppError("subagentUnavailable"));
 		const requestId = randomUUID();
 		return new Promise((resolve, reject) => {
 			const finish = (fn: () => void) => {
@@ -287,9 +287,9 @@ export class SubagentTracker {
 			const off = bus.on(`${RPC_REPLY}${requestId}`, (reply) => {
 				const r = rec(reply);
 				if (r?.success === true) finish(() => resolve(r.data));
-				else finish(() => reject(new Error(str(rec(r?.error)?.message) ?? "子代理请求失败")));
+				else finish(() => reject(new AppError("subagentTimeout")));
 			});
-			const timer = setTimeout(() => finish(() => reject(new Error("子代理扩展没有响应，请确认已安装 pi-subagents"))), 10_000);
+			const timer = setTimeout(() => finish(() => reject(new AppError("subagentExtensionNotInstalled"))), 10_000);
 			timer.unref();
 			bus.emit(RPC_REQUEST, { version: 1, requestId, method, params });
 		});
@@ -297,7 +297,7 @@ export class SubagentTracker {
 
 	async stop(id: string): Promise<void> {
 		const e = this.runs.get(id);
-		if (!e) throw new Error("子代理不存在");
+		if (!e) throw new AppError("subagentNotFound");
 		if (isDone(e.state)) return;
 		if (e.asyncId) await this.request("stop", e.childId ? { id: e.asyncId, childId: e.childId } : { id: e.asyncId });
 		else await this.request("interrupt", e.runId ? { id: e.runId } : {});
@@ -307,7 +307,7 @@ export class SubagentTracker {
 
 	async detail(id: string): Promise<SubagentDetail> {
 		const e = this.runs.get(id);
-		if (!e) throw new Error("子代理不存在");
+		if (!e) throw new AppError("subagentNotFound");
 		let steps: SubagentStep[] = [];
 		let complete = false;
 		const file = await this.transcriptFile(e);
@@ -393,11 +393,11 @@ export class SubagentTracker {
 				if (e.isError === true && x.state === "failed" && !x.error && reason) x.error = clip(reason, 400);
 				if (isDone(x.state)) continue;
 				if (e.isError === true) {
-					x.error = clip(reason, 400) || "调用失败";
+					x.error = clip(reason, 400) || encodeError(new AppError("subagentCallFailed"));
 					this.settle(x, "failed", now);
 				} else {
 					// A chain step that never started, or a child the result does not mention.
-					x.error ??= "未执行";
+					x.error ??= encodeError(new AppError("subagentNotRun"));
 					this.settle(x, "stopped", now);
 				}
 			}
@@ -537,7 +537,7 @@ export class SubagentTracker {
 				if (missed >= 4) {
 					for (const e of this.runs.values()) {
 						if (e.asyncId === id && !isDone(e.state)) {
-							e.error = "状态未知（已不在运行列表中）";
+							e.error = encodeError(new AppError("subagentUnknownState"));
 							this.settle(e, "stopped", now);
 						}
 					}

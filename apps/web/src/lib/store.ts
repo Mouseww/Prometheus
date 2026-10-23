@@ -25,6 +25,7 @@ import type {
 } from "@prometheus/protocol";
 import { create } from "zustand";
 import type { ConnState, PrometheusClient } from "./client.ts";
+import { localizeError } from "./errors.ts";
 import { defineMessages, tr } from "./i18n.ts";
 
 const M = defineMessages({
@@ -202,12 +203,14 @@ const get = useStore.getState;
 
 export function toast(message: string, level: Toast["level"] = "info"): void {
 	const id = crypto.randomUUID();
-	set((s) => ({ toasts: [...s.toasts.slice(-4), { id, message, level }] }));
+	// 后端错误码在这里统一翻译，所有 toast 路径都不会漏。
+	const text = localizeError(message);
+	set((s) => ({ toasts: [...s.toasts.slice(-4), { id, message: text, level }] }));
 	setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), level === "error" ? 8000 : 4000);
 }
 
 function errorText(err: unknown): string {
-	return err instanceof Error ? err.message : String(err);
+	return localizeError(err instanceof Error ? err.message : String(err));
 }
 
 /** Run an RPC and surface failures as a toast; returns undefined on error. */

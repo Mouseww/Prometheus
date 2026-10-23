@@ -3,6 +3,7 @@ import { Globe, LoaderCircle, Monitor, Server } from "lucide-react";
 import { useEffect, useState } from "react";
 import { isTauri, localSupported, passwordLogin, forgetServer, loadServerHistory, saveMode, saveRemote, saveSameOriginToken, saveSession, startLocal, targetFromUrl } from "../lib/backend.ts";
 import type { BackendTarget } from "../lib/client.ts";
+import { localizeError } from "../lib/errors.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { Button, Field, Flame, Input } from "./ui.tsx";
 
@@ -82,7 +83,7 @@ export function ConnectScreen({ unauthorized, error, onConnect, wantsPassword = 
 			saveMode("local");
 			onConnect(target);
 		} catch (err) {
-			setMessage(t("startFailed", { e: err instanceof Error ? err.message : String(err) }));
+			setMessage(t("startFailed", { e: localizeError(err instanceof Error ? err.message : String(err)) }));
 		} finally {
 			setBusy(false);
 		}

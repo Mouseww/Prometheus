@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { PermissionPrompt, UIRequest } from "@prometheus/protocol";
+import { localizeError } from "../lib/errors.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { respondUI, useStore } from "../lib/store.ts";
 import { Button, Input, Textarea } from "./ui.tsx";
@@ -62,7 +63,7 @@ function PermissionDialog({ sessionId, id, prompt }: { sessionId: string; id: st
 	const owner = useStore((s) => s.sessions.find((x) => x.id === sessionId));
 	const answer = (value: string) => void respondUI(sessionId, id, { value });
 	const deny = () => answer(prompt.kind === "plan" ? "keep" : "deny");
-	const name = owner?.name || owner?.firstMessage || sessionId.slice(0, 8);
+	const name = owner?.name || localizeError(owner?.firstMessage ?? "") || sessionId.slice(0, 8);
 
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => e.key === "Escape" && deny();

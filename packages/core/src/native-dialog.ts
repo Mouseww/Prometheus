@@ -1,4 +1,5 @@
 import { execFile, spawn } from "node:child_process";
+import { AppError, encodeError } from "@prometheus/protocol";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -89,8 +90,8 @@ if ($path) { Write-Output $path }
  * Shows the operating system's folder chooser on the machine running this process.
  * Resolves to null when the user cancels; rejects when no dialog tool is available (e.g. a headless Linux box).
  */
-export async function pickFolderNative(start?: string): Promise<string | null> {
-	const env = { ...process.env, PROMETHEUS_PICK_START: start ?? "", PROMETHEUS_PICK_TITLE: "选择文件夹" };
+export async function pickFolderNative(start?: string, title = "Choose a folder"): Promise<string | null> {
+	const env = { ...process.env, PROMETHEUS_PICK_START: start ?? "", PROMETHEUS_PICK_TITLE: title };
 	const clean = (s: string) => s.replace(/[\r\n]+$/g, "").trim() || null;
 
 	if (process.platform === "win32") {
@@ -100,24 +101,24 @@ export async function pickFolderNative(start?: string): Promise<string | null> {
 				resolve({ code: err ? 1 : 0, stdout: stdout ?? "", missing: (err as NodeJS.ErrnoException | null)?.code === "ENOENT" }),
 			),
 		);
-		if (r.missing) throw new Error("找不到 PowerShell，无法打开系统文件夹选择框");
+		if (r.missing) throw new AppError("pickFailed", { error: "PowerShell not found" });
 		return clean(r.stdout);
 	}
 
 	if (process.platform === "darwin") {
 		const script = start
-			? `POSIX path of (choose folder with prompt "选择文件夹" default location POSIX file ${JSON.stringify(start)})`
-			: `POSIX path of (choose folder with prompt "选择文件夹")`;
+			? `POSIX path of (choose folder with prompt ${JSON.stringify(title)} default location POSIX file ${JSON.stringify(start)})`
+			: `POSIX path of (choose folder with prompt ${JSON.stringify(title)})`;
 		const r = await run("osascript", ["-e", script]);
-		if (r.missing) throw new Error("找不到 osascript");
+		if (r.missing) throw new AppError("pickFailed", { error: "osascript not found" });
 		return r.code === 0 ? clean(r.stdout) : null;
 	}
 
-	const zenity = await run("zenity", ["--file-selection", "--directory", "--title=选择文件夹", ...(start ? [`--filename=${start.replace(/\/?$/, "/")}`] : [])]);
+	const zenity = await run("zenity", ["--file-selection", "--directory", `--title=${title}`, ...(start ? [`--filename=${start.replace(/\/?$/, "/")}`] : [])]);
 	if (!zenity.missing) return zenity.code === 0 ? clean(zenity.stdout) : null;
 	const kdialog = await run("kdialog", ["--getexistingdirectory", start || process.env.HOME || "/"]);
 	if (!kdialog.missing) return kdialog.code === 0 ? clean(kdialog.stdout) : null;
-	throw new Error("系统缺少图形文件夹选择工具（zenity / kdialog）或没有桌面环境");
+	throw new AppError("pickFailed", { error: "zenity / kdialog not found or no desktop session" });
 }
 
 /** Opens an http(s) link in the default browser of the machine the server runs on. */
@@ -176,7 +177,7 @@ async function findEditor(e: (typeof EDITORS)[number]): Promise<string | null> {
 
 /** Apps that can open a workspace folder here: the file manager always, editors only when installed. */
 export async function listExternalApps(): Promise<ExternalApp[]> {
-	const manager = process.platform === "win32" ? "资源管理器" : process.platform === "darwin" ? "Finder" : "文件管理器";
+	const manager = process.platform === "darwin" ? "Finder" : encodeError(new AppError("fileManagerName"));
 	const apps: ExternalApp[] = [{ id: "files", label: manager }];
 	const found = await Promise.all(EDITORS.map(async (e) => ((await findEditor(e)) ? { id: e.id, label: e.label } : null)));
 	for (const f of found) if (f) apps.push(f);
@@ -191,16 +192,16 @@ function launch(cmd: string, args: string[]): void {
 
 /** Opens a folder in the chosen app. The caller must already have checked that `path` is a workspace. */
 export async function openInExternalApp(app: string, path: string): Promise<void> {
-	if (!existsSync(path)) throw new Error("目录不存在");
+	if (!existsSync(path)) throw new AppError("openPathMissing");
 	if (app === "files") {
 		if (process.platform === "win32") launch("explorer.exe", [path]);
 		else launch(process.platform === "darwin" ? "open" : "xdg-open", [path]);
 		return;
 	}
 	const editor = EDITORS.find((e) => e.id === app);
-	if (!editor) throw new Error("不支持的应用");
+	if (!editor) throw new AppError("openAppUnsupported");
 	const found = await findEditor(editor);
-	if (!found) throw new Error(`未检测到 ${editor.label}`);
+	if (!found) throw new AppError("openAppNotFound", { label: editor.label });
 	if (process.platform === "darwin") launch("open", ["-a", found, path]);
 	else launch(found, [path]);
 }

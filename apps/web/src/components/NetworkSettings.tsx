@@ -2,6 +2,7 @@ import clsx from "clsx";
 import { Copy, LoaderCircle, Lock, ShieldAlert, Wifi } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { NetworkPatch, NetworkStatus } from "@prometheus/protocol";
+import { localizeError } from "../lib/errors.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { toast, useStore } from "../lib/store.ts";
 import { Button, Field, Input, PageHeader, Textarea } from "./ui.tsx";
@@ -140,7 +141,7 @@ export function NetworkSettings() {
 			setPort(String(s.port));
 			setHosts(s.allowedHosts.join("\n"));
 		} catch (err) {
-			setError(err instanceof Error ? err.message : String(err));
+			setError(localizeError(err instanceof Error ? err.message : String(err)));
 		}
 	}, []);
 
@@ -162,7 +163,7 @@ export function NetworkSettings() {
 			if (done) toast(done);
 			return true;
 		} catch (err) {
-			setError(err instanceof Error ? err.message : String(err));
+			setError(localizeError(err instanceof Error ? err.message : String(err)));
 			return false;
 		} finally {
 			setBusy(false);

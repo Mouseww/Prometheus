@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { embed } from "@prometheus/gateway";
 import type { KnowledgeStore, KnowledgeStoreFactory } from "@prometheus/plugin-sdk";
-import type { GatewayConfig, KnowledgeBaseInfo, KnowledgeDocumentInfo, KnowledgeHit } from "@prometheus/protocol";
+import { AppError, type GatewayConfig, type KnowledgeBaseInfo, type KnowledgeDocumentInfo, type KnowledgeHit } from "@prometheus/protocol";
 import { chunkText } from "./chunker.ts";
 
 interface BaseRecord {
@@ -61,8 +61,8 @@ export class KnowledgeService {
 
 	async create(input: { name: string; description?: string; store?: string; embedding: { gatewayId: string; model: string } }): Promise<KnowledgeBaseInfo> {
 		const store = input.store ?? "lancedb";
-		if (!this.options.stores().has(store)) throw new Error(`未注册的知识库存储：${store}`);
-		if (!input.name.trim()) throw new Error("知识库名称不能为空");
+		if (!this.options.stores().has(store)) throw new AppError("kbStoreUnknown", { store });
+		if (!input.name.trim()) throw new AppError("kbNameEmpty");
 		this.gateway(input.embedding.gatewayId);
 		const record: BaseRecord = {
 			id: `kb_${randomUUID().slice(0, 8)}`,
@@ -83,8 +83,8 @@ export class KnowledgeService {
 			const { gatewayId, model } = patch.embedding;
 			const changed = gatewayId !== record.embedding.gatewayId || model !== record.embedding.model;
 			// Vectors from different models are not comparable, so the model is locked once documents exist.
-			if (changed && record.documents.length > 0) throw new Error("知识库已有文档，无法更换向量模型；请先删除全部文档或新建知识库");
-			if (!model.trim()) throw new Error("向量模型不能为空");
+			if (changed && record.documents.length > 0) throw new AppError("kbEmbeddingLocked");
+			if (!model.trim()) throw new AppError("kbModelEmpty");
 			this.gateway(gatewayId);
 			if (changed && record.dimensions) {
 				// Emptied base: discard the old-dimension table so the next ingest recreates it.
@@ -96,7 +96,7 @@ export class KnowledgeService {
 			record.embedding = { gatewayId, model: model.trim() };
 		}
 		if (patch.name !== undefined) {
-			if (!patch.name.trim()) throw new Error("知识库名称不能为空");
+			if (!patch.name.trim()) throw new AppError("kbNameEmpty");
 			record.name = patch.name.trim();
 		}
 		if (patch.description !== undefined) record.description = patch.description.trim() || undefined;
@@ -119,9 +119,9 @@ export class KnowledgeService {
 
 	async ingest(id: string, title: string, text: string): Promise<KnowledgeDocumentInfo> {
 		const record = this.require(id);
-		if (text.length > MAX_DOCUMENT_CHARS) throw new Error(`文档过大（上限 ${MAX_DOCUMENT_CHARS} 字符）`);
+		if (text.length > MAX_DOCUMENT_CHARS) throw new AppError("kbDocumentTooLarge", { max: MAX_DOCUMENT_CHARS });
 		const chunks = chunkText(text);
-		if (!chunks.length) throw new Error("文档内容为空");
+		if (!chunks.length) throw new AppError("kbDocumentEmpty");
 
 		const vectors = await this.embedAll(record, chunks);
 		if (!record.dimensions) record.dimensions = vectors[0]?.length;
@@ -164,7 +164,7 @@ export class KnowledgeService {
 		let pending = this.open.get(record.id);
 		if (!pending) {
 			const factory = this.options.stores().get(record.store);
-			if (!factory) throw new Error(`知识库存储插件未加载：${record.store}`);
+			if (!factory) throw new AppError("kbStoreMissing", { store: record.store });
 			pending = factory({
 				baseId: record.id,
 				dataDir: join(this.options.dataDir, "stores", record.id),
@@ -179,13 +179,13 @@ export class KnowledgeService {
 
 	private gateway(id: string): GatewayConfig {
 		const g = this.options.gateways().find((x) => x.id === id);
-		if (!g) throw new Error(`Embedding 网关不存在：${id}`);
+		if (!g) throw new AppError("embeddingGatewayMissing", { id });
 		return g;
 	}
 
 	private require(id: string): BaseRecord {
 		const b = this.bases.get(id);
-		if (!b) throw new Error(`知识库不存在：${id}`);
+		if (!b) throw new AppError("kbNotFound", { id });
 		return b;
 	}
 

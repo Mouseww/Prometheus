@@ -232,7 +232,7 @@ flowchart LR
 | Slash commands / prompt templates / skills | `extensionRunner.getRegisteredCommands`, `promptTemplates`, `getSkills` | `commands.list` | `/` command palette | v0.1 |
 | Extension UI (select/confirm/input/editor/notify/status/widget/title) | `bindExtensions({uiContext})` | `ui.request` / `ui.respond` | Modal dialogs, toasts, status bar, widget area | v0.1 |
 | Context usage, composition and manual compaction | `getContextUsage`, `getSessionStats`, `compact` | `session.stats`, `chat.compact` | Usage ring under the composer; expands to composition and a compact button | v0.1 |
-| Enabling/disabling tools | `getAllTools`, `setActiveToolsByName` | `tools.list/set` | Tool toggle panel | v0.1 |
+| Listing tools | `getAllTools` | `tools.list` | None (tool availability is set by Modes) | v0.1 |
 | Manual compaction | `compact`, `compaction_*` | `chat.compact` | Compact button + progress hint | v0.1 |
 | Auto retry | `auto_retry_*` | `event` | Retry banner | v0.1 |
 | `!` bash execution | `executeBash`, `bash_execution_update` | `bash.run` | Terminal output block | v0.2 |

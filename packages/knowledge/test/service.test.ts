@@ -38,7 +38,7 @@ describe("KnowledgeService.update", () => {
 	it("refuses to swap the model once documents exist, but still allows renaming", async () => {
 		const { service, base } = await setup();
 		await service.ingest(base.id, "doc", "hello world");
-		await expect(service.update(base.id, { embedding: { gatewayId: "a", model: "m2" } })).rejects.toThrow("无法更换向量模型");
+		await expect(service.update(base.id, { embedding: { gatewayId: "a", model: "m2" } })).rejects.toThrow(/kbEmbeddingLocked/);
 		expect(await service.update(base.id, { embedding: { gatewayId: "a", model: "m1" }, description: "d" })).toMatchObject({ description: "d" });
 	});
 
@@ -52,6 +52,6 @@ describe("KnowledgeService.update", () => {
 
 	it("rejects unknown gateways", async () => {
 		const { service, base } = await setup();
-		await expect(service.update(base.id, { embedding: { gatewayId: "zzz", model: "m" } })).rejects.toThrow("Embedding 网关不存在");
+		await expect(service.update(base.id, { embedding: { gatewayId: "zzz", model: "m" } })).rejects.toThrow(/embeddingGatewayMissing/);
 	});
 });

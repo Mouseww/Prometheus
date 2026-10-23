@@ -1,6 +1,8 @@
 // Wire protocol shared by the Prometheus host and every client (web, desktop, android).
 // Zero runtime dependencies: types mirror the subset of PI shapes that cross the wire.
 
+export * from "./errors.ts";
+
 export const PROTOCOL_VERSION = 1;
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -840,7 +842,7 @@ export interface RpcMethods {
 	"system.apps": { params: Record<string, never>; result: { id: string; label: string }[] };
 	"system.openIn": { params: { app: string; path: string }; result: { ok: true } };
 	"system.open": { params: { url: string }; result: { ok: true } };
-	"fs.pick": { params: { start?: string }; result: { path: string | null } };
+	"fs.pick": { params: { start?: string; /** Localized dialog title; the client supplies it because the server has no UI language. */ title?: string }; result: { path: string | null } };
 	/** Create a folder for a new workspace; the returned listing is the parent, refreshed. */
 	"fs.mkdir": { params: { parent: string; name: string }; result: DirListing };
 
@@ -862,7 +864,6 @@ export interface RpcMethods {
 
 	"commands.list": { params: { sessionId: string }; result: CommandInfo[] };
 	"tools.list": { params: { sessionId: string }; result: ToolInfo[] };
-	"tools.set": { params: { sessionId: string; active: string[] }; result: null };
 
 	"ui.respond": { params: { sessionId: string; requestId: string; response: UIResponse }; result: null };
 

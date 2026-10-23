@@ -28,6 +28,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { PanelInfo, SessionSummary, WorkspaceInfo } from "@prometheus/protocol";
 import { clearSession, saveMode, saveRemote } from "../lib/backend.ts";
 import type { BackendTarget } from "../lib/client.ts";
+import { localizeError } from "../lib/errors.ts";
 import { defineMessages, relativeTime, useT } from "../lib/i18n.ts";
 import { usePrefs } from "../lib/prefs.ts";
 import { PlatformSwitcher } from "./PlatformSwitcher.tsx";
@@ -122,7 +123,7 @@ const menuItem = "flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-l
 function SessionMenu({ s, onRename }: { s: SessionSummary; onRename: () => void }) {
 	const t = useT(M);
 	const { open, setOpen, ref } = usePopover();
-	const title = s.name || s.firstMessage || t("newSession");
+	const title = s.name || localizeError(s.firstMessage ?? "") || t("newSession");
 	return (
 		<div ref={ref} className="relative" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
 			<button
@@ -176,9 +177,9 @@ function SessionRow({ s, active }: { s: SessionSummary; active: boolean }) {
 	const lang = usePrefs((p) => p.lang);
 	const [editing, setEditing] = useState(false);
 	const [name, setName] = useState("");
-	const title = s.name || s.firstMessage || t("newSession");
+	const title = s.name || localizeError(s.firstMessage ?? "") || t("newSession");
 	const startRename = () => {
-		setName(s.name || s.firstMessage || "");
+		setName(s.name || localizeError(s.firstMessage ?? "") || "");
 		setEditing(true);
 	};
 

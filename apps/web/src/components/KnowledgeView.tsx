@@ -3,6 +3,7 @@ import { confirmDialog } from "../lib/dialogs.ts";
 import { BookOpen, FileText, Plus, RefreshCw, Search, Settings2, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { GatewayConfig, KnowledgeBaseInfo, KnowledgeDocumentInfo, KnowledgeHit } from "@prometheus/protocol";
+import { localizeError } from "../lib/errors.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { call, toast } from "../lib/store.ts";
 import { Badge, Button, Dialog, Empty, Field, Input, PageHeader, Select, Textarea } from "./ui.tsx";
@@ -499,7 +500,7 @@ function BaseDetail({ base, onChanged }: { base: KnowledgeBaseInfo; onChanged: (
 					{docs.map((d) => (
 						<div key={d.id} className="flex items-center gap-3 px-4 py-2.5">
 							<FileText className="size-4 text-ink-500" />
-							<span className="min-w-0 flex-1 truncate text-sm text-ink-200">{d.title}</span>
+							<span className="min-w-0 flex-1 truncate text-sm text-ink-200">{localizeError(d.title)}</span>
 							<span className="font-mono text-[11px] text-ink-500">{t("chunks", { n: d.chunks })}</span>
 							<Button
 								variant="danger"

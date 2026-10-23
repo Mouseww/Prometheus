@@ -168,7 +168,7 @@ describe("embed", () => {
 		expect(url).toBe("https://g.example.com/v1beta/models/text-embedding-004:batchEmbedContents");
 	});
 	it("rejects anthropic", async () => {
-		await expect(embed(gw({ format: "anthropic-messages" }), "x", ["a"])).rejects.toThrow(/Anthropic/);
+		await expect(embed(gw({ format: "anthropic-messages" }), "x", ["a"])).rejects.toThrow(/embeddingUnsupported/);
 	});
 });
 
@@ -211,8 +211,8 @@ describe("transcribe", () => {
 
 	it("surfaces HTTP errors and rejects anthropic", async () => {
 		const fetchImpl = (async () => new Response("no such model", { status: 404 })) as unknown as typeof fetch;
-		await expect(transcribe(gw(), "x", audio, "audio/webm", { fetchImpl })).rejects.toThrow(/404 no such model/);
-		await expect(transcribe(gw({ format: "anthropic-messages" }), "x", audio, "audio/webm")).rejects.toThrow(/Anthropic/);
+		await expect(transcribe(gw(), "x", audio, "audio/webm", { fetchImpl })).rejects.toThrow(/transcribeFailed.*404/);
+		await expect(transcribe(gw({ format: "anthropic-messages" }), "x", audio, "audio/webm")).rejects.toThrow(/transcribeUnsupported/);
 	});
 });
 

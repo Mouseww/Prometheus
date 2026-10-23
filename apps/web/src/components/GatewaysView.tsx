@@ -4,6 +4,7 @@ import { CloudDownload, Coins, DatabaseZap, Download, ExternalLink, LoaderCircle
 import { useEffect, useState } from "react";
 import { GATEWAY_PRESETS } from "@prometheus/protocol";
 import type { GatewayAuth, GatewayConfig, GatewayFormat, GatewayModel, GatewayPreset, ModelPricing, PiGatewayInfo } from "@prometheus/protocol";
+import { localizeError } from "../lib/errors.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { usePrefs } from "../lib/prefs.ts";
 import { call, refreshModels, toast } from "../lib/store.ts";
@@ -713,7 +714,7 @@ function GatewayEditor({ initial, isNew, preset, onClose, onSaved }: { initial: 
 				{test && (
 					<div className={clsx("rounded-lg border px-3.5 py-2.5 text-sm", test.ok ? "border-moss-400/30 bg-moss-400/8 text-moss-400" : "border-rose-400/30 bg-rose-400/8 text-rose-400")}>
 						{test.ok ? t("testOk") : t("testFail")} · {test.latencyMs}ms
-						<div className="mt-1 font-mono text-xs break-all opacity-80">{test.message}</div>
+						<div className="mt-1 font-mono text-xs break-all opacity-80">{localizeError(test.message)}</div>
 					</div>
 				)}
 

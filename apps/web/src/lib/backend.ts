@@ -1,4 +1,25 @@
 import type { BackendTarget } from "./client.ts";
+import { localizeError } from "./errors.ts";
+import { defineMessages, tr } from "./i18n.ts";
+
+const M = defineMessages({
+	zh: {
+		timeout: "连接超时",
+		unreachable: "无法连接到服务器",
+		closed: "连接被服务器关闭，请检查地址和域名白名单",
+		usesToken: "该服务器使用访问令牌而不是密码",
+		noLoginNeeded: "该服务器不需要登录",
+		loginFailed: "登录失败",
+	},
+	en: {
+		timeout: "Connection timed out",
+		unreachable: "Cannot reach the server",
+		closed: "The server closed the connection. Check the address and the domain allowlist",
+		usesToken: "This server uses an access token, not a password",
+		noLoginNeeded: "This server does not require signing in",
+		loginFailed: "Sign-in failed",
+	},
+});
 
 const REMOTE_KEY = "prometheus.remote";
 const TOKEN_KEY = "prometheus.token";
@@ -141,9 +162,9 @@ export function passwordLogin(target: BackendTarget, secret: string): Promise<Pa
 			resolve(r);
 		};
 		const ws = new WebSocket(target.wsUrl);
-		const timer = setTimeout(() => done({ ok: false, message: "连接超时" }), 15_000);
-		ws.onerror = () => done({ ok: false, message: "无法连接到服务器" });
-		ws.onclose = () => done({ ok: false, message: "连接被服务器关闭，请检查地址和域名白名单" });
+		const timer = setTimeout(() => done({ ok: false, message: tr(M, "timeout") }), 15_000);
+		ws.onerror = () => done({ ok: false, message: tr(M, "unreachable") });
+		ws.onclose = () => done({ ok: false, message: tr(M, "closed") });
 		ws.onmessage = (ev) => {
 			let f: { type?: string; login?: string; authRequired?: boolean; token?: string; message?: string };
 			try {
@@ -153,8 +174,8 @@ export function passwordLogin(target: BackendTarget, secret: string): Promise<Pa
 			}
 			if (f.type === "hello") {
 				if (f.login === "password") ws.send(JSON.stringify({ type: "login", password: secret }));
-				else done({ ok: false, message: f.authRequired ? "该服务器使用访问令牌而不是密码" : "该服务器不需要登录" });
-			} else if (f.type === "login_failed") done({ ok: false, message: f.message ?? "登录失败" });
+				else done({ ok: false, message: f.authRequired ? tr(M, "usesToken") : tr(M, "noLoginNeeded") });
+			} else if (f.type === "login_failed") done({ ok: false, message: f.message ? localizeError(f.message) : tr(M, "loginFailed") });
 			else if (f.type === "auth_ok" && f.token) done({ ok: true, token: f.token });
 		};
 	});

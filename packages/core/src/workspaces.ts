@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { createJsonStore, type JsonStore } from "@prometheus/plugin-sdk";
-import type { WorkspaceInfo } from "@prometheus/protocol";
+import { AppError, type WorkspaceInfo } from "@prometheus/protocol";
 
 interface WorkspaceFile {
 	workspaces: WorkspaceInfo[];
@@ -60,7 +60,7 @@ export class WorkspaceStore {
 	/** Explicit add (or reuse): validates the directory and un-hides it. */
 	async add(path: string, name?: string): Promise<WorkspaceInfo> {
 		const dir = normalizeDir(path);
-		if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new Error(`目录不存在：${dir}`);
+		if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new AppError("dirNotFound", { dir });
 		const id = workspaceId(dir);
 		const now = new Date().toISOString();
 		let result: WorkspaceInfo | undefined;
@@ -110,13 +110,13 @@ export class WorkspaceStore {
 	}
 
 	async rename(id: string, name: string): Promise<WorkspaceInfo> {
-		if (!name.trim()) throw new Error("名称不能为空");
+		if (!name.trim()) throw new AppError("folderNameEmpty");
 		let result: WorkspaceInfo | undefined;
 		await this.write((d) => {
 			result = d.workspaces.find((w) => w.id === id);
 			if (result) result.name = name.trim();
 		});
-		if (!result) throw new Error(`工作区不存在：${id}`);
+		if (!result) throw new AppError("workspaceNotFound", { id });
 		return result;
 	}
 

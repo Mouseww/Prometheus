@@ -16,7 +16,7 @@ import type {
 	RpcHandler,
 	WorkspaceRef,
 } from "@prometheus/plugin-sdk";
-import type { GatewayConfig, PanelInfo, PluginFile, PluginInfo, PluginInstallResult } from "@prometheus/protocol";
+import { AppError, encodeError, type GatewayConfig, type PanelInfo, type PluginFile, type PluginInfo, type PluginInstallResult } from "@prometheus/protocol";
 
 export interface PluginRoute {
 	method: HttpMethod;
@@ -42,9 +42,9 @@ const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/;
 
 /** Names that are safe as a folder on every OS, not just valid by pattern. */
 export function folderNameProblem(name: string): string | undefined {
-	if (!NAME_PATTERN.test(name)) return `插件名不合法：${name}（小写字母、数字、- _ .，不超过 64 位）`;
-	if (name.endsWith(".")) return "插件名不能以 . 结尾";
-	if (WINDOWS_RESERVED.test(name)) return `“${name}”是系统保留名称，请换一个`;
+	if (!NAME_PATTERN.test(name)) return encodeError(new AppError("pluginNameInvalid", { name, detail: "lowercase letters, digits, - _ . — at most 64 characters" }));
+	if (name.endsWith(".")) return encodeError(new AppError("pluginNameEndsWithDot"));
+	if (WINDOWS_RESERVED.test(name)) return encodeError(new AppError("pluginNameReserved", { name }));
 	return undefined;
 }
 const METHOD_PATTERN = /^[a-zA-Z][\w.]{0,63}$/;
@@ -86,7 +86,7 @@ export class PluginHost {
 	reloadSessions: () => Promise<void> = async () => {};
 	workspaces: () => Promise<WorkspaceRef[]> = async () => [];
 	runAgent: (options: AgentRunOptions) => Promise<AgentRunResult> = async () => {
-		throw new Error("当前宿主不支持在后台运行 Agent");
+		throw new AppError("pluginBackgroundUnsupported");
 	};
 	onChanged: () => void = () => {};
 	/** Wired by the server: pushes a `plugin.notify` frame for one plugin. */
@@ -175,9 +175,9 @@ export class PluginHost {
 		entry.reg = reg;
 		try {
 			const plugin = await entry.fetch();
-			if (!plugin || typeof plugin.setup !== "function") throw new Error("插件必须默认导出 { name, setup(ctx) }（可用 definePlugin 包装）");
-			if (!NAME_PATTERN.test(plugin.name)) throw new Error(`插件名不合法：${plugin.name}`);
-			if (this.entries.some((e) => e !== entry && e.reg && e.info.name === plugin.name)) throw new Error(`插件名重复：${plugin.name}`);
+			if (!plugin || typeof plugin.setup !== "function") throw new AppError("pluginSetupShape");
+			if (!NAME_PATTERN.test(plugin.name)) throw new AppError("pluginNameInvalid", { name: plugin.name, detail: "lowercase letters, digits, - _ . — at most 64 characters" });
+			if (this.entries.some((e) => e !== entry && e.reg && e.info.name === plugin.name)) throw new AppError("pluginNameDuplicate", { name: plugin.name });
 			info.name = plugin.name;
 			info.version = plugin.version;
 			if (entry.source === "builtin") {
@@ -253,7 +253,7 @@ export class PluginHost {
 
 	private find(id: string): Entry {
 		const entry = this.entries.find((e) => e.id === id);
-		if (!entry) throw new Error(`插件不存在：${id}`);
+		if (!entry) throw new AppError("pluginNotFound", { id });
 		return entry;
 	}
 
@@ -264,7 +264,7 @@ export class PluginHost {
 
 	async setEnabled(id: string, enabled: boolean): Promise<PluginInfo> {
 		const entry = this.find(id);
-		if (!entry.info.toggleable) throw new Error("该插件是应用的组成部分，不能停用");
+		if (!entry.info.toggleable) throw new AppError("pluginBuiltinLocked");
 		await this.options.setDisabled?.(id, !enabled);
 		await this.teardown(entry);
 		if (enabled) await this.activate(entry);
@@ -288,9 +288,9 @@ export class PluginHost {
 
 	async remove(id: string): Promise<void> {
 		const entry = this.find(id);
-		if (entry.source !== "directory") throw new Error("只能删除用户安装的文件夹插件");
+		if (entry.source !== "directory") throw new AppError("pluginDirectoryOnly");
 		const dir = resolve(this.pluginsDir, entry.key);
-		if (!dir.startsWith(resolve(this.pluginsDir) + sep)) throw new Error("插件目录不合法");
+		if (!dir.startsWith(resolve(this.pluginsDir) + sep)) throw new AppError("pluginDirInvalid");
 		await this.teardown(entry);
 		await rm(dir, { recursive: true, force: true });
 		this.entries = this.entries.filter((e) => e !== entry);
@@ -309,7 +309,7 @@ export class PluginHost {
 		if (problem) throw new Error(problem);
 		const files = validateFiles(input.files);
 		const clash = this.entries.find((e) => e.info.name === name && e.source !== "directory");
-		if (clash) throw new Error(`已有同名的${clash.source === "builtin" ? "内置" : "配置"}插件：${name}`);
+		if (clash) throw new AppError("pluginNameClash", { kind: clash.source === "builtin" ? "built-in" : "config", name });
 
 		const dir = join(this.pluginsDir, name);
 		const prior = this.entries.find((e) => e.id === `directory:${name}`);
@@ -331,8 +331,8 @@ export class PluginHost {
 			await writeFile(join(dir, "package.json"), JSON.stringify({ name, version: input.version ?? "0.1.0", private: true, type: "module", main: "index.js" }, null, 2));
 			await this.options.setDisabled?.(entry.id, false);
 			await this.activate(entry);
-			if (entry.info.status !== "loaded") throw new Error(entry.info.error ?? "插件加载失败");
-			if (entry.info.name !== name) throw new Error(`插件声明的 name（${entry.info.name}）必须与安装名（${name}）一致`);
+			if (entry.info.status !== "loaded") throw new Error(entry.info.error ?? encodeError(new AppError("pluginNotLoaded")));
+			if (entry.info.name !== name) throw new AppError("pluginNameMismatch", { declared: entry.info.name, installed: name });
 		} catch (err) {
 			await this.teardown(entry);
 			await rm(dir, { recursive: true, force: true });
@@ -345,14 +345,14 @@ export class PluginHost {
 			} else if (!prior) {
 				this.entries = this.entries.filter((e) => e !== entry);
 			}
-			throw new Error(`插件未能加载，已保持原状：${errorText(err)}`);
+			throw new AppError("pluginLoadError", { error: errorText(err) });
 		}
 		if (backup) await rm(backup, { recursive: true, force: true });
 
 		const restartReasons: string[] = [];
-		if (this.options.host !== "server") restartReasons.push("当前是终端（TUI）模式，不支持热加载，请重启后生效");
+		if (this.options.host !== "server") restartReasons.push(encodeError(new AppError("pluginHotReloadTui")));
 		// Only the entry file is re-read on update; modules it imports stay cached by Node until restart.
-		if (prior && files.length > 1) restartReasons.push("这是多文件插件的更新：入口文件已重新加载，但被它引用的其他文件会沿用旧缓存，请重启应用后完全生效");
+		if (prior && files.length > 1) restartReasons.push(encodeError(new AppError("pluginMultiFileReload")));
 		entry.info.notes = restartReasons;
 		await this.applied();
 		return { plugin: entry.info, updated: Boolean(prior), hot: this.options.host === "server", restartReasons };
@@ -384,19 +384,19 @@ export class PluginHost {
 				reg.factories.push(factory);
 			},
 			knowledgeStore: (id, factory) => {
-				if (this.stores.has(id)) throw new Error(`知识库存储 id 已被注册：${id}`);
+				if (this.stores.has(id)) throw new AppError("pluginStoreDuplicate", { id });
 				this.stores.set(id, factory);
 				reg.storeIds.push(id);
 			},
 			route: (method, path, handler) => {
-				if (!path.startsWith("/")) throw new Error("路由 path 必须以 / 开头");
+				if (!path.startsWith("/")) throw new AppError("pluginRoutePath");
 				reg.routes.push({ method, path: `/plugins/${name}${path}`, handler });
 			},
 			panel: (panel) => {
 				entry.info.panels.push({ plugin: name, id: panel.id, title: panel.title, icon: panel.icon, url: `/plugins/${name}${panel.path}` });
 			},
 			rpc: (method, handler) => {
-				if (!METHOD_PATTERN.test(method)) throw new Error(`RPC 方法名不合法：${method}`);
+				if (!METHOD_PATTERN.test(method)) throw new AppError("pluginMethodInvalid", { method });
 				const key = `${name}/${method}`;
 				this.rpcs.set(key, handler);
 				reg.rpcKeys.push(key);
@@ -412,27 +412,27 @@ export class PluginHost {
 
 /** Relative, forward-slash paths only; nothing may escape the plugin folder. */
 export function validateFiles(input: PluginFile[]): PluginFile[] {
-	if (!Array.isArray(input) || input.length === 0) throw new Error("至少需要一个文件（入口为 index.js）");
-	if (input.length > MAX_FILES) throw new Error(`文件过多（上限 ${MAX_FILES} 个）`);
+	if (!Array.isArray(input) || input.length === 0) throw new AppError("pluginFilesRequired");
+	if (input.length > MAX_FILES) throw new AppError("pluginTooManyFiles", { max: MAX_FILES });
 	const seen = new Set<string>();
 	let total = 0;
 	const out: PluginFile[] = [];
 	for (const file of input) {
 		const path = typeof file?.path === "string" ? file.path.trim() : "";
 		const content = typeof file?.content === "string" ? file.content : "";
-		if (!path || path.includes("\\") || path.includes("\0") || isAbsolute(path) || /^[A-Za-z]:/.test(path)) throw new Error(`文件路径不合法：${path || "(空)"}，请使用相对路径和 /`);
+		if (!path || path.includes("\\") || path.includes("\0") || isAbsolute(path) || /^[A-Za-z]:/.test(path)) throw new AppError("pluginFilePathInvalid", { path: path || "(empty)" });
 		const clean = normalize(path).split(sep).join("/");
-		if (clean.startsWith("../") || clean === ".." || clean.split("/").some((s) => s === ".." || s === "node_modules" || s.startsWith(".git"))) throw new Error(`文件路径不合法：${path}`);
-		if (clean === "package.json") throw new Error("package.json 由系统生成，请勿提供");
-		if (seen.has(clean)) throw new Error(`文件重复：${clean}`);
+		if (clean.startsWith("../") || clean === ".." || clean.split("/").some((s) => s === ".." || s === "node_modules" || s.startsWith(".git"))) throw new AppError("pluginFilePathInvalid", { path });
+		if (clean === "package.json") throw new AppError("pluginFilePackageJson");
+		if (seen.has(clean)) throw new AppError("pluginFileDuplicate", { path: clean });
 		seen.add(clean);
 		const bytes = Buffer.byteLength(content, "utf8");
-		if (bytes > MAX_FILE_BYTES) throw new Error(`文件过大：${clean}（上限 ${MAX_FILE_BYTES / 1000} KB）`);
+		if (bytes > MAX_FILE_BYTES) throw new AppError("pluginFileTooLarge", { path: clean, max: MAX_FILE_BYTES / 1000 });
 		total += bytes;
 		out.push({ path: clean, content });
 	}
-	if (total > MAX_TOTAL_BYTES) throw new Error("插件总体积过大");
-	if (!seen.has("index.js")) throw new Error("缺少入口文件 index.js");
+	if (total > MAX_TOTAL_BYTES) throw new AppError("pluginTotalTooLarge");
+	if (!seen.has("index.js")) throw new AppError("pluginEntryMissing");
 	return out;
 }
 
@@ -451,6 +451,6 @@ async function resolveEntry(spec: string, dataDir: string): Promise<string> {
 	const exp = typeof pkg.exports === "string" ? pkg.exports : (pkg.exports?.["."] as string | undefined);
 	const rel = typeof exp === "string" ? exp : pkg.main ?? "index.js";
 	const entry = resolve(dir, rel);
-	if (!entry.startsWith(dir)) throw new Error("插件入口不能指向插件目录之外");
+	if (!entry.startsWith(dir)) throw new AppError("pluginEntryOutside");
 	return entry;
 }

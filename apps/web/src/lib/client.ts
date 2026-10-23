@@ -1,4 +1,16 @@
 import type { ClientFrame, RpcMethod, RpcParams, RpcResult, ServerFrame } from "@prometheus/protocol";
+import { defineMessages, tr } from "./i18n.ts";
+
+const M = defineMessages({
+	zh: {
+		closedAbruptly: "连接已断开",
+		closed: "连接已关闭",
+	},
+	en: {
+		closedAbruptly: "The connection was lost",
+		closed: "The connection is closed",
+	},
+});
 
 export interface BackendTarget {
 	wsUrl: string;
@@ -56,7 +68,7 @@ export class PrometheusClient {
 		};
 		ws.onclose = (ev) => {
 			if (this.ws !== ws) return;
-			this.failPending("连接已断开");
+			this.failPending(tr(M, "closedAbruptly"));
 			// Closing the idle socket to ask for credentials must not replace the sign-in prompt with "closed".
 			if (this.state === "unauthorized") return;
 			if (ev.code === 4001 || ev.code === 4003) {
@@ -74,7 +86,7 @@ export class PrometheusClient {
 	close(): void {
 		this.stopped = true;
 		this.ws?.close();
-		this.failPending("连接已关闭");
+		this.failPending(tr(M, "closed"));
 	}
 
 	async rpc<M extends RpcMethod>(method: M, params: RpcParams<M>): Promise<RpcResult<M>> {

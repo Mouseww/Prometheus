@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ExtensionUIContext, ExtensionUIDialogOptions } from "@earendil-works/pi-coding-agent";
-import type { PermissionPrompt, UIRequest, UIResponse } from "@prometheus/protocol";
+import { AppError, encodeError, type PermissionPrompt, type UIRequest, type UIResponse } from "@prometheus/protocol";
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 type RequestBody = DistributiveOmit<UIRequest, "id">;
@@ -130,7 +130,7 @@ export class UIBridge {
 			setFooter: () => {},
 			setHeader: () => {},
 			custom: async () => {
-				ctx.notify("该扩展使用了仅终端可用的自定义界面，请在 TUI 中使用", "warning");
+				ctx.notify(encodeError(new AppError("extensionTerminalOnly")), "warning");
 				return undefined;
 			},
 			addAutocompleteProvider: () => {},
@@ -140,7 +140,7 @@ export class UIBridge {
 			theme: undefined,
 			getAllThemes: () => [],
 			getTheme: () => undefined,
-			setTheme: () => ({ success: false, error: "Web UI 不支持切换终端主题" }),
+			setTheme: () => ({ success: false, error: encodeError(new AppError("themeTerminalOnly")) }),
 			getToolsExpanded: () => true,
 			setToolsExpanded: () => {},
 		};

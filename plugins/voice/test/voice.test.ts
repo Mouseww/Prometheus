@@ -90,7 +90,7 @@ describe("voice plugin against a stub transcription server", () => {
 		const rpcs = await setup();
 		await rpcs.get("configure")!({ gatewayId: "gw", model: "whisper-1" });
 		reply = { status: 401, body: "bad key" };
-		await expect(rpcs.get("transcribe")!({ audio: b64(3000), mimeType: "audio/webm" })).rejects.toThrow(/401 bad key/);
+		await expect(rpcs.get("transcribe")!({ audio: b64(3000), mimeType: "audio/webm" })).rejects.toThrow(/transcribeFailed.*401/);
 		reply = { status: 200, body: JSON.stringify({ text: "  " }) };
 		await expect(rpcs.get("transcribe")!({ audio: b64(3000), mimeType: "audio/webm" })).rejects.toThrow(/没有识别到/);
 	});

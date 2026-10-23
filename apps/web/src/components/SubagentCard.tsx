@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import { ChevronRight } from "lucide-react";
 import { useMemo } from "react";
+import { localizeError } from "../lib/errors.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { NO_SUBAGENTS, selectSubagent, useStore } from "../lib/store.ts";
 import { formatElapsed, isLive, StateIcon } from "./SubagentPanel.tsx";
@@ -39,7 +40,7 @@ export function SubagentCard({ callId, fallback }: { callId: string; fallback: R
 						>
 							<StateIcon state={r.state} />
 							<span className="shrink-0 font-mono text-[13px] font-medium text-ink-100">{r.agent}</span>
-							<span className="min-w-0 flex-1 truncate text-xs text-ink-400">{r.task || r.error || "—"}</span>
+							<span className="min-w-0 flex-1 truncate text-xs text-ink-400">{r.task || localizeError(r.error ?? "") || "—"}</span>
 							<span className="shrink-0 font-mono text-[11px] text-ink-500 tabular-nums">{formatElapsed((r.endedAt ?? Date.now()) - r.startedAt)}</span>
 							<ChevronRight className="size-3.5 shrink-0 text-ink-600" />
 						</button>

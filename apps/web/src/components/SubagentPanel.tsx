@@ -4,6 +4,7 @@ import { Bot, Brain, Check, ChevronDown, ChevronRight, CircleAlert, Clock, ListT
 import { useEffect, useMemo, useRef, useState } from "react";
 import { sortSubagents, type SubagentDetail, type SubagentRun, type SubagentState, type SubagentStep } from "@prometheus/protocol";
 import { fmtTokens } from "../lib/format.ts";
+import { localizeError } from "../lib/errors.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { closeSubagentRegion, NO_SUBAGENTS, openSubagentList, selectSubagent, setSubagentSort, type SubagentSort, stopSubagent, useStore } from "../lib/store.ts";
 import { Markdown } from "./Markdown.tsx";
@@ -167,7 +168,7 @@ function Row({ run, selected, now }: { run: SubagentRun; selected: boolean; now:
 						{run.state === "running" && run.currentTool && <span className="truncate font-mono text-ink-400">· {run.currentTool}</span>}
 						{stats && <span className="truncate">· {stats}</span>}
 					</span>
-					{run.error && run.state !== "completed" && <span className="mt-1 line-clamp-2 block text-[11px] text-rose-400/90">{run.error}</span>}
+					{run.error && run.state !== "completed" && <span className="mt-1 line-clamp-2 block text-[11px] text-rose-400/90">{localizeError(run.error)}</span>}
 				</span>
 			</button>
 			{run.stoppable && (
@@ -305,7 +306,7 @@ function DetailBody({ run }: { run: SubagentRun }) {
 				setDetail(next);
 				setError(null);
 			} catch (err) {
-				if (!dead) setError(err instanceof Error ? err.message : String(err));
+				if (!dead) setError(localizeError(err instanceof Error ? err.message : String(err)));
 			}
 		};
 		void load();

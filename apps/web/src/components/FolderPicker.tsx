@@ -2,6 +2,7 @@ import { ArrowUp, ChevronRight, Clock, CornerLeftUp, Folder, FolderPlus, HardDri
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { DirListing } from "@prometheus/protocol";
+import { localizeError } from "../lib/errors.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { isLoopbackHost } from "../lib/backend.ts";
 import { useStore } from "../lib/store.ts";
@@ -78,10 +79,10 @@ export function FolderPicker({ onPick, onClose }: { onPick: (path: string) => vo
 		setPicking(true);
 		setError(null);
 		try {
-			const { path } = await client.rpc("fs.pick", { start: listing?.path });
+			const { path } = await client.rpc("fs.pick", { start: listing?.path, title: t("title") });
 			if (path) onPick(path);
 		} catch (err) {
-			setError(err instanceof Error ? err.message : t("loadFailed"));
+			setError(err instanceof Error ? localizeError(err.message) : t("loadFailed"));
 		} finally {
 			setPicking(false);
 		}
@@ -103,7 +104,7 @@ export function FolderPicker({ onPick, onClose }: { onPick: (path: string) => vo
 		} catch (err) {
 			if (id !== req.current) return false;
 			// Report inline: a toast would cover the dialog the user is looking at.
-			setError(err instanceof Error ? err.message : t("loadFailed"));
+			setError(err instanceof Error ? localizeError(err.message) : t("loadFailed"));
 			return false;
 		} finally {
 			if (id === req.current) setLoading(false);
@@ -139,7 +140,7 @@ export function FolderPicker({ onPick, onClose }: { onPick: (path: string) => vo
 			if (created) onPick(created.path);
 			else await load(next.path);
 		} catch (err) {
-			setError(err instanceof Error ? err.message : t("loadFailed"));
+			setError(err instanceof Error ? localizeError(err.message) : t("loadFailed"));
 		} finally {
 			setCreating(false);
 		}

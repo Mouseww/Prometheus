@@ -1,18 +1,16 @@
 import clsx from "clsx";
-import { Code, ExternalLink, FolderOpen, FolderTree, Minus, PanelLeft, PanelRight, Square, SquareTerminal, Wrench, X } from "lucide-react";
+import { Code, ExternalLink, FolderOpen, FolderTree, Minus, PanelLeft, PanelRight, Square, SquareTerminal, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { ToolInfo } from "@prometheus/protocol";
 import { isDesktopShell, isLoopbackHost } from "../lib/backend.ts";
+import { localizeError } from "../lib/errors.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { call, closeWorkbenchTab, NO_SUBAGENTS, openFolderTab, openTerminalTab, pluginActive, toggleSubagentPanel, useStore } from "../lib/store.ts";
 import { Flame } from "./ui.tsx";
 
 const M = defineMessages({
 	zh: {
-		tools: "工具",
 		terminal: "终端",
 		folder: "文件夹",
-		toolSwitch: "工具开关",
 		subagents: "子代理",
 		toggleSidebar: "切换侧栏",
 		minimize: "最小化",
@@ -25,10 +23,8 @@ const M = defineMessages({
 		openIn: "在其他应用中打开",
 	},
 	en: {
-		tools: "Tools",
 		terminal: "Terminal",
 		folder: "Folder",
-		toolSwitch: "Tool switches",
 		subagents: "Subagents",
 		toggleSidebar: "Toggle sidebar",
 		minimize: "Minimize",
@@ -57,48 +53,6 @@ export function usePopover() {
 		};
 	}, [open]);
 	return { open, setOpen, ref };
-}
-
-function ToolsPopover() {
-	const t = useT(M);
-	const sessionId = useStore((s) => s.session?.id);
-	const { open, setOpen, ref } = usePopover();
-	const [tools, setTools] = useState<ToolInfo[]>([]);
-
-	useEffect(() => {
-		if (open && sessionId) void call((c) => c.rpc("tools.list", { sessionId })).then((list) => list && setTools(list));
-	}, [open, sessionId]);
-
-	const toggle = async (name: string) => {
-		if (!sessionId) return;
-		const next = tools.map((x) => (x.name === name ? { ...x, active: !x.active } : x));
-		setTools(next);
-		await call((c) => c.rpc("tools.set", { sessionId, active: next.filter((x) => x.active).map((x) => x.name) }));
-	};
-
-	return (
-		<div ref={ref} className="relative">
-			<button type="button" onClick={() => setOpen(!open)} className="rounded-md p-1.5 text-ink-400 hover:bg-ink-800 hover:text-ink-100" title={t("tools")}>
-				<Wrench className="size-4" />
-			</button>
-			{open && (
-				<div className="absolute top-full right-0 z-40 mt-2 w-80 max-w-[calc(100vw-1rem)] animate-rise rounded-xl border border-ink-700 bg-ink-900/97 p-1.5 shadow-2xl shadow-black/40 backdrop-blur">
-					<div className="px-2.5 pt-1.5 pb-2 font-mono text-[10.5px] tracking-widest text-ink-500 uppercase">{t("toolSwitch")}</div>
-					<div className="max-h-[min(24rem,70dvh)] overflow-y-auto">
-						{tools.map((x) => (
-							<label key={x.name} className="flex cursor-pointer items-start gap-2.5 rounded-lg px-2.5 py-2 hover:bg-ink-800">
-								<input type="checkbox" checked={x.active} onChange={() => void toggle(x.name)} className="mt-0.5 accent-ember-500" />
-								<span className="min-w-0">
-									<span className="block font-mono text-[13px] text-ink-100">{x.name}</span>
-									<span className="line-clamp-2 text-xs text-ink-500">{x.description}</span>
-								</span>
-							</label>
-						))}
-					</div>
-				</div>
-			)}
-		</div>
-	);
 }
 
 function SubagentToggle() {
@@ -196,7 +150,7 @@ function OpenInMenu() {
 							className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-ink-200 hover:bg-ink-800"
 						>
 							{a.id === "files" ? <FolderOpen className="size-4 text-ember-400" /> : <Code className="size-4 text-sky-400" />}
-							{a.label}
+							{localizeError(a.label)}
 						</button>
 					))}
 				</div>
@@ -219,7 +173,6 @@ function SessionTools() {
 			<FolderToggle />
 			<TerminalToggle />
 			<SubagentToggle />
-			<ToolsPopover />
 		</div>
 	);
 }
@@ -256,7 +209,7 @@ export function TitleBar({ onToggleSidebar, bare }: { onToggleSidebar?: () => vo
 	const ws = workspaces.find((w) => w.id === session?.workspaceId);
 	const firstUser = session?.messages.find((m) => m.role === "user");
 	const firstText = firstUser ? (typeof firstUser.content === "string" ? firstUser.content : firstUser.content.map((c) => (c.type === "text" ? c.text : "")).join("")) : "";
-	const name = title || session?.name || summary?.name || firstText.trim() || summary?.firstMessage || t("newChat");
+	const name = title || session?.name || summary?.name || firstText.trim() || localizeError(summary?.firstMessage ?? "") || t("newChat");
 
 	let heading: React.ReactNode = null;
 	if (bare) {

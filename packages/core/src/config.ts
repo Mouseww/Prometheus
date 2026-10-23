@@ -2,7 +2,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { mergeGatewayUpdate, validateGateway } from "@prometheus/gateway";
-import type { GatewayConfig } from "@prometheus/protocol";
+import { AppError, type GatewayConfig } from "@prometheus/protocol";
 
 export interface NetworkConfig {
 	/** Also listen on all network interfaces. */
@@ -104,7 +104,7 @@ export class ConfigStore {
 		const existing = this.config.gateways.find((g) => g.id === incoming.id);
 		const merged = mergeGatewayUpdate(incoming, existing);
 		const errors = validateGateway(merged);
-		if (errors.length) throw new Error(errors.join("；"));
+		if (errors.length) throw new AppError("gatewayInvalid", { errors: errors.join("\n") });
 		this.config.gateways = existing
 			? this.config.gateways.map((g) => (g.id === merged.id ? merged : g))
 			: [...this.config.gateways, merged];

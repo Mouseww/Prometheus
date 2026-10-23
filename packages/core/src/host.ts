@@ -21,6 +21,8 @@ import {
 import { DEFAULT_CATALOG_URL, listModels, matchModelDefaults, mergeGatewayUpdate, type ModelCatalog, parseModelCatalog, parsePiModels, redactGateway, toProviderConfig } from "@prometheus/gateway";
 import type { AgentRunOptions, AgentRunResult, PrometheusPlugin } from "@prometheus/plugin-sdk";
 import {
+	AppError,
+	encodeError,
 	type CommandInfo,
 	type ContextBreakdown,
 	type ModelPricing,
@@ -207,7 +209,7 @@ export class PrometheusHost {
 
 	async call<M extends RpcMethod>(method: M, params: RpcParams<M>): Promise<RpcResult<M>> {
 		const handler = (this.handlers as Partial<Record<RpcMethod, unknown>>)[method] as ((p: RpcParams<M>) => Promise<RpcResult<M>> | RpcResult<M>) | undefined;
-		if (!handler) throw new Error(`未知方法：${method}`);
+		if (!handler) throw new AppError("notFound", { what: method });
 		return handler(params ?? ({} as RpcParams<M>));
 	}
 
@@ -241,7 +243,7 @@ export class PrometheusHost {
 		try {
 			return parsePiModels(JSON.parse(raw), process.env, auth);
 		} catch {
-			throw new Error("PI 的 models.json 不是合法 JSON");
+			throw new AppError("catalogInvalid");
 		}
 	}
 
@@ -287,7 +289,7 @@ export class PrometheusHost {
 		try {
 			await live.session.reload();
 		} catch (err) {
-			live.bridge.context().notify(`重新加载失败：${err instanceof Error ? err.message : err}`, "error");
+			live.bridge.context().notify(encodeError(new AppError("reloadFailed", { error: err instanceof Error ? err.message : String(err) })), "error");
 		}
 	}
 
@@ -360,7 +362,7 @@ export class PrometheusHost {
 		await session.bindExtensions({
 			uiContext: bridge.context(),
 			mode: "rpc",
-			onError: (err) => bridge.context().notify(`扩展错误：${err.error}`, "error"),
+			onError: (err) => bridge.context().notify(encodeError(new AppError("extensionError", { error: String(err.error) })), "error"),
 		});
 		// Subagent children are separate PI processes: without this they cannot resolve `<gateway>/<model>`.
 		let releaseChildExtensions = () => {};
@@ -384,7 +386,7 @@ export class PrometheusHost {
 			await this.listSessions();
 			path = this.paths.get(sessionId);
 		}
-		if (!path) throw new Error(`会话不存在：${sessionId}`);
+		if (!path) throw new AppError("sessionNotFound", { id: sessionId });
 		return path;
 	}
 
@@ -402,7 +404,7 @@ export class PrometheusHost {
 
 	private require(sessionId: string): LiveSession {
 		const live = this.live.get(sessionId);
-		if (!live) throw new Error("会话未打开，请先调用 session.open");
+		if (!live) throw new AppError("sessionNotOpen");
 		return live;
 	}
 
@@ -500,7 +502,7 @@ export class PrometheusHost {
 	 */
 	private async runAgent(options: AgentRunOptions): Promise<AgentRunResult> {
 		const dir = options.cwd?.trim();
-		if (!dir || !existsSync(dir) || !statSync(dir).isDirectory()) throw new Error(`工作目录不存在：${dir}`);
+		if (!dir || !existsSync(dir) || !statSync(dir).isDirectory()) throw new AppError("workdirNotFound", { dir });
 		await this.workspaces.add(dir);
 		const live = await this.attach(SessionManager.create(normalizeDir(dir)));
 		const { session, bridge, gate } = live;
@@ -516,15 +518,15 @@ export class PrometheusHost {
 		try {
 			if (options.model) {
 				const target = this.modelRuntime.getModel(options.model.provider, options.model.id);
-				if (!target) throw new Error(`模型不存在：${options.model.provider}/${options.model.id}`);
+				if (!target) throw new AppError("modelNotFound", { provider: options.model.provider, id: options.model.id });
 				await session.setModel(target);
 			}
 			await session.prompt(options.prompt);
 			await session.waitForIdle();
 			const aborted = options.signal?.aborted || session.messages.some((m) => (m as unknown as { stopReason?: string }).stopReason === "aborted");
 			const last = session.messages[session.messages.length - 1] as unknown as { stopReason?: string; errorMessage?: string } | undefined;
-			if (aborted) return { sessionId: id, status: "aborted", text: this.lastReply(session), error: "已中止或超时" };
-			if (last?.stopReason === "error") return { sessionId: id, status: "error", text: this.lastReply(session), error: last.errorMessage ?? "模型返回错误" };
+			if (aborted) return { sessionId: id, status: "aborted", text: this.lastReply(session), error: encodeError(new AppError("aborted")) };
+			if (last?.stopReason === "error") return { sessionId: id, status: "error", text: this.lastReply(session), error: last.errorMessage ?? encodeError(new AppError("generic")) };
 			return { sessionId: id, status: "success", text: this.lastReply(session) };
 		} catch (err) {
 			return { sessionId: id, status: "error", text: this.lastReply(session), error: err instanceof Error ? err.message : String(err) };
@@ -563,11 +565,11 @@ export class PrometheusHost {
 	/** Map a client-side message position to the session entry that produced it. */
 	private locate(live: LiveSession, ref: MessageRef): { entryId: string; flat: { entryId: string; message: ChatMessage }[]; pos: number } {
 		const s = live.session;
-		if (s.isStreaming) throw new Error("请等待当前回复结束");
+		if (s.isStreaming) throw new AppError("waitForReply");
 		const projection = s.sessionManager.buildSessionProjection();
 		const flat = projection.entries.flatMap((e) => e.messages.map((m) => ({ entryId: e.sourceEntry.id, message: m as unknown as ChatMessage })));
 		const hit = flat[ref.index];
-		if (!hit || hit.message.role !== ref.role || hit.message.timestamp !== ref.timestamp) throw new Error("消息已变化，请刷新后重试");
+		if (!hit || hit.message.role !== ref.role || hit.message.timestamp !== ref.timestamp) throw new AppError("messageChanged");
 		return { entryId: hit.entryId, flat, pos: ref.index };
 	}
 
@@ -582,7 +584,7 @@ export class PrometheusHost {
 			const item = flat[i];
 			if (item?.message.role === "user") return item;
 		}
-		throw new Error("找不到对应的用户消息");
+		throw new AppError("messageNotFound");
 	}
 
 	private async deleteMessage(sessionId: string, ref: MessageRef): Promise<void> {
@@ -608,10 +610,10 @@ export class PrometheusHost {
 		const m = user.message as Extract<ChatMessage, { role: "user" }>;
 		const text = edited ?? (typeof m.content === "string" ? m.content : m.content.map((c) => (c.type === "text" ? c.text : "")).join(""));
 		const images = typeof m.content === "string" ? [] : m.content.filter((c): c is ImageContent => c.type === "image");
-		if (!text.trim() && !images.length) throw new Error("消息不能为空");
+		if (!text.trim() && !images.length) throw new AppError("messageEmpty");
 		// Branch from before the user message; the old reply stays in the session tree.
 		const result = await live.session.navigateTree(user.entryId);
-		if (result.cancelled) throw new Error("操作已取消");
+		if (result.cancelled) throw new AppError("aborted");
 		this.resetMessages(sessionId, live);
 		await this.prompt(sessionId, text, images.length ? images : undefined, undefined);
 	}
@@ -623,7 +625,7 @@ export class PrometheusHost {
 		const internal = session as unknown as { _steeringMessages: string[]; _followUpMessages: string[]; _emitQueueUpdate(): void; agent: { steeringQueue: { messages: unknown[] }; followUpQueue: { messages: unknown[] } } };
 		const labels = kind === "steer" ? internal._steeringMessages : internal._followUpMessages;
 		const queue = kind === "steer" ? internal.agent.steeringQueue : internal.agent.followUpQueue;
-		if (labels[index] !== text) throw new Error("该消息已发送");
+		if (labels[index] !== text) throw new AppError("messageAlreadySent");
 		const [message] = queue.messages.splice(index, 1) as { content?: unknown }[];
 		labels.splice(index, 1);
 		internal._emitQueueUpdate();
@@ -671,7 +673,7 @@ export class PrometheusHost {
 		// A configured workspace root only matters while it still exists; a stale path must not break the picker.
 		const configured = this.workspaceRoot();
 		const dir = normalizeDir(path?.trim() || configured || home);
-		if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new Error(`目录不存在：${dir}`);
+		if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new AppError("dirNotFound", { dir });
 		const dirs = readdirSync(dir, { withFileTypes: true })
 			.filter((d) => {
 				if (d.name.startsWith(".") || d.name.startsWith("$")) return false;
@@ -708,11 +710,11 @@ export class PrometheusHost {
 	private async createDir(parent: string, name: string): Promise<DirListing> {
 		const base = normalizeDir(parent?.trim() || this.cwd);
 		const clean = name?.trim();
-		if (!clean) throw new Error("文件夹名不能为空");
-		if (/[\\/]/.test(clean) || clean === "." || clean === "..") throw new Error(`文件夹名不合法：${clean}`);
-		if (!existsSync(base) || !statSync(base).isDirectory()) throw new Error(`目录不存在：${base}`);
+		if (!clean) throw new AppError("folderNameEmpty");
+		if (/[\\/]/.test(clean) || clean === "." || clean === "..") throw new AppError("folderNameInvalid", { name: clean });
+		if (!existsSync(base) || !statSync(base).isDirectory()) throw new AppError("dirNotFound", { dir: base });
 		const target = join(base, clean);
-		if (existsSync(target)) throw new Error(`已存在同名文件夹：${clean}`);
+		if (existsSync(target)) throw new AppError("folderExists", { name: clean });
 		await mkdir(target, { recursive: false });
 		return this.listDirs(base);
 	}
@@ -731,7 +733,7 @@ export class PrometheusHost {
 		"session.list": () => this.listSessions(),
 		"session.create": async ({ cwd, name }) => {
 			const dir = cwd?.trim() || this.cwd;
-			if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new Error(`工作目录不存在：${dir}`);
+			if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new AppError("workdirNotFound", { dir });
 			await this.workspaces.add(dir);
 			const live = await this.attach(SessionManager.create(normalizeDir(dir)));
 			if (name?.trim()) live.session.setSessionName(name.trim());
@@ -798,8 +800,8 @@ export class PrometheusHost {
 		},
 		"workspace.open": async ({ id }) => {
 			const w = (await this.workspaces.list()).find((x) => x.id === id);
-			if (!w) throw new Error(`工作区不存在：${id}`);
-			if (!existsSync(w.path) || !statSync(w.path).isDirectory()) throw new Error(`目录不存在：${w.path}`);
+			if (!w) throw new AppError("workspaceNotFound", { id });
+			if (!existsSync(w.path) || !statSync(w.path).isDirectory()) throw new AppError("dirNotFound", { dir: w.path });
 			openInFileManager(w.path);
 			return null;
 		},
@@ -809,15 +811,15 @@ export class PrometheusHost {
 			return null;
 		},
 		"fs.dirs": ({ path }) => this.listDirs(path),
-		"fs.pick": async ({ start }) => {
+		"fs.pick": async ({ start, title }) => {
 			const from = start && existsSync(start) ? start : undefined;
-			return { path: await pickFolderNative(from) };
+			return { path: await pickFolderNative(from, title || "Choose a folder") };
 		},
 		"system.apps": () => listExternalApps(),
 		"system.openIn": async ({ app, path }) => {
 			// Only folders the user added as workspaces: a client must not be able to launch arbitrary paths.
 			const norm = (p: string) => (process.platform === "win32" ? p.toLowerCase() : p).replace(/[\\/]+$/, "");
-			if (!(await this.workspaces.list()).some((w) => norm(w.path) === norm(path))) throw new Error("该目录不是已添加的工作区");
+			if (!(await this.workspaces.list()).some((w) => norm(w.path) === norm(path))) throw new AppError("dirNotWorkspace");
 			await openInExternalApp(app, path);
 			return { ok: true as const };
 		},
@@ -837,7 +839,7 @@ export class PrometheusHost {
 			}
 			if (typeof workspaceRoot === "string") {
 				const next = workspaceRoot.trim();
-				if (next && (!existsSync(next) || !statSync(next).isDirectory())) throw new Error(`目录不存在：${next}`);
+				if (next && (!existsSync(next) || !statSync(next).isDirectory())) throw new AppError("dirNotFound", { dir: next });
 				await this.runtime.config.setWorkspaceRoot(next);
 			}
 			return { autoCompaction: this.settings().getCompactionEnabled(), workspaceRoot: this.workspaceRoot() };
@@ -875,7 +877,7 @@ export class PrometheusHost {
 		},
 
 		"chat.prompt": async ({ sessionId, text, images, delivery }) => {
-			if (!text.trim() && !images?.length) throw new Error("消息不能为空");
+			if (!text.trim() && !images?.length) throw new AppError("messageEmpty");
 			checkImages(images);
 			const disposition = await this.prompt(sessionId, text, images, delivery);
 			return { disposition };
@@ -919,7 +921,7 @@ export class PrometheusHost {
 		},
 		"model.set": async ({ sessionId, model }) => {
 			const target = this.modelRuntime.getModel(model.provider, model.id);
-			if (!target) throw new Error(`模型不存在：${model.provider}/${model.id}`);
+			if (!target) throw new AppError("modelNotFound", { provider: model.provider, id: model.id });
 			const { session } = this.require(sessionId);
 			await session.setModel(target);
 			this.listener.event(sessionId, { type: "model_changed", model: toModelRef(target) });
@@ -931,7 +933,7 @@ export class PrometheusHost {
 			return null;
 		},
 		"permission.set": ({ sessionId, mode }) => {
-			if (!PERMISSION_MODES.includes(mode)) throw new Error(`未知权限模式：${String(mode)}`);
+			if (!PERMISSION_MODES.includes(mode)) throw new AppError("unknownPermissionMode", { mode: String(mode) });
 			this.require(sessionId).gate.setMode(mode);
 			return null;
 		},
@@ -955,11 +957,6 @@ export class PrometheusHost {
 			const active = new Set(s.getActiveToolNames());
 			return s.getAllTools().filter((t) => t.name !== EXIT_PLAN_MODE).map((t) => ({ name: t.name, description: t.description ?? "", active: active.has(t.name) }));
 		},
-		"tools.set": ({ sessionId, active }) => {
-			const live = this.require(sessionId);
-			live.session.setActiveToolsByName(live.gate.mode === "plan" ? [...active, EXIT_PLAN_MODE] : active);
-			return null;
-		},
 
 		"ui.respond": ({ sessionId, requestId, response }) => {
 			this.require(sessionId).bridge.respond(requestId, response);
@@ -981,10 +978,10 @@ export class PrometheusHost {
 		},
 		"gateway.test": async ({ id, model }) => {
 			const g = this.runtime.config.gateways().find((x) => x.id === id);
-			if (!g) throw new Error(`网关不存在：${id}`);
+			if (!g) throw new AppError("gatewayNotFound", { id });
 			const modelId = model ?? g.models[0]?.id;
 			const target = modelId && this.modelRuntime.getModel(id, modelId);
-			if (!target) throw new Error("网关未注册或模型不存在");
+			if (!target) throw new AppError("gatewayNotRegistered");
 			const started = performance.now();
 			try {
 				const reply = await this.modelRuntime.completeSimple(
@@ -993,9 +990,9 @@ export class PrometheusHost {
 					{ signal: AbortSignal.timeout(30_000) },
 				);
 				const latencyMs = Math.round(performance.now() - started);
-				if (reply.stopReason === "error") return { ok: false, latencyMs, message: reply.errorMessage ?? "请求失败" };
+				if (reply.stopReason === "error") return { ok: false, latencyMs, message: reply.errorMessage ?? encodeError(new AppError("generic")) };
 				const text = reply.content.map((c) => (c.type === "text" ? c.text : "")).join("").trim();
-				return { ok: true, latencyMs, message: text.slice(0, 200) || "（空回复）" };
+				return { ok: true, latencyMs, message: text.slice(0, 200) || encodeError(new AppError("emptyReply")) };
 			} catch (err) {
 				return { ok: false, latencyMs: Math.round(performance.now() - started), message: err instanceof Error ? err.message : String(err) };
 			}
@@ -1004,7 +1001,7 @@ export class PrometheusHost {
 		"gateway.models": async ({ gateway }) => {
 			const existing = this.runtime.config.gateways().find((x) => x.id === gateway.id);
 			const merged = mergeGatewayUpdate(gateway, existing);
-			if (!/^https?:\/\//.test(merged.baseUrl ?? "")) throw new Error("Base URL 必须是 http(s) 地址");
+			if (!/^https?:\/\//.test(merged.baseUrl ?? "")) throw new AppError("baseUrlScheme");
 			return listModels(merged, { signal: AbortSignal.timeout(20_000) });
 		},
 
@@ -1031,15 +1028,15 @@ export class PrometheusHost {
 
 		"gateway.defaults": async ({ models, url }) => {
 			const source = (url ?? "").trim() || DEFAULT_CATALOG_URL;
-			if (!/^https?:\/\//i.test(source)) throw new Error("地址必须是 http(s)");
+			if (!/^https?:\/\//i.test(source)) throw new AppError("baseUrlScheme");
 			const cached = this.catalogs.get(source);
 			let catalog: ModelCatalog;
 			if (cached && Date.now() - cached.at < 10 * 60_000) catalog = cached.catalog;
 			else {
 				const res = await fetch(source, { signal: AbortSignal.timeout(20_000), headers: { accept: "application/json" } });
-				if (!res.ok) throw new Error(`拉取失败：HTTP ${res.status}`);
+				if (!res.ok) throw new AppError("fetchFailed", { status: res.status });
 				catalog = parseModelCatalog(await res.json());
-				if (!catalog.count) throw new Error("该地址没有可识别的模型数据");
+				if (!catalog.count) throw new AppError("catalogEmpty");
 				this.catalogs.set(source, { at: Date.now(), catalog });
 			}
 			return { source, defaults: matchModelDefaults(catalog, models) };
@@ -1063,8 +1060,8 @@ export class PrometheusHost {
 			const skipped: { id: string; reason: string }[] = [];
 			for (const { gateway, missingKey } of await this.readPiGateways()) {
 				if (wanted && !wanted.has(gateway.id)) continue;
-				if (existing.has(gateway.id)) skipped.push({ id: gateway.id, reason: "已存在" });
-				else if (missingKey) skipped.push({ id: gateway.id, reason: "API Key 无法读取（命令或未设置的环境变量），请手动添加" });
+				if (existing.has(gateway.id)) skipped.push({ id: gateway.id, reason: encodeError(new AppError("gatewayExists")) });
+				else if (missingKey) skipped.push({ id: gateway.id, reason: encodeError(new AppError("gatewayKeyUnreadable")) });
 				else {
 					try {
 						await this.runtime.config.saveGateway(gateway);
@@ -1089,7 +1086,7 @@ export class PrometheusHost {
 			return null;
 		},
 		"kb.documents": ({ id }) => this.runtime.knowledge.documents(id),
-		"kb.ingest": ({ id, title, text }) => this.runtime.knowledge.ingest(id, title.trim() || "未命名文档", text),
+		"kb.ingest": ({ id, title, text }) => this.runtime.knowledge.ingest(id, title.trim() || "i18n:kbUntitled", text),
 		"kb.removeDocument": async ({ id, documentId }) => {
 			await this.runtime.knowledge.removeDocument(id, documentId);
 			return null;
@@ -1108,7 +1105,7 @@ export class PrometheusHost {
 		},
 		"plugin.call": async ({ plugin, method, params }) => {
 			const handler = this.runtime.plugins.rpcs.get(`${plugin}/${method}`);
-			if (!handler) throw new Error(`插件方法不存在：${plugin}/${method}`);
+			if (!handler) throw new AppError("pluginMethodNotFound", { plugin, method });
 			const isObject = params !== null && typeof params === "object" && !Array.isArray(params);
 			return (await handler(isObject ? (params as Record<string, unknown>) : {})) ?? null;
 		},
