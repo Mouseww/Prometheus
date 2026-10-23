@@ -2,9 +2,9 @@ import clsx from "clsx";
 import { BarChart3, Blocks, Boxes, Bot, Cable, Check, Copy, FolderOpen, Globe, Laptop, Layers, Mic, Moon, Network, Package, Plug, Server, Shield, Sparkles, Sun, SlidersHorizontal, Terminal } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
-import { isAndroid, isDesktopShell } from "../lib/backend.ts";
+import { isAndroid, isDesktopShell, isTauri, loadMode } from "../lib/backend.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { initRuntimes, useRuntimes } from "../lib/runtimes.ts";
+import { initRuntimes } from "../lib/runtimes.ts";
 import { type Lang, SKINS, type SendMode, type Skin, setPrefs, type ThemeMode, usePrefs } from "../lib/prefs.ts";
 import { openSettings, pluginActive, type SettingsTab, toast, updateHostSettings, useStore } from "../lib/store.ts";
 import { checkForUpdate, showUpdate, updaterSupported, useUpdater } from "../lib/updater.ts";
@@ -468,7 +468,7 @@ export function SettingsView() {
 	const tab = useStore((s) => s.settingsTab);
 	const plugins = useStore((s) => s.plugins);
 	// Runtimes install into this machine, so the tab exists only where the shell can do that (local mode).
-	const localShell = useRuntimes((s) => s.available || s.loadError !== null);
+	const localShell = isTauri() && loadMode() !== "remote";
 	useEffect(() => {
 		void initRuntimes();
 	}, []);

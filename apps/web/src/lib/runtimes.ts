@@ -131,15 +131,16 @@ function onEvent(e: ProgressEvent): void {
 export async function initRuntimes(): Promise<void> {
 	if (started || !isTauri()) return;
 	started = true;
+	// The list first: it must not wait on the event subscription.
+	const loading = refreshRuntimes();
 	try {
 		const { listen } = await import("@tauri-apps/api/event");
 		await listen<ProgressEvent>("runtime://progress", (ev) => onEvent(ev.payload));
 	} catch (err) {
 		started = false;
 		useRuntimes.setState({ loadError: `event: ${String(err)}` });
-		return;
 	}
-	await refreshRuntimes();
+	await loading;
 }
 
 interface EnvDelta {
