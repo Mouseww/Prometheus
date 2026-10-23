@@ -40,21 +40,38 @@ export default definePlugin({
 		const applied = new Map<string, { modeId: string | null; cut: LastCut }>();
 
 		ctx.extension((pi) => {
-			/** What the host offered before a mode narrowed it, so switching back restores everything. */
-			let hostTools: string[] | null = null;
+			/**
+			 * The tools the host had active just before this plugin first narrowed them. Only set while a
+			 * restricting mode is in effect; an unrestricted mode never touches the tool set.
+			 *
+			 * Other extensions change the active tools during a chat (pi-subagents activates `subagent`
+			 * only after `subagents_enable` is called), so a baseline recorded at session start goes
+			 * stale. Re-applying it every turn would switch such tools back off.
+			 */
+			let before: string[] | null = null;
 
 			const applyTools = (mode: AgentMode | undefined) => {
-				hostTools ??= pi.getActiveTools();
-				const next = allowedTools(mode, hostTools);
+				const active = pi.getActiveTools();
+				if (!mode || mode.tools.length === 0) {
+					if (before === null) return;
+					// Leaving a restricting mode: give back what it removed, keep whatever was added since.
+					const restore = [...new Set([...active, ...before])];
+					before = null;
+					if (!same(restore, active)) pi.setActiveTools(restore);
+					return;
+				}
+				before ??= active;
+				const pool = [...new Set([...before, ...active])];
+				const next = allowedTools(mode, pool);
 				// Re-applying the same set is a no-op; PI would otherwise re-declare the tool catalog
 				// every turn, which costs a cache miss for nothing.
-				if (same(next, pi.getActiveTools())) return;
+				if (same(next, active)) return;
 				pi.setActiveTools(next);
 			};
 
 			// A reload rebuilds the registry, so the host baseline has to be recorded again.
 			pi.on("session_start", async (_event, ext) => {
-				hostTools = null;
+				before = null;
 				const id = ext?.sessionManager?.getSessionId();
 				if (id) applied.delete(id);
 				applyTools(await currentMode(ext?.sessionManager?.getSessionId()));
