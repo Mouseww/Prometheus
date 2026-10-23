@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { definePlugin } from "@prometheus/plugin-sdk";
 import type { AgentMode, LastCut, ModesState } from "./store.ts";
-import { allowedTools, bodyOf, composeSystemPrompt, makeStore, modeFor, newMode, sanitizeMode, seedModes } from "./store.ts";
+import { bodyOf, composeSystemPrompt, makeStore, modeFor, newMode, planTools, sanitizeMode, seedModes } from "./store.ts";
 import { knownTools } from "./tools.ts";
 
 type Params = Record<string, unknown>;
@@ -13,7 +13,6 @@ interface PromptEvent {
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 const idOrNull = (v: unknown): string | null => (v === null || v === undefined || v === "" ? null : str(v));
-const same = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((n, i) => n === b[i]);
 
 /**
  * Modes: a named system prompt plus the tool set it may reach.
@@ -51,22 +50,11 @@ export default definePlugin({
 			let before: string[] | null = null;
 
 			const applyTools = (mode: AgentMode | undefined) => {
-				const active = pi.getActiveTools();
-				if (!mode || mode.tools.length === 0) {
-					if (before === null) return;
-					// Leaving a restricting mode: give back what it removed, keep whatever was added since.
-					const restore = [...new Set([...active, ...before])];
-					before = null;
-					if (!same(restore, active)) pi.setActiveTools(restore);
-					return;
-				}
-				before ??= active;
-				const pool = [...new Set([...before, ...active])];
-				const next = allowedTools(mode, pool);
-				// Re-applying the same set is a no-op; PI would otherwise re-declare the tool catalog
+				const plan = planTools(mode, before, pi.getActiveTools());
+				before = plan.before;
+				// Re-applying the same set is skipped; PI would otherwise re-declare the tool catalog
 				// every turn, which costs a cache miss for nothing.
-				if (same(next, active)) return;
-				pi.setActiveTools(next);
+				if (plan.set) pi.setActiveTools(plan.set);
 			};
 
 			// A reload rebuilds the registry, so the host baseline has to be recorded again.

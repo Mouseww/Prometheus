@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BUNDLED } from "../src/bundled.ts";
-import { allowedTools, bodyOf, composeSystemPrompt, makeStore, modeFor, newMode, sanitizeMode, seedModes, stripHostPersona, type ModesState } from "../src/store.ts";
+import { allowedTools, bodyOf, composeSystemPrompt, makeStore, modeFor, newMode, planTools, sanitizeMode, seedModes, stripHostPersona, type AgentMode, type ModesState } from "../src/store.ts";
 
 let dir: string;
 
@@ -263,5 +263,34 @@ describe("composeSystemPrompt", () => {
 
 	it("a mode with no body composes nothing", () => {
 		expect(composeSystemPrompt(undefined, "", HOST, "E:/w").text).toBe(HOST);
+	});
+});
+
+describe("planTools", () => {
+	const open = { tools: [] } as unknown as AgentMode;
+	const narrow = { tools: ["read", "grep"] } as unknown as AgentMode;
+
+	it("never touches the tools while the mode restricts nothing", () => {
+		expect(planTools(open, null, ["read", "bash"])).toEqual({ set: null, before: null });
+		expect(planTools(undefined, null, ["read", "bash"])).toEqual({ set: null, before: null });
+	});
+
+	it("keeps a tool another extension activated mid-chat", () => {
+		// The baseline predates `subagent`; an unrestricted mode must not switch it back off.
+		const step = planTools(open, null, ["read", "bash", "subagent"]);
+		expect(step.set).toBeNull();
+	});
+
+	it("narrows to the mode's tools and remembers what was active", () => {
+		const step = planTools(narrow, null, ["read", "bash", "grep"]);
+		expect(step).toEqual({ set: ["read", "grep"], before: ["read", "bash", "grep"] });
+		// Next turn nothing changes: no re-declaration.
+		expect(planTools(narrow, step.before, ["read", "grep"]).set).toBeNull();
+	});
+
+	it("leaving a restricting mode restores the removed tools and keeps later additions", () => {
+		const step = planTools(open, ["read", "bash", "grep"], ["read", "grep", "subagent"]);
+		expect(step.before).toBeNull();
+		expect(new Set(step.set)).toEqual(new Set(["read", "grep", "subagent", "bash"]));
 	});
 });

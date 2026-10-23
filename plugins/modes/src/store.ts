@@ -181,6 +181,28 @@ export function allowedTools(mode: AgentMode | undefined, available: readonly st
 	return available.filter((name) => mode.tools.includes(name));
 }
 
+/**
+ * The tool set a mode wants, given what was active before it first narrowed the set (`before`, null
+ * while no restricting mode is in effect) and what is active now.
+ *
+ * Other extensions switch tools on and off during a chat, so `before` goes stale; the result is
+ * always built from the union so a tool activated later is neither dropped nor switched back off.
+ * `set` is null when nothing needs to change.
+ */
+export function planTools(mode: AgentMode | undefined, before: string[] | null, active: readonly string[]): { set: string[] | null; before: string[] | null } {
+	if (!mode || mode.tools.length === 0) {
+		if (before === null) return { set: null, before: null };
+		// Leaving a restricting mode: give back what it removed, keep whatever was added since.
+		const restore = [...new Set([...active, ...before])];
+		return { set: sameSet(restore, active) ? null : restore, before: null };
+	}
+	const base = before ?? [...active];
+	const next = allowedTools(mode, [...new Set([...base, ...active])]);
+	return { set: sameSet(next, active) ? null : next, before: base };
+}
+
+const sameSet = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
+
 /** pi's own identity sentence, the template's first line. */
 const HOST_IDENTITY = "You are an expert coding assistant operating inside pi, a coding agent harness.";
 /** Start and end markers of pi's documentation section. Either one missing means "leave it alone". */
