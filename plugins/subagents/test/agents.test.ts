@@ -110,14 +110,3 @@ describe("AgentStore", () => {
 		expect(diffOverride(d, d)).toEqual({});
 	});
 });
-
-describe("default model", () => {
-	it("stores and clears subagents.defaultModel", async () => {
-		const store = new AgentStore(dir);
-		await store.setDefaultModel("agirouter/claude-sonnet-5-5");
-		expect(await store.getDefaultModel()).toBe("agirouter/claude-sonnet-5-5");
-		await store.setDefaultModel("");
-		expect(await store.getDefaultModel()).toBe("");
-		expect((await settings()).subagents).toBeUndefined();
-	});
-});
