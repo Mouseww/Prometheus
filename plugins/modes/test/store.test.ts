@@ -268,41 +268,49 @@ describe("composeSystemPrompt", () => {
 
 describe("planTools", () => {
 	const open = { tools: [] } as unknown as AgentMode;
-	const narrow = { tools: ["read", "grep"] } as unknown as AgentMode;
+	const registered = ["read", "bash", "powershell", "edit", "write", "grep", "find", "ls", "subagent", "codemode", "exit_plan_mode"];
+	const defaults = ["read", "bash", "edit", "write", "subagent"];
 
-	it("never touches the tools while the mode restricts nothing", () => {
-		expect(planTools(open, null, ["read", "bash"])).toEqual({ set: null, before: null });
-		expect(planTools(undefined, null, ["read", "bash"])).toEqual({ set: null, before: null });
+	it("opens every registered tool when the mode names none", () => {
+		const next = planTools(open, defaults, registered) ?? [];
+		for (const n of ["powershell", "grep", "find", "ls", "codemode"]) expect(next).toContain(n);
 	});
 
-	it("keeps a tool another extension activated mid-chat", () => {
-		// The baseline predates `subagent`; an unrestricted mode must not switch it back off.
-		const step = planTools(open, null, ["read", "bash", "subagent"]);
-		expect(step.set).toBeNull();
+	it("treats no mode like a mode without tools", () => {
+		expect(planTools(undefined, defaults, registered)).toEqual(planTools(open, defaults, registered));
 	});
 
-	it("narrows to the mode's tools and remembers what was active", () => {
-		const step = planTools(narrow, null, ["read", "bash", "grep"]);
-		expect(step).toEqual({ set: ["read", "grep"], before: ["read", "bash", "grep"] });
-		// Next turn nothing changes: no re-declaration.
-		expect(planTools(narrow, step.before, ["read", "grep"]).set).toBeNull();
-	});
-
-	it("leaving a restricting mode restores the removed tools and keeps later additions", () => {
-		const step = planTools(open, ["read", "bash", "grep"], ["read", "grep", "subagent"]);
-		expect(step.before).toBeNull();
-		expect(new Set(step.set)).toEqual(new Set(["read", "grep", "subagent", "bash"]));
-	});
-});
-
-describe("planTools with registered tools", () => {
-	it("lets a restricting mode switch on a tool that is off by default", () => {
+	it("gives exactly the named tools, including ones that are off by default", () => {
 		const mode = { tools: ["read", "powershell", "grep"] } as unknown as AgentMode;
-		const step = planTools(mode, null, ["read", "bash", "edit", "write"], ["read", "bash", "powershell", "edit", "write", "grep", "find", "ls"]);
-		expect(new Set(step.set)).toEqual(new Set(["read", "powershell", "grep"]));
+		expect(new Set(planTools(mode, defaults, registered))).toEqual(new Set(["read", "powershell", "grep"]));
 	});
-	it("does not switch anything on for an unrestricted mode", () => {
-		const mode = { tools: [] } as unknown as AgentMode;
-		expect(planTools(mode, null, ["read", "bash"], ["read", "bash", "powershell"]).set).toBeNull();
+
+	it("is a no-op once the set is in effect, whatever the order", () => {
+		const open1 = planTools(open, defaults, registered) ?? [];
+		expect(planTools(open, [...open1].reverse(), registered)).toBeNull();
+	});
+
+	it("never switches the plan-exit tool on, but keeps it while plan mode has it on", () => {
+		expect(planTools(open, defaults, registered)).not.toContain("exit_plan_mode");
+		const next = planTools(open, [...defaults, "exit_plan_mode"], registered) ?? [];
+		expect(next).toContain("exit_plan_mode");
+	});
+
+	it("leaves MCP tools as they are", () => {
+		const reg = [...registered, "mcp__a__x", "mcp__b__y"];
+		const next = planTools(open, [...defaults, "mcp__a__x"], reg) ?? [];
+		expect(next).toContain("mcp__a__x");
+		expect(next).not.toContain("mcp__b__y");
+	});
+
+	it("restores the full set after a restricting mode", () => {
+		const narrow = { tools: ["read"] } as unknown as AgentMode;
+		const only = planTools(narrow, defaults, registered) ?? [];
+		expect(only).toEqual(["read"]);
+		expect(planTools(open, only, registered)?.length).toBeGreaterThan(8);
+	});
+
+	it("does nothing when PI reports no registered tools", () => {
+		expect(planTools(open, defaults, [])).toBeNull();
 	});
 });

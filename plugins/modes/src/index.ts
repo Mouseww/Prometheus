@@ -39,27 +39,15 @@ export default definePlugin({
 		const applied = new Map<string, { modeId: string | null; cut: LastCut }>();
 
 		ctx.extension((pi) => {
-			/**
-			 * The tools the host had active just before this plugin first narrowed them. Only set while a
-			 * restricting mode is in effect; an unrestricted mode never touches the tool set.
-			 *
-			 * Other extensions change the active tools during a chat (pi-subagents activates `subagent`
-			 * only after `subagents_enable` is called), so a baseline recorded at session start goes
-			 * stale. Re-applying it every turn would switch such tools back off.
-			 */
-			let before: string[] | null = null;
-
+			/** The mode decides the tools every turn: other extensions switch tools during a chat, so nothing is remembered. */
 			const applyTools = (mode: AgentMode | undefined) => {
-				const plan = planTools(mode, before, pi.getActiveTools(), pi.getAllTools().map((t) => t.name));
-				before = plan.before;
+				const next = planTools(mode, pi.getActiveTools(), pi.getAllTools().map((t) => t.name));
 				// Re-applying the same set is skipped; PI would otherwise re-declare the tool catalog
 				// every turn, which costs a cache miss for nothing.
-				if (plan.set) pi.setActiveTools(plan.set);
+				if (next) pi.setActiveTools(next);
 			};
 
-			// A reload rebuilds the registry, so the host baseline has to be recorded again.
 			pi.on("session_start", async (_event, ext) => {
-				before = null;
 				const id = ext?.sessionManager?.getSessionId();
 				if (id) applied.delete(id);
 				applyTools(await currentMode(ext?.sessionManager?.getSessionId()));

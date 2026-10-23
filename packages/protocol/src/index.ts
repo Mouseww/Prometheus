@@ -864,7 +864,6 @@ export interface RpcMethods {
 
 	"commands.list": { params: { sessionId: string }; result: CommandInfo[] };
 	"tools.list": { params: { sessionId: string }; result: ToolInfo[] };
-	"tools.set": { params: { sessionId: string; active: string[] }; result: null };
 
 	"ui.respond": { params: { sessionId: string; requestId: string; response: UIResponse }; result: null };
 

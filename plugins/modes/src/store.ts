@@ -181,28 +181,28 @@ export function allowedTools(mode: AgentMode | undefined, available: readonly st
 	return available.filter((name) => mode.tools.includes(name));
 }
 
+/** Only plan mode may switch this one on; the permission gate adds and removes it itself. */
+const PLAN_EXIT_TOOL = "exit_plan_mode";
+
 /**
- * The tool set a mode wants, given what was active before it first narrowed the set (`before`, null
- * while no restricting mode is in effect) and what is active now.
+ * The active tool set a mode asks for, or null when it is already in effect.
  *
- * Other extensions switch tools on and off during a chat, so `before` goes stale; the result is
- * always built from the union so a tool activated later is neither dropped nor switched back off.
- * `registered` is every tool PI knows, active or not. `set` is null when nothing needs to change.
+ * The mode alone decides: a mode that names tools gets exactly those, and a mode that names none
+ * (or no mode at all) opens every tool PI has registered, including the ones it keeps off by
+ * default (powershell, grep, find, ls). Two kinds are left alone: the plan-exit tool, which the
+ * permission gate manages, and MCP tools, which stay behind the tool-search tool instead of being
+ * dumped into every prompt.
  */
-export function planTools(mode: AgentMode | undefined, before: string[] | null, active: readonly string[], registered: readonly string[] = []): { set: string[] | null; before: string[] | null } {
-	if (!mode || mode.tools.length === 0) {
-		if (before === null) return { set: null, before: null };
-		// Leaving a restricting mode: give back what it removed, keep whatever was added since.
-		const restore = [...new Set([...active, ...before])];
-		return { set: sameSet(restore, active) ? null : restore, before: null };
-	}
-	const base = before ?? [...active];
-	// A mode that names a tool PI keeps off by default (powershell, grep, find, ls) switches it on.
-	const next = allowedTools(mode, [...new Set([...base, ...active, ...registered])]);
-	return { set: sameSet(next, active) ? null : next, before: base };
+export function planTools(mode: AgentMode | undefined, active: readonly string[], registered: readonly string[]): string[] | null {
+	if (registered.length === 0) return null;
+	const live = new Set(active);
+	const base = registered.filter((n) => n !== PLAN_EXIT_TOOL);
+	const next = mode && mode.tools.length > 0 ? allowedTools(mode, base) : base.filter((n) => !n.startsWith("mcp__") || live.has(n));
+	if (live.has(PLAN_EXIT_TOOL)) next.push(PLAN_EXIT_TOOL);
+	return sameSet(next, active) ? null : next;
 }
 
-const sameSet = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
+const sameSet = (a: readonly string[], b: readonly string[]) => a.length === b.length && new Set(a).size === new Set([...a, ...b]).size && a.every((x) => b.includes(x));
 
 /** pi's own identity sentence, the template's first line. */
 const HOST_IDENTITY = "You are an expert coding assistant operating inside pi, a coding agent harness.";

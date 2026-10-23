@@ -946,11 +946,6 @@ export class PrometheusHost {
 			const active = new Set(s.getActiveToolNames());
 			return s.getAllTools().filter((t) => t.name !== EXIT_PLAN_MODE).map((t) => ({ name: t.name, description: t.description ?? "", active: active.has(t.name) }));
 		},
-		"tools.set": ({ sessionId, active }) => {
-			const live = this.require(sessionId);
-			live.session.setActiveToolsByName(live.gate.mode === "plan" ? [...active, EXIT_PLAN_MODE] : active);
-			return null;
-		},
 
 		"ui.respond": ({ sessionId, requestId, response }) => {
 			this.require(sessionId).bridge.respond(requestId, response);

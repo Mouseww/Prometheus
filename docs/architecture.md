@@ -234,7 +234,7 @@ flowchart LR
 | 斜杠命令 / 提示模板 / Skills | `extensionRunner.getRegisteredCommands`、`promptTemplates`、`getSkills` | `commands.list` | `/` 命令面板 | v0.1 |
 | 扩展 UI（select/confirm/input/editor/notify/status/widget/title） | `bindExtensions({uiContext})` | `ui.request` / `ui.respond` | 模态对话框、Toast、状态栏、Widget 区 | v0.1 |
 | 上下文用量、构成与手动压缩 | `getContextUsage`、`getSessionStats`、`compact` | `session.stats`、`chat.compact` | 输入框底栏用量环，点击展开构成项与压缩按钮 | v0.1 |
-| 工具启用/禁用 | `getAllTools`、`setActiveToolsByName` | `tools.list/set` | 标题栏工具开关 | v0.1 |
+| 工具列表 | `getAllTools` | `tools.list` | 无（工具启用由「模式」决定） | v0.1 |
 | 手动压缩 | `compact`、`compaction_*` | `chat.compact` | 压缩按钮 + 进度提示 | v0.1 |
 | 自动重试 | `auto_retry_*` | `event` | 重试横幅 | v0.1 |
 | `!` Bash 执行 | `executeBash`、`bash_execution_update` | `bash.run` | 终端输出块 | v0.2 |
