@@ -1,9 +1,10 @@
 import clsx from "clsx";
-import { BarChart3, Blocks, Bot, Cable, Check, Copy, FolderOpen, Globe, Laptop, Layers, Mic, Moon, Network, Package, Plug, Server, Shield, Sparkles, Sun, SlidersHorizontal, Terminal } from "lucide-react";
+import { BarChart3, Blocks, Boxes, Bot, Cable, Check, Copy, FolderOpen, Globe, Laptop, Layers, Mic, Moon, Network, Package, Plug, Server, Shield, Sparkles, Sun, SlidersHorizontal, Terminal } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { isAndroid, isDesktopShell } from "../lib/backend.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
+import { initRuntimes, useRuntimes } from "../lib/runtimes.ts";
 import { type Lang, SKINS, type SendMode, type Skin, setPrefs, type ThemeMode, usePrefs } from "../lib/prefs.ts";
 import { openSettings, pluginActive, type SettingsTab, toast, updateHostSettings, useStore } from "../lib/store.ts";
 import { checkForUpdate, showUpdate, updaterSupported, useUpdater } from "../lib/updater.ts";
@@ -13,6 +14,7 @@ import { MarketView } from "./MarketView.tsx";
 import { ConnectorsView } from "./ConnectorsView.tsx";
 import { McpView } from "./McpView.tsx";
 import { NetworkSettings } from "./NetworkSettings.tsx";
+import { RuntimesSettings } from "./RuntimesSettings.tsx";
 import { PlatformsView } from "./PlatformsView.tsx";
 import { SshView } from "./SshView.tsx";
 import { PluginsView } from "./PluginsView.tsx";
@@ -38,6 +40,7 @@ const M = defineMessages({
 		veil: "隐私面罩",
 		voice: "语音输入",
 		network: "网络访问",
+		runtimes: "运行环境",
 		platforms: "多平台",
 		ssh: "SSH",
 		usage: "用量统计",
@@ -104,6 +107,7 @@ const M = defineMessages({
 		veil: "Privacy Mask",
 		voice: "Voice",
 		network: "Network access",
+		runtimes: "Runtimes",
 		platforms: "Platforms",
 		ssh: "SSH",
 		usage: "Usage",
@@ -432,7 +436,7 @@ function GeneralSettings() {
  * then statistics. Voice sits beside the gateways because it needs one to transcribe.
  * A tab owned by a switchable plugin only shows while that plugin runs.
  */
-const TAB_GROUPS: { id: SettingsTab; icon: typeof Network; plugin?: string }[][] = [
+const TAB_GROUPS: { id: SettingsTab; icon: typeof Network; plugin?: string; local?: boolean }[][] = [
 	[
 		{ id: "general", icon: SlidersHorizontal },
 		{ id: "gateways", icon: Network },
@@ -449,6 +453,7 @@ const TAB_GROUPS: { id: SettingsTab; icon: typeof Network; plugin?: string }[][]
 	[
 		{ id: "market", icon: Package },
 		{ id: "plugins", icon: Blocks },
+		{ id: "runtimes", icon: Boxes, local: true },
 	],
 	[
 		{ id: "network", icon: Globe },
@@ -462,7 +467,12 @@ export function SettingsView() {
 	const t = useT(M);
 	const tab = useStore((s) => s.settingsTab);
 	const plugins = useStore((s) => s.plugins);
-	const groups = TAB_GROUPS.map((g) => g.filter((x) => !x.plugin || pluginActive(plugins, x.plugin))).filter((g) => g.length > 0);
+	// Runtimes install into this machine, so the tab exists only where the shell can do that (local mode).
+	const localShell = useRuntimes((s) => s.available);
+	useEffect(() => {
+		void initRuntimes();
+	}, []);
+	const groups = TAB_GROUPS.map((g) => g.filter((x) => (!x.plugin || pluginActive(plugins, x.plugin)) && (!x.local || localShell))).filter((g) => g.length > 0);
 	return (
 		<div className="@container flex min-h-0 flex-1 flex-col overflow-hidden @2xl:flex-row">
 			<nav className="flex shrink-0 gap-1 overflow-x-auto border-b hairline p-2 @2xl:block @2xl:w-44 @2xl:space-y-0.5 @2xl:overflow-x-visible @2xl:border-r @2xl:border-b-0 @2xl:p-3">
@@ -494,6 +504,7 @@ export function SettingsView() {
 				{tab === "market" && <MarketView />}
 				{tab === "voice" && <VoiceSettings />}
 				{tab === "network" && <NetworkSettings />}
+				{tab === "runtimes" && <RuntimesSettings />}
 				{tab === "modes" && <ModesView />}
 				{tab === "subagents" && <SubagentsView />}
 				{tab === "veil" && <VeilView />}

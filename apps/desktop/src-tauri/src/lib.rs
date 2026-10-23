@@ -7,6 +7,8 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::{Manager, RunEvent};
 
+mod runtimes;
+
 #[cfg(desktop)]
 mod tray;
 
@@ -140,6 +142,8 @@ struct Launch {
     node: PathBuf,
     entry: PathBuf,
     env: Vec<(&'static str, std::ffi::OsString)>,
+    /// Variables from on-demand runtimes (GOROOT, CARGO_HOME, ...); names come from the manifest, so they are owned.
+    extra_env: Vec<(String, std::ffi::OsString)>,
     cwd: Option<PathBuf>,
 }
 
@@ -272,9 +276,12 @@ fn node_env(prepend: Vec<PathBuf>, append: Vec<PathBuf>) -> Vec<(&'static str, s
 #[cfg(not(target_os = "android"))]
 fn launch_target(app: &tauri::AppHandle) -> Result<Launch, String> {
     let entry = server_entry(app).ok_or("找不到 Prometheus 服务端入口（可设置 PROMETHEUS_SERVER_ENTRY）")?;
-    let (node, prepend, append) = resolve_node(bundled_node(app))?;
+    let (node, mut prepend, append) = resolve_node(bundled_node(app))?;
+    // Runtimes the user installed from the app win over whatever else is on PATH.
+    let (rt_bins, extra_env) = runtimes::desktop_env(app);
+    prepend.splice(0..0, rt_bins);
     let cwd = if std::env::var_os("PROMETHEUS_CWD").is_none() { app.path().home_dir().ok() } else { None };
-    Ok(Launch { node, entry, env: node_env(prepend, append), cwd })
+    Ok(Launch { node, entry, env: node_env(prepend, append), extra_env, cwd })
 }
 
 #[cfg(target_os = "android")]
@@ -294,8 +301,10 @@ fn launch_target(app: &tauri::AppHandle) -> Result<Launch, String> {
         ("PROMETHEUS_CWD", work.clone().into()),
         ("LD_LIBRARY_PATH", runtime.lib_dir.clone().into()),
     ];
-    env.extend(android::tool_env(&data, &runtime));
-    Ok(Launch { node: runtime.node, entry: runtime.entry, env, cwd: Some(work) })
+    let rt_root = runtimes::root_dir(app)?;
+    let guest_ids = runtimes::installed_guest_ids(app);
+    env.extend(android::tool_env(&data, &runtime, &rt_root, &guest_ids));
+    Ok(Launch { node: runtime.node, entry: runtime.entry, env, extra_env: Vec::new(), cwd: Some(work) })
 }
 
 fn spawn_backend(app: &tauri::AppHandle, backend: &Backend) -> Result<(), String> {
@@ -310,6 +319,7 @@ fn spawn_backend(app: &tauri::AppHandle, backend: &Backend) -> Result<(), String
         .env("PROMETHEUS_TOKEN", &token)
         .env("PROMETHEUS_PARENT_WATCH", "1")
         .envs(launch.env.iter().map(|(k, v)| (k, v)))
+        .envs(launch.extra_env.iter().map(|(k, v)| (k, v)))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -472,6 +482,12 @@ pub fn run() {
             relaunch_app,
             open_external,
             local_supported,
+            runtimes::runtime_list,
+            runtimes::runtime_install,
+            runtimes::runtime_env,
+            runtimes::runtime_install_msvc,
+            runtimes::runtime_cancel,
+            runtimes::runtime_uninstall,
             tray::set_close_to_tray,
             tray::show_main_window,
             tray::open_session_in_main,
@@ -479,9 +495,21 @@ pub fn run() {
     #[cfg(mobile)]
     let builder = builder
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![start_local_backend, stop_local_backend, relaunch_app, local_supported]);
+        .invoke_handler(tauri::generate_handler![
+            start_local_backend,
+            stop_local_backend,
+            relaunch_app,
+            local_supported,
+            runtimes::runtime_list,
+            runtimes::runtime_install,
+            runtimes::runtime_env,
+            runtimes::runtime_install_msvc,
+            runtimes::runtime_cancel,
+            runtimes::runtime_uninstall,
+        ]);
     let app = builder
         .manage(backend.clone())
+        .manage(runtimes::Installs::default())
         .build(tauri::generate_context!())
         .expect("failed to build Prometheus desktop");
 

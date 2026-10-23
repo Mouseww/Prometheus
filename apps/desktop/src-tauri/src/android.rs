@@ -69,6 +69,11 @@ pub fn prepare(data_dir: &Path) -> Result<Runtime, String> {
 const EXEC_PREFIX: &str = "libexec_";
 /// Prefix for git's helper programs (`git-remote-https` and friends), linked into `git-core/`.
 const GITCORE_PREFIX: &str = "libgitcore_";
+/// Prefix for shims that run a tool inside the PRoot rootfs (see `runtimes.rs` and scripts/android-runtime.ts).
+const GUEST_PREFIX: &str = "libguest_";
+/// Termux's PRoot and its loader, shipped as native libraries.
+const PROOT_BIN: &str = "libexec_proot.so";
+const PROOT_LOADER: &str = "libproot_loader.so";
 
 /// Shared storage the user can browse. Only usable once "all files access" is granted, so probe by writing.
 pub fn workspace_dir(data_dir: &Path) -> PathBuf {
@@ -91,7 +96,7 @@ fn link(target: &Path, at: &Path) {
 /// Android only runs files from the native-library directory, so every tool lives there under a `lib*.so` name.
 /// The kernel resolves symlinks before the exec check, so links in app storage give them their real names
 /// (`git`, `npm`, ...) and a PATH entry. Rebuilt on every launch: it is cheap and survives app updates that move the library directory.
-fn link_tools(data_dir: &Path, native: &Path) -> (PathBuf, PathBuf) {
+fn link_tools(data_dir: &Path, native: &Path, guest_ids: &[String]) -> (PathBuf, PathBuf) {
     let bin = data_dir.join("bin");
     let git_core = data_dir.join("git-core");
     for dir in [&bin, &git_core] {
@@ -107,17 +112,42 @@ fn link_tools(data_dir: &Path, native: &Path) -> (PathBuf, PathBuf) {
                 link(&entry.path(), &bin.join(name));
             } else if let Some(name) = stem.strip_prefix(GITCORE_PREFIX) {
                 link(&entry.path(), &git_core.join(name));
+            } else if let Some(rest) = stem.strip_prefix(GUEST_PREFIX) {
+                // `libguest_<runtime>__<tool>.so`: a PRoot shim, only exposed once that runtime is installed.
+                if let Some((runtime, tool)) = rest.split_once("__") {
+                    if guest_ids.iter().any(|id| id == runtime) {
+                        link(&entry.path(), &bin.join(tool));
+                    }
+                }
             }
         }
     }
     (bin, git_core)
 }
 
+/// Adds or removes the PRoot shims of on-demand runtimes in the running app, so an install takes effect without a restart.
+pub fn refresh_guest_shims(data_dir: &Path, guest_ids: &[String]) {
+    let Some(native) = native_lib_dir() else { return };
+    let bin = data_dir.join("bin");
+    let _ = fs::create_dir_all(&bin);
+    let Ok(entries) = fs::read_dir(&native) else { return };
+    for entry in entries.flatten() {
+        let file = entry.file_name().to_string_lossy().into_owned();
+        let Some(rest) = file.strip_suffix(".so").and_then(|s| s.strip_prefix(GUEST_PREFIX)) else { continue };
+        let Some((runtime, tool)) = rest.split_once("__") else { continue };
+        if guest_ids.iter().any(|id| id == runtime) {
+            link(&entry.path(), &bin.join(tool));
+        } else {
+            let _ = fs::remove_file(bin.join(tool));
+        }
+    }
+}
+
 /// Environment that makes the shipped tools (node, npm, git, bash, ...) usable from the server and from commands it runs.
-pub fn tool_env(data_dir: &Path, runtime: &Runtime) -> Vec<(&'static str, std::ffi::OsString)> {
+pub fn tool_env(data_dir: &Path, runtime: &Runtime, rt_root: &Path, guest_ids: &[String]) -> Vec<(&'static str, std::ffi::OsString)> {
     use std::ffi::OsString;
     let Some(native) = native_lib_dir() else { return Vec::new() };
-    let (bin, git_core) = link_tools(data_dir, &native);
+    let (bin, git_core) = link_tools(data_dir, &native, guest_ids);
     let server = runtime.entry.parent().map(Path::to_path_buf).unwrap_or_default();
     let cacert = server.join("etc/cacert.pem");
     let npm_cli = server.join("tools/npm/bin/npm-cli.js");
@@ -168,9 +198,57 @@ pub fn tool_env(data_dir: &Path, runtime: &Runtime) -> Vec<(&'static str, std::f
         ("GIT_CONFIG_KEY_1", "core.fileMode".into()),
         ("GIT_CONFIG_VALUE_1", "false".into()),
     ];
+    // PRoot guest shims (python, go, cargo, ...) read these; see the `guestrun` script.
+    env.push(("PROMETHEUS_PROOT", native.join(PROOT_BIN).into()));
+    env.push(("PROOT_LOADER", native.join(PROOT_LOADER).into()));
+    env.push(("PROOT_TMP_DIR", data_dir.join("tmp").into()));
+    env.push(("PROMETHEUS_ROOTFS", crate::runtimes::rootfs_dir(rt_root).into()));
     if cacert.is_file() {
+        env.push(("PROMETHEUS_CACERT", cacert.clone().into()));
         env.push(("GIT_SSL_CAINFO", cacert.clone().into()));
         env.push(("SSL_CERT_FILE", cacert.into()));
     }
     env
+}
+
+/// Environment the guest sees. Keep in sync with the `guestrun` shim in scripts/android-runtime.ts.
+const GUEST_PATH: &str = "/opt/python/bin:/opt/go/bin:/opt/rust/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
+/// A command that runs `args` inside the Ubuntu rootfs through PRoot. Android refuses to execute downloaded files, so
+/// everything installed on demand runs this way. `env` is extra guest environment (e.g. RUSTUP_HOME).
+pub fn guest_command(
+    app: &tauri::AppHandle,
+    rt_root: &Path,
+    args: &[String],
+    env: &[(String, String)],
+) -> Result<std::process::Command, String> {
+    use tauri::Manager;
+    let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let native = native_lib_dir().ok_or("找不到应用的原生库目录")?;
+    let (proot, loader) = (native.join(PROOT_BIN), native.join(PROOT_LOADER));
+    if !proot.is_file() || !loader.is_file() {
+        return Err("此安装包未内置 PRoot，无法在 Android 上安装运行环境".into());
+    }
+    let rootfs = crate::runtimes::rootfs_dir(rt_root);
+    let tmp = data.join("tmp");
+    let _ = fs::create_dir_all(&tmp);
+    let mut cmd = std::process::Command::new(proot);
+    cmd.env("PROOT_LOADER", loader)
+        .env("PROOT_TMP_DIR", &tmp)
+        .env("LD_LIBRARY_PATH", data.join("server/lib"))
+        .args(["--link2symlink", "-0", "-r"])
+        .arg(&rootfs)
+        .args(["-b", "/dev", "-b", "/proc", "-b", "/sys", "-w", "/root"]);
+    let cacert = data.join("server/etc/cacert.pem");
+    if cacert.is_file() {
+        cmd.arg("-b").arg(format!("{}:/etc/ssl/certs/ca-certificates.crt", cacert.display()));
+    }
+    cmd.args(["/usr/bin/env", "-i", "HOME=/root", "LANG=C.UTF-8", "TERM=xterm"])
+        .arg(format!("PATH={GUEST_PATH}"))
+        .arg("SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt");
+    for (k, v) in env {
+        cmd.arg(format!("{k}={v}"));
+    }
+    cmd.args(args);
+    Ok(cmd)
 }

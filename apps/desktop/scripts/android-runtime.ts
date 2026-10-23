@@ -16,9 +16,16 @@ const ABI = "arm64-v8a";
 // Nothing in these is needed to run the tools; ca-certificates is fetched on its own (only its cert bundle is used).
 const SKIP = new Set(["ca-certificates", "resolv-conf"]);
 // Termux packages to ship. Executables become lib*.so files in jniLibs, the only place Android lets an app execute from.
-const PACKAGES = ["nodejs-lts", "npm", "git", "bash", "ripgrep"];
+// proot runs the on-demand runtimes (Python, Go, Rust) from an Ubuntu rootfs the app downloads later; see src-tauri/src/runtimes.rs.
+const PACKAGES = ["nodejs-lts", "npm", "git", "bash", "ripgrep", "proot"];
 // Binaries from those packages exposed on PATH (see EXEC_PREFIX in src-tauri/src/android.rs).
-const BINARIES = ["git", "bash", "rg"];
+const BINARIES = ["git", "bash", "rg", "proot"];
+// Tools that run inside the PRoot rootfs: runtime id -> command names. Each becomes a shim that is only put on PATH once that runtime is installed.
+const GUEST_SHIMS: Record<string, Record<string, string>> = {
+	python: { python: "python3", python3: "python3", pip: "pip3", pip3: "pip3" },
+	go: { go: "go", gofmt: "gofmt" },
+	rust: { cargo: "cargo", rustc: "rustc", rustup: "rustup", rustdoc: "rustdoc" },
+};
 const GIT_HELPERS = ["git-remote-http", "git-remote-https", "git-http-fetch"];
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -193,6 +200,10 @@ try {
 		if (!existsSync(full) || !isElf(realpathSync(full))) throw new Error(`git helper missing or not a program: ${f}`);
 		ship(full, `libgitcore_${f}.so`);
 	}
+	// PRoot's loader is exec'd by proot itself, so it must also live in the library directory (found through PROOT_LOADER).
+	const loader = join(prefix, "libexec/proot/loader");
+	if (!existsSync(loader)) throw new Error("proot loader missing from the Termux proot package");
+	ship(loader, "libproot_loader.so");
 	console.log(`shipped ${BINARIES.join(", ")} and ${GIT_HELPERS.join(", ")}`);
 
 	// npm is plain JavaScript: ship its tree beside the server, and tiny shell shims as the `npm`/`npx` commands.
@@ -208,6 +219,25 @@ try {
 	// npm's own npx cannot start packages here (their bins say `#!/usr/bin/env node`, and there is no /usr/bin/env), so use ours.
 	copyFileSync(join(dirname(fileURLToPath(import.meta.url)), "android/npx.mjs"), join(bundle, "tools/npx.mjs"));
 	writeFileSync(join(jniDir, "libexec_npx.so"), shim('exec "$PROMETHEUS_NODE" "$PROMETHEUS_NPX_JS" "$@"'), { mode: 0o755 });
+
+	// Shims for the on-demand runtimes. `guestrun` starts a command inside the PRoot rootfs; keep its environment in sync with
+	// GUEST_PATH in src-tauri/src/android.rs. Like npm above, these are scripts in the library directory, the only place they can run from.
+	const guestrun = [
+		"#!/system/bin/sh",
+		'if [ ! -x "$PROMETHEUS_ROOTFS/usr/bin/env" ]; then echo "runtime not installed: open Settings > Runtimes" >&2; exit 127; fi',
+		'CA=""',
+		'[ -n "$PROMETHEUS_CACERT" ] && CA="-b $PROMETHEUS_CACERT:/etc/ssl/certs/ca-certificates.crt"',
+		'BIND=""',
+		'[ "$PWD" != "/" ] && BIND="-b $PWD"',
+		"exec \"$PROMETHEUS_PROOT\" --link2symlink -0 -r \"$PROMETHEUS_ROOTFS\" -b /dev -b /proc -b /sys $BIND $CA -w \"$PWD\" /usr/bin/env -i HOME=/root LANG=C.UTF-8 TERM=\"${TERM:-xterm}\" SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt PATH=/opt/python/bin:/opt/go/bin:/opt/rust/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin RUSTUP_HOME=/opt/rust/rustup CARGO_HOME=/opt/rust/cargo GOROOT=/opt/go GOPATH=/root/go GOTOOLCHAIN=local \"$@\"",
+		"",
+	].join("\n");
+	writeFileSync(join(jniDir, "libexec_guestrun.so"), guestrun, { mode: 0o755 });
+	for (const [runtime, tools] of Object.entries(GUEST_SHIMS)) {
+		for (const [name, target] of Object.entries(tools)) {
+			writeFileSync(join(jniDir, `libguest_${runtime}__${name}.so`), shim(`exec "$PROMETHEUS_TOOLS_BIN/guestrun" ${target} "$@"`), { mode: 0o755 });
+		}
+	}
 
 	// CA bundle for git (Termux's own path does not exist on the phone).
 	const cert = join(prefix, "etc/tls/cert.pem");

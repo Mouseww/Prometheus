@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { dirname, resolve } from "node:path";
+import { delimiter, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { builtinPlugins } from "@prometheus/builtin-plugins";
 import { DEFAULT_LAN_PORT, PrometheusHost } from "@prometheus/core";
-import { AppError, type ClientFrame, encodeError, type NetworkPatch, type NetworkStatus, PROTOCOL_VERSION, type ServerFrame } from "@prometheus/protocol";
+import { AppError, type ClientFrame, encodeError, type NetworkPatch, type NetworkStatus, PROTOCOL_VERSION, type RuntimeEnv, type ServerFrame } from "@prometheus/protocol";
 import { WebSocket, WebSocketServer } from "ws";
 import {
 	type Access,
@@ -176,6 +176,28 @@ function cookieHeader(value: string, req: IncomingMessage, maxAgeS?: number): st
 	const secure = req.headers["x-forwarded-proto"] === "https" ? "; Secure" : "";
 	const age = maxAgeS === undefined ? "" : `; Max-Age=${maxAgeS}`;
 	return `${COOKIE}=${encodeURIComponent(value)}; HttpOnly; SameSite=Strict; Path=/${age}${secure}`;
+}
+
+// ---------- on-demand runtimes ----------
+
+let appliedBins: string[] = [];
+let appliedEnv: string[] = [];
+
+/** Pi's bash tool copies process.env on every spawn, so changing it here reaches the next command without a restart. */
+function applyRuntimeEnv(next: RuntimeEnv): void {
+	const strs = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
+	if (!strs(next.bins) || typeof next.env !== "object" || next.env === null) throw new Error("invalid runtime env");
+	const key = Object.keys(process.env).find((k) => k.toLowerCase() === "path") ?? "PATH";
+	const rest = (process.env[key] ?? "").split(delimiter).filter((p) => p && !appliedBins.includes(p));
+	process.env[key] = [...next.bins, ...rest].join(delimiter);
+	appliedBins = [...next.bins];
+	for (const k of appliedEnv) delete process.env[k];
+	appliedEnv = [];
+	for (const [k, v] of Object.entries(next.env)) {
+		if (typeof v !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) || k.toLowerCase() === "path") continue;
+		process.env[k] = v;
+		appliedEnv.push(k);
+	}
 }
 
 async function handleHttp(req: IncomingMessage, res: ServerResponse, kind: Kind): Promise<void> {
@@ -380,6 +402,11 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage, kind: Kind) => {
 						// Only the machine itself, with nothing in between, may open or reshape network access.
 						if (!access.local) throw new AppError("networkLocalOnly");
 						data = await updateNetwork(frame.params as NetworkPatch);
+					} else if (frame.method === "runtime.env") {
+						// Changes what every command the agent runs inherits, so only the machine itself may do it.
+						if (!access.local) throw new AppError("networkLocalOnly");
+						applyRuntimeEnv(frame.params as RuntimeEnv);
+						data = null;
 					} else {
 						data = await host.call(frame.method, frame.params as never);
 						if (frame.method === "session.create" || frame.method === "session.open") client.sessions.add((data as { id: string }).id);

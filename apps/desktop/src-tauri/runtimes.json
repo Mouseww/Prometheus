@@ -1,0 +1,438 @@
+{
+  "runtimes": [
+    {
+      "id": "rootfs",
+      "name": "Linux 基础系统",
+      "description": "Android 上运行 Python / Go / Rust 所需的 Ubuntu 用户空间（通过 PRoot 运行）。",
+      "version": "24.04.5",
+      "hidden": true,
+      "targets": {
+        "android-aarch64": {
+          "urls": [
+            "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.5-base-arm64.tar.gz",
+            "https://mirrors.tuna.tsinghua.edu.cn/ubuntu-cdimage/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.5-base-arm64.tar.gz"
+          ],
+          "sha256": "a91d5a93010193712d346d761372b7c9db6dfcf093893161c64ca107f05914f2",
+          "sizeMb": 30,
+          "format": "tar.gz",
+          "check": "usr/bin/env"
+        }
+      }
+    },
+    {
+      "id": "python",
+      "name": "Python",
+      "description": "独立构建的 CPython（python-build-standalone），含 pip，不依赖系统 Python。",
+      "version": "3.13.17",
+      "probe": [
+        "python3",
+        "python"
+      ],
+      "requires": [
+        "rootfs"
+      ],
+      "targets": {
+        "windows-x86_64": {
+          "urls": [
+            "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.13.17%2B20261021-x86_64-pc-windows-msvc-install_only.tar.gz"
+          ],
+          "sha256": "e10b46d9b03a3a494297f336770f55f86474d683061137b1cf595e12e47bcef5",
+          "sizeMb": 40,
+          "format": "tar.gz",
+          "strip": 1,
+          "bin": [
+            "",
+            "Scripts"
+          ],
+          "check": "python.exe"
+        },
+        "windows-aarch64": {
+          "urls": [
+            "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.13.17%2B20261021-aarch64-pc-windows-msvc-install_only.tar.gz"
+          ],
+          "sha256": "dd7f2c489a30356b02dc0aca8c210400a09952b06a955d432313d605f8850765",
+          "sizeMb": 40,
+          "format": "tar.gz",
+          "strip": 1,
+          "bin": [
+            "",
+            "Scripts"
+          ],
+          "check": "python.exe"
+        },
+        "linux-x86_64": {
+          "urls": [
+            "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.13.17%2B20261021-x86_64-unknown-linux-gnu-install_only.tar.gz"
+          ],
+          "sha256": "cbda6f7767884fc456860b11fd184391a9320cae00a86c0f49a1c7ac6e236f7a",
+          "sizeMb": 40,
+          "format": "tar.gz",
+          "strip": 1,
+          "bin": [
+            "bin"
+          ],
+          "check": "bin/python3"
+        },
+        "linux-aarch64": {
+          "urls": [
+            "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.13.17%2B20261021-aarch64-unknown-linux-gnu-install_only.tar.gz"
+          ],
+          "sha256": "616ab0a31b2a3f28119582f4d1943e342f13bac2ec5a8dfe8572c3c0bcadb95a",
+          "sizeMb": 40,
+          "format": "tar.gz",
+          "strip": 1,
+          "bin": [
+            "bin"
+          ],
+          "check": "bin/python3"
+        },
+        "macos-x86_64": {
+          "urls": [
+            "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.13.17%2B20261021-x86_64-apple-darwin-install_only.tar.gz"
+          ],
+          "sha256": "b7d7c2dd63545cabe996191b6f20f0b652c7de123d9ca451dda7e5f1ebbcbbbc",
+          "sizeMb": 40,
+          "format": "tar.gz",
+          "strip": 1,
+          "bin": [
+            "bin"
+          ],
+          "check": "bin/python3"
+        },
+        "macos-aarch64": {
+          "urls": [
+            "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.13.17%2B20261021-aarch64-apple-darwin-install_only.tar.gz"
+          ],
+          "sha256": "9c985cbf327425873469896ce748c7134b6deca8edb81e93c589ad2fc5aff445",
+          "sizeMb": 40,
+          "format": "tar.gz",
+          "strip": 1,
+          "bin": [
+            "bin"
+          ],
+          "check": "bin/python3"
+        }
+      }
+    },
+    {
+      "id": "go",
+      "name": "Go",
+      "description": "Go 官方发行版。",
+      "version": "1.27.3",
+      "probe": [
+        "go"
+      ],
+      "requires": [
+        "rootfs"
+      ],
+      "env": {
+        "GOROOT": "{dir}"
+      },
+      "targets": {
+        "windows-x86_64": {
+          "urls": [
+            "https://dl.google.com/go/go1.27.3.windows-amd64.zip",
+            "https://mirrors.aliyun.com/golang/go1.27.3.windows-amd64.zip"
+          ],
+          "sha256Url": "https://dl.google.com/go/go1.27.3.windows-amd64.zip.sha256",
+          "sizeMb": 80,
+          "format": "zip",
+          "strip": 1,
+          "bin": [
+            "bin"
+          ],
+          "check": "bin/go.exe"
+        },
+        "windows-aarch64": {
+          "urls": [
+            "https://dl.google.com/go/go1.27.3.windows-arm64.zip",
+            "https://mirrors.aliyun.com/golang/go1.27.3.windows-arm64.zip"
+          ],
+          "sha256Url": "https://dl.google.com/go/go1.27.3.windows-arm64.zip.sha256",
+          "sizeMb": 80,
+          "format": "zip",
+          "strip": 1,
+          "bin": [
+            "bin"
+          ],
+          "check": "bin/go.exe"
+        },
+        "linux-x86_64": {
+          "urls": [
+            "https://dl.google.com/go/go1.27.3.linux-amd64.tar.gz",
+            "https://mirrors.aliyun.com/golang/go1.27.3.linux-amd64.tar.gz"
+          ],
+          "sha256Url": "https://dl.google.com/go/go1.27.3.linux-amd64.tar.gz.sha256",
+          "sizeMb": 80,
+          "format": "tar.gz",
+          "strip": 1,
+          "bin": [
+            "bin"
+          ],
+          "check": "bin/go"
+        },
+        "linux-aarch64": {
+          "urls": [
+            "https://dl.google.com/go/go1.27.3.linux-arm64.tar.gz",
+            "https://mirrors.aliyun.com/golang/go1.27.3.linux-arm64.tar.gz"
+          ],
+          "sha256": "a06e99309dbcbdca1a8ccd2282c3ee146e55930886e26b4f1193269587165f49",
+          "sizeMb": 80,
+          "format": "tar.gz",
+          "strip": 1,
+          "bin": [
+            "bin"
+          ],
+          "check": "bin/go"
+        },
+        "macos-x86_64": {
+          "urls": [
+            "https://dl.google.com/go/go1.27.3.darwin-amd64.tar.gz",
+            "https://mirrors.aliyun.com/golang/go1.27.3.darwin-amd64.tar.gz"
+          ],
+          "sha256Url": "https://dl.google.com/go/go1.27.3.darwin-amd64.tar.gz.sha256",
+          "sizeMb": 80,
+          "format": "tar.gz",
+          "strip": 1,
+          "bin": [
+            "bin"
+          ],
+          "check": "bin/go"
+        },
+        "macos-aarch64": {
+          "urls": [
+            "https://dl.google.com/go/go1.27.3.darwin-arm64.tar.gz",
+            "https://mirrors.aliyun.com/golang/go1.27.3.darwin-arm64.tar.gz"
+          ],
+          "sha256Url": "https://dl.google.com/go/go1.27.3.darwin-arm64.tar.gz.sha256",
+          "sizeMb": 80,
+          "format": "tar.gz",
+          "strip": 1,
+          "bin": [
+            "bin"
+          ],
+          "check": "bin/go"
+        }
+      }
+    },
+    {
+      "id": "rust",
+      "name": "Rust",
+      "description": "通过 rustup 安装 stable 工具链（minimal，含 cargo）。编译还需要 C 链接器：Windows 没有 Visual Studio 生成工具时自动改用 GNU 工具链（llvm-mingw）；macOS 缺少命令行工具时会弹出系统安装窗口；Linux 需自备 cc；Android 会在基础系统里装 gcc。",
+      "version": "stable",
+      "probe": [
+        "cargo",
+        "rustc"
+      ],
+      "requires": [
+        "rootfs"
+      ],
+      "env": {
+        "RUSTUP_HOME": "{dir}/rustup",
+        "CARGO_HOME": "{dir}/cargo"
+      },
+      "targets": {
+        "windows-x86_64": {
+          "urls": [
+            "https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe",
+            "https://rsproxy.cn/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe"
+          ],
+          "sha256Url": "https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe.sha256",
+          "sizeMb": 300,
+          "format": "exe",
+          "bin": [
+            "cargo/bin"
+          ],
+          "check": "cargo/bin/cargo.exe",
+          "run": [
+            "-y",
+            "--no-modify-path",
+            "--profile",
+            "minimal",
+            "--default-toolchain",
+            "stable"
+          ],
+          "needsLinker": true,
+          "gnuFallback": {
+            "requires": "llvm-mingw",
+            "host": "x86_64-pc-windows-gnu",
+            "linker": "bin/x86_64-w64-mingw32-clang.exe",
+            "config": "cargo/config.toml"
+          }
+        },
+        "windows-aarch64": {
+          "urls": [
+            "https://static.rust-lang.org/rustup/dist/aarch64-pc-windows-msvc/rustup-init.exe",
+            "https://rsproxy.cn/rustup/dist/aarch64-pc-windows-msvc/rustup-init.exe"
+          ],
+          "sha256Url": "https://static.rust-lang.org/rustup/dist/aarch64-pc-windows-msvc/rustup-init.exe.sha256",
+          "sizeMb": 300,
+          "format": "exe",
+          "bin": [
+            "cargo/bin"
+          ],
+          "check": "cargo/bin/cargo.exe",
+          "run": [
+            "-y",
+            "--no-modify-path",
+            "--profile",
+            "minimal",
+            "--default-toolchain",
+            "stable"
+          ],
+          "needsLinker": true
+        },
+        "linux-x86_64": {
+          "urls": [
+            "https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init",
+            "https://rsproxy.cn/rustup/dist/x86_64-unknown-linux-gnu/rustup-init"
+          ],
+          "sha256": "5be191e8c70a5007074254cb74d78dbfdd25cd5a61c27de7b8e5410122ec24f4",
+          "sizeMb": 300,
+          "format": "exe",
+          "bin": [
+            "cargo/bin"
+          ],
+          "check": "cargo/bin/cargo",
+          "run": [
+            "-y",
+            "--no-modify-path",
+            "--profile",
+            "minimal",
+            "--default-toolchain",
+            "stable"
+          ],
+          "needsLinker": true
+        },
+        "linux-aarch64": {
+          "urls": [
+            "https://static.rust-lang.org/rustup/dist/aarch64-unknown-linux-gnu/rustup-init",
+            "https://rsproxy.cn/rustup/dist/aarch64-unknown-linux-gnu/rustup-init"
+          ],
+          "sha256Url": "https://static.rust-lang.org/rustup/dist/aarch64-unknown-linux-gnu/rustup-init.sha256",
+          "sizeMb": 300,
+          "format": "exe",
+          "bin": [
+            "cargo/bin"
+          ],
+          "check": "cargo/bin/cargo",
+          "guestApt": [
+            "gcc",
+            "libc6-dev"
+          ],
+          "run": [
+            "-y",
+            "--no-modify-path",
+            "--profile",
+            "minimal",
+            "--default-toolchain",
+            "stable"
+          ],
+          "needsLinker": true
+        },
+        "macos-x86_64": {
+          "urls": [
+            "https://static.rust-lang.org/rustup/dist/x86_64-apple-darwin/rustup-init",
+            "https://rsproxy.cn/rustup/dist/x86_64-apple-darwin/rustup-init"
+          ],
+          "sha256Url": "https://static.rust-lang.org/rustup/dist/x86_64-apple-darwin/rustup-init.sha256",
+          "sizeMb": 300,
+          "format": "exe",
+          "bin": [
+            "cargo/bin"
+          ],
+          "check": "cargo/bin/cargo",
+          "run": [
+            "-y",
+            "--no-modify-path",
+            "--profile",
+            "minimal",
+            "--default-toolchain",
+            "stable"
+          ],
+          "needsLinker": true
+        },
+        "macos-aarch64": {
+          "urls": [
+            "https://static.rust-lang.org/rustup/dist/aarch64-apple-darwin/rustup-init",
+            "https://rsproxy.cn/rustup/dist/aarch64-apple-darwin/rustup-init"
+          ],
+          "sha256Url": "https://static.rust-lang.org/rustup/dist/aarch64-apple-darwin/rustup-init.sha256",
+          "sizeMb": 300,
+          "format": "exe",
+          "bin": [
+            "cargo/bin"
+          ],
+          "check": "cargo/bin/cargo",
+          "run": [
+            "-y",
+            "--no-modify-path",
+            "--profile",
+            "minimal",
+            "--default-toolchain",
+            "stable"
+          ],
+          "needsLinker": true
+        }
+      }
+    },
+    {
+      "id": "git",
+      "name": "Git",
+      "description": "MinGit（Git for Windows 的精简版）。",
+      "version": "2.56.0.3",
+      "probe": [
+        "git"
+      ],
+      "hint": "请用系统包管理器安装 git（macOS: xcode-select --install；Linux: apt/dnf install git）。Android 已内置。",
+      "targets": {
+        "windows-x86_64": {
+          "urls": [
+            "https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.3/MinGit-2.56.0.3-64-bit.zip"
+          ],
+          "sha256": "2e5619966e588fde5f8122c5557cad50c0fbafcaed736689f40ec1dfb1d78ea7",
+          "sizeMb": 40,
+          "format": "zip",
+          "bin": [
+            "cmd"
+          ],
+          "check": "cmd/git.exe"
+        },
+        "windows-aarch64": {
+          "urls": [
+            "https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.3/MinGit-2.56.0.3-arm64.zip"
+          ],
+          "sha256": "042e7fda964e2072c11435fd0efeb822083c8f5a07c8b00456247bbb5334589d",
+          "sizeMb": 40,
+          "format": "zip",
+          "bin": [
+            "cmd"
+          ],
+          "check": "cmd/git.exe"
+        }
+      }
+    },
+    {
+      "id": "llvm-mingw",
+      "name": "llvm-mingw",
+      "description": "便携 C/C++ 工具链（clang + MinGW-w64），在没有 Visual Studio 生成工具的 Windows 上给 Rust 当链接器。",
+      "version": "20260421",
+      "hidden": true,
+      "targets": {
+        "windows-x86_64": {
+          "urls": [
+            "https://github.com/mstorsjo/llvm-mingw/releases/download/20260421/llvm-mingw-20260421-ucrt-x86_64.zip"
+          ],
+          "sha256": "0c47b9fc1043b68a8d7e8e022b878f11306ed35beacf858864b36b096a0acd95",
+          "sizeMb": 178,
+          "format": "zip",
+          "strip": 1,
+          "bin": [
+            "bin"
+          ],
+          "check": "bin/x86_64-w64-mingw32-clang.exe"
+        }
+      }
+    }
+  ]
+}

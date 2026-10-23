@@ -13,6 +13,7 @@ import { Sidebar } from "./components/Sidebar.tsx";
 import { SubagentPanel } from "./components/SubagentPanel.tsx";
 import { TitleBar } from "./components/TitleBar.tsx";
 import { WorkbenchPanel } from "./components/WorkbenchPanel.tsx";
+import { RuntimeProgressCard } from "./components/RuntimesSettings.tsx";
 import { Toasts } from "./components/Toasts.tsx";
 import { Modal } from "./components/ui.tsx";
 import { UpdateDialog } from "./components/UpdateDialog.tsx";
@@ -168,6 +169,7 @@ export function App() {
 			<ContextMenuHost />
 			<UpdateDialog remote={target.label !== "local"} />
 			<Toasts />
+			<RuntimeProgressCard />
 		</div>
 	);
 }

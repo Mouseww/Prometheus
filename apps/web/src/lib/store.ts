@@ -27,6 +27,7 @@ import { create } from "zustand";
 import type { ConnState, PrometheusClient } from "./client.ts";
 import { localizeError } from "./errors.ts";
 import { defineMessages, tr } from "./i18n.ts";
+import { noteToolResult } from "./runtimes.ts";
 
 const M = defineMessages({
 	zh: {
@@ -137,7 +138,7 @@ function savedSort(): SubagentSort {
 	return v === "started" || v === "ended" ? v : "status";
 }
 
-export type SettingsTab = "general" | "gateways" | "mcp" | "connectors" | "skills" | "modes" | "subagents" | "market" | "veil" | "plugins" | "voice" | "network" | "platforms" | "ssh" | "usage";
+export type SettingsTab = "general" | "gateways" | "mcp" | "connectors" | "skills" | "modes" | "subagents" | "market" | "veil" | "plugins" | "voice" | "network" | "runtimes" | "platforms" | "ssh" | "usage";
 export type View = "chat" | "knowledge" | "memory" | "automations" | "git" | "settings" | { panel: string };
 
 interface State {
@@ -304,6 +305,7 @@ function reduce(session: ActiveSession, e: SessionEvent): ActiveSession {
 			return { ...session, tools: { ...session.tools, [e.toolCallId]: { ...run, partial: e.partialResult } } };
 		}
 		case "tool_execution_end": {
+			noteToolResult(e.toolName, e.result);
 			const run = session.tools[e.toolCallId] ?? { toolCallId: e.toolCallId, toolName: e.toolName, args: undefined, status: "running" as const };
 			return {
 				...session,

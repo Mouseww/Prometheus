@@ -778,7 +778,15 @@ export interface VoiceState extends VoiceSettings {
 // ---------- Network access ----------
 
 /** Server RPCs that never reach the PI host. */
-export type ServerRpcMethod = "network.get" | "network.set";
+export type ServerRpcMethod = "network.get" | "network.set" | "runtime.env";
+
+/** Environment for on-demand runtimes (Python, Go, ...) the desktop shell installed; applied to the running server. */
+export interface RuntimeEnv {
+	/** Directories put at the front of PATH, replacing the ones applied last time. */
+	bins: string[];
+	/** Extra variables (GOROOT, CARGO_HOME, ...), replacing the ones applied last time. */
+	env: Record<string, string>;
+}
 
 export interface NetworkStatus {
 	/** The listen address comes from PROMETHEUS_HOST, so the settings below do not apply. */
@@ -814,6 +822,7 @@ export interface RpcMethods {
 	/** Server-level, answered by the listener itself and only on the local port. */
 	"network.get": { params: Record<string, never>; result: NetworkStatus };
 	"network.set": { params: NetworkPatch; result: NetworkStatus };
+	"runtime.env": { params: RuntimeEnv; result: null };
 
 	"session.list": { params: Record<string, never>; result: SessionSummary[] };
 	"session.create": { params: { cwd?: string; name?: string }; result: SessionSnapshot };
