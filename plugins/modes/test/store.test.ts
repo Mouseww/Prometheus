@@ -18,10 +18,11 @@ afterEach(async () => {
 const seed = (over: Partial<ModesState> = {}) => seedModes({ modes: [], selected: null, overrides: {}, seeded: 0, ...over });
 
 describe("seedModes", () => {
-	it("ships five modes, none selected", () => {
+	it("ships six modes, none selected", () => {
 		const state = seed();
 		expect(state.modes.map((m) => m.id).sort()).toEqual([
 			"builtin-default",
+			"builtin-delegate",
 			"builtin-operator",
 			"builtin-purge",
 			"builtin-research",
@@ -156,6 +157,7 @@ describe("migration", () => {
 		const out = seedModes(v3 as unknown as ModesState);
 		expect(out.modes.map((m) => m.id).sort()).toEqual([
 			"builtin-default",
+			"builtin-delegate",
 			"builtin-operator",
 			"builtin-purge",
 			"builtin-research",

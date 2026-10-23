@@ -23,6 +23,7 @@
     "@prometheus/plugin-sdk": "workspace:*",
     "@prometheus/plugin-skills": "workspace:*",
     "@prometheus/plugin-ssh": "workspace:*",
+    "@prometheus/plugin-subagents": "workspace:*",
     "@prometheus/plugin-terminal": "workspace:*",
     "@prometheus/plugin-todos": "workspace:*",
     "@prometheus/plugin-veil": "workspace:*",

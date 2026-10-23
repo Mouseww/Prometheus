@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { BarChart3, Blocks, Cable, Check, Copy, FolderOpen, Globe, Laptop, Layers, Mic, Moon, Network, Package, Plug, Server, Sparkles, Sun, SlidersHorizontal, Terminal } from "lucide-react";
+import { BarChart3, Blocks, Bot, Cable, Check, Copy, FolderOpen, Globe, Laptop, Layers, Mic, Moon, Network, Package, Plug, Server, Shield, Sparkles, Sun, SlidersHorizontal, Terminal } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { isAndroid, isDesktopShell } from "../lib/backend.ts";
@@ -17,6 +17,8 @@ import { PlatformsView } from "./PlatformsView.tsx";
 import { SshView } from "./SshView.tsx";
 import { PluginsView } from "./PluginsView.tsx";
 import { ModesView } from "./ModesView.tsx";
+import { SubagentsView } from "./SubagentsView.tsx";
+import { VeilView } from "./VeilView.tsx";
 import { SkillsView } from "./SkillsView.tsx";
 import { Button, PageHeader } from "./ui.tsx";
 import { UsageView } from "./UsageView.tsx";
@@ -32,6 +34,8 @@ const M = defineMessages({
 		market: "PI 插件市场",
 		plugins: "Prometheus 插件",
 		modes: "模式",
+		subagents: "子代理",
+		veil: "隐私面罩",
 		voice: "语音输入",
 		network: "网络访问",
 		platforms: "多平台",
@@ -96,6 +100,8 @@ const M = defineMessages({
 		market: "PI Marketplace",
 		plugins: "Prometheus Plugins",
 		modes: "Modes",
+		subagents: "Subagents",
+		veil: "Privacy Mask",
 		voice: "Voice",
 		network: "Network access",
 		platforms: "Platforms",
@@ -420,44 +426,63 @@ function GeneralSettings() {
 	);
 }
 
-const TABS: { id: SettingsTab; icon: typeof Network }[] = [
-	// 基础 → 智能体能力 → 外部连接 → 扩展 → 网络与多端 → 统计
-	{ id: "general", icon: SlidersHorizontal },
-	{ id: "gateways", icon: Network },
-	{ id: "modes", icon: Layers },
-	{ id: "skills", icon: Sparkles },
-	{ id: "mcp", icon: Cable },
-	{ id: "connectors", icon: Plug },
-	{ id: "ssh", icon: Terminal },
-	{ id: "market", icon: Package },
-	{ id: "plugins", icon: Blocks },
-	{ id: "voice", icon: Mic },
-	{ id: "network", icon: Globe },
-	{ id: "platforms", icon: Server },
-	{ id: "usage", icon: BarChart3 },
+/**
+ * Tabs in groups, each separated by a rule: the basics, then everything that shapes the agent
+ * (what it says, who it delegates to, what it can reach), then extensions, then network and privacy,
+ * then statistics. Voice sits beside the gateways because it needs one to transcribe.
+ * A tab owned by a switchable plugin only shows while that plugin runs.
+ */
+const TAB_GROUPS: { id: SettingsTab; icon: typeof Network; plugin?: string }[][] = [
+	[
+		{ id: "general", icon: SlidersHorizontal },
+		{ id: "gateways", icon: Network },
+		{ id: "voice", icon: Mic, plugin: "voice" },
+	],
+	[
+		{ id: "modes", icon: Layers, plugin: "modes" },
+		{ id: "subagents", icon: Bot, plugin: "subagents" },
+		{ id: "skills", icon: Sparkles },
+		{ id: "mcp", icon: Cable },
+		{ id: "connectors", icon: Plug },
+		{ id: "ssh", icon: Terminal, plugin: "ssh" },
+	],
+	[
+		{ id: "market", icon: Package },
+		{ id: "plugins", icon: Blocks },
+	],
+	[
+		{ id: "network", icon: Globe },
+		{ id: "veil", icon: Shield, plugin: "veil" },
+		{ id: "platforms", icon: Server },
+	],
+	[{ id: "usage", icon: BarChart3 }],
 ];
 
 export function SettingsView() {
 	const t = useT(M);
 	const tab = useStore((s) => s.settingsTab);
 	const plugins = useStore((s) => s.plugins);
-	const tabs = TABS.filter((x) => x.id !== "ssh" || pluginActive(plugins, "ssh"));
+	const groups = TAB_GROUPS.map((g) => g.filter((x) => !x.plugin || pluginActive(plugins, x.plugin))).filter((g) => g.length > 0);
 	return (
 		<div className="@container flex min-h-0 flex-1 flex-col overflow-hidden @2xl:flex-row">
 			<nav className="flex shrink-0 gap-1 overflow-x-auto border-b hairline p-2 @2xl:block @2xl:w-44 @2xl:space-y-0.5 @2xl:overflow-x-visible @2xl:border-r @2xl:border-b-0 @2xl:p-3">
-				{tabs.map(({ id, icon: Icon }) => (
-					<button
-						key={id}
-						type="button"
-						onClick={() => openSettings(id)}
-						className={clsx(
-							"flex shrink-0 items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm whitespace-nowrap transition-colors @2xl:w-full",
-							tab === id ? "bg-ink-800 text-ink-100" : "text-ink-400 hover:bg-ink-850 hover:text-ink-100",
-						)}
-					>
-						<Icon className={clsx("size-4 shrink-0", tab === id && "text-ember-400")} />
-						<span className="min-w-0 truncate">{t(id)}</span>
-					</button>
+				{groups.map((group, i) => (
+					<div key={group[0]?.id} className={clsx("flex shrink-0 gap-1 @2xl:block @2xl:space-y-0.5", i > 0 && "border-l hairline pl-1 @2xl:mt-2 @2xl:border-t @2xl:border-l-0 @2xl:pt-2 @2xl:pl-0")}>
+						{group.map(({ id, icon: Icon }) => (
+							<button
+								key={id}
+								type="button"
+								onClick={() => openSettings(id)}
+								className={clsx(
+									"flex shrink-0 items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm whitespace-nowrap transition-colors @2xl:w-full",
+									tab === id ? "bg-ink-800 text-ink-100" : "text-ink-400 hover:bg-ink-850 hover:text-ink-100",
+								)}
+							>
+								<Icon className={clsx("size-4 shrink-0", tab === id && "text-ember-400")} />
+								<span className="min-w-0 truncate">{t(id)}</span>
+							</button>
+						))}
+					</div>
 				))}
 			</nav>
 			<div className="@container flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -470,6 +495,8 @@ export function SettingsView() {
 				{tab === "voice" && <VoiceSettings />}
 				{tab === "network" && <NetworkSettings />}
 				{tab === "modes" && <ModesView />}
+				{tab === "subagents" && <SubagentsView />}
+				{tab === "veil" && <VeilView />}
 				{tab === "platforms" && <PlatformsView />}
 				{tab === "ssh" && <SshView />}
 				{tab === "plugins" && <PluginsView />}

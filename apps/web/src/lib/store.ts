@@ -137,8 +137,8 @@ function savedSort(): SubagentSort {
 	return v === "started" || v === "ended" ? v : "status";
 }
 
-export type SettingsTab = "general" | "gateways" | "mcp" | "connectors" | "skills" | "modes" | "market" | "plugins" | "voice" | "network" | "platforms" | "ssh" | "usage";
-export type View = "chat" | "knowledge" | "memory" | "automations" | "git" | "veil" | "settings" | { panel: string };
+export type SettingsTab = "general" | "gateways" | "mcp" | "connectors" | "skills" | "modes" | "subagents" | "market" | "veil" | "plugins" | "voice" | "network" | "platforms" | "ssh" | "usage";
+export type View = "chat" | "knowledge" | "memory" | "automations" | "git" | "settings" | { panel: string };
 
 interface State {
 	client: PrometheusClient | null;

@@ -52,8 +52,8 @@ export interface ModesState {
 	defaultEnabled?: boolean;
 }
 
-/** 1-2: prompt-only. 3: prompts, decoupled from permissions. 4: per-mode tools. 5: purge-strength compose modes. */
-const SEED_VERSION = 5;
+/** 1-2: prompt-only. 3: prompts, decoupled from permissions. 4: per-mode tools. 5: purge-strength compose modes. 6: subagent boost. */
+const SEED_VERSION = 6;
 
 export const emptyState = (): ModesState => ({ modes: [], selected: null, overrides: {}, seeded: 0 });
 
@@ -76,6 +76,14 @@ const SEEDS: Seed[] = [
 		description: "Standard assistant: every tool, normal caution",
 		file: "default.en.md",
 		compose: "replace",
+		tools: [],
+	},
+	{
+		id: "builtin-delegate",
+		title: "Subagent boost",
+		description: "Orchestrator: hands work to subagents first, runs independent jobs in parallel, verifies before reporting",
+		file: "delegate.en.md",
+		compose: "append",
 		tools: [],
 	},
 	{

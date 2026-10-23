@@ -229,11 +229,12 @@ function pick(state: ModesState, id: string): AgentMode {
 	return mode;
 }
 
-const SEED_VERSION = 5;
+const SEED_VERSION = 6;
 
 /** Shipped file per seeded id, so `reset` can restore the bundled text. */
 const SEED_FILES: Record<string, string> = {
 	"builtin-default": "default.en.md",
+	"builtin-delegate": "delegate.en.md",
 	"builtin-operator": "operator.en.md",
 	"builtin-whitehat": "whitehat.en.md",
 	"builtin-purge": "purge.en.md",

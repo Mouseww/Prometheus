@@ -58,7 +58,7 @@ Add a gateway in settings to use your own proxy, a relay, or an official endpoin
 ### Skills and plugins
 
 - **Skills**: `SKILL.md`-compatible. The model loads them on demand based on the description, or you can invoke one manually with `/skill:name`. A built-in `prometheus` skill teaches the model about this app.
-- **Prometheus plugins**: knowledge base (LanceDB vector search), MCP management, memory, todo, Git, automation, voice, terminal, workbench, SSH, Veil, modes, connectors and more are all delivered as plugins and can be disabled individually.
+- **Prometheus plugins**: knowledge base (LanceDB vector search), MCP management, memory, todo, Git, automation, voice, terminal, workbench, SSH, Veil, modes, subagents, connectors and more are all delivered as plugins and can be disabled individually.
 - **PI plugin marketplace**: install community PI extension packages directly.
 
 <img src="https://raw.githubusercontent.com/Mouseww/Prometheus/main/docs/images/skills.png" alt="Skills" width="900" />
@@ -71,7 +71,8 @@ Add a gateway in settings to use your own proxy, a relay, or an official endpoin
 - **Auto-folded steps**: once a turn finishes, intermediate tool calls fold away and only the final reply stays visible.
 - **`@` file mentions**: search and reference workspace files from the composer.
 - Adjustable chat width; links open in your default browser, with a context menu to copy.
-- **Modes**: Default / Operator / White hat / Purge / Research, each with its own system prompt and tool set; switching does not reload the session.
+- **Subagents**: Settings → Subagents edits the description, prompt mode, prompt, model, tools and context limits of built-in and custom subagents (built on pi-subagents, shared with the PI terminal). The "Subagent boost" mode makes the main agent delegate to them first.
+- **Modes**: Default / Subagent boost / Operator / White hat / Purge / Research, each with its own system prompt and tool set; switching does not reload the session.
 
 ### Veil: privacy shield
 

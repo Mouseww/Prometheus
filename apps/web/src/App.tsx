@@ -16,7 +16,6 @@ import { WorkbenchPanel } from "./components/WorkbenchPanel.tsx";
 import { Toasts } from "./components/Toasts.tsx";
 import { Modal } from "./components/ui.tsx";
 import { UpdateDialog } from "./components/UpdateDialog.tsx";
-import { VeilView } from "./components/VeilView.tsx";
 import type { BackendTarget } from "./lib/client.ts";
 import { PrometheusClient } from "./lib/client.ts";
 import { clearSession, discoverBackend, establishCookie, isDesktopShell, saveMode, saveSession } from "./lib/backend.ts";
@@ -53,8 +52,7 @@ export function App() {
 		if (!plugins.length) return;
 		if (
 			(view === "automations" && !pluginActive(plugins, "automations")) ||
-			(view === "git" && !pluginActive(plugins, "git")) ||
-			(view === "veil" && !pluginActive(plugins, "veil"))
+			(view === "git" && !pluginActive(plugins, "git"))
 		)
 			setView("chat");
 	}, [view, plugins]);
@@ -157,7 +155,6 @@ export function App() {
 							{view === "memory" && <MemoryView />}
 							{view === "automations" && <AutomationsView />}
 							{view === "git" && <GitView />}
-							{view === "veil" && <VeilView />}
 							{view === "settings" && <SettingsView />}
 							{typeof view === "object" && <PanelFrame target={target} url={view.panel} />}
 						</Modal>

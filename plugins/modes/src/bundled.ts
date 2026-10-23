@@ -1,3 +1,4 @@
+import { TEXT as delegate } from "./bundled/delegate_en.ts";
 import { TEXT as defaultPrompt } from "./bundled/default_en.ts";
 import { TEXT as operator } from "./bundled/operator_en.ts";
 import { TEXT as purge } from "./bundled/purge_en.ts";
@@ -12,6 +13,7 @@ import { TEXT as whitehat } from "./bundled/whitehat_en.ts";
  */
 export const BUNDLED: Record<string, string> = {
 	"default.en.md": defaultPrompt,
+	"delegate.en.md": delegate,
 	"operator.en.md": operator,
 	"purge.en.md": purge,
 	"research.en.md": research,
