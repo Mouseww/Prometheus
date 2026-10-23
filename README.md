@@ -13,7 +13,7 @@
 [![License](https://img.shields.io/badge/license-PPUL%20v1.0%20%C2%B7%20%E4%B8%AA%E4%BA%BA%E5%85%8D%E8%B4%B9%20%2F%20%E5%95%86%E7%94%A8%E9%9C%80%E6%8E%88%E6%9D%83-blue?style=for-the-badge)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A5%2022.19-339933?style=for-the-badge&logo=node.js&logoColor=white)](#快速开始)
 
-[快速开始](#快速开始) · [功能](#功能一览) · [架构](#架构) · [写一个插件](#写一个插件) · [部署文档](docs/deployment.md) · [架构文档](docs/architecture.md) · [English](README.en.md)
+[快速开始](#快速开始) · [功能](#功能一览) · [隐私面罩](#隐私面罩veil) · [架构](#架构) · [写一个插件](#写一个插件) · [部署文档](docs/deployment.md) · [架构文档](docs/architecture.md) · [English](README.en.md)
 
 <img src="https://raw.githubusercontent.com/Mouseww/Prometheus/main/docs/images/chat.png" alt="Prometheus 对话界面" width="900" />
 
@@ -27,9 +27,10 @@
 
 | | |
 | --- | --- |
-| **一个内核，四个入口** | TUI、桌面 GUI（Tauri）、Web、安卓共用同一套服务端与协议，会话随处可续。 |
+| **一个内核，四个入口** | TUI、桌面 GUI（Tauri，Windows / macOS Intel 与 Apple 芯片，内置 Node 与 npm/npx）、Web、安卓共用同一套服务端与协议，会话随处可续。 |
 | **接入任何模型** | 自定义 AI 网关：OpenAI Chat / Responses、Anthropic、Gemini 四种协议，自定义地址、鉴权头与密钥。 |
 | **万物皆插件** | 网关、知识库、工具、命令、HTTP 路由、UI 面板全部通过 `definePlugin` 贡献，连内置功能也是插件。 |
+| **隐私优先** | 隐私面罩在出网前脱敏机密，并可经指定代理出口。 |
 | **可控的权限** | 写文件、执行命令前弹窗确认，可按命令“始终允许”；第三方凭据加密存储，永不进入模型上下文。 |
 | **随时随地** | 一键部署到服务器，浏览器、手机直接访问；局域网 / 域名访问带密码与限速保护。 |
 
@@ -65,11 +66,39 @@
 
 <img src="https://raw.githubusercontent.com/Mouseww/Prometheus/main/docs/images/plugins.png" alt="Prometheus 插件" width="900" />
 
-### 内置 Git 面板
+### 对话体验
 
-查看改动、暂存、提交、切换分支与同步，Agent 改完代码可以直接在这里审阅。
+- **编辑并重发**：已发送的消息可修改后重发；排队 / 引导中的消息可编辑或撤回。
+- **自动折叠步骤**：一轮结束后，中间的工具调用自动折叠，只留最终回复，长对话更清爽。
+- **`@` 文件提及**：输入框里 `@` 搜索工作区文件并引用。
+- **对话宽度**可调；链接用系统默认浏览器打开，右键菜单可复制。
+- **模式（Modes）**：默认 / 运维 / 白帽 / 净化 / 调研等模式，各自拥有独立的系统提示词与工具集，切换无需重载会话。
+
+### 隐私面罩（Veil）
+
+出网前把密钥、手机号、连接串、证件号等机密换成 `{{类型_ULID}}` 化名，回答回来再换回原文；脱敏失败直接拦截，绝不外发明文。另可开启**区域中立化**与**出口代理**（HTTP / HTTPS / SOCKS5），让模型请求从指定 IP 出去。详见 [plugins/veil/README.md](plugins/veil/README.md)。
+
+### Git 审阅与分支
+
+查看改动、暂存、提交、同步；**Git 审阅**可逐处审阅 Agent 的改动，**分支选择器**随时切换分支。
 
 <img src="https://raw.githubusercontent.com/Mouseww/Prometheus/main/docs/images/git.png" alt="Git 面板" width="900" />
+
+### SSH 远程与工作台
+
+- **SSH 插件**：配置远程服务器后，Agent 可通过 `ssh_exec` / `ssh_upload` / `ssh_download` 在远端执行命令、传输文件。
+- **工作台**：侧边文件查看器，Agent 可用 `open_file` 直接把文件定位到指定行给你看。
+- **文件夹选择器**：资源管理器风格，可新建文件夹，桌面版使用原生对话框；可设置默认根目录。
+
+### 多平台：一个客户端连多个服务
+
+保存多台 Prometheus 服务（本机、公司服务器、家里的 NAS……），在设置或侧边栏一键切换要连接的那一个，不用重复输入地址。支持访问令牌或登录密码，登录后只保存会话令牌；平台列表只存在当前设备。桌面版与安卓版都可以在「本机模式」与远程服务之间切换。
+
+### 桌面与安卓
+
+- **桌面**：关闭窗口可最小化到托盘，会话在后台继续运行；托盘可查看运行中的会话；应用内检查并一键更新（同时更新本机服务端）。
+- **网络访问**：让局域网设备或通过域名（如 nginx 反代）访问本机的 Prometheus，带密码与限速。
+- **安卓本机模式**：APK 内置 Node、npm/npx、git、bash、rg，数据留在手机上；也可以连接远程服务器。
 
 ### 更多
 
@@ -81,6 +110,9 @@
 | 连接器 | GitHub、Jira / Confluence、Bitbucket、Microsoft 365、数据库；OAuth / 令牌授权，写操作可设“只读 / 写前确认 / 允许写”，详见 [连接器设计](docs/connectors.md) |
 | 自动化 | 按计划在后台运行 Agent 任务，每次运行都生成可查看的会话 |
 | 子 Agent | 把任务委派给子 Agent 并行处理 |
+| 终端 | 内置终端面板 |
+| 语音 | 语音输入 |
+| PI 配置导入 | 网关默认值与一键导入已有 PI 配置 |
 | 多皮肤 | 深浅主题 + 余烬 / 深海 / 森林 / 星云 / 玫瑰 五种皮肤，中英文界面 |
 | 用量统计 | 查看 token 与费用用量 |
 
@@ -142,7 +174,7 @@ packages/plugin-sdk   插件开发 SDK（definePlugin）
 packages/gateway      AI 网关：OpenAI Chat/Responses、Anthropic、Gemini
 packages/knowledge    知识库服务与 knowledge_search 工具
 packages/core         运行时宿主（会话、插件、UI 桥）
-plugins/*             内置插件：知识库、MCP、技能、记忆、Git、自动化、终端、连接器…
+plugins/*             内置插件：知识库、MCP、技能、记忆、Git、自动化、终端、SSH、隐私面罩、模式、连接器…
 apps/server           HTTP + WebSocket 服务端
 apps/web              React Web UI（桌面 / 安卓共用）
 apps/desktop          Tauri 桌面壳

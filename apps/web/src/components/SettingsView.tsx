@@ -455,8 +455,8 @@ export function SettingsView() {
 							tab === id ? "bg-ink-800 text-ink-100" : "text-ink-400 hover:bg-ink-850 hover:text-ink-100",
 						)}
 					>
-						<Icon className={clsx("size-4", tab === id && "text-ember-400")} />
-						{t(id)}
+						<Icon className={clsx("size-4 shrink-0", tab === id && "text-ember-400")} />
+						<span className="min-w-0 truncate">{t(id)}</span>
 					</button>
 				))}
 			</nav>

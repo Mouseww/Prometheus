@@ -156,12 +156,12 @@
 		"sha256": "f44bbfdc3d42ec0217bffa978309390e59cea5a48a9a83226d4a496c42ad0b99"
 	},
 	"nodejs": {
-		"filename": "pool/main/n/nodejs/nodejs_26.4.0-2_aarch64.deb",
-		"sha256": "ea827c251f87c42b41728351cfe82e81cbdf8ee3cf9420d3e59af3419161ddad"
+		"filename": "pool/main/n/nodejs/nodejs_26.12.1_aarch64.deb",
+		"sha256": "478b1ed7eb797b1525f6aacfdff6bc998cd4aee234d06d23ed456be2ac730105"
 	},
 	"nodejs-lts": {
-		"filename": "pool/main/n/nodejs-lts/nodejs-lts_24.18.0-2_aarch64.deb",
-		"sha256": "c799ca24e353ee6a3dc016577592142da7b8defadc32b225bfc189b00a639076"
+		"filename": "pool/main/n/nodejs-lts/nodejs-lts_24.22.1_aarch64.deb",
+		"sha256": "c4aae57009e4398613807d77ff395026455fe03b6d9d8a29f929212b04f74719"
 	},
 	"npm": {
 		"filename": "pool/main/n/npm/npm_11.21.1_all.deb",

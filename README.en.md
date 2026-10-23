@@ -58,18 +58,46 @@ Add a gateway in settings to use your own proxy, a relay, or an official endpoin
 ### Skills and plugins
 
 - **Skills**: `SKILL.md`-compatible. The model loads them on demand based on the description, or you can invoke one manually with `/skill:name`. A built-in `prometheus` skill teaches the model about this app.
-- **Prometheus plugins**: knowledge base (LanceDB vector search), MCP management, memory, todo, Git, automation, voice, terminal, workbench, connectors and more are all delivered as plugins and can be disabled individually.
+- **Prometheus plugins**: knowledge base (LanceDB vector search), MCP management, memory, todo, Git, automation, voice, terminal, workbench, SSH, Veil, modes, connectors and more are all delivered as plugins and can be disabled individually.
 - **PI plugin marketplace**: install community PI extension packages directly.
 
 <img src="https://raw.githubusercontent.com/Mouseww/Prometheus/main/docs/images/skills.png" alt="Skills" width="900" />
 
 <img src="https://raw.githubusercontent.com/Mouseww/Prometheus/main/docs/images/plugins.png" alt="Prometheus plugins" width="900" />
 
-### Built-in Git panel
+### Chat experience
 
-Review changes, stage, commit, switch branches and sync — right where the agent finished editing.
+- **Edit and resend**: modify a sent message and resend it; edit or withdraw queued / steered messages.
+- **Auto-folded steps**: once a turn finishes, intermediate tool calls fold away and only the final reply stays visible.
+- **`@` file mentions**: search and reference workspace files from the composer.
+- Adjustable chat width; links open in your default browser, with a context menu to copy.
+- **Modes**: Default / Operator / White hat / Purge / Research, each with its own system prompt and tool set; switching does not reload the session.
+
+### Veil: privacy shield
+
+Before a request leaves your machine, secrets (keys, phone numbers, connection strings, ID numbers) are swapped for `{{TYPE_ULID}}` aliases and restored in the reply. If masking fails, the request is blocked rather than sent in clear text. Optional **locale neutralization** and an **egress proxy** (HTTP / HTTPS / SOCKS5) route model traffic through an IP of your choice. See [plugins/veil/README.md](plugins/veil/README.md).
+
+### Git review and branches
+
+Review changes, stage, commit and sync. **Git review** walks through the agent's edits, and the **branch picker** switches branches in place.
 
 <img src="https://raw.githubusercontent.com/Mouseww/Prometheus/main/docs/images/git.png" alt="Git panel" width="900" />
+
+### SSH and workbench
+
+- **SSH plugin**: configure remote servers and the agent can run commands and transfer files via `ssh_exec` / `ssh_upload` / `ssh_download`.
+- **Workbench**: a side file viewer; the agent can show you a file at a given line with `open_file`.
+- **Folder picker**: Explorer-style, can create folders, native dialog on desktop; a default root folder can be set.
+
+### Platforms: one client, many servers
+
+Save several Prometheus servers (this machine, a company server, a home NAS...) and switch between them in one click from Settings or the sidebar, without retyping addresses. Access token or login password are supported (only the session token is kept after sign-in), and the list lives on the current device only. Desktop and Android can switch between local mode and remote servers.
+
+### Desktop and Android
+
+- **Desktop**: closing the window can minimize to the tray so sessions keep running; the tray lists running sessions; in-app update checks also update the local server.
+- **Network access**: let LAN devices or a domain (e.g. behind nginx) reach this machine's Prometheus, with password and rate limiting.
+- **Android local mode**: the APK bundles Node, npm/npx, git, bash and rg, keeping data on the phone; it can also connect to a remote server.
 
 ### And more
 
