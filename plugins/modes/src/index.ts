@@ -50,7 +50,7 @@ export default definePlugin({
 			let before: string[] | null = null;
 
 			const applyTools = (mode: AgentMode | undefined) => {
-				const plan = planTools(mode, before, pi.getActiveTools());
+				const plan = planTools(mode, before, pi.getActiveTools(), pi.getAllTools().map((t) => t.name));
 				before = plan.before;
 				// Re-applying the same set is skipped; PI would otherwise re-declare the tool catalog
 				// every turn, which costs a cache miss for nothing.

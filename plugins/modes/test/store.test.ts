@@ -294,3 +294,15 @@ describe("planTools", () => {
 		expect(new Set(step.set)).toEqual(new Set(["read", "grep", "subagent", "bash"]));
 	});
 });
+
+describe("planTools with registered tools", () => {
+	it("lets a restricting mode switch on a tool that is off by default", () => {
+		const mode = { tools: ["read", "powershell", "grep"] } as unknown as AgentMode;
+		const step = planTools(mode, null, ["read", "bash", "edit", "write"], ["read", "bash", "powershell", "edit", "write", "grep", "find", "ls"]);
+		expect(new Set(step.set)).toEqual(new Set(["read", "powershell", "grep"]));
+	});
+	it("does not switch anything on for an unrestricted mode", () => {
+		const mode = { tools: [] } as unknown as AgentMode;
+		expect(planTools(mode, null, ["read", "bash"], ["read", "bash", "powershell"]).set).toBeNull();
+	});
+});

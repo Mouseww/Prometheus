@@ -187,9 +187,9 @@ export function allowedTools(mode: AgentMode | undefined, available: readonly st
  *
  * Other extensions switch tools on and off during a chat, so `before` goes stale; the result is
  * always built from the union so a tool activated later is neither dropped nor switched back off.
- * `set` is null when nothing needs to change.
+ * `registered` is every tool PI knows, active or not. `set` is null when nothing needs to change.
  */
-export function planTools(mode: AgentMode | undefined, before: string[] | null, active: readonly string[]): { set: string[] | null; before: string[] | null } {
+export function planTools(mode: AgentMode | undefined, before: string[] | null, active: readonly string[], registered: readonly string[] = []): { set: string[] | null; before: string[] | null } {
 	if (!mode || mode.tools.length === 0) {
 		if (before === null) return { set: null, before: null };
 		// Leaving a restricting mode: give back what it removed, keep whatever was added since.
@@ -197,7 +197,8 @@ export function planTools(mode: AgentMode | undefined, before: string[] | null, 
 		return { set: sameSet(restore, active) ? null : restore, before: null };
 	}
 	const base = before ?? [...active];
-	const next = allowedTools(mode, [...new Set([...base, ...active])]);
+	// A mode that names a tool PI keeps off by default (powershell, grep, find, ls) switches it on.
+	const next = allowedTools(mode, [...new Set([...base, ...active, ...registered])]);
 	return { set: sameSet(next, active) ? null : next, before: base };
 }
 
