@@ -352,6 +352,24 @@ export class AgentStore {
 		await writeJson(this.settingsFile, out);
 	}
 
+	/** `subagents.defaultModel`: the model every subagent without its own uses. Empty inherits the parent's. */
+	async getDefaultModel(): Promise<string> {
+		const { settings } = await this.overrides();
+		const sub = isObj(settings.subagents) ? settings.subagents : {};
+		return typeof sub.defaultModel === "string" ? sub.defaultModel : "";
+	}
+
+	async setDefaultModel(model: string): Promise<void> {
+		const settings = await readJson(this.settingsFile);
+		const sub = isObj(settings.subagents) ? { ...settings.subagents } : {};
+		if (model) sub.defaultModel = model;
+		else delete sub.defaultModel;
+		const out = { ...settings };
+		if (Object.keys(sub).length) out.subagents = sub;
+		else delete out.subagents;
+		await writeJson(this.settingsFile, out);
+	}
+
 	async packageInstalled(): Promise<boolean> {
 		if ((await this.builtinDirs()).length) return true;
 		const settings = await readJson(this.settingsFile).catch(() => ({}) as Json);

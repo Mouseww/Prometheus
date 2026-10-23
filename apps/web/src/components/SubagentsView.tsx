@@ -25,6 +25,8 @@ const M = defineMessages({
 		loading: "加载中…",
 		emptyTitle: "没有找到子代理",
 		emptyBody: "新建一个子代理，写好它的提示词，主代理就可以把任务委派给它。",
+		defaultModel: "所有子代理的默认模型",
+		defaultModelHint: "没有单独指定模型的子代理都用它；选「继承」则跟随主对话当前模型。格式为 网关ID/模型ID。",
 		basics: "基本",
 		name: "名称",
 		description: "说明",
@@ -88,6 +90,8 @@ const M = defineMessages({
 		loading: "Loading…",
 		emptyTitle: "No subagents found",
 		emptyBody: "Create a subagent and write its prompt; the main agent can then delegate tasks to it.",
+		defaultModel: "Default model for all subagents",
+		defaultModelHint: "Used by every subagent without its own model; \"Inherit\" follows the main chat's current model. Format: gatewayId/modelId.",
 		basics: "Basics",
 		name: "Name",
 		description: "Description",
@@ -185,14 +189,17 @@ export function SubagentsView() {
 	const t = useT(M);
 	const [agents, setAgents] = useState<Summary[]>([]);
 	const [installed, setInstalled] = useState(true);
+	const [defaultModel, setDefaultModel] = useState("");
+	const models = useStore((s) => s.models);
 	const [picked, setPicked] = useState<string | null>(null);
 	const [loaded, setLoaded] = useState(false);
 
 	const load = async () => {
-		const res = await pluginCall<{ installed: boolean; agents: Summary[] }>("subagents", "list");
+		const res = await pluginCall<{ installed: boolean; defaultModel: string; agents: Summary[] }>("subagents", "list");
 		if (!res) return;
 		setAgents(res.agents);
 		setInstalled(res.installed);
+		setDefaultModel(res.defaultModel);
 		setPicked((s) => (s && res.agents.some((a) => a.name === s) ? s : (res.agents[0]?.name ?? null)));
 		setLoaded(true);
 	};
@@ -233,6 +240,28 @@ export function SubagentsView() {
 					</Button>
 				</div>
 			)}
+			<div className="flex flex-wrap items-center gap-3 border-b hairline px-4 py-3 @3xl:px-8">
+				<div className="min-w-48 flex-1">
+					<div className="text-sm text-ink-100">{t("defaultModel")}</div>
+					<div className="text-xs text-ink-500">{t("defaultModelHint")}</div>
+				</div>
+				<Select
+					className="max-w-80"
+					value={defaultModel}
+					onChange={(e) => {
+						const model = e.target.value;
+						setDefaultModel(model);
+						void pluginCall("subagents", "setDefaultModel", { model }).then((r) => r && toast(t("saved")));
+					}}
+				>
+					<option value="">{t("modelInherit")}</option>
+					{[...new Set([...(defaultModel ? [defaultModel] : []), ...models.map((m) => `${m.provider}/${m.id}`)])].map((m) => (
+						<option key={m} value={m}>
+							{m}
+						</option>
+					))}
+				</Select>
+			</div>
 			<div className="flex min-h-0 flex-1 flex-col @3xl:flex-row">
 				<div className="max-h-[34%] w-full shrink-0 space-y-1 overflow-y-auto border-b hairline p-3 @3xl:max-h-none @3xl:w-72 @3xl:border-r @3xl:border-b-0">
 					{agents.map((a) => (

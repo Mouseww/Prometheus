@@ -30,8 +30,16 @@ export default definePlugin({
 
 		ctx.rpc("list", async () => ({
 			installed: await store.packageInstalled(),
+			defaultModel: await store.getDefaultModel(),
 			agents: (await store.list()).map(({ prompt, ...rest }) => ({ ...rest, promptLength: prompt.length })),
 		}));
+
+		ctx.rpc("setDefaultModel", async (p: Params) => {
+			const model = str(p.model).slice(0, 200);
+			await store.setDefaultModel(model);
+			await changed();
+			return { model };
+		});
 
 		ctx.rpc("get", async (p: Params) => store.get(str(p.name)));
 
