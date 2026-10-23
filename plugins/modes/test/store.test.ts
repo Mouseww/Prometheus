@@ -203,7 +203,7 @@ describe("knownTools", () => {
 		const { knownTools } = await import("../src/tools.ts");
 		const names = knownTools();
 		// Present on every platform, so a broken factory import cannot pass silently.
-		for (const name of ["read", "write", "edit", "bash", "grep", "todo_write"]) expect(names).toContain(name);
+		for (const name of ["read", "write", "edit", "bash", "powershell", "grep", "todo_write"]) expect(names).toContain(name);
 		expect(new Set(names).size).toBe(names.length);
 	});
 

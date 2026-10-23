@@ -9,6 +9,8 @@ import { createCodingTools, createReadOnlyTools } from "@earendil-works/pi-codin
  * they are registered per session and cannot be enumerated without one.
  */
 const PLUGIN_TOOLS = [
+	// PI registers it on Windows, but neither factory below returns it.
+	"powershell",
 	"todo_write",
 	"open_file",
 	"knowledge_search",
