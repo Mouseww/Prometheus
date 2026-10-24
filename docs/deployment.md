@@ -60,6 +60,16 @@ docker run -p 7420:7420 -e PROMETHEUS_TOKEN=<至少16位随机串> \
 
 反向代理要保留 `Upgrade` 头并建议用 HTTPS，示例见设置页。若本机浏览器也经由同一反向代理访问，会被当作外部访问而要求密码。
 
+### 一键公网地址（Cloudflare 临时隧道）
+
+不想配域名、反向代理和 DDNS 时，在「设置 → 网络访问」打开「一键公网地址」：服务端启动 `cloudflared tunnel`（Cloudflare 的免费 quick tunnel），获得随机的 `https://xxxx.trycloudflare.com`，转发到本机服务。
+
+- **必须先设置登录密码**，否则无法开启；经隧道进来的请求按「代理请求」处理，需要密码，隧道域名只在开启期间自动加入白名单。
+- 首次使用会下载 cloudflared 到数据目录的 `bin/`（已装在 `PATH` 里则直接用）。下载使用 `curl`，并读取 `HTTPS_PROXY` / `ALL_PROXY` 等环境变量，Windows 上还会读系统代理。
+- 地址是临时的：关闭开关或重启服务后会变，开关不持久化；这是免费隧道，不保证稳定，不适合长期生产。
+- 下载失败、启动退出或等不到地址时界面会提示是网络问题，网络（或代理的全局 / TUN 模式）恢复后再点开关重试。
+- 同一页会为局域网地址和公网地址显示二维码，手机端连接页点「扫码」即可填入；安卓会申请相机权限（`CAMERA`）。普通网页扫码需要 HTTPS 页面。
+
 ### 内置 Node 运行时
 
 桌面安装包自带官方 Node（`bundle-node` 在打包时按构建机的平台/架构下载最新的 22.x，并校验 SHA256，放进 `node/` 资源目录），不依赖用户机器上的 Node 或 `PATH`——从 Finder 启动的 macOS 应用拿不到终端的 `PATH`，这正是过去报「No such file or directory」的原因。查找顺序：`PROMETHEUS_NODE` → 内置 Node → `PATH` 与常见安装位置（Homebrew、nvm、volta、asdf、fnm；仅开发构建等没有内置 Node 时才会走到）。`NODE_MAJOR`、`NODE_BUNDLE_ARCH` 环境变量可指定打包的 Node 大版本与架构。同时内置 npm 与 npx（追加在子进程 `PATH` 末尾，用户自己安装的同名工具优先）。发布时 macOS 同时构建 Apple Silicon（`macos-latest`）与 Intel（`macos-15-intel`）两个包；Intel 包没有 LanceDB 原生库，知识库向量检索不可用，其余功能不受影响。

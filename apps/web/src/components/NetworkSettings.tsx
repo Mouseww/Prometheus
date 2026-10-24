@@ -271,6 +271,42 @@ export function NetworkSettings() {
 						)}
 					</Section>
 
+					<Section title={t("password")} hint={t("passwordHint")}>
+						<div className={clsx("text-xs", status.passwordSet ? "text-moss-400" : "text-ember-300")}>{status.passwordSet ? t("passwordSet") : t("passwordNotSet")}</div>
+						{editable && (
+							<>
+								<div className="grid gap-3 @xl:grid-cols-2">
+									<Field label={t("newPassword")}>
+										<Input type="password" value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} autoComplete="new-password" />
+									</Field>
+									<Field label={t("confirmPassword")}>
+										<Input type="password" value={pw.again} onChange={(e) => setPw({ ...pw, again: e.target.value })} autoComplete="new-password" />
+									</Field>
+								</div>
+								{pw.again && pw.next !== pw.again && <p className="text-xs text-rose-400">{t("mismatch")}</p>}
+								{status.passwordSet && <p className="text-xs text-ink-500">{t("changeWarn")}</p>}
+								<div className="flex flex-wrap gap-2">
+									<Button
+										variant="primary"
+										disabled={busy || !pwReady}
+										onClick={() =>
+											void apply({ password: pw.next }, t("passwordSaved")).then((ok) => {
+												if (ok) setPw({ next: "", again: "" });
+											})
+										}
+									>
+										{status.passwordSet ? t("changePassword") : t("setPassword")}
+									</Button>
+									{status.passwordSet && (
+										<Button variant="outline" disabled={busy} onClick={() => void apply({ revokeSessions: true }, t("signedOut"))}>
+											{t("signOutAll")}
+										</Button>
+									)}
+								</div>
+							</>
+						)}
+					</Section>
+
 					<Section title={t("tunnel")} hint={t("tunnelDesc")}>
 						<div className="flex items-center gap-3">
 							<button
@@ -306,42 +342,6 @@ export function NetworkSettings() {
 							</div>
 						)}
 						{status.tunnel.state !== "off" && <p className="text-xs text-ink-500">{t("tunnelWarn")}</p>}
-					</Section>
-
-					<Section title={t("password")} hint={t("passwordHint")}>
-						<div className={clsx("text-xs", status.passwordSet ? "text-moss-400" : "text-ember-300")}>{status.passwordSet ? t("passwordSet") : t("passwordNotSet")}</div>
-						{editable && (
-							<>
-								<div className="grid gap-3 @xl:grid-cols-2">
-									<Field label={t("newPassword")}>
-										<Input type="password" value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} autoComplete="new-password" />
-									</Field>
-									<Field label={t("confirmPassword")}>
-										<Input type="password" value={pw.again} onChange={(e) => setPw({ ...pw, again: e.target.value })} autoComplete="new-password" />
-									</Field>
-								</div>
-								{pw.again && pw.next !== pw.again && <p className="text-xs text-rose-400">{t("mismatch")}</p>}
-								{status.passwordSet && <p className="text-xs text-ink-500">{t("changeWarn")}</p>}
-								<div className="flex flex-wrap gap-2">
-									<Button
-										variant="primary"
-										disabled={busy || !pwReady}
-										onClick={() =>
-											void apply({ password: pw.next }, t("passwordSaved")).then((ok) => {
-												if (ok) setPw({ next: "", again: "" });
-											})
-										}
-									>
-										{status.passwordSet ? t("changePassword") : t("setPassword")}
-									</Button>
-									{status.passwordSet && (
-										<Button variant="outline" disabled={busy} onClick={() => void apply({ revokeSessions: true }, t("signedOut"))}>
-											{t("signOutAll")}
-										</Button>
-									)}
-								</div>
-							</>
-						)}
 					</Section>
 
 					<Section title={t("hosts")} hint={t("hostsHint")}>

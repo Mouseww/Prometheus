@@ -58,6 +58,16 @@ Only clients on the same machine can change these settings; devices logged in ov
 
 The reverse proxy must preserve the `Upgrade` header and should use HTTPS; see the settings page for examples. If a browser on the same machine also goes through that reverse proxy, it is treated as external access and will require a password.
 
+### One-click public address (Cloudflare quick tunnel)
+
+If you do not want to set up a domain, reverse proxy and DDNS, turn on "One-click public address" in **Settings → Network access**. The server starts `cloudflared tunnel` (Cloudflare's free quick tunnel), gets a random `https://xxxx.trycloudflare.com` and forwards it to the local server.
+
+- **A login password must be set first**, or it cannot be turned on. Requests through the tunnel are treated as proxied requests and need the password; the tunnel hostname is added to the allow list only while it is on.
+- On first use cloudflared is downloaded into `bin/` in the data directory (an existing one on `PATH` is used as is). The download uses `curl` and honours `HTTPS_PROXY` / `ALL_PROXY` and similar variables; on Windows the system proxy is read too.
+- The address is temporary: it changes after you turn the switch off or restart, and the switch is not persisted. It is a free tunnel with no stability guarantee, not meant for long-term production use.
+- When the download fails, cloudflared exits or no address arrives, the page says it is a network problem; retry after the network (or the proxy's global / TUN mode) is back.
+- The same page shows QR codes for the LAN and public addresses; tap "Scan" on the phone's connect page to fill the address in. Android asks for the camera permission (`CAMERA`). Scanning in a plain web page needs an HTTPS page.
+
 ### Bundled Node runtime
 
 The desktop installer ships the official Node (`bundle-node` downloads the newest 22.x for the build host's platform/arch at packaging time, verifies its SHA256 and places it in the `node/` resource directory), so it needs no Node install or `PATH` on the user's machine. Apps launched from Finder on macOS do not inherit the terminal `PATH`, which used to cause "No such file or directory". Lookup order: `PROMETHEUS_NODE` -> bundled Node -> `PATH` and common install locations (Homebrew, nvm, volta, asdf, fnm; only reached by dev builds or installs without the bundled runtime). `NODE_MAJOR` and `NODE_BUNDLE_ARCH` select the bundled major version and architecture. npm and npx are bundled too, appended to the end of the child `PATH` so tools the user installed take precedence. Releases build macOS twice, Apple Silicon (`macos-latest`) and Intel (`macos-15-intel`); the Intel build has no LanceDB native binding, so knowledge-base vector search is unavailable there and everything else works.

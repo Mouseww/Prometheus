@@ -4,8 +4,8 @@
 
 # Prometheus
 
-**先见之明，递你一簇火。**
-一个源码公开、可二次开发的 AI Agent 工作台：同一个内核，终端 / 桌面 / Web / 安卓四种入口。
+**在手机上指挥你电脑里的 AI Agent，机密不出本机。**
+开源、可自托管的 AI Agent 工作台：接任意模型网关，写文件前先问你，发给模型前先脱敏；电脑、手机、浏览器、终端共用同一个会话。
 
 [![Stars](https://img.shields.io/github/stars/Mouseww/Prometheus?style=for-the-badge&logo=github&color=ff5a1f)](https://github.com/Mouseww/Prometheus/stargazers)
 [![Release](https://img.shields.io/github/v/release/Mouseww/Prometheus?style=for-the-badge&color=ffc061)](https://github.com/Mouseww/Prometheus/releases)
@@ -15,9 +15,23 @@
 
 [快速开始](#快速开始) · [功能](#功能一览) · [隐私面罩](#隐私面罩veil) · [架构](#架构) · [写一个插件](#写一个插件) · [部署文档](docs/deployment.md) · [架构文档](docs/architecture.md) · [English](README.en.md)
 
-<img src="https://raw.githubusercontent.com/Mouseww/Prometheus/main/docs/images/chat.png" alt="Prometheus 对话界面" width="900" />
+<img src="https://raw.githubusercontent.com/Mouseww/Prometheus/main/docs/images/demo-phone.gif" alt="手机连上电脑里的 Agent" width="760" />
 
 </div>
+
+---
+
+## 三个场景
+
+**1. 出门在外，手机接着电脑里的任务。** 在电脑上设置登录密码、打开局域网访问（或一键开启 Cloudflare 公网地址，不用配域名、反代和 DDNS），手机在连接页点「扫码」或输入地址，就能继续同一个会话。
+
+**2. 先问你，再动手。** 写文件、执行命令之前会展示完整内容并等你确认，可以按命令“始终允许”。下面是真实录屏：让 Claude Sonnet 给函数加类型标注，写入与运行各确认一次。
+
+<div align="center"><img src="https://raw.githubusercontent.com/Mouseww/Prometheus/main/docs/images/demo-chat.gif" alt="权限确认" width="760" /></div>
+
+**3. 机密不出本机。** 数据库连接串、手机号、密钥在发给模型之前换成化名，回答回来再换回原文；脱敏失败直接拦截。
+
+<div align="center"><img src="https://raw.githubusercontent.com/Mouseww/Prometheus/main/docs/images/demo-veil.gif" alt="隐私面罩" width="760" /></div>
 
 ---
 
@@ -93,12 +107,15 @@
 
 ### 多平台：一个客户端连多个服务
 
-保存多台 Prometheus 服务（本机、公司服务器、家里的 NAS……），在设置或侧边栏一键切换要连接的那一个，不用重复输入地址。支持访问令牌或登录密码，登录后只保存会话令牌；平台列表只存在当前设备。桌面版与安卓版都可以在「本机模式」与远程服务之间切换。
+保存多台 Prometheus 服务（本机、公司服务器、家里的 NAS……），在设置或侧边栏一键切换要连接的那一个，不用重复输入地址。支持访问令牌或登录密码，登录后保存会话令牌；添加时可勾选「记住密码」，切换平台自动登录（密码明文存于本机，默认勾选，可取消）。平台列表只存在当前设备。桌面版与安卓版都可以在「本机模式」与远程服务之间切换。
 
 ### 桌面与安卓
 
 - **桌面**：关闭窗口可最小化到托盘，会话在后台继续运行；托盘可查看运行中的会话；应用内检查并一键更新（同时更新本机服务端）。
 - **网络访问**：让局域网设备或通过域名（如 nginx 反代）访问本机的 Prometheus，带密码与限速。
+- **一键公网地址**：不会配域名反代和 DDNS 也能连：在「设置 → 网络访问」打开 Cloudflare 临时隧道，获得一个 `https://xxxx.trycloudflare.com` 地址（首次自动下载 cloudflared，需先设置登录密码，地址随机且重启后会变，网络受限时会提示检查网络或代理）。
+- **扫码连接**：网络访问页对局域网 / 公网地址显示二维码，手机端连接页点「扫码」即可填入地址（安卓会申请相机权限）。
+- **完成通知**：在「设置 → 通用 → 通知」开启后，每轮对话结束时通过系统通知提醒（Windows / macOS / 安卓 / 浏览器），可选仅在后台时通知。
 - **安卓本机模式**：APK 内置 Node、npm/npx、git、bash、rg，数据留在手机上；也可以连接远程服务器。
 
 ### 更多
@@ -114,6 +131,7 @@
 | 终端 | 内置终端面板 |
 | 语音 | 语音输入 |
 | PI 配置导入 | 网关默认值与一键导入已有 PI 配置 |
+| 系统通知 | 任务完成时按平台调用系统通知，首次开启请求权限，可随时关闭 |
 | 多皮肤 | 深浅主题 + 余烬 / 深海 / 森林 / 星云 / 玫瑰 五种皮肤，中英文界面 |
 | 用量统计 | 查看 token 与费用用量 |
 

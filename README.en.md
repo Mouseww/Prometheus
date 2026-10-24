@@ -4,8 +4,8 @@
 
 # Prometheus
 
-**Foresight, handed to you as a spark.**
-An open-source, fork-friendly AI agent workbench: one kernel, four entry points — terminal / desktop / web / Android.
+**Command the AI agent on your computer from your phone, with secrets that never leave the machine.**
+An open-source, self-hostable AI agent workbench: any model gateway, asks before it writes files, masks secrets before they reach the model; computer, phone, browser and terminal share one session.
 
 [![Stars](https://img.shields.io/github/stars/Mouseww/Prometheus?style=for-the-badge&logo=github&color=ff5a1f)](https://github.com/Mouseww/Prometheus/stargazers)
 [![Release](https://img.shields.io/github/v/release/Mouseww/Prometheus?style=for-the-badge&color=ffc061)](https://github.com/Mouseww/Prometheus/releases)
@@ -15,9 +15,23 @@ An open-source, fork-friendly AI agent workbench: one kernel, four entry points 
 
 [Quick start](#quick-start) · [Features](#features) · [Architecture](#architecture) · [Write a plugin](#write-a-plugin) · [Deployment](docs/en/deployment.md) · [Architecture doc](docs/en/architecture.md) · [中文](README.md)
 
-<img src="https://raw.githubusercontent.com/Mouseww/Prometheus/main/docs/images/chat.png" alt="Prometheus chat UI" width="900" />
+<img src="https://raw.githubusercontent.com/Mouseww/Prometheus/main/docs/images/demo-phone.gif" alt="Phone connected to the agent on the computer" width="760" />
 
 </div>
+
+---
+
+## Three scenes
+
+**1. Away from your desk, your phone picks up the task on your computer.** Set a login password and turn on LAN access on the computer (or open a Cloudflare public address in one click, no domain, reverse proxy or DDNS needed). On the phone, tap "Scan" on the connect page or type the address, and continue the same session.
+
+**2. It asks first, then acts.** Before writing a file or running a command it shows the full content and waits for your OK; you can "always allow" per command. The recording below is real: Claude Sonnet adds type hints to a function, with one confirmation for the write and one for the run.
+
+<div align="center"><img src="https://raw.githubusercontent.com/Mouseww/Prometheus/main/docs/images/demo-chat.gif" alt="Permission prompts" width="760" /></div>
+
+**3. Secrets stay on your machine.** Connection strings, phone numbers and keys are swapped for aliases before the request goes to the model, and swapped back in the answer; if masking fails the request is blocked.
+
+<div align="center"><img src="https://raw.githubusercontent.com/Mouseww/Prometheus/main/docs/images/demo-veil.gif" alt="Privacy mask" width="760" /></div>
 
 ---
 
@@ -92,12 +106,15 @@ Review changes, stage, commit and sync. **Git review** walks through the agent's
 
 ### Platforms: one client, many servers
 
-Save several Prometheus servers (this machine, a company server, a home NAS...) and switch between them in one click from Settings or the sidebar, without retyping addresses. Access token or login password are supported (only the session token is kept after sign-in), and the list lives on the current device only. Desktop and Android can switch between local mode and remote servers.
+Save several Prometheus servers (this machine, a company server, a home NAS...) and switch between them in one click from Settings or the sidebar, without retyping addresses. Access token or login password are supported (a session token is kept after sign-in; tick "Remember password" when adding a platform to sign in automatically when switching — the password is stored in plain text on this device, on by default, can be unticked), and the list lives on the current device only. Desktop and Android can switch between local mode and remote servers.
 
 ### Desktop and Android
 
 - **Desktop**: closing the window can minimize to the tray so sessions keep running; the tray lists running sessions; in-app update checks also update the local server.
 - **Network access**: let LAN devices or a domain (e.g. behind nginx) reach this machine's Prometheus, with password and rate limiting.
+- **One-click public address**: no domain, reverse proxy or DDNS needed. In **Settings → Network access** turn on a Cloudflare quick tunnel to get an `https://xxxx.trycloudflare.com` address (cloudflared is downloaded on first use; a login password must be set first; the address is random and changes after a restart; on network failures you are asked to check the network or proxy).
+- **Scan to connect**: the network page shows QR codes for the LAN / public address; tap "Scan" on the phone's connect page to fill in the address (Android asks for camera permission).
+- **Completion notifications**: turn on **Settings → General → Notifications** to get a system notification when a turn finishes (Windows / macOS / Android / browser), optionally only while in the background.
 - **Android local mode**: the APK bundles Node, npm/npx, git, bash and rg, keeping data on the phone; it can also connect to a remote server.
 
 ### And more
@@ -110,6 +127,7 @@ Save several Prometheus servers (this machine, a company server, a home NAS...) 
 | Connectors | GitHub, Jira / Confluence, Bitbucket, Microsoft 365, databases; OAuth / token auth, with per-connection “read-only / confirm writes / allow writes”. See [connector design](docs/en/connectors.md) |
 | Automation | Run agent tasks on a schedule in the background; every run produces a viewable session |
 | Sub-agents | Delegate tasks to sub-agents and run them in parallel |
+| System notifications | Native notification when a task finishes; permission is requested on first enable and it can be turned off any time |
 | Themes | Light and dark plus five skins (Ember / Deep Sea / Forest / Nebula / Rose), with Chinese and English UI |
 | Usage stats | Token and cost accounting |
 

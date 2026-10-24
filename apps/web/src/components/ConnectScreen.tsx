@@ -198,7 +198,7 @@ export function ConnectScreen({ unauthorized, error, onConnect, wantsPassword = 
 						<Field label={t("url")}>
 							<div className="flex gap-2">
 								<Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://agent.example.com" required />
-								<Button variant="outline" onClick={() => setScanning(true)}>
+								<Button variant="outline" className="shrink-0 whitespace-nowrap" onClick={() => setScanning(true)}>
 									<ScanLine className="size-4" /> {t("scan")}
 								</Button>
 							</div>
