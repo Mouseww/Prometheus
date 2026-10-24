@@ -49,6 +49,7 @@ const M = defineMessages({
 		firewall: "如果其他设备打不开，请在这台电脑的防火墙里放行上面的端口。",
 		exposeWarn: "开启后，任何能连上这个端口并知道密码的人都能让 Agent 在这台电脑上读写文件、执行命令。请使用强密码，不要把端口直接暴露到公网；公网访问请通过带 HTTPS 的反向代理。",
 		unauthorized: "只能在本机修改",
+		lanQr: "局域网地址 {u}（仅同一网络可用；公网请开启上面的公网地址）。手机在连接页点「扫码」",
 		scanHint: "手机打开 Prometheus 的连接页，点「扫码」即可填入地址",
 		tunnel: "一键公网地址（Cloudflare）",
 		tunnelDesc: "不需要域名、反向代理或 DDNS。开启后会获得一个 https://…trycloudflare.com 的公网地址，在任何设备上用上面设置的登录密码即可连接。地址是临时随机的，关闭或重启后会变化。",
@@ -57,6 +58,7 @@ const M = defineMessages({
 		tunnelStarting: "正在向 Cloudflare 申请地址…",
 		tunnelOn: "公网地址已开启",
 		tunnelFailed: "开启失败：{e}",
+		tunnelNetworkHint: "这多半是网络问题：无法连接 GitHub 或 Cloudflare。请检查网络或代理（必要时开启代理的全局/TUN 模式），网络恢复后再点开关重试。",
 		tunnelWarn: "公网上任何人拿到这个地址都能看到登录页，请使用强密码。这是 Cloudflare 的免费临时隧道，不保证稳定，不适合长期生产使用。",
 	},
 	en: {
@@ -99,6 +101,7 @@ const M = defineMessages({
 		firewall: "If other devices cannot connect, allow the port above through this computer's firewall.",
 		exposeWarn: "Once on, anyone who can reach this port and knows the password can make the agent read and write files and run commands on this computer. Use a strong password, do not expose the port directly to the internet, and put public access behind an HTTPS reverse proxy.",
 		unauthorized: "Can only be changed on this computer",
+		lanQr: "LAN address {u} (same network only; turn on the public address for internet access). Tap Scan on the phone connect page",
 		scanHint: "On your phone open the Prometheus connect page and tap Scan to fill in the address",
 		tunnel: "One-click public address (Cloudflare)",
 		tunnelDesc: "No domain, reverse proxy or DDNS needed. Turning it on gives you a public https://…trycloudflare.com address; open it on any device and sign in with the password set above. The address is random and temporary: it changes after you turn it off or restart.",
@@ -107,6 +110,7 @@ const M = defineMessages({
 		tunnelStarting: "Requesting an address from Cloudflare…",
 		tunnelOn: "Public address is on",
 		tunnelFailed: "Could not start: {e}",
+		tunnelNetworkHint: "This is most likely a network problem: GitHub or Cloudflare cannot be reached. Check your connection or proxy (use the proxy's global/TUN mode if needed), then flip the switch again once the network is back.",
 		tunnelWarn: "Anyone on the internet who gets this address sees the sign-in page, so use a strong password. This is Cloudflare's free temporary tunnel: no stability guarantee, not meant for long-term production use.",
 	},
 });
@@ -260,7 +264,7 @@ export function NetworkSettings() {
 								))}
 								<div className="flex items-center gap-3 pt-1">
 									<QrCode value={urls[0] as string} size={144} />
-									<p className="text-xs text-ink-400">{t("scanHint")}</p>
+									<p className="text-xs text-ink-400">{t("lanQr", { u: urls[0] as string })}</p>
 								</div>
 								<p className="text-xs text-ink-500">{t("firewall")}</p>
 							</div>
@@ -286,6 +290,7 @@ export function NetworkSettings() {
 						</div>
 						{!status.passwordSet && status.tunnel.state === "off" && <p className="text-xs text-ember-300">{t("tunnelNeedPassword")}</p>}
 						{status.tunnel.state === "error" && <p className="text-xs break-words text-rose-400">{t("tunnelFailed", { e: status.tunnel.error ?? "" })}</p>}
+						{status.tunnel.state === "error" && status.tunnel.network && <p className="text-xs text-ember-300">{t("tunnelNetworkHint")}</p>}
 						{status.tunnel.state === "on" && status.tunnel.url && (
 							<div className="flex items-center gap-2 rounded-lg bg-ink-950 px-3 py-1.5 font-mono text-[13px] text-ink-200">
 								<span className="min-w-0 flex-1 truncate">{status.tunnel.url}</span>

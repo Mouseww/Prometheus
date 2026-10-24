@@ -1,6 +1,6 @@
 [package]
 name = "prometheus-desktop"
-version = "0.10.5"
+version = "0.10.6"
 edition = "2021"
 rust-version = "1.77"
 
@@ -30,6 +30,9 @@ rustls-pki-types = "1"
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
 tauri-plugin-single-instance = "2"
+
+[dependencies.tauri-plugin-notification]
+version = "2"
 
 [dependencies.tauri-plugin-opener]
 version = "2"

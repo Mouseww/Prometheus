@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { isAndroid, isDesktopShell, isTauri, loadMode } from "../lib/backend.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
+import { requestNotifyPermission } from "../lib/notify.ts";
 import { initRuntimes } from "../lib/runtimes.ts";
 import { type Lang, SKINS, type SendMode, type Skin, setPrefs, type ThemeMode, usePrefs } from "../lib/prefs.ts";
 import { openSettings, pluginActive, type SettingsTab, toast, updateHostSettings, useStore } from "../lib/store.ts";
@@ -65,6 +66,13 @@ const M = defineMessages({
 		chooseRoot: "选择…",
 		clearRoot: "清除",
 		session: "会话",
+		notifications: "通知",
+		notifyOnDone: "任务完成时通知",
+		notifyOnDoneHint: "每轮对话结束后，通过系统通知提醒你（Windows、macOS、Android 或浏览器）。首次开启会请求通知权限。",
+		notifyBackgroundOnly: "仅在后台时通知",
+		notifyBackgroundOnlyHint: "窗口在前台并处于焦点时不打扰你。",
+		notifyDenied: "系统已拒绝通知权限。请在系统设置里允许 Prometheus 发送通知，然后重新开启。",
+		notifyUnsupported: "当前环境不支持系统通知。",
 		window: "窗口",
 		closeToTray: "关闭时最小化到托盘",
 		closeToTrayHint: "关闭窗口后 Prometheus 继续在后台运行，会话不会中断；点击托盘图标查看运行中的会话，右键可显示、隐藏或退出。",
@@ -132,6 +140,13 @@ const M = defineMessages({
 		chooseRoot: "Choose…",
 		clearRoot: "Clear",
 		session: "Session",
+		notifications: "Notifications",
+		notifyOnDone: "Notify when a task finishes",
+		notifyOnDoneHint: "Shows a system notification after each turn ends (Windows, macOS, Android or the browser). Turning it on asks for notification permission.",
+		notifyBackgroundOnly: "Only when in the background",
+		notifyBackgroundOnlyHint: "Stay quiet while the window is in front and focused.",
+		notifyDenied: "The system denied notification permission. Allow notifications for Prometheus in system settings, then turn this on again.",
+		notifyUnsupported: "System notifications are not supported here.",
 		window: "Window",
 		closeToTray: "Minimize to tray on close",
 		closeToTrayHint: "Closing the window keeps Prometheus running in the background so sessions are not interrupted. Click the tray icon to see running sessions; right-click to show, hide or quit.",
@@ -316,6 +331,15 @@ function GeneralSettings() {
 	const prefs = usePrefs();
 	const host = useStore((s) => s.hostSettings);
 	const [canUpdate, setCanUpdate] = useState(false);
+	const [notifyMsg, setNotifyMsg] = useState<string | null>(null);
+	const toggleNotify = async (on: boolean) => {
+		setNotifyMsg(null);
+		if (!on) return setPrefs({ notifyOnDone: false });
+		const perm = await requestNotifyPermission();
+		if (perm === "granted") return setPrefs({ notifyOnDone: true });
+		setPrefs({ notifyOnDone: false });
+		setNotifyMsg(perm === "unsupported" ? t("notifyUnsupported") : t("notifyDenied"));
+	};
 	useEffect(() => {
 		void updaterSupported().then(setCanUpdate);
 	}, []);
@@ -326,6 +350,16 @@ function GeneralSettings() {
 			<div className="min-h-0 flex-1 overflow-y-auto">
 				<div className="max-w-3xl space-y-8 p-4 md:p-8">
 					<Section title={t("appearance")}>
+						<Row label={t("language")}>
+							<Segmented<Lang>
+								value={prefs.lang}
+								onChange={(lang) => setPrefs({ lang })}
+								options={[
+									{ value: "zh", label: "简体中文" },
+									{ value: "en", label: "English" },
+								]}
+							/>
+						</Row>
 						<Row label={t("theme")}>
 							<Segmented<ThemeMode>
 								value={prefs.theme}
@@ -375,20 +409,6 @@ function GeneralSettings() {
 								</button>
 							</div>
 						</Row>
-						<Row label={t("language")}>
-							<Segmented<Lang>
-								value={prefs.lang}
-								onChange={(lang) => setPrefs({ lang })}
-								options={[
-									{ value: "zh", label: "简体中文" },
-									{ value: "en", label: "English" },
-								]}
-							/>
-						</Row>
-					</Section>
-
-					<Section title={t("workspace")}>
-						<WorkspaceRootRow />
 					</Section>
 
 					<Section title={t("session")}>
@@ -405,6 +425,21 @@ function GeneralSettings() {
 								]}
 							/>
 						</Row>
+					</Section>
+
+					<Section title={t("notifications")}>
+						<Row label={t("notifyOnDone")} hint={notifyMsg ?? t("notifyOnDoneHint")}>
+							<Toggle checked={prefs.notifyOnDone} onChange={(v) => void toggleNotify(v)} />
+						</Row>
+						{prefs.notifyOnDone && (
+							<Row label={t("notifyBackgroundOnly")} hint={t("notifyBackgroundOnlyHint")}>
+								<Toggle checked={prefs.notifyBackgroundOnly} onChange={(notifyBackgroundOnly) => setPrefs({ notifyBackgroundOnly })} />
+							</Row>
+						)}
+					</Section>
+
+					<Section title={t("workspace")}>
+						<WorkspaceRootRow />
 					</Section>
 
 					{isDesktopShell() && (

@@ -793,6 +793,8 @@ export interface TunnelStatus {
 	state: "off" | "downloading" | "starting" | "on" | "error";
 	url?: string;
 	error?: string;
+	/** The failure looks like a network problem (cannot reach GitHub/Cloudflare): retry once the connection is back. */
+	network?: boolean;
 }
 
 export interface NetworkStatus {

@@ -21,6 +21,10 @@ interface Prefs {
 	/** Desktop: closing the window hides it to the tray instead of quitting. */
 	closeToTray: boolean;
 	sendMode: SendMode;
+	/** System notification when an agent turn finishes. */
+	notifyOnDone: boolean;
+	/** Only notify while the window is hidden or not focused. */
+	notifyBackgroundOnly: boolean;
 	/** Chat column width in px; null follows the window size. */
 	chatWidth: number | null;
 }
@@ -28,7 +32,7 @@ interface Prefs {
 const KEY = "prometheus.prefs";
 
 function load(): Prefs {
-	const fallback: Prefs = { theme: "dark", skin: "ember", lang: navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en", closeToTray: true, sendMode: "followUp", chatWidth: null };
+	const fallback: Prefs = { theme: "dark", skin: "ember", lang: navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en", closeToTray: true, sendMode: "followUp", chatWidth: null, notifyOnDone: false, notifyBackgroundOnly: true };
 	try {
 		return { ...fallback, ...(JSON.parse(localStorage.getItem(KEY) ?? "{}") as Partial<Prefs>) };
 	} catch {

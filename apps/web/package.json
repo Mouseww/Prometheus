@@ -16,6 +16,7 @@
     "@fontsource/ibm-plex-sans": "5.3.0",
     "@prometheus/protocol": "workspace:*",
     "@tauri-apps/api": "2.12.4",
+    "@tauri-apps/plugin-notification": "2.7.0",
     "@tauri-apps/plugin-opener": "2.7.2",
     "@tauri-apps/plugin-updater": "2.14.0",
     "clsx": "2.1.1",

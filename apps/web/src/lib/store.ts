@@ -1,3 +1,4 @@
+import { notifyTurnDone } from "./notify.ts";
 import { OPEN_FILE_TOOL } from "@prometheus/protocol";
 import type {
 	AssistantMessage,
@@ -379,6 +380,7 @@ export function handleFrame(frame: ServerFrame): void {
 	const active = get().session;
 	switch (frame.type) {
 		case "event":
+			if (frame.event.type === "agent_settled" && !frame.event.aborted) notifyTurnDone(get().sessions.find((x) => x.id === frame.sessionId)?.name ?? active?.name ?? "");
 			if (frame.sessionId === active?.id) enqueue(frame.event);
 			return;
 		case "ui.request":

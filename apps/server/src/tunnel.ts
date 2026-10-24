@@ -1,13 +1,36 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
-import { createWriteStream, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { chmod, mkdir, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
 import type { TunnelStatus } from "@prometheus/protocol";
 
 const RELEASE = "https://github.com/cloudflare/cloudflared/releases/latest/download";
 const URL_RE = /https:\/\/([a-z0-9-]+\.trycloudflare\.com)/gi;
+
+/** A failure caused by reaching GitHub or Cloudflare; the UI tells the user to check the network and retry. */
+class NetworkError extends Error {}
+
+/** Proxy for downloads: env vars first, then the Windows system proxy. Node's own fetch ignores both. */
+function proxyUrl(): string | undefined {
+	const e = process.env;
+	const env = e.HTTPS_PROXY ?? e.https_proxy ?? e.ALL_PROXY ?? e.all_proxy ?? e.HTTP_PROXY ?? e.http_proxy;
+	if (env) return env;
+	if (process.platform !== "win32") return undefined;
+	const r = spawnSync("reg", ["query", String.raw`HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`, "/v", "ProxyServer"], { encoding: "utf8", windowsHide: true });
+	const m = /ProxyServer\s+REG_SZ\s+(\S+)/.exec(r.stdout ?? "");
+	if (!m?.[1]) return undefined;
+	const v = m[1].includes("=") ? (/https=([^;]+)/.exec(m[1])?.[1] ?? /http=([^;]+)/.exec(m[1])?.[1]) : m[1];
+	return v ? (v.includes("://") ? v : `http://${v}`) : undefined;
+}
+
+/** Downloads with curl (ships with Windows 10+, macOS and most Linux), which honours the proxy. */
+async function fetchFile(url: string, dest: string): Promise<void> {
+	const proxy = proxyUrl();
+	const args = ["-fL", "--retry", "2", "--connect-timeout", "20", "-o", dest, ...(proxy ? ["-x", proxy] : []), url];
+	const r = spawnSync("curl", args, { encoding: "utf8", windowsHide: true });
+	if (r.error) throw new Error("下载 cloudflared 需要 curl，请安装 curl 或手动安装 cloudflared 并加入 PATH");
+	if (r.status !== 0) throw new NetworkError(`下载 cloudflared 失败${proxy ? `（代理 ${proxy}）` : "（未检测到代理）"}：${(r.stderr ?? "").trim().split("\n").pop() ?? ""}。可手动安装 cloudflared 并加入 PATH 后重试`);
+}
 
 /** Release asset for this OS/CPU, or null when Cloudflare publishes none. */
 export function assetName(platform: NodeJS.Platform = process.platform, arch: string = process.arch): string | null {
@@ -63,19 +86,18 @@ export class QuickTunnel {
 		const asset = assetName();
 		if (!asset) throw new Error(`Cloudflare 没有提供适用于 ${process.platform}/${process.arch} 的 cloudflared，请手动安装后重试`);
 		await mkdir(this.binDir, { recursive: true });
-		const res = await fetch(`${RELEASE}/${asset}`, { redirect: "follow" });
-		if (!res.ok || !res.body) throw new Error(`下载 cloudflared 失败（HTTP ${res.status}）。可手动安装 cloudflared 并加入 PATH 后重试`);
 		const target = this.localBinary();
 		const tmp = `${target}.download`;
+		const url = `${RELEASE}/${asset}`;
+		const archive = asset.endsWith(".tgz") ? `${tmp}.tgz` : tmp;
 		try {
 			if (asset.endsWith(".tgz")) {
-				const archive = `${tmp}.tgz`;
-				await pipeline(Readable.fromWeb(res.body as never), createWriteStream(archive));
+				await fetchFile(url, archive);
 				const x = spawnSync("tar", ["-xzf", archive, "-C", this.binDir], { windowsHide: true });
 				await rm(archive, { force: true });
 				if (x.status !== 0) throw new Error("解压 cloudflared 失败");
 			} else {
-				await pipeline(Readable.fromWeb(res.body as never), createWriteStream(tmp));
+				await fetchFile(url, tmp);
 				await rename(tmp, target);
 			}
 			if (process.platform !== "win32") await chmod(target, 0o755);
@@ -89,7 +111,7 @@ export class QuickTunnel {
 	/** Returns at once; progress shows up through status(). Does nothing when already running. */
 	start(port: number): void {
 		if (this.state.state !== "off" && this.state.state !== "error") return;
-		void this.run(port).catch((err: unknown) => this.set({ state: "error", error: err instanceof Error ? err.message : String(err) }));
+		void this.run(port).catch((err: unknown) => this.set({ state: "error", error: err instanceof Error ? err.message : String(err), ...(err instanceof NetworkError ? { network: true } : {}) }));
 	}
 
 	private async run(port: number): Promise<void> {
@@ -121,12 +143,12 @@ export class QuickTunnel {
 			if (this.child !== child) return;
 			this.child = undefined;
 			const reason = tail.split(/\r?\n/).filter(Boolean).slice(-3).join(" | ");
-			this.set({ state: "error", error: `cloudflared 已退出（${code ?? "signal"}）${reason ? `：${reason}` : ""}` });
+			this.set({ state: "error", error: `cloudflared 已退出（${code ?? "signal"}）${reason ? `：${reason}` : ""}`, network: true });
 		});
 		setTimeout(() => {
 			if (this.child === child && this.state.state === "starting") {
 				this.stop();
-				this.set({ state: "error", error: "等待 Cloudflare 分配地址超时，请检查网络后重试" });
+				this.set({ state: "error", error: "等待 Cloudflare 分配地址超时", network: true });
 			}
 		}, 45_000).unref();
 	}
