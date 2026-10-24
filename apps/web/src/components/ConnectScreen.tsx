@@ -1,6 +1,7 @@
 import clsx from "clsx";
-import { Globe, LoaderCircle, Monitor, Server } from "lucide-react";
+import { Globe, LoaderCircle, Monitor, ScanLine, Server } from "lucide-react";
 import { useEffect, useState } from "react";
+import { QrScanner } from "./QrScanner.tsx";
 import { isTauri, localSupported, passwordLogin, forgetServer, loadServerHistory, saveMode, saveRemote, saveSameOriginToken, saveSession, startLocal, targetFromUrl } from "../lib/backend.ts";
 import type { BackendTarget } from "../lib/client.ts";
 import { localizeError } from "../lib/errors.ts";
@@ -9,6 +10,8 @@ import { Button, Field, Flame, Input } from "./ui.tsx";
 
 const M = defineMessages({
 	zh: {
+		scan: "扫码",
+		badQr: "二维码不是有效的服务器地址",
 		subtitle: "选择运行方式",
 		local: "本机模式",
 		localDesc: "在这台设备上自动启动 Prometheus 服务，数据保存在本地",
@@ -30,6 +33,8 @@ const M = defineMessages({
 		webSubtitle: "连接到你的 Agent 服务器",
 	},
 	en: {
+		scan: "Scan",
+		badQr: "That QR code is not a valid server address",
 		subtitle: "Choose how to run",
 		local: "Local mode",
 		localDesc: "Start a Prometheus server on this device automatically; data stays local",
@@ -61,6 +66,7 @@ export function ConnectScreen({ unauthorized, error, onConnect, wantsPassword = 
 	const [history, setHistory] = useState(loadServerHistory);
 	const [token, setToken] = useState(() => loadServerHistory()[0]?.token ?? "");
 	const [login, setLogin] = useState("");
+	const [scanning, setScanning] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [message, setMessage] = useState<string | null>(error ?? null);
 
@@ -121,6 +127,19 @@ export function ConnectScreen({ unauthorized, error, onConnect, wantsPassword = 
 		onConnect(target);
 	};
 
+	const onScan = (text: string) => {
+		setScanning(false);
+		try {
+			const u = new URL(text.trim());
+			if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("protocol");
+			setUrl(u.origin);
+			setToken("");
+			setMessage(null);
+		} catch {
+			setMessage(t("badQr"));
+		}
+	};
+
 	const card = "flex w-full items-start gap-3.5 rounded-2xl border p-4 text-left transition-all disabled:opacity-60";
 
 	return (
@@ -177,7 +196,12 @@ export function ConnectScreen({ unauthorized, error, onConnect, wantsPassword = 
 							</div>
 						)}
 						<Field label={t("url")}>
-							<Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://agent.example.com" required />
+							<div className="flex gap-2">
+								<Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://agent.example.com" required />
+								<Button variant="outline" onClick={() => setScanning(true)}>
+									<ScanLine className="size-4" /> {t("scan")}
+								</Button>
+							</div>
 						</Field>
 						<Field label={t("loginPassword")} hint={t("loginHint")}>
 							<Input type="password" value={login} onChange={(e) => setLogin(e.target.value)} autoComplete="current-password" autoFocus={unauthorized} />
@@ -198,6 +222,7 @@ export function ConnectScreen({ unauthorized, error, onConnect, wantsPassword = 
 					</form>
 				)}
 			</div>
+			{scanning && <QrScanner onResult={onScan} onClose={() => setScanning(false)} />}
 		</div>
 	);
 }

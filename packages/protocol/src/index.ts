@@ -788,7 +788,15 @@ export interface RuntimeEnv {
 	env: Record<string, string>;
 }
 
+/** Cloudflare quick tunnel: a public https address without a domain, reverse proxy or DDNS. */
+export interface TunnelStatus {
+	state: "off" | "downloading" | "starting" | "on" | "error";
+	url?: string;
+	error?: string;
+}
+
 export interface NetworkStatus {
+	tunnel: TunnelStatus;
 	/** The listen address comes from PROMETHEUS_HOST, so the settings below do not apply. */
 	managed: boolean;
 	lan: boolean;
@@ -814,6 +822,8 @@ export interface NetworkPatch {
 	password?: string;
 	/** Signs every device out without changing the password. */
 	revokeSessions?: boolean;
+	/** Opens or closes the Cloudflare quick tunnel (needs a login password). */
+	tunnel?: boolean;
 }
 
 export interface RpcMethods {

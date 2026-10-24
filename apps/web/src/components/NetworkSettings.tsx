@@ -5,6 +5,7 @@ import type { NetworkPatch, NetworkStatus } from "@prometheus/protocol";
 import { localizeError } from "../lib/errors.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { toast, useStore } from "../lib/store.ts";
+import { QrCode } from "./QrCode.tsx";
 import { Button, Field, Input, PageHeader, Textarea } from "./ui.tsx";
 
 const M = defineMessages({
@@ -48,6 +49,15 @@ const M = defineMessages({
 		firewall: "如果其他设备打不开，请在这台电脑的防火墙里放行上面的端口。",
 		exposeWarn: "开启后，任何能连上这个端口并知道密码的人都能让 Agent 在这台电脑上读写文件、执行命令。请使用强密码，不要把端口直接暴露到公网；公网访问请通过带 HTTPS 的反向代理。",
 		unauthorized: "只能在本机修改",
+		scanHint: "手机打开 Prometheus 的连接页，点「扫码」即可填入地址",
+		tunnel: "一键公网地址（Cloudflare）",
+		tunnelDesc: "不需要域名、反向代理或 DDNS。开启后会获得一个 https://…trycloudflare.com 的公网地址，在任何设备上用上面设置的登录密码即可连接。地址是临时随机的，关闭或重启后会变化。",
+		tunnelNeedPassword: "请先设置登录密码，再开启公网地址",
+		tunnelDownloading: "正在下载 cloudflared（首次使用，约 40 MB）…",
+		tunnelStarting: "正在向 Cloudflare 申请地址…",
+		tunnelOn: "公网地址已开启",
+		tunnelFailed: "开启失败：{e}",
+		tunnelWarn: "公网上任何人拿到这个地址都能看到登录页，请使用强密码。这是 Cloudflare 的免费临时隧道，不保证稳定，不适合长期生产使用。",
 	},
 	en: {
 		title: "Network access",
@@ -89,6 +99,15 @@ const M = defineMessages({
 		firewall: "If other devices cannot connect, allow the port above through this computer's firewall.",
 		exposeWarn: "Once on, anyone who can reach this port and knows the password can make the agent read and write files and run commands on this computer. Use a strong password, do not expose the port directly to the internet, and put public access behind an HTTPS reverse proxy.",
 		unauthorized: "Can only be changed on this computer",
+		scanHint: "On your phone open the Prometheus connect page and tap Scan to fill in the address",
+		tunnel: "One-click public address (Cloudflare)",
+		tunnelDesc: "No domain, reverse proxy or DDNS needed. Turning it on gives you a public https://…trycloudflare.com address; open it on any device and sign in with the password set above. The address is random and temporary: it changes after you turn it off or restart.",
+		tunnelNeedPassword: "Set a login password first to open a public address",
+		tunnelDownloading: "Downloading cloudflared (first use, about 40 MB)…",
+		tunnelStarting: "Requesting an address from Cloudflare…",
+		tunnelOn: "Public address is on",
+		tunnelFailed: "Could not start: {e}",
+		tunnelWarn: "Anyone on the internet who gets this address sees the sign-in page, so use a strong password. This is Cloudflare's free temporary tunnel: no stability guarantee, not meant for long-term production use.",
 	},
 });
 
@@ -148,6 +167,14 @@ export function NetworkSettings() {
 	useEffect(() => {
 		void load();
 	}, [load]);
+
+	// Downloading and starting the tunnel take a while; follow along until it settles.
+	const tunnelState = status?.tunnel.state;
+	useEffect(() => {
+		if (tunnelState !== "downloading" && tunnelState !== "starting") return;
+		const id = setInterval(() => void load(), 1500);
+		return () => clearInterval(id);
+	}, [tunnelState, load]);
 
 	/** Sends one change; the server's message (weak password, port taken, ...) is shown inline rather than as a toast. */
 	const apply = async (patch: NetworkPatch, done?: string) => {
@@ -231,9 +258,49 @@ export function NetworkSettings() {
 										</button>
 									</div>
 								))}
+								<div className="flex items-center gap-3 pt-1">
+									<QrCode value={urls[0] as string} size={144} />
+									<p className="text-xs text-ink-400">{t("scanHint")}</p>
+								</div>
 								<p className="text-xs text-ink-500">{t("firewall")}</p>
 							</div>
 						)}
+					</Section>
+
+					<Section title={t("tunnel")} hint={t("tunnelDesc")}>
+						<div className="flex items-center gap-3">
+							<button
+								type="button"
+								role="switch"
+								aria-checked={status.tunnel.state !== "off" && status.tunnel.state !== "error"}
+								disabled={!editable || busy || (status.tunnel.state === "off" && !status.passwordSet)}
+								onClick={() => void apply({ tunnel: status.tunnel.state === "off" || status.tunnel.state === "error" })}
+								className={clsx("relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50", status.tunnel.state === "on" ? "bg-ember-500" : status.tunnel.state === "off" || status.tunnel.state === "error" ? "bg-ink-700" : "bg-ember-500/50")}
+							>
+								<span className={clsx("absolute top-0.5 left-0.5 size-5 rounded-full bg-white transition-transform", status.tunnel.state !== "off" && status.tunnel.state !== "error" && "translate-x-5")} />
+							</button>
+							<span className={clsx("flex items-center gap-1.5 text-sm", status.tunnel.state === "on" ? "text-moss-400" : "text-ink-400")}>
+								{(status.tunnel.state === "downloading" || status.tunnel.state === "starting") && <LoaderCircle className="size-4 animate-spin" />}
+								{status.tunnel.state === "downloading" ? t("tunnelDownloading") : status.tunnel.state === "starting" ? t("tunnelStarting") : status.tunnel.state === "on" ? t("tunnelOn") : t("off")}
+							</span>
+						</div>
+						{!status.passwordSet && status.tunnel.state === "off" && <p className="text-xs text-ember-300">{t("tunnelNeedPassword")}</p>}
+						{status.tunnel.state === "error" && <p className="text-xs break-words text-rose-400">{t("tunnelFailed", { e: status.tunnel.error ?? "" })}</p>}
+						{status.tunnel.state === "on" && status.tunnel.url && (
+							<div className="flex items-center gap-2 rounded-lg bg-ink-950 px-3 py-1.5 font-mono text-[13px] text-ink-200">
+								<span className="min-w-0 flex-1 truncate">{status.tunnel.url}</span>
+								<button type="button" onClick={() => void copy(status.tunnel.url as string)} className="text-ink-500 hover:text-ink-100" title={t("copy")} aria-label={t("copy")}>
+									<Copy className="size-3.5" />
+								</button>
+							</div>
+						)}
+						{status.tunnel.state === "on" && status.tunnel.url && (
+							<div className="flex items-center gap-3">
+								<QrCode value={status.tunnel.url} />
+								<p className="text-xs text-ink-400">{t("scanHint")}</p>
+							</div>
+						)}
+						{status.tunnel.state !== "off" && <p className="text-xs text-ink-500">{t("tunnelWarn")}</p>}
 					</Section>
 
 					<Section title={t("password")} hint={t("passwordHint")}>

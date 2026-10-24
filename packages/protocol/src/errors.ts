@@ -143,6 +143,7 @@ export const ERROR_PARAMS = {
 	listenManaged: [],
 	lanNeedsPassword: [],
 	networkLocalOnly: [],
+	tunnelNeedsPassword: [],
 	passwordFormat: [],
 	passwordTooShort: ["min"],
 	passwordTooLong: ["max"],

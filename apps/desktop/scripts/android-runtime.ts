@@ -278,6 +278,7 @@ try {
 	let manifest = readFileSync(manifestPath, "utf8");
 	const perms = [
 		"android.permission.RECORD_AUDIO",
+		"android.permission.CAMERA",
 		"android.permission.MODIFY_AUDIO_SETTINGS",
 		"android.permission.FOREGROUND_SERVICE",
 		"android.permission.FOREGROUND_SERVICE_SPECIAL_USE",

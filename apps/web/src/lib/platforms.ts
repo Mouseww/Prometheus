@@ -1,4 +1,4 @@
-import { isTauri, loadRemote, saveMode, saveRemote, saveSameOriginToken, startLocal, targetFromUrl } from "./backend.ts";
+import { isTauri, loadRemote, passwordLogin, saveMode, saveRemote, saveSameOriginToken, startLocal, targetFromUrl } from "./backend.ts";
 import type { BackendTarget } from "./client.ts";
 
 /** A saved Prometheus server the user can switch to. Lives in this browser/app only; tokens never leave it. */
@@ -7,6 +7,8 @@ export interface Platform {
 	name: string;
 	url: string;
 	token?: string;
+	/** Only set when the user chose "remember password"; used to sign in again when the session token is gone or revoked. */
+	password?: string;
 }
 
 const KEY = "prometheus.platforms";
@@ -45,7 +47,15 @@ function announce(target: BackendTarget): void {
 }
 
 /** Makes `p` the active server and tells the app to reconnect. */
-export function switchPlatform(p: Platform): void {
+export async function switchPlatform(p: Platform): Promise<void> {
+	if (p.password) {
+		// A remembered password refreshes the session so switching never prompts; on failure the saved token is tried as is.
+		const r = await passwordLogin(targetFromUrl(p.url), p.password).catch(() => null);
+		if (r?.ok) {
+			p = { ...p, token: r.token };
+			savePlatforms(loadPlatforms().map((x) => (x.id === p.id ? { ...x, token: r.token } : x)));
+		}
+	}
 	const target = targetFromUrl(p.url, p.token);
 	if (!isTauri() && samePlatform(p.url, location.origin)) {
 		// The page's own server is the default; no saved remote needed.

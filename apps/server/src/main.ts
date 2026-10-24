@@ -24,6 +24,7 @@ import {
 } from "./network.ts";
 import { isLoopbackAddress, originAllowed, parseCookies, tokensEqual } from "./security.ts";
 import { defaultWebRoot, serveStatic } from "./static.ts";
+import { QuickTunnel } from "./tunnel.ts";
 
 const HOST = process.env.PROMETHEUS_HOST ?? "127.0.0.1";
 const PORT = Number(process.env.PROMETHEUS_PORT ?? 7420);
@@ -87,6 +88,8 @@ const host = await PrometheusHost.create({
 });
 
 const config = host.runtime.config;
+const tunnel = new QuickTunnel(config.dataDir);
+process.on("exit", () => tunnel.stop());
 
 // ---------- who is asking ----------
 
@@ -105,7 +108,7 @@ function accessOf(req: IncomingMessage, kind: Kind): Access {
 /** Whether this request may talk to us at all (Host/Origin rules differ per listener). */
 function requestAllowed(req: IncomingMessage, kind: Kind, access: Access): boolean {
 	if (access.mode === "deny") return false;
-	if (kind === "network" || access.mode === "password") return networkRequestAllowed(req, config.network().allowedHosts, EXTRA_ORIGINS);
+	if (kind === "network" || access.mode === "password") return networkRequestAllowed(req, [...config.network().allowedHosts, ...(tunnel.host() ? [tunnel.host() as string] : [])], EXTRA_ORIGINS);
 	return originAllowed(req, { tokenRequired: Boolean(TOKEN), extraOrigins: EXTRA_ORIGINS });
 }
 
@@ -275,6 +278,7 @@ function networkStatus(canEdit: boolean): NetworkStatus {
 		addresses: net?.listening ? lanAddresses() : [],
 		localPort: mainPort,
 		canEdit: canEdit && !MANAGED,
+		tunnel: tunnel.status(),
 	};
 }
 
@@ -326,6 +330,7 @@ async function updateNetwork(patch: NetworkPatch): Promise<NetworkStatus> {
 	if (patch.revokeSessions) secret = newSecret();
 	const lan = patch.lan ?? cur.lan;
 	if (lan && !passwordHash) throw new AppError("lanNeedsPassword");
+	if (patch.tunnel && !passwordHash) throw new AppError("tunnelNeedsPassword");
 	let port = cur.port;
 	if (patch.port !== undefined) {
 		if (!Number.isInteger(patch.port) || patch.port < 1024 || patch.port > 65535) throw new AppError("portRange");
@@ -338,6 +343,9 @@ async function updateNetwork(patch: NetworkPatch): Promise<NetworkStatus> {
 	if (rebind) await applyNetwork();
 	// Signed-in devices on the old password lose access at once; the settings page itself is local and stays.
 	if (patch.password !== undefined || patch.revokeSessions) for (const c of clients) if (c.access.mode === "password") c.ws.close(4003, "unauthorized");
+	// The tunnel forwards to the main listener, where proxied requests must sign in with the password.
+	if (patch.tunnel === true) tunnel.start(mainPort);
+	else if (patch.tunnel === false) tunnel.stop();
 	return networkStatus(true);
 }
 
@@ -436,6 +444,7 @@ main.listen(PORT, HOST, () => {
 async function shutdown(): Promise<void> {
 	for (const c of clients) c.ws.close(1001, "server shutdown");
 	main.close();
+	tunnel.stop();
 	await stopNetwork();
 	await host.dispose().catch(() => {});
 	process.exit(0);

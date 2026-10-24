@@ -28,7 +28,8 @@ const M = defineMessages({
 		token: "访问令牌",
 		tokenHint: "服务器端 PROMETHEUS_TOKEN；使用登录密码时留空",
 		loginPassword: "登录密码",
-		loginHint: "服务器「网络访问」里设置的密码；登录后只保存会话令牌，不保存密码",
+		loginHint: "服务器「网络访问」里设置的密码；登录后保存会话令牌",
+		rememberPassword: "记住密码（切换平台时自动登录，密码明文保存在本机）",
 		save: "保存",
 		saveSwitch: "保存并切换",
 		cancel: "取消",
@@ -56,7 +57,8 @@ const M = defineMessages({
 		token: "Access token",
 		tokenHint: "PROMETHEUS_TOKEN on the server; leave empty when using a login password",
 		loginPassword: "Login password",
-		loginHint: "The password set under the server's Network access. Only a session token is stored, never the password",
+		loginHint: "The password set under the server's Network access. A session token is stored after sign-in",
+		rememberPassword: "Remember password (signs in automatically when switching; stored in plain text on this device)",
 		save: "Save",
 		saveSwitch: "Save and switch",
 		cancel: "Cancel",
@@ -189,6 +191,7 @@ function PlatformForm({ onSave, onCancel }: { onSave: (p: Platform, andSwitch: b
 	const [url, setUrl] = useState("https://");
 	const [token, setToken] = useState("");
 	const [login, setLogin] = useState("");
+	const [remember, setRemember] = useState(true);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
@@ -212,7 +215,7 @@ function PlatformForm({ onSave, onCancel }: { onSave: (p: Platform, andSwitch: b
 			}
 			secret = r.token;
 		}
-		onSave({ id: crypto.randomUUID().slice(0, 8), name: name.trim() || new URL(origin).host, url: origin, token: secret || undefined }, andSwitch);
+		onSave({ id: crypto.randomUUID().slice(0, 8), name: name.trim() || new URL(origin).host, url: origin, token: secret || undefined, ...(login && remember ? { password: login } : {}) }, andSwitch);
 	};
 
 	return (
@@ -237,6 +240,10 @@ function PlatformForm({ onSave, onCancel }: { onSave: (p: Platform, andSwitch: b
 					<Input type="password" autoComplete="off" value={login} onChange={(e) => setLogin(e.target.value)} />
 				</Field>
 			</div>
+			<label className="flex items-center gap-2 text-sm text-ink-300">
+				<input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+				{t("rememberPassword")}
+			</label>
 			{error && <p className="rounded-lg border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-sm break-words text-rose-400">{error}</p>}
 			<div className="flex justify-end gap-2">
 				<Button onClick={onCancel}>{t("cancel")}</Button>
