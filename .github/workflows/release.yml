@@ -203,3 +203,60 @@ jobs:
           # tauri-action creates the release; wait for it rather than racing the desktop jobs.
           for i in $(seq 1 30); do gh release view "$TAG" >/dev/null 2>&1 && break; sleep 20; done
           gh release upload "$TAG" Prometheus-*.apk --clobber
+
+  # Intel Mac build for macOS 10.15 Catalina (e.g. MacBook Air 2013), which the regular macOS build cannot run on:
+  # Node 22 needs macOS 11+, so this flavour ships Node 20, a Safari 15 web bundle and a 10.15 deployment target.
+  macos-legacy:
+    runs-on: macos-15-intel
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      MACOSX_DEPLOYMENT_TARGET: "10.15"
+      NODE_MAJOR: "20"
+      SERVER_NODE_TARGET: node20
+      WEB_BUILD_TARGET: legacy-safari
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+          key: legacy-mac
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build the macOS 10.15 DMG
+        working-directory: apps/desktop
+        run: pnpm tauri build --config src-tauri/tauri.bundle.json --config src-tauri/tauri.legacy-mac.json --verbose
+
+      - name: Check the deployment target and bundled Node
+        run: |
+          app=$(find apps/desktop/src-tauri/target/release/bundle/macos -name '*.app' -maxdepth 1 | head -n1)
+          bin="$app/Contents/MacOS/$(ls "$app/Contents/MacOS" | head -n1)"
+          vtool -show-build "$bin" 2>/dev/null || otool -l "$bin" | grep -A3 -E "LC_BUILD_VERSION|LC_VERSION_MIN"
+          node_bin=$(find "$app/Contents/Resources" -path '*node/bin/node' | head -n1)
+          vtool -show-build "$node_bin" 2>/dev/null | grep -E "minos|sdk" || true
+          "$node_bin" --version
+          plutil -extract LSMinimumSystemVersion raw "$app/Contents/Info.plist"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          dmg=$(find apps/desktop/src-tauri/target/release/bundle/dmg -name '*.dmg' | head -n1)
+          [ -n "$dmg" ] || { echo "no DMG produced" >&2; exit 1; }
+          out="Prometheus-${TAG}-macos-10.15-x64.dmg"
+          cp "$dmg" "$out"
+          # tauri-action creates the release; wait for it rather than racing the desktop jobs.
+          for i in $(seq 1 60); do gh release view "$TAG" >/dev/null 2>&1 && break; sleep 20; done
+          gh release upload "$TAG" "$out" --clobber

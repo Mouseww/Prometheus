@@ -8,6 +8,8 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 
+// SERVER_NODE_TARGET=node20 builds the legacy-macOS flavour (Node 20 is the newest line that runs on macOS 10.15); it adds the Node 22 APIs Node 20 lacks.
+const nodeTarget = process.env.SERVER_NODE_TARGET ?? "node22";
 const android = process.argv.includes("--android");
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const out = join(root, android ? "dist/server-bundle-android" : "dist/server-bundle");
@@ -50,7 +52,8 @@ await build({
 	bundle: true,
 	platform: "node",
 	format: "esm",
-	target: "node22",
+	target: nodeTarget,
+	banner: nodeTarget === "node22" ? undefined : { js: 'import "./polyfills.js";' },
 	legalComments: "none",
 	plugins: [
 		{
@@ -65,6 +68,18 @@ await build({
 		},
 	],
 });
+
+if (nodeTarget !== "node22") {
+	writeFileSync(
+		join(out, "polyfills.js"),
+		`// APIs newer than Node 20 that the server's dependencies call.
+if (!Promise.withResolvers) Promise.withResolvers = function () { let resolve, reject; const promise = new this((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
+if (!Array.fromAsync) Array.fromAsync = async function (src, fn, thisArg) { const out = []; let i = 0; if (src[Symbol.asyncIterator] || src[Symbol.iterator]) { for await (const v of src) out.push(fn ? await fn.call(thisArg, v, i++) : v); } else { for (let n = src.length >>> 0; i < n; i++) { const v = await src[i]; out.push(fn ? await fn.call(thisArg, v, i) : v); } } return out; };
+if (!Object.groupBy) Object.groupBy = function (items, fn) { const o = Object.create(null); let i = 0; for (const v of items) { (o[fn(v, i++)] ??= []).push(v); } return o; };
+if (!Map.groupBy) Map.groupBy = function (items, fn) { const m = new Map(); let i = 0; for (const v of items) { const k = fn(v, i++); if (!m.has(k)) m.set(k, []); m.get(k).push(v); } return m; };
+`,
+	);
+}
 
 // LAN and domain visitors load the UI from this server (the desktop window serves its own copy), so ship it alongside.
 const webDist = join(root, "apps/web/dist");

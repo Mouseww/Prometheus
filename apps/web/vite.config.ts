@@ -20,5 +20,6 @@ export default defineConfig({
 			"/plugins": backend,
 		},
 	},
-	build: { target: "es2022", chunkSizeWarningLimit: 1500 },
+	// WEB_BUILD_TARGET=legacy-safari is the macOS 10.15 build, whose WebView stops at Safari 15.
+	build: { target: process.env.WEB_BUILD_TARGET === "legacy-safari" ? ["es2020", "safari15"] : "es2022", chunkSizeWarningLimit: 1500 },
 });
