@@ -8,6 +8,10 @@ rust-version = "1.77"
 name = "prometheus_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# Web inspector in release builds (used by the macOS 10.15 diagnostic build).
+devtools = ["tauri/devtools"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
