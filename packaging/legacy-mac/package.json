@@ -1,0 +1,35 @@
+{
+  "name": "prometheus-legacy-mac",
+  "version": "0.10.7",
+  "private": true,
+  "description": "Prometheus for macOS 10.15: an Electron shell (bundled Chromium) around the same server and web UI",
+  "author": "Prometheus",
+  "license": "AGPL-3.0-only",
+  "main": "main.js",
+  "devDependencies": {
+    "electron": "32.3.3",
+    "electron-builder": "25.1.8"
+  },
+  "build": {
+    "appId": "dev.prometheus.desktop.legacy",
+    "productName": "Prometheus",
+    "directories": { "output": "dist" },
+    "files": ["main.js", "package.json"],
+    "extraResources": [
+      { "from": "../../dist/server-bundle", "to": "server" },
+      { "from": "../../dist/node-runtime", "to": "node" }
+    ],
+    "mac": {
+      "target": [{ "target": "dmg", "arch": ["x64"] }],
+      "icon": "../../apps/desktop/src-tauri/icons/icon.icns",
+      "category": "public.app-category.developer-tools",
+      "minimumSystemVersion": "10.15.0",
+      "identity": null,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Prometheus uses the microphone only when you press the voice input button, to turn your speech into text."
+      }
+    },
+    "dmg": { "sign": false },
+    "artifactName": "Prometheus-v${version}-macos-10.15-x64.${ext}"
+  }
+}
