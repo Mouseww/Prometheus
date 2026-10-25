@@ -42,6 +42,7 @@ function load(): Prefs {
 
 export const usePrefs = create<Prefs>(load);
 
+import { onMediaChange } from "./media.ts";
 const media = window.matchMedia("(prefers-color-scheme: light)");
 
 function apply(p: Prefs): void {
@@ -58,7 +59,7 @@ usePrefs.subscribe((p) => {
 	apply(p);
 	localStorage.setItem(KEY, JSON.stringify(p));
 });
-media.addEventListener("change", () => apply(usePrefs.getState()));
+onMediaChange(media, () => apply(usePrefs.getState()));
 
 export function setPrefs(p: Partial<Prefs>): void {
 	usePrefs.setState(p);

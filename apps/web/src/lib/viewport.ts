@@ -1,12 +1,12 @@
 import { useSyncExternalStore } from "react";
+import { onMediaChange } from "./media.ts";
 
 /** Matches Tailwind's `max-md`: below this width the sidebar becomes a drawer and pages go full screen. */
 const MOBILE = "(max-width: 767px)";
 
 const subscribe = (notify: () => void) => {
 	const query = window.matchMedia(MOBILE);
-	query.addEventListener("change", notify);
-	return () => query.removeEventListener("change", notify);
+	return onMediaChange(query, notify);
 };
 
 export const useIsMobile = (): boolean =>

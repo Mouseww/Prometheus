@@ -15,15 +15,10 @@
           shown = true;
           var d = document.createElement("pre");
           d.style.cssText = "position:fixed;inset:0;margin:0;padding:24px;overflow:auto;white-space:pre-wrap;background:#1c1814;color:#f2c9a0;font:13px/1.5 ui-monospace,Menlo,monospace;z-index:99999";
-          d.textContent = "Prometheus failed to start
-
-" + msg + "
-
-" + navigator.userAgent;
+          d.textContent = ["Prometheus failed to start", msg, navigator.userAgent].join(String.fromCharCode(10, 10));
           (document.body || document.documentElement).appendChild(d);
         }
-        window.addEventListener("error", function (e) { show((e.message || "error") + (e.filename ? "
-" + e.filename + ":" + e.lineno + ":" + e.colno : "")); });
+        window.addEventListener("error", function (e) { show((e.message || "error") + (e.filename ? String.fromCharCode(10) + e.filename + ":" + e.lineno + ":" + e.colno : "")); });
         window.addEventListener("unhandledrejection", function (e) { show("Unhandled rejection: " + (e.reason && (e.reason.stack || e.reason.message) || e.reason)); });
         setTimeout(function () { var r = document.getElementById("root"); if (r && !r.childNodes.length) show("The interface did not render within 8 seconds."); }, 8000);
       })();
