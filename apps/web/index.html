@@ -6,6 +6,28 @@
     <meta name="theme-color" content="#1c1814" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Prometheus</title>
+    <script>
+      // Shows startup errors on screen: in an old WebView a script failure otherwise leaves only the dark window background.
+      (function () {
+        var shown = false;
+        function show(msg) {
+          if (shown || document.getElementById("root") && document.getElementById("root").childNodes.length) return;
+          shown = true;
+          var d = document.createElement("pre");
+          d.style.cssText = "position:fixed;inset:0;margin:0;padding:24px;overflow:auto;white-space:pre-wrap;background:#1c1814;color:#f2c9a0;font:13px/1.5 ui-monospace,Menlo,monospace;z-index:99999";
+          d.textContent = "Prometheus failed to start
+
+" + msg + "
+
+" + navigator.userAgent;
+          (document.body || document.documentElement).appendChild(d);
+        }
+        window.addEventListener("error", function (e) { show((e.message || "error") + (e.filename ? "
+" + e.filename + ":" + e.lineno + ":" + e.colno : "")); });
+        window.addEventListener("unhandledrejection", function (e) { show("Unhandled rejection: " + (e.reason && (e.reason.stack || e.reason.message) || e.reason)); });
+        setTimeout(function () { var r = document.getElementById("root"); if (r && !r.childNodes.length) show("The interface did not render within 8 seconds."); }, 8000);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
