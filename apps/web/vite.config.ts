@@ -7,8 +7,20 @@ const backend = process.env.PROMETHEUS_DEV_BACKEND ?? "http://127.0.0.1:7420";
 // The release workflow already requires this file's version to equal the tag.
 const { version } = JSON.parse(readFileSync(new URL("../desktop/src-tauri/tauri.conf.json", import.meta.url), "utf8")) as { version: string };
 
+const legacy = process.env.WEB_BUILD_TARGET === "legacy-safari";
+// Safari before 16.4 rejects regex lookbehind at parse time, which blanks the whole app; the one literal that uses it is rewritten without it.
+const noLookbehind = {
+	name: "no-regex-lookbehind",
+	enforce: "pre" as const,
+	transform(code: string, id: string) {
+		if (!legacy || !id.includes("mdast-util-gfm-autolink-literal")) return null;
+		const from = String.raw`/(?<=^|\s|\p{P}|\p{S})([-.\w+]+)@`;
+		return code.includes(from) ? code.replace(from, String.raw`/([-.\w+]+)@`) : null;
+	},
+};
+
 export default defineConfig({
-	plugins: [react(), tailwindcss()],
+	plugins: [noLookbehind, react(), tailwindcss()],
 	define: { __APP_VERSION__: JSON.stringify(version) },
 	clearScreen: false,
 	server: {
