@@ -235,7 +235,7 @@ jobs:
 
       - name: Build the macOS 10.15 DMG
         working-directory: apps/desktop
-        run: pnpm tauri build --config src-tauri/tauri.bundle.json --config src-tauri/tauri.legacy-mac.json --verbose
+        run: pnpm tauri build --config src-tauri/tauri.bundle.json --config src-tauri/tauri.legacy-mac.json --features devtools --verbose
 
       - name: Check the deployment target and bundled Node
         run: |
