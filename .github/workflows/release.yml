@@ -216,8 +216,6 @@ jobs:
       WEB_BUILD_TARGET: legacy-safari
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.tag || github.ref_name }}
 
       - uses: pnpm/action-setup@v4
 
@@ -242,6 +240,7 @@ jobs:
       - name: Check the deployment target and bundled Node
         run: |
           app=$(find apps/desktop/src-tauri/target/release/bundle/macos -name '*.app' -maxdepth 1 | head -n1)
+          [ -n "$app" ] || { echo "no .app produced" >&2; exit 1; }
           bin="$app/Contents/MacOS/$(ls "$app/Contents/MacOS" | head -n1)"
           vtool -show-build "$bin" 2>/dev/null || otool -l "$bin" | grep -A3 -E "LC_BUILD_VERSION|LC_VERSION_MIN"
           node_bin=$(find "$app/Contents/Resources" -path '*node/bin/node' | head -n1)

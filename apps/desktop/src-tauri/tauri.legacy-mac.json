@@ -1,7 +1,7 @@
 {
   "bundle": {
     "createUpdaterArtifacts": false,
-    "targets": ["dmg"],
+    "targets": ["app", "dmg"],
     "macOS": { "minimumSystemVersion": "10.15" }
   }
 }
