@@ -378,33 +378,73 @@ modes 的 replace/strict 会返回完整的 `systemPrompt`。
 - **录制回放：** 适配器的事件解析用真实 CLI 录制的事件流做快照测试，CI 上跑。
 - **版本守护：** 声明支持的 CLI 版本范围；Codex 的 TS 绑定从锁定版本生成；夜间任务用最新 CLI 跑一致性测试，提前发现上游协议变化。
 
-## 11. 能力矩阵（预期，spike 后修订）
+## 11. 能力矩阵（P0 spike 后修订）
 
-| 能力 | PI | Claude Code | Codex |
+图例：✅ 已验证可行；⚠️ 可行但有差异或需要变通；❌ 不支持；🧪 依赖实验性接口。
+
+| 能力 | PI | Claude Code（Agent SDK 0.3.x / CLI 2.1.27x+） | Codex（app-server，0.133+） |
 |---|---|---|---|
-| Prometheus 工具 | ✅ | ✅ 总线 | ✅ 总线 |
-| 每轮上下文注入 | ✅ | ✅ hook | ✅ 输入前置 |
-| 统一权限 / 逐次询问 | ✅ | ✅ | ⚠️ 工作区内编辑不逐次询问 |
-| 计划模式 | ✅ | ✅ 原生 ExitPlanMode | ✅ 导出 exit_plan_mode |
-| 工具白名单 | ✅ | ✅ | ⚠️ 原生工具粗粒度 |
-| 插话 | ✅ | ✅ | ❓ |
-| 手动压缩 | ✅ | ✅ | ❓ |
-| 分叉 / 树导航 | ✅ / ✅ | ✅ / ❌ | ❓ / ❌ |
+| Prometheus 工具 | ✅ | ✅ HTTP MCP + headers | ✅ HTTP MCP + `bearer_token_env_var` |
+| 调用关联（总线 ↔ runtime） | ✅ | ✅ `_meta["claudecode/toolUseId"]` | ⚠️ 只有 `turn_id`/`thread_id`，按回合内顺序 + 参数关联 |
+| 工具列表热更新 | ✅ | ✅ 响应 `tools/list_changed` | ⚠️ 不响应；回合间调用 `config/mcpServer/reload` |
+| 每轮上下文注入 | ✅ | ✅ `UserPromptSubmit.additionalContext` | ✅ 输入前置文本项 |
+| 静态上下文更新 | ✅ 每轮 | ⚠️ 需要 resume 重启，并且 `systemPrompt.snapshot:false` | ⚠️ `thread/resume` 时传新的 `developerInstructions` |
+| 统一权限 / 逐次询问 | ✅ | ✅ 以 `PreToolUse` hook 为准（`canUseTool` 对自动放行的只读调用不触发） | ⚠️ 只有沙箱外或策略要求时才发审批请求；工作区内编辑不逐次询问 |
+| 运行中切换权限模式 | ✅ | ✅ `setPermissionMode()` | ✅ `turn/start` 时覆盖 `approvalPolicy`/`sandboxPolicy` |
+| 计划模式 | ✅ | ✅ 原生 ExitPlanMode | ✅ 导出 exit_plan_mode + read-only 沙箱 |
+| 工具白名单 | ✅ | ⚠️ `tools`/`disallowedTools` 只能在启动时设，切换要 resume 重启 | ⚠️ 原生工具粗粒度；Prometheus 工具在总线侧过滤 |
+| 插话 | ✅ | ✅ 流式输入（并入当前回合） | ✅ `turn/steer`（需要 `expectedTurnId`） |
+| 中止 | ✅ | ✅ `interrupt()`，会话可以继续使用 | ✅ `turn/interrupt` |
+| 手动压缩 | ✅ | ⚠️ 发送 `/compact`（待验证） | ✅ `thread/compact/start` |
+| 分叉 / 树导航 | ✅ / ✅ | ✅ `resume + forkSession` / ❌ | ✅ `thread/fork` / ⚠️ `thread/rollback`（只能按回合数回退） |
+| 切换模型 | ✅ | ✅ `setModel()` | ✅ `turn/start.model` |
+| 模型列表 | ✅ | ✅ `supportedModels()` | ✅ `model/list`（⚠️ 默认模型不一定可用于 ChatGPT 登录） |
+| 流式文本 / 思考 | ✅ | ✅ `includePartialMessages` → 原始 Messages 流事件 | ✅ `item/agentMessage/delta`、`item/reasoning/*` |
+| diff 渲染 | ✅ | ✅ 由 Edit/Write 参数构造 | ✅ `fileChange.changes[].diff`（统一 diff） |
+| todo 面板 | ✅ | ✅ TodoWrite 映射 | ✅ `turn/plan/updated` 映射 |
+| 用量 | ✅ | ✅ `result.modelUsage`（累计）、`usage`（单回合） | ✅ `thread/tokenUsage/updated`（含上下文窗口） |
 | veil（Prometheus 网关） | ✅ | ✅ 中继 | ✅ 中继 |
 | veil（原生网关） | — | ❌ | ❌ |
 | 任意格式网关 | ✅ | ⚠️ 仅 anthropic（后期转换） | ⚠️ 仅 responses（后期转换） |
-| 上下文分项 | ✅ | ⚠️ 估算 | ⚠️ 估算 |
+| 上下文分项 | ✅ | ⚠️ 估算 | ⚠️ 估算（有总量和窗口） |
 | Android 连接服务器 | ✅ | ✅ | ✅ |
 | Android 本机模式 | ✅ | ❌ 需连接服务器 | ❌ 需连接服务器（静态 musl 待验证） |
+| 协议稳定性 | — | 正式 SDK | 🧪 整个 app-server 标注为 experimental；只用稳定子集，锁定版本范围 |
 
-## 12. 先做的 spike（每个都是开工前的去/留判断）
+## 12. P0 spike 结论（2026-08，Claude Agent SDK 0.3.310 / CLI 2.1.310 和 2.1.273；codex-cli 0.133.0）
 
-1. CC Agent SDK：支持 `tools/list_changed` 吗？中途改 `allowedTools`、system prompt 是否必须 resume？`settingSources` 和 `env` 的优先级？`tool_use_id` 能否在 MCP 请求里拿到（§4.3）？
-2. Codex app-server：线程和回合的生命周期、审批请求的结构、turn 级 sandbox/approval 覆盖、steer、compact、fork、MCP list_changed、`developer_instructions`。它目前标注为 experimental，要评估稳定性，并确定最低版本。
-3. Codex 的 HTTP MCP + bearer env 在 Windows 上是否正常。
-4. 合规：在 Prometheus 里调用用户本机 CLI 的订阅登录是否符合 Anthropic / OpenAI 条款。结论决定"原生模式"是默认开启，还是需要用户确认后开启。
-5. Android：Codex 的静态 musl 版本能否在 bionic 上运行（只决定本机模式能否放开，不阻塞主线）。
-6. 性能：每个会话一个子进程的冷启动时间；resume 重启的开销（决定 static 上下文变化时的策略）。
+都用模拟的模型服务（Anthropic Messages SSE 和 OpenAI Responses）验证，runtime 和 MCP 一侧是真实代码。
+
+### 12.1 Claude Code
+- **接入：** `query({ prompt: AsyncIterable<SDKUserMessage>, options })`，用流式输入模式。`pathToClaudeCodeExecutable` 指定用户安装的 CLI（2.1.273 可用），默认使用 SDK 自带的二进制（依赖 optional dependency）。
+- **插话：** 回合中追加的用户消息会并进当前回合的下一个请求，不会新开回合，也会触发 `UserPromptSubmit`。
+- **权限：** `canUseTool(name, input, { toolUseID, signal, mcpServer, ... })` 只在需要询问时才调用，只读命令会被自动放行。**所以统一权限放在 `PreToolUse` hook**（返回 `permissionDecision: allow|deny|ask` 和 `updatedInput`），`canUseTool` 只用来兜底。
+- **MCP：** http 类型的 headers 每个请求都会带上；会响应 `tools/list_changed`，约 6ms 后重新列出工具；`tools/call._meta["claudecode/toolUseId"]` 就是 tool_use id，可以直接关联。`alwaysLoad: true` 可以避免工具被放到 ToolSearch 后面延迟加载。
+- **system prompt：** preset `claude_code` 加 `append`。默认 `snapshot:true` 会把第一次的提示固化下来，resume 时传新的 append 不生效，**必须设置 `snapshot:false`**。
+- **⚠️ 网关注入陷阱：** 用户 `~/.claude/settings.json` 里的 `env` 会**覆盖** SDK 的 `env` 选项。本机实测：用户设置里的代理地址覆盖了我们注入的 `ANTHROPIC_BASE_URL`。对策：Prometheus 网关模式下使用 `settingSources: ["project", "local"]`，不加载 user 层，并在 `probe` 时校验 init 消息里的实际出口。`CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1` 也有效，但这是未公开的内部开关，只作备选。原生网关模式照常加载全部设置。
+- **`env` 选项会整体替换子进程环境**，需要显式合并 `process.env`。
+- **工具集：** 子智能体工具现在叫 `Agent`（`Task` 是旧名），两个都要禁用；默认工具还有 CronCreate、Workflow、ScheduleWakeup、Monitor 等，用显式的 `tools: [...]` 白名单控制。`strictMcpConfig: true` 生效。
+- **会话：** 记录存放在 `~/.claude/projects/<cwd 规范化>/<id>.jsonl`（会跟随 `CLAUDE_CONFIG_DIR`）；SDK 提供 `listSessions/getSessionMessages/forkSession/deleteSession/renameSession`。`interrupt()` 后结果是 `error_during_execution/aborted_streaming`，之后会话还能继续用。
+- **用量：** `result.usage` 只算单回合主循环；`modelUsage` 和 `total_cost_usd` 是累计值，统计时要取差值。
+
+### 12.2 Codex（app-server）
+- **传输：** stdio，每行一个 JSON，**消息里没有 `jsonrpc` 字段**。握手顺序是 `initialize` → 通知 `initialized`。TS 类型用 `codex app-server generate-ts --out` 生成（加不加 `--experimental` 各生成一份），只使用稳定那份里的方法。
+- **生命周期（稳定）：** `thread/start|resume|fork|list|read|rollback|archive|name/set`、`turn/start|steer|interrupt`、`thread/compact/start`、`model/list`、`config/mcpServer/reload`、`mcpServerStatus/list`。
+- **覆盖参数：** thread 级可以设 `model/cwd/approvalPolicy/sandbox/baseInstructions/developerInstructions/config`；turn 级可以设 `approvalPolicy/sandboxPolicy/model/effort/cwd`，设置后对之后的回合也生效。turn 级**不能**改 instructions。
+- **审批：** `item/commandExecution/requestApproval` 和 `item/fileChange/requestApproval`，回复 `{ decision: "accept"|"acceptForSession"|"decline"|"cancel" }`。文件变更的审批请求里**不带 diff**，要按 `itemId` 和 `item/started` 里的 fileChange 关联。
+- **事件：** `item/started|completed`（commandExecution、fileChange（带统一 diff）、mcpToolCall（server 和 tool 是分开的字段）、webSearch、plan、contextCompaction……）、`item/agentMessage/delta`、`item/reasoning/*`、`item/commandExecution/outputDelta`、`turn/plan/updated`、`turn/diff/updated`、`thread/tokenUsage/updated`、`turn/completed`（status 为 completed、interrupted 或 failed，加 error；没有单独的失败事件）、`error`（带 `willRetry`）。
+- **MCP：** 需要配置 `mcp_servers.<id>.url`、`bearer_token_env_var`，以及 **`default_tools_approval_mode="approve"`**（不配的话调用会被自动取消）。`tools/call._meta` 只带 `x-codex-turn-metadata`（thread_id、turn_id），不带 call_id。**不响应 `list_changed`**。token 环境变量没设时，MCP 服务器会**静默消失**，所以 probe 必须先检查。Codex 会去掉 schema 里的 `minimum`、`default` 等关键字，所以 Prometheus 工具不能依赖这些关键字做校验，执行端要自己校验。
+- **备选的工具通道：** 🧪 `thread/start.dynamicTools` 加 `item/tool/call` 可以在协议内直接提供工具，自带 call id，不需要 MCP。等它稳定后可以替换 Codex 下的 MCP 总线。
+- **本机环境问题（和设计无关，需要用户处理）：** `~/.codex/config.toml` 第 1 行格式错误，codex 的所有命令都会失败。Prometheus 的 probe 要把配置解析错误展示给用户。
+
+### 12.3 由此修订的设计决定
+1. §4.3 关联：CC 用 `_meta` 精确关联；Codex 用 `(turn_id, 回合内第 n 次调用该工具, 参数哈希)` 关联，对不上时以总线数据为准，单独生成工具卡片。
+2. §4.5 热更新：CC 依赖 `list_changed`；Codex 在每个回合开始前，如果工具集有变化，就调用 `config/mcpServer/reload`。
+3. §6 权限：CC 的拦截点从 `canUseTool` 改为 `PreToolUse`；Codex 模式切换用 turn 级的 `approvalPolicy/sandboxPolicy` 覆盖。
+4. §7 网关：CC 在 Prometheus 网关模式下排除 user 设置层；Codex 在 Prometheus 网关模式下使用 Prometheus 自己的 `CODEX_HOME`（`<data>/runtimes/codex-home`），不读用户的 config.toml 和 auth.json，原生模式才用用户的 `CODEX_HOME`。
+5. §5.2 static 上下文：CC 设置 `snapshot:false`，内容变化后的下一回合 resume 重启；Codex 在 `thread/resume` 时更新 `developerInstructions`。
+6. 仍待验证：CC 的 `/compact` 在流式输入模式下是否可用、2.1.273 的 `_meta` 和 `list_changed` 行为、Codex 跨回合的 `list_changed`、冷启动性能、Android 上的 musl。
+7. 合规（未决）：在 Prometheus 里调用用户本机 CLI 的订阅登录是否符合 Anthropic / OpenAI 条款。在确认之前，“原生登录模式”默认关闭，由用户在设置里自行开启并看到提示；使用 API key 或 Prometheus 网关的路径不受影响。
 
 ## 13. 实施阶段与验收
 
