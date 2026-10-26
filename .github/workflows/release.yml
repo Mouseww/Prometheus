@@ -245,7 +245,16 @@ jobs:
           [ -n "$app" ] || { echo "no .app produced" >&2; exit 1; }
           plutil -extract LSMinimumSystemVersion raw "$app/Contents/Info.plist"
           ls "$app/Contents/Resources/server/main.js" "$app/Contents/Resources/server/web/index.html"
-          ELECTRON_RUN_AS_NODE=1 "$app/Contents/MacOS/Prometheus" --version
+          # Start the server exactly like the shell does and require it to come up under Electron's Node 20.
+          res="$app/Contents/Resources"
+          export ELECTRON_RUN_AS_NODE=1 PROMETHEUS_HOST=127.0.0.1 PROMETHEUS_PORT=0 PROMETHEUS_HOME="$RUNNER_TEMP/prom-home"
+          "$app/Contents/MacOS/Prometheus" --version
+          "$app/Contents/MacOS/Prometheus" --import "file://$res/server/polyfills.js" "$res/server/main.js" > server.log 2>&1 &
+          pid=$!
+          for i in $(seq 1 60); do grep -q PROMETHEUS_READY server.log && break; kill -0 $pid 2>/dev/null || break; sleep 1; done
+          cat server.log
+          kill $pid 2>/dev/null || true
+          grep -q PROMETHEUS_READY server.log || { echo "server did not become ready under Node 20" >&2; exit 1; }
 
       - name: Publish
         env:

@@ -5,6 +5,7 @@ const { spawn } = require("node:child_process");
 const net = require("node:net");
 const path = require("node:path");
 const fs = require("node:fs");
+const { pathToFileURL } = require("node:url");
 
 // A fixed port keeps the page origin (and so localStorage: settings, history) the same between launches.
 const PREFERRED_PORT = 17420;
@@ -30,7 +31,7 @@ async function startServer() {
 	const port = (await portFree(PREFERRED_PORT)) ? PREFERRED_PORT : 0;
 	// Bundled npm/npx go last so tools the user installed win; GUI launches lack Homebrew's directories.
 	const pathEnv = ["/opt/homebrew/bin", "/usr/local/bin", process.env.PATH ?? "/usr/bin:/bin", nodeBin].join(":");
-	server = spawn(process.execPath, [entry], {
+	server = spawn(process.execPath, ["--import", pathToFileURL(path.join(path.dirname(entry), "polyfills.js")).href, entry], {
 		cwd: app.getPath("home"),
 		env: {
 			...process.env,
