@@ -80,7 +80,7 @@ async function run(bin: "ssh" | "scp", h: SshHost, args: string[], timeoutMs: nu
 			}, timeoutMs);
 			child.on("error", (err) => {
 				clearTimeout(timer);
-				reject(new Error((err as NodeJS.ErrnoException).code === "ENOENT" ? `找不到 ${bin}，请先安装 OpenSSH 客户端` : err.message));
+				reject(new Error((err as NodeJS.ErrnoException).code === "ENOENT" ? `找不到 ${bin}，请先安装 OpenSSH 客户端${process.env.PROMETHEUS_ROOTFS ? "（Android：先在设置 > 运行环境安装“Linux 基础系统”，在其中执行 apt install openssh-client，然后重启应用）" : ""}` : err.message));
 			});
 			child.on("close", (code) => {
 				clearTimeout(timer);

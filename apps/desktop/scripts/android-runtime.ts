@@ -229,10 +229,27 @@ try {
 		'[ -n "$PROMETHEUS_CACERT" ] && CA="-b $PROMETHEUS_CACERT:/etc/ssl/certs/ca-certificates.crt"',
 		'BIND=""',
 		'[ "$PWD" != "/" ] && BIND="-b $PWD"',
+		// ssh with a saved password: the askpass helper lives in host storage and its variables must survive `env -i`.
+		'if [ -n "$SSH_ASKPASS" ]; then BIND="$BIND -b $(dirname "$SSH_ASKPASS")"; fi',
+		'for v in SSH_ASKPASS SSH_ASKPASS_REQUIRE DISPLAY PROMETHEUS_SSH_SECRET; do eval "val=\\"\\${$v}\\""; [ -n "$val" ] && set -- "$v=$val" "$@"; done',
 		"exec \"$PROMETHEUS_PROOT\" --link2symlink -0 -r \"$PROMETHEUS_ROOTFS\" -b /dev -b /proc -b /sys $BIND $CA -w \"$PWD\" /usr/bin/env -i HOME=/root LANG=C.UTF-8 TERM=\"${TERM:-xterm}\" SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt PATH=/opt/python/bin:/opt/go/bin:/opt/rust/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin RUSTUP_HOME=/opt/rust/rustup CARGO_HOME=/opt/rust/cargo GOROOT=/opt/go GOPATH=/root/go GOTOOLCHAIN=local \"$@\"",
 		"",
 	].join("\n");
 	writeFileSync(join(jniDir, "libexec_guestrun.so"), guestrun, { mode: 0o755 });
+	// Generic fallback: every executable found in the rootfs is linked (by name) into a PATH directory placed after the system ones;
+	// this dispatcher runs the command named by $0 inside the rootfs. apt/dpkg re-scan afterwards so new packages appear at once.
+	writeFileSync(
+		join(jniDir, "libexec_guestany.so"),
+		shim('name=$(basename "$0")\n"$PROMETHEUS_TOOLS_BIN/guestrun" "$name" "$@"\nrc=$?\ncase "$name" in apt|apt-get|dpkg|aptitude) "$PROMETHEUS_TOOLS_BIN/guestsync" ;; esac\nexit $rc'),
+		{ mode: 0o755 },
+	);
+	writeFileSync(
+		join(jniDir, "libexec_guestsync.so"),
+		shim(
+			'D="$PROMETHEUS_GUEST_BIN"; mkdir -p "$D"\nfor dir in usr/bin usr/sbin usr/local/bin usr/local/sbin opt/python/bin opt/go/bin opt/rust/cargo/bin; do\n  for f in "$PROMETHEUS_ROOTFS/$dir"/*; do\n    { [ -e "$f" ] || [ -L "$f" ]; } || continue\n    [ -d "$f" ] && continue\n    n=${f##*/}\n    [ -e "$D/$n" ] || [ -L "$D/$n" ] || ln -s "$PROMETHEUS_TOOLS_BIN/guestany" "$D/$n"\n  done\ndone'
+		),
+		{ mode: 0o755 },
+	);
 	for (const [runtime, tools] of Object.entries(GUEST_SHIMS)) {
 		for (const [name, target] of Object.entries(tools)) {
 			writeFileSync(join(jniDir, `libguest_${runtime}__${name}.so`), shim(`exec "$PROMETHEUS_TOOLS_BIN/guestrun" ${target} "$@"`), { mode: 0o755 });

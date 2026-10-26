@@ -125,6 +125,31 @@ fn link_tools(data_dir: &Path, native: &Path, guest_ids: &[String]) -> (PathBuf,
     (bin, git_core)
 }
 
+/// Links every executable in the rootfs (by name) to the `guestany` dispatcher, in a directory that sits after the system dirs on PATH,
+/// so commands installed with apt inside PRoot work from the host without being listed one by one.
+fn link_guest_bins(data_dir: &Path, rootfs: &Path) -> PathBuf {
+    let dir = data_dir.join("guest-bin");
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::create_dir_all(&dir);
+    let dispatcher = data_dir.join("bin/guestany");
+    if !rootfs.join("usr/bin/env").exists() {
+        return dir;
+    }
+    for sub in ["usr/bin", "usr/sbin", "usr/local/bin", "usr/local/sbin", "opt/python/bin", "opt/go/bin", "opt/rust/cargo/bin"] {
+        let Ok(entries) = fs::read_dir(rootfs.join(sub)) else { continue };
+        for entry in entries.flatten() {
+            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                continue;
+            }
+            let at = dir.join(entry.file_name());
+            if at.symlink_metadata().is_err() {
+                let _ = std::os::unix::fs::symlink(&dispatcher, &at);
+            }
+        }
+    }
+    dir
+}
+
 /// Adds or removes the PRoot shims of on-demand runtimes in the running app, so an install takes effect without a restart.
 pub fn refresh_guest_shims(data_dir: &Path, guest_ids: &[String]) {
     let Some(native) = native_lib_dir() else { return };
@@ -162,8 +187,10 @@ pub fn tool_env(data_dir: &Path, runtime: &Runtime, rt_root: &Path, guest_ids: &
         let _ = fs::write(&openssl_conf, "# Prometheus: minimal OpenSSL config (defaults only)\n");
     }
 
+    let guest_bin = link_guest_bins(data_dir, &crate::runtimes::rootfs_dir(rt_root));
     let mut path = OsString::from(&bin);
-    path.push(":/system/bin:/system/xbin");
+    path.push(":/system/bin:/system/xbin:");
+    path.push(&guest_bin);
     if let Some(old) = std::env::var_os("PATH") {
         path.push(":");
         path.push(old);
@@ -178,6 +205,7 @@ pub fn tool_env(data_dir: &Path, runtime: &Runtime, rt_root: &Path, guest_ids: &
         ("PROMETHEUS_NPM_CLI", npm_cli.into()),
         ("PROMETHEUS_NPX_JS", server.join("tools/npx.mjs").into()),
         ("PROMETHEUS_TOOLS_BIN", bin.into()),
+        ("PROMETHEUS_GUEST_BIN", guest_bin.into()),
         ("OPENSSL_CONF", openssl_conf.into()),
         // npm: keep its state in app storage and use the system shell for lifecycle scripts (there is no /bin/sh).
         ("npm_config_cache", cache.join("npm").into()),

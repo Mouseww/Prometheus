@@ -1333,7 +1333,7 @@ pub fn runtime_env(app: AppHandle) -> EnvDelta {
 #[cfg(target_os = "android")]
 pub fn installed_guest_ids(app: &AppHandle) -> Vec<String> {
     let (Ok(root), Ok(defs)) = (root_dir(app), manifest()) else { return Vec::new() };
-    defs.into_iter().filter(|d| d.id != ROOTFS_ID && installed_version(&root, d).is_some()).map(|d| d.id).collect()
+    defs.into_iter().filter(|d| installed_version(&root, d).is_some()).map(|d| d.id).collect()
 }
 
 #[cfg(test)]
