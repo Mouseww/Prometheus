@@ -82,6 +82,21 @@ export interface NativeSessionInfo {
 	firstMessage: string;
 }
 
+/** Prometheus services an external runtime plugs into (docs §4, §5, §7). PI does not need them: it runs in-process. */
+export interface RuntimeServices {
+	bus: import("./bus/tool-bus.ts").ToolBus;
+	relay: import("./relay/gateway-relay.ts").GatewayRelay;
+	/** Plugin tools and context providers, seen through the neutral model (PiFacade for legacy plugins). */
+	plugins: import("../plugin-host.ts").PluginHost;
+	/** A configured gateway by id (read per request by the relay, so edits apply to running sessions). */
+	gateway(id: string): import("@prometheus/protocol").GatewayConfig | undefined;
+	/** Absolute path of the runtime's CLI when the user wants a specific install; otherwise the bundled one. */
+	executable?(): string | undefined;
+	/** Prometheus data directory. */
+	dataDir: string;
+	log: { info(m: string): void; warn(m: string): void };
+}
+
 /** How a session reports back to the host. The host builds one per session and passes it in `SessionInit`. */
 export interface SessionHooks {
 	/** The session exists and has its id, but its extensions are not bound yet (so UI requests may already name it). */

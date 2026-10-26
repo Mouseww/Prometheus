@@ -26,6 +26,7 @@ export class FakeLlm {
 	private server: Server | undefined;
 	readonly requests: RecordedRequest[] = [];
 	private script: FakeTurn[] = [];
+	private seq = 0;
 	private fallback: FakeTurn = { blocks: [{ type: "text", text: "ok" }] };
 
 	get baseUrl(): string {
@@ -96,7 +97,7 @@ export class FakeLlm {
 				}
 			} else {
 				usedTool = true;
-				send("content_block_start", { type: "content_block_start", index, content_block: { type: "tool_use", id: block.id ?? `toolu_${index}_${this.requests.length}`, name: block.name, input: {} } });
+				send("content_block_start", { type: "content_block_start", index, content_block: { type: "tool_use", id: block.id ?? `toolu_${index}_${++this.seq}`, name: block.name, input: {} } });
 				send("content_block_delta", { type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json: JSON.stringify(block.input) } });
 				await wait();
 			}
