@@ -91,16 +91,14 @@ export default definePlugin({
   name: "hello",
   version: "0.1.0",
   setup(ctx) {
-    ctx.extension((pi) => {
-      pi.registerTool({
-        name: "greet",
-        label: "Greet",
-        description: "Greet someone by name",
-        parameters: Type.Object({ name: Type.String() }),
-        async execute(_id, { name }) {
-          return { content: [{ type: "text", text: \`Hello, \${name}!\` }], details: {} };
-        },
-      });
+    ctx.tools.register({
+      name: "greet",
+      label: "Greet",
+      description: "Greet someone by name",
+      parameters: Type.Object({ name: Type.String() }),
+      async execute(_id, { name }) {
+        return { content: [{ type: "text", text: \`Hello, \${name}!\` }], details: {} };
+      },
     });
   },
 });
@@ -119,16 +117,14 @@ export default {
   name: "hello",
   version: "0.1.0",
   setup(ctx) {
-    ctx.extension((pi) => {
-      pi.registerTool({
-        name: "greet",
-        label: "Greet",
-        description: "Greet someone by name",
-        parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
-        async execute(_id, { name }) {
-          return { content: [{ type: "text", text: \`Hello, \${name}!\` }], details: {} };
-        },
-      });
+    ctx.tools.register({
+      name: "greet",
+      label: "Greet",
+      description: "Greet someone by name",
+      parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
+      async execute(_id, { name }) {
+        return { content: [{ type: "text", text: \`Hello, \${name}!\` }], details: {} };
+      },
     });
   },
 };
@@ -164,7 +160,9 @@ A plugin can be switched off (its tools, panels and RPCs vanish at once) from th
 | \`workspaces()\` | Project folders the user has added |
 | \`runAgent({ cwd, prompt, access, ... })\` | Run the agent to completion with nobody present, in a new saved chat (server only). \`access\` is \`readonly\`, \`edits\` or \`full\`; whatever it does not cover is refused, never asked |
 | \`notifyChanged()\` | Tell open views of this plugin to refetch (server only) |
-| \`extension(factory)\` | Contribute a PI extension: tools, commands, providers, event hooks |
+| \`tools.register({ name, description, parameters, execute })\` | Add a tool the model can call. Works under every agent runtime; prefer it to \`extension\`. \`execute(toolCallId, params, signal, onUpdate, toolCtx)\` gets \`toolCtx.cwd / sessionId / hasUI / ui.confirm|select|input|notify\`; \`parameters\` is a JSON Schema object; names must be unique across all plugins |
+| \`context.provide(async (req) => ...)\` | Contribute prompt text before each run: \`{ static: { sections?, guidelines? }, turn? }\`. \`static\` is stable for the session; \`turn\` changes per user message. \`req\` has \`prompt\`, \`cwd\`, \`sessionId\`, \`runtime\` and \`signal\`. Section names match \`^[a-z][a-z0-9_-]*$\` and must not be one PI owns (\`preamble\`, \`tools\`, \`rules\`, \`docs\`, \`addendum\`, \`project_context\`, \`skills\`, \`cwd\`, \`turn_context\`, \`unattended\`, \`auto_mode\`, \`plan_mode\`) |
+| \`extension(factory)\` | Contribute a PI extension for what the neutral API does not cover: commands, providers, MCP servers and event hooks such as \`tool_call\`, \`before_provider_request\`, \`resources_discover\` (PI only; other runtimes get a best-effort translation) |
 | \`knowledgeStore(id, factory)\` | Register a vector store backend selectable when creating a knowledge base |
 | \`route(method, path, handler)\` | HTTP route at \`/plugins/<name><path>\` (server only) |
 | \`panel({ id, title, icon?, path })\` | Sidebar panel rendered in a sandboxed iframe pointing at one of your routes (server only) |
@@ -174,9 +172,13 @@ A plugin can be switched off (its tools, panels and RPCs vanish at once) from th
 
 \`createJsonStore(path, fallback)\` from the SDK gives atomic, serialised, owner-only JSON persistence that both the TUI and server can share.
 
-## PI extension API you will use most
+## Tools and prompt text: use the neutral API
 
-Inside \`ctx.extension((pi) => ...)\`: \`pi.registerTool\`, \`pi.registerCommand(name, { description, handler })\`, \`pi.registerProvider\`, \`pi.registerMcpServer(name, cfg)\`, and \`pi.on(event, handler)\` for hooks such as \`before_agent_start\` (adjust the system prompt) and \`resources_discover\` (return \`{ skillPaths }\`). In handlers, \`ctx.ui.notify / select / confirm / input\` work in the GUI and TUI.
+Register tools with \`ctx.tools.register\` and add prompt text with \`ctx.context.provide\`, as in the examples above. Do not return \`{ systemPrompt }\` from a hook to add text: that freezes the whole prompt and hides sections added after it.
+
+## PI extension API, for what the neutral API lacks
+
+Inside \`ctx.extension((pi) => ...)\`: \`pi.registerCommand(name, { description, handler })\`, \`pi.registerProvider\`, \`pi.registerMcpServer(name, cfg)\`, and \`pi.on(event, handler)\` for hooks such as \`tool_call\` (inspect or block a call), \`before_provider_request\` and \`resources_discover\` (return \`{ skillPaths }\`). \`pi.registerTool\` still works, but prefer \`ctx.tools.register\`. In handlers, \`ctx.ui.notify / select / confirm / input\` work in the GUI and TUI.
 
 Built-in plugins in the repository (\`plugins/mcp\`, \`plugins/skills\`, \`plugins/memory\`, \`plugins/packages\`) are ordinary plugins and good templates.
 

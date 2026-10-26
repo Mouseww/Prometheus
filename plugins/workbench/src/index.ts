@@ -32,25 +32,21 @@ export default definePlugin({
 		});
 
 		// ---- Agent tools ----
-		ctx.extension((pi) => {
-			pi.on("before_agent_start", (event) => {
-				event.systemPromptOptions.promptGuidelines?.push(...GUIDELINES);
-			});
+		ctx.context.provide(() => ({ static: { guidelines: GUIDELINES } }));
 
-			pi.registerTool({
-				name: OPEN_FILE_TOOL,
-				label: "查看文件",
-				description: "Show a file in the user's side file viewer, optionally scrolled to a line. Only files inside the project folders can be shown.",
-				promptSnippet: `${OPEN_FILE_TOOL}: show a file to the user in the app's side viewer`,
-				parameters: Type.Object({
-					path: Type.String({ description: "File path, relative to the working directory or absolute" }),
-					line: Type.Optional(Type.Integer({ minimum: 1, description: "Line to scroll to and highlight" })),
-				}),
-				async execute(_id, params, _signal, _update, tctx) {
-					const real = await resolveAllowed(params.path, tctx.cwd, await roots(tctx.cwd));
-					return { content: [{ type: "text", text: `Opened ${real}${params.line ? ` at line ${params.line}` : ""} in the viewer.` }], details: { path: real, line: params.line } };
-				},
-			});
+		ctx.tools.register({
+			name: OPEN_FILE_TOOL,
+			label: "查看文件",
+			description: "Show a file in the user's side file viewer, optionally scrolled to a line. Only files inside the project folders can be shown.",
+			promptSnippet: `${OPEN_FILE_TOOL}: show a file to the user in the app's side viewer`,
+			parameters: Type.Object({
+				path: Type.String({ description: "File path, relative to the working directory or absolute" }),
+				line: Type.Optional(Type.Integer({ minimum: 1, description: "Line to scroll to and highlight" })),
+			}),
+			async execute(_id, params, _signal, _update, tctx) {
+				const real = await resolveAllowed(params.path, tctx.cwd, await roots(tctx.cwd));
+				return { content: [{ type: "text", text: `Opened ${real}${params.line ? ` at line ${params.line}` : ""} in the viewer.` }], details: { path: real, line: params.line } };
+			},
 		});
 	},
 });

@@ -496,6 +496,53 @@ describe("PI bridge", () => {
 		expect(custom.systemPromptOptions).toEqual({ sections: { x: "X" }, promptGuidelines: [] });
 	});
 
+	it("runs the context bridge before legacy handlers, so a systemPrompt they fold in already holds the neutral sections", async () => {
+		// Like PI's runner: handlers run in registration order and `event.systemPrompt` is rendered on read from the current options.
+		const emitStart = async (handlers: { event: string; fn: (...args: any[]) => any }[]) => {
+			const options = { sections: { existing: "E" } as Record<string, string>, promptGuidelines: [] as string[] };
+			let forced: string | undefined;
+			for (const h of handlers.filter((x) => x.event === "before_agent_start")) {
+				const event = {
+					type: "before_agent_start",
+					messageType: "user",
+					prompt: "p",
+					get systemPrompt() {
+						return forced ?? Object.values(options.sections).join("\n");
+					},
+					systemPromptOptions: options,
+				};
+				const ret = await h.fn(event, { cwd: "/proj" });
+				if (ret?.systemPrompt !== undefined) forced = ret.systemPrompt;
+			}
+			return forced;
+		};
+		// The legacy plugin loads first, so plugin order alone would put its handler ahead of the bridge.
+		const build = async () => {
+			const host = await makeHost();
+			await host.load(
+				{ name: "modes-like", setup: (ctx) => ctx.extension((pi) => void pi.on("before_agent_start", (event) => ({ systemPrompt: `${event.systemPrompt}|X` }))) },
+				"builtin",
+			);
+			await host.load({ name: "neutral", setup: (ctx) => ctx.context.provide(() => ({ static: { sections: { memory: "SECTION-M" } } })) }, "builtin");
+			return host;
+		};
+
+		const dynamic = fakePi();
+		await run((await build()).dynamicExtension(), dynamic.pi);
+		const fromDynamic = await emitStart(dynamic.handlers);
+		expect(fromDynamic).toContain("SECTION-M");
+		expect(fromDynamic?.endsWith("|X")).toBe(true);
+
+		const tuiHost = await build();
+		const exts = tuiHost.extensions;
+		expect(exts.map((e) => (typeof e === "function" ? "" : e.name))[0]).toBe("prometheus:context");
+		const tui = fakePi();
+		for (const ext of exts) await run(ext, tui.pi);
+		const fromTui = await emitStart(tui.handlers);
+		expect(fromTui).toContain("SECTION-M");
+		expect(fromTui?.endsWith("|X")).toBe(true);
+	});
+
 	it("registers no handler when no plugin provides context, and still replays legacy factories", async () => {
 		const host = await makeHost();
 		const legacy = vi.fn();

@@ -11,7 +11,7 @@ A plugin is a folder of ES-module files. The entry is index.js and must default-
   export default { name: "my-plugin", version: "0.1.0", setup(ctx) { ... } }
 The name must match the "name" argument (lowercase letters, digits, - _ .). Plugins cannot import npm packages or Prometheus modules, only Node built-ins ("node:fs", "node:path", "node:child_process", ...) and relative files of their own.
 
-ctx gives you: ctx.extension((pi) => { pi.registerTool({ name, label, description, parameters: <JSON Schema object>, async execute(toolCallId, params, signal, onUpdate, toolCtx) { return { content: [{ type: "text", text: "..." }], details: {} }; } }); pi.registerCommand(name, { description, handler }); pi.on("before_agent_start", (event) => { event.systemPromptOptions.promptGuidelines.push("..."); event.systemPromptOptions.sections.my_section = "..."; }); }), ctx.rpc(method, async (params) => value) for the app UI, ctx.route(method, path, (req, res) => ...) and ctx.panel({ id, title, path }) for a sidebar page served from a route, ctx.dataDir (private folder), ctx.cwd, ctx.log, ctx.onDispose(fn) (release timers and sockets here: the plugin can be reloaded at any time). Do not return { systemPrompt } from before_agent_start: that freezes the whole prompt and hides later sections.
+ctx gives you: ctx.tools.register({ name, label, description, parameters: <JSON Schema object>, async execute(toolCallId, params, signal, onUpdate, toolCtx) { return { content: [{ type: "text", text: "..." }], details: {} }; } }) for tools (toolCtx has cwd, sessionId, hasUI and ui.confirm/select/input/notify), ctx.context.provide(async (req) => ({ static: { sections: { my_section: "..." }, guidelines: ["..."] }, turn: "text that changes per user message" })) for prompt text (req has prompt, cwd, sessionId; section names are lowercase letters, digits, - and _), ctx.extension((pi) => { pi.registerCommand(name, { description, handler }); pi.on("tool_call", ...); }) only for what those two cannot do (commands, providers, hooks such as tool_call, before_provider_request, resources_discover), ctx.rpc(method, async (params) => value) for the app UI, ctx.route(method, path, (req, res) => ...) and ctx.panel({ id, title, path }) for a sidebar page served from a route, ctx.dataDir (private folder), ctx.cwd, ctx.log, ctx.onDispose(fn) (release timers and sockets here: the plugin can be reloaded at any time). Do not return { systemPrompt } from a before_agent_start hook to add text: that freezes the whole prompt and hides later sections. Tool names must be unique across all plugins.
 
 Parameters are plain JSON Schema, e.g. { type: "object", properties: { city: { type: "string" } }, required: ["city"] }.
 
@@ -19,7 +19,13 @@ The user is shown every file and must approve before anything is written. The pl
 
 In a chat that is running, new tools appear from the next message on.`;
 
-/** Lets the agent write a plugin into the app. Only the server host registers it; the TUI cannot hot-load. */
+/**
+ * Lets the agent write a plugin into the app. Only the server host registers it; the TUI cannot hot-load.
+ *
+ * This stays a PI extension on purpose (it needs the host's `PluginHost`, not a plugin context). The same
+ * goes for the permission gate, the modes / veil / mcp plugins and the skills `resources_discover` hook:
+ * they use PI-only hooks and remain `ctx.extension` / PI extensions until the later runtime phases.
+ */
 export function pluginBuilderExtension(plugins: PluginHost): InlineExtension {
 	return {
 		name: "prometheus:plugin-builder",

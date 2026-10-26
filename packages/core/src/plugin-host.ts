@@ -351,14 +351,16 @@ export class PluginHost {
 	get extensions(): InlineExtension[] {
 		// Shared by every factory below so a duplicate tool name across plugins gets a warning.
 		const seen = new Map<string, string>();
-		const list: InlineExtension[] = this.entries.flatMap((e) => {
+		const plugins: InlineExtension[] = this.entries.flatMap((e) => {
 			const name = `prometheus:${e.info.name}`;
 			const items: InlineExtension[] = (e.reg?.factories ?? []).map((factory) => ({ name, factory: (pi) => factory(trackTools(pi, e.info.name, seen)) }));
 			if (e.reg?.tools.length) items.push({ name, factory: (pi) => registerNeutralTools(pi, e.info.name, e.reg?.tools ?? [], seen) });
 			return items;
 		});
-		if (this.entries.some((e) => e.reg?.providers.length)) list.push({ name: "prometheus:context", factory: (pi) => this.registerContextBridge(pi) });
-		return list;
+		// The bridge goes first: legacy handlers such as `modes` fold `event.systemPrompt` into a replacement
+		// prompt, so the neutral sections must already be in it by the time they run.
+		const bridge: InlineExtension[] = this.entries.some((e) => e.reg?.providers.length) ? [{ name: "prometheus:context", factory: (pi) => this.registerContextBridge(pi) }] : [];
+		return [...bridge, ...plugins];
 	}
 
 	/**
@@ -370,6 +372,8 @@ export class PluginHost {
 			name: "prometheus:plugins",
 			factory: async (pi) => {
 				const seen = new Map<string, string>();
+				// First, so handlers of legacy factories (e.g. `modes`, which freezes `event.systemPrompt`) see the neutral sections.
+				if (this.entries.some((e) => e.reg?.providers.length)) this.registerContextBridge(pi);
 				for (const entry of [...this.entries]) {
 					for (const factory of entry.reg?.factories ?? []) {
 						try {
@@ -380,7 +384,6 @@ export class PluginHost {
 					}
 					registerNeutralTools(pi, entry.info.name, entry.reg?.tools ?? [], seen);
 				}
-				if (this.entries.some((e) => e.reg?.providers.length)) this.registerContextBridge(pi);
 			},
 		};
 	}

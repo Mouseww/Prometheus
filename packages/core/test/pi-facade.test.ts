@@ -400,8 +400,8 @@ describe("PluginHost external view", () => {
 	});
 });
 
-describe("real plugins through the facade", () => {
-	it("memory: the real extension recalls per prompt and saves via the captured tool", async () => {
+describe("real plugins through the external view", () => {
+	it("memory: the real plugin recalls per prompt and saves via its neutral tool", async () => {
 		let memory: PrometheusPlugin;
 		try {
 			memory = ((await import("../../../plugins/memory/src/index.ts")) as { default: PrometheusPlugin }).default;
@@ -411,33 +411,29 @@ describe("real plugins through the facade", () => {
 			return;
 		}
 		const dataDir = await mkdtemp(join(tmpdir(), "plugfacade-mem-"));
-		const factories: ExtensionFactory[] = [];
-		const ctx = new Proxy(
-			{ dataDir, cwd: dataDir, extension: (f: ExtensionFactory) => void factories.push(f), rpc: () => {} },
-			{ get: (t, p) => (p in t ? (t as any)[p] : () => {}) },
-		);
-		await memory.setup(ctx as any);
-		expect(factories).toHaveLength(1);
+		const host = new PluginHost({ host: "server", dataDir, agentDir: dataDir, cwd: dataDir, settings: () => ({}), gateways: () => [] });
+		await host.load(memory, "builtin");
+		expect(host.list()[0]).toMatchObject({ name: "memory", status: "loaded" });
 
-		const cap = await captureExtension(factories, { pluginName: "memory", cwd: dataDir, log: log() });
-		expect(cap.warnings).toEqual([]);
-		expect(cap.tools.map((t) => t.name)).toEqual(["memory_save", "memory_search", "memory_forget"]);
-		expect(cap.contextProviders).toHaveLength(1);
-		const provider = cap.contextProviders[0]!;
+		// Fully neutral: nothing for the PiFacade to translate or complain about.
+		const view = await host.externalView();
+		expect(view.warnings).toEqual([]);
+		expect(view.tools.map((t) => t.tool.name)).toEqual(["memory_save", "memory_search", "memory_forget"]);
+		expect(view.contextProviders).toHaveLength(1);
+		const turnFor = async (prompt: string) => (await host.collectContextExternal({ prompt, cwd: dataDir, runtime: "claude-code" })).turn;
 
-		// Empty store: the real handler returns early.
-		expect(await provider({ prompt: "pnpm?", cwd: dataDir, runtime: "claude-code" })).toBeUndefined();
+		// Empty store: the provider has nothing to say.
+		expect(await turnFor("pnpm?")).toEqual([]);
 
-		const save = cap.tools.find((t) => t.name === "memory_save")!;
+		const save = view.tools.find((t) => t.tool.name === "memory_save")!.tool;
 		const saved = await save.execute("1", { content: "The user prefers pnpm over npm", scope: "user" }, undefined, undefined, toolCtx({ cwd: dataDir }));
 		expect(saved.content[0]).toMatchObject({ type: "text", text: expect.stringContaining("Saved memory") });
 
-		const hit = await provider({ prompt: "which pnpm should I use?", cwd: dataDir, runtime: "claude-code" });
-		expect(hit?.turn).toMatch(/^## memory\n/);
-		expect(hit?.turn).toContain("Long-term memories about the user");
-		expect(hit?.turn).toContain("prefers pnpm");
-		const miss = await provider({ prompt: "zebra giraffe", cwd: dataDir, runtime: "claude-code" });
-		expect(miss?.turn).toContain("Memory store: 1 global");
-		expect(miss?.turn).not.toContain("Long-term memories about the user");
+		const [hit] = await turnFor("which pnpm should I use?");
+		expect(hit).toContain("Long-term memories about the user");
+		expect(hit).toContain("prefers pnpm");
+		const [miss] = await turnFor("zebra giraffe");
+		expect(miss).toContain("Memory store: 1 global");
+		expect(miss).not.toContain("Long-term memories about the user");
 	});
 });

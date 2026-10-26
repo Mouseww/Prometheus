@@ -48,74 +48,71 @@ export default definePlugin({
 				return { ...s, entries: [entry, ...s.entries] };
 			});
 
-		ctx.extension((pi) => {
-			pi.registerTool({
-				name: "memory_save",
-				label: "保存记忆",
-				description:
-					"Save a durable fact to long-term memory: user preferences, decisions, project conventions, recurring corrections. Do not store secrets or transient task details. Keep each memory to one self-contained statement.",
-				promptSnippet: "memory_save: remember a durable fact across sessions",
-				parameters: Type.Object({
-					content: Type.String({ description: "One self-contained statement", maxLength: MAX_CONTENT }),
-					scope: Type.Optional(Type.Union([Type.Literal("user"), Type.Literal("project")], { description: "user (default): applies everywhere; project: only this working directory" })),
-					tags: Type.Optional(Type.Array(Type.String(), { maxItems: 12 })),
-				}),
-				async execute(_id, params, _signal, _update, toolCtx) {
-					const state = await add({
-						content: requireContent(params.content),
-						tags: cleanTags(params.tags),
-						scope: params.scope ?? "user",
-						cwd: toolCtx.cwd,
-						pinned: false,
-						source: "agent",
-					});
-					return text(`Saved memory ${state.entries[0]?.id}.`);
-				},
-			});
+		ctx.tools.register({
+			name: "memory_save",
+			label: "保存记忆",
+			description:
+				"Save a durable fact to long-term memory: user preferences, decisions, project conventions, recurring corrections. Do not store secrets or transient task details. Keep each memory to one self-contained statement.",
+			promptSnippet: "memory_save: remember a durable fact across sessions",
+			parameters: Type.Object({
+				content: Type.String({ description: "One self-contained statement", maxLength: MAX_CONTENT }),
+				scope: Type.Optional(Type.Union([Type.Literal("user"), Type.Literal("project")], { description: "user (default): applies everywhere; project: only this working directory" })),
+				tags: Type.Optional(Type.Array(Type.String(), { maxItems: 12 })),
+			}),
+			async execute(_id, params, _signal, _update, toolCtx) {
+				const state = await add({
+					content: requireContent(params.content),
+					tags: cleanTags(params.tags),
+					scope: params.scope ?? "user",
+					cwd: toolCtx.cwd,
+					pinned: false,
+					source: "agent",
+				});
+				return text(`Saved memory ${state.entries[0]?.id}.`);
+			},
+		});
 
-			pi.registerTool({
-				name: "memory_search",
-				label: "检索记忆",
-				description: "Search long-term memory for facts saved in earlier sessions.",
-				promptSnippet: "memory_search: look up facts remembered from earlier sessions",
-				parameters: Type.Object({
-					query: Type.String(),
-					limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
-				}),
-				async execute(_id, params, _signal, _update, toolCtx) {
-					const hits = search(visibleTo((await store.read()).entries, toolCtx.cwd), params.query, params.limit ?? 8);
-					return text(hits.length ? hits.map((h) => `[${h.entry.id}] ${h.entry.content}`).join("\n") : "No matching memories.");
-				},
-			});
+		ctx.tools.register({
+			name: "memory_search",
+			label: "检索记忆",
+			description: "Search long-term memory for facts saved in earlier sessions.",
+			promptSnippet: "memory_search: look up facts remembered from earlier sessions",
+			parameters: Type.Object({
+				query: Type.String(),
+				limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
+			}),
+			async execute(_id, params, _signal, _update, toolCtx) {
+				const hits = search(visibleTo((await store.read()).entries, toolCtx.cwd), params.query, params.limit ?? 8);
+				return text(hits.length ? hits.map((h) => `[${h.entry.id}] ${h.entry.content}`).join("\n") : "No matching memories.");
+			},
+		});
 
-			pi.registerTool({
-				name: "memory_forget",
-				label: "删除记忆",
-				description: "Delete a memory by id when it is wrong or the user asks to forget it.",
-				parameters: Type.Object({ id: Type.String() }),
-				async execute(_id, params) {
-					let found = false;
-					await store.update((s) => {
-						found = s.entries.some((e) => e.id === params.id);
-						return { ...s, entries: s.entries.filter((e) => e.id !== params.id) };
-					});
-					return text(found ? `Forgot memory ${params.id}.` : `No memory with id ${params.id}.`);
-				},
-			});
+		ctx.tools.register({
+			name: "memory_forget",
+			label: "删除记忆",
+			description: "Delete a memory by id when it is wrong or the user asks to forget it.",
+			parameters: Type.Object({ id: Type.String() }),
+			async execute(_id, params) {
+				let found = false;
+				await store.update((s) => {
+					found = s.entries.some((e) => e.id === params.id);
+					return { ...s, entries: s.entries.filter((e) => e.id !== params.id) };
+				});
+				return text(found ? `Forgot memory ${params.id}.` : `No memory with id ${params.id}.`);
+			},
+		});
 
-			pi.on("before_agent_start", async (event, eventCtx) => {
-				const state = await store.read();
-				if (!state.autoInject) return;
-				const prompt = event.messageType === "user" ? event.prompt : "";
-				const visible = visibleTo(state.entries, eventCtx.cwd);
-				if (!visible.length) return;
-				const picked = selectForPrompt(visible, prompt);
-				const parts: string[] = [];
-				if (picked.length) parts.push(renderMemorySection(picked));
-				parts.push(renderMemoryIndex(visible, new Set(picked.map((e) => e.id))));
-				// A returned `systemPrompt` freezes the whole prompt and would hide later sections such as auto mode.
-				event.systemPromptOptions.sections.memory = parts.join("\n\n");
-			});
+		// Everything goes in `turn`: saving a memory mid-session changes both the hits and the index.
+		ctx.context.provide(async (req) => {
+			const state = await store.read();
+			if (!state.autoInject) return undefined;
+			const visible = visibleTo(state.entries, req.cwd);
+			if (!visible.length) return undefined;
+			const picked = selectForPrompt(visible, req.prompt);
+			const parts: string[] = [];
+			if (picked.length) parts.push(renderMemorySection(picked));
+			parts.push(renderMemoryIndex(visible, new Set(picked.map((e) => e.id))));
+			return { turn: parts.join("\n\n") };
 		});
 
 		ctx.rpc("list", async () => {

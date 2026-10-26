@@ -103,4 +103,38 @@ describe("neutral plugin API inside a real PI session", () => {
 			warn.mockRestore();
 		}
 	}, 60_000);
+
+	it("folds neutral sections into the prompt a legacy (modes-like) handler freezes", async () => {
+		const cwd = join(root, "work");
+		const agentDir = join(root, "agent");
+		const host = new PluginHost({ host: "server", dataDir: join(root, "data-order"), agentDir, cwd, settings: () => ({}), gateways: () => [] });
+		// Loaded first, as `modes` would be ahead of a later-listed plugin: it must still run after the bridge.
+		await host.load(
+			{ name: "modes-like", setup: (ctx) => ctx.extension((pi) => void pi.on("before_agent_start", (event) => ({ systemPrompt: `${event.systemPrompt}\n|X` }))) },
+			"builtin",
+		);
+		await host.load({ name: "neutral", setup: (ctx) => ctx.context.provide(() => ({ static: { sections: { memory: "remember pnpm" } } })) }, "builtin");
+
+		const modelRuntime = await ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath: join(agentDir, "models.json") });
+		const loader = new DefaultResourceLoader({ cwd, agentDir, extensionFactories: [host.dynamicExtension()] });
+		await loader.reload();
+		const { session } = await createAgentSession({
+			cwd,
+			agentDir,
+			modelRuntime,
+			sessionManager: SessionManager.inMemory(cwd),
+			settingsManager: SettingsManager.inMemory(),
+			resourceLoader: loader,
+		});
+		try {
+			await session.bindExtensions({ mode: "rpc" });
+			const internals = session as unknown as { _baseSystemPromptOptions: unknown };
+			const result = await session.extensionRunner.emitBeforeAgentStart({ messageType: "user", prompt: "hi" } as never, internals._baseSystemPromptOptions as never);
+			const frozen = (result.systemPromptOptions as { forceSystemPrompt?: string }).forceSystemPrompt;
+			expect(frozen).toContain("remember pnpm");
+			expect(frozen?.endsWith("|X")).toBe(true);
+		} finally {
+			session.dispose();
+		}
+	}, 60_000);
 });

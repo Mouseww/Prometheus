@@ -2,7 +2,7 @@ import { join } from "node:path";
 import type { ExtensionFactory, InlineExtension } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { toProviderConfig } from "@prometheus/gateway";
-import { KnowledgeService, knowledgeExtension } from "@prometheus/knowledge";
+import { KnowledgeService, registerKnowledge } from "@prometheus/knowledge";
 import type { HostKind, PrometheusPlugin } from "@prometheus/plugin-sdk";
 import { ConfigStore, defaultDataDir } from "./config.ts";
 import { PluginHost } from "./plugin-host.ts";
@@ -52,7 +52,7 @@ export async function bootstrap(options: BootstrapOptions): Promise<Runtime> {
 	await knowledge.load();
 
 	await plugins.load(
-		{ name: "knowledge", version: "0.1.0", setup: (ctx) => ctx.extension(knowledgeExtension(knowledge)) },
+		{ name: "knowledge", version: "0.1.0", setup: (ctx) => registerKnowledge(ctx, knowledge) },
 		"builtin",
 	);
 	for (const plugin of options.builtinPlugins ?? []) await plugins.load(plugin, "builtin");

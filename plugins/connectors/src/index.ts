@@ -259,63 +259,61 @@ export default definePlugin({
 
 		// ---------- Agent tools ----------
 
-		ctx.extension((pi) => {
-			const text = (value: string) => ({ content: [{ type: "text" as const, text: value }], details: {} });
+		const text = (value: string) => ({ content: [{ type: "text" as const, text: value }], details: {} });
 
-			pi.registerTool({
-				name: "connector_list",
-				label: "已连接服务",
-				description: "List third-party services the user has connected (GitHub, Jira, Outlook, databases, ...). Shows connection ids and whether writes are allowed. Never shows credentials.",
-				promptSnippet: "connector_list: see which third-party services are connected",
-				parameters: Type.Object({}),
-				async execute() {
-					const list = await vault.list();
-					if (!list.length) return text("No connections. The user can add one in Settings → Connectors.");
-					return text(list.map((c) => `${c.id}  ${c.provider}  "${c.label}"  account=${c.account ?? "?"}  writes=${c.policy}`).join("\n"));
-				},
-			});
-
-			pi.registerTool({
-				name: "connector_describe",
-				label: "查看连接器操作",
-				description: "Describe the operations (and their JSON parameter schemas) a connected provider supports. Call this before connector_call with an unfamiliar provider.",
-				parameters: Type.Object({ provider: Type.String({ description: "github | atlassian | bitbucket | microsoft | database" }) }),
-				async execute(_id, params) {
-					const p = providerById(params.provider);
-					if (!p) throw new Error(`Unknown provider ${params.provider}. Known: ${providers.map((x) => x.id).join(", ")}`);
-					return text(renderResult(p.operations.map((o) => ({ name: o.name, access: o.access, description: o.description, params: o.params }))));
-				},
-			});
-
-			pi.registerTool({
-				name: "connector_call",
-				label: "调用第三方服务",
-				description:
-					"Run an operation on a connected third-party service. Use connector_list for the connection id and connector_describe for operation names and params. Write operations may require user confirmation or be refused by the connection's policy; do not retry a refused write.",
-				promptSnippet: "connector_call: act on connected services (GitHub, Jira, Outlook, Teams, databases)",
-				parameters: Type.Object({
-					connection: Type.String({ description: "Connection id from connector_list" }),
-					operation: Type.String(),
-					params: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
-				}),
-				async execute(_id, params, signal, _update, toolCtx) {
-					const result = await service.call({
-						connection: params.connection,
-						operation: params.operation,
-						params: params.params ?? {},
-						signal,
-						confirm: toolCtx.hasUI ? (message) => toolCtx.ui.confirm("允许写入第三方服务？", message) : undefined,
-					});
-					return text(renderResult(result));
-				},
-			});
-
-			pi.on("before_agent_start", async (event) => {
+		ctx.tools.register({
+			name: "connector_list",
+			label: "已连接服务",
+			description: "List third-party services the user has connected (GitHub, Jira, Outlook, databases, ...). Shows connection ids and whether writes are allowed. Never shows credentials.",
+			promptSnippet: "connector_list: see which third-party services are connected",
+			parameters: Type.Object({}),
+			async execute() {
 				const list = await vault.list();
-				if (!list.length) return;
-				const lines = list.map((c) => `- ${c.id}: ${c.provider} "${c.label}" (writes: ${c.policy})`).join("\n");
-				event.systemPromptOptions.sections.connectors = `# Connected services\nThe user has connected these third-party services. Use connector_describe / connector_call; never ask the user to paste credentials.\n${lines}`;
-			});
+				if (!list.length) return text("No connections. The user can add one in Settings → Connectors.");
+				return text(list.map((c) => `${c.id}  ${c.provider}  "${c.label}"  account=${c.account ?? "?"}  writes=${c.policy}`).join("\n"));
+			},
+		});
+
+		ctx.tools.register({
+			name: "connector_describe",
+			label: "查看连接器操作",
+			description: "Describe the operations (and their JSON parameter schemas) a connected provider supports. Call this before connector_call with an unfamiliar provider.",
+			parameters: Type.Object({ provider: Type.String({ description: "github | atlassian | bitbucket | microsoft | database" }) }),
+			async execute(_id, params) {
+				const p = providerById(params.provider);
+				if (!p) throw new Error(`Unknown provider ${params.provider}. Known: ${providers.map((x) => x.id).join(", ")}`);
+				return text(renderResult(p.operations.map((o) => ({ name: o.name, access: o.access, description: o.description, params: o.params }))));
+			},
+		});
+
+		ctx.tools.register({
+			name: "connector_call",
+			label: "调用第三方服务",
+			description:
+				"Run an operation on a connected third-party service. Use connector_list for the connection id and connector_describe for operation names and params. Write operations may require user confirmation or be refused by the connection's policy; do not retry a refused write.",
+			promptSnippet: "connector_call: act on connected services (GitHub, Jira, Outlook, Teams, databases)",
+			parameters: Type.Object({
+				connection: Type.String({ description: "Connection id from connector_list" }),
+				operation: Type.String(),
+				params: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+			}),
+			async execute(_id, params, signal, _update, toolCtx) {
+				const result = await service.call({
+					connection: params.connection,
+					operation: params.operation,
+					params: params.params ?? {},
+					signal,
+					confirm: toolCtx.hasUI ? (message: string) => toolCtx.ui.confirm("允许写入第三方服务？", message) : undefined,
+				});
+				return text(renderResult(result));
+			},
+		});
+
+		ctx.context.provide(async () => {
+			const list = await vault.list();
+			if (!list.length) return undefined;
+			const lines = list.map((c) => `- ${c.id}: ${c.provider} "${c.label}" (writes: ${c.policy})`).join("\n");
+			return { static: { sections: { connectors: `# Connected services\nThe user has connected these third-party services. Use connector_describe / connector_call; never ask the user to paste credentials.\n${lines}` } } };
 		});
 	},
 });

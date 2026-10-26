@@ -29,35 +29,33 @@ export default definePlugin({
 	// Safe to switch off: the chat panel simply has nothing to show.
 	optional: true,
 	setup(ctx) {
-		ctx.extension((pi) => {
-			pi.registerTool({
-				name: TODO_TOOL,
-				label: "任务清单",
-				description:
-					"Create and update the task list for this conversation. The user sees it next to the chat and follows your progress live. Send the complete list every time.",
-				promptSnippet: `${TODO_TOOL}: plan multi-step work and keep a live checklist the user can follow`,
-				promptGuidelines: GUIDELINES,
-				parameters: Type.Object({
-					todos: Type.Array(
-						Type.Object({
-							content: Type.String({ description: "What to do, in the imperative: \"Run the tests\"" }),
-							status: Type.Union([Type.Literal("pending"), Type.Literal("in_progress"), Type.Literal("completed")]),
-							activeForm: Type.Optional(Type.String({ description: "Present continuous form shown while in progress: \"Running the tests\"" })),
-						}),
-						{ maxItems: 50 },
-					),
-				}),
-				async execute(_id, params) {
-					const todos = parseTodos(params);
-					const bad = problem(todos);
-					if (bad) throw new Error(bad);
-					const mark = { completed: "[x]", in_progress: "[>]", pending: "[ ]" } as const;
-					const lines = todos.map((t, i) => `${i + 1}. ${mark[t.status]} ${t.content}`).join("\n");
-					const left = todos.some((t) => t.status !== "completed");
-					const next = left ? `Carry on with the current item, and call ${TODO_TOOL} again as soon as it is done.` : "All items are completed.";
-					return { content: [{ type: "text", text: `Task list updated (${summarize(todos)}).\n${lines}\n${next}` }], details: { todos } };
-				},
-			});
+		ctx.tools.register({
+			name: TODO_TOOL,
+			label: "任务清单",
+			description:
+				"Create and update the task list for this conversation. The user sees it next to the chat and follows your progress live. Send the complete list every time.",
+			promptSnippet: `${TODO_TOOL}: plan multi-step work and keep a live checklist the user can follow`,
+			promptGuidelines: GUIDELINES,
+			parameters: Type.Object({
+				todos: Type.Array(
+					Type.Object({
+						content: Type.String({ description: "What to do, in the imperative: \"Run the tests\"" }),
+						status: Type.Union([Type.Literal("pending"), Type.Literal("in_progress"), Type.Literal("completed")]),
+						activeForm: Type.Optional(Type.String({ description: "Present continuous form shown while in progress: \"Running the tests\"" })),
+					}),
+					{ maxItems: 50 },
+				),
+			}),
+			async execute(_id, params) {
+				const todos = parseTodos(params);
+				const bad = problem(todos);
+				if (bad) throw new Error(bad);
+				const mark = { completed: "[x]", in_progress: "[>]", pending: "[ ]" } as const;
+				const lines = todos.map((t, i) => `${i + 1}. ${mark[t.status]} ${t.content}`).join("\n");
+				const left = todos.some((t) => t.status !== "completed");
+				const next = left ? `Carry on with the current item, and call ${TODO_TOOL} again as soon as it is done.` : "All items are completed.";
+				return { content: [{ type: "text", text: `Task list updated (${summarize(todos)}).\n${lines}\n${next}` }], details: { todos } };
+			},
 		});
 	},
 });

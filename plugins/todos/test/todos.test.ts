@@ -39,7 +39,7 @@ describe("problem / summarize", () => {
 describe("todos plugin", () => {
 	it("registers todo_write whose result carries the parsed list", async () => {
 		const tools: { name: string; execute: (...a: unknown[]) => Promise<{ details: { todos: unknown[] }; content: { text: string }[] }> }[] = [];
-		await plugin.setup({ extension: (f: (pi: unknown) => void) => f({ registerTool: (t: never) => tools.push(t) }) } as never);
+		await plugin.setup({ tools: { register: (t: never) => tools.push(t) } } as never);
 		const tool = tools.find((t) => t.name === "todo_write");
 		expect(tool).toBeDefined();
 		const res = await tool!.execute("1", { todos: [{ content: "a", status: "in_progress" }] });

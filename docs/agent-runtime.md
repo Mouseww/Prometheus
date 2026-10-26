@@ -237,7 +237,9 @@ ctx.context.provide(async ({ prompt, cwd, sessionId, runtime, messageType, permi
 - `static` 进 system prompt，内容变了才更新。这样提示缓存不会每轮失效。
 - `turn` 跟随用户消息注入，比如记忆命中、知识库命中、权限模式提示。
 
-内置插件这样迁移：memory 的索引放 `static`、命中项放 `turn`；knowledge 的说明放 `static`、命中放 `turn`；connectors、workbench、技能索引放 `static`；权限、计划、自动、无人值守放 `turn`（模式会中途变化）。
+内置插件这样迁移（P2-c 已完成前四项）：memory 的命中项和索引**全部放 `turn`**（`memory_save` 会在会话中途改变二者，放 `static` 会让提示缓存失效或内容过期）；knowledge 的知识库清单放 `static.sections.knowledge`、connectors 的服务清单放 `static.sections.connectors`、workbench 的用法说明放 `static.guidelines`；技能索引放 `static`；权限、计划、自动、无人值守放 `turn`（模式会中途变化）。knowledge 原先在 `before_agent_start` 里返回 `systemPrompt`，会冻结整段提示、使之后的段落丢失，迁移后改为静态段落，属有意修复。memory、knowledge、connectors、workbench、todos、ssh、automations 的工具都已改用 `ctx.tools.register`。modes、veil、mcp、技能的 `resources_discover`、子代理 runtime、权限闸门仍是 PI 扩展，留待后续阶段。
+
+**顺序约束**：PI 桥接的 `before_agent_start` 处理器必须排在所有旧式（`ctx.extension`）处理器之前（`PluginHost.dynamicExtension()` 和 TUI 的 `extensions` 都先注册它）。modes 的 replace/strict 会把 `event.systemPrompt`（即此前所有处理器累加的结果）冻结为整段替换；若桥接在它之后才写入段落，桥接写入的段落（包括放进 `turn_context` 的 memory）就会在这两种模式下消失。
 
 ### 5.2 各 runtime 落点
 

@@ -77,55 +77,53 @@ export default definePlugin({
 			}
 		});
 
-		ctx.extension((pi) => {
-			pi.registerTool({
-				name: "ssh_hosts",
-				label: "SSH 主机列表",
-				description: "List the SSH servers the user has configured (name, host, user). Use the name with ssh_exec.",
-				promptSnippet: "ssh_hosts: list configured SSH servers",
-				parameters: Type.Object({}),
-				async execute() {
-					const { hosts } = await store.read();
-					if (!hosts.length) return text("尚未配置任何 SSH 主机。");
-					return text(hosts.map((h) => `${h.name}\t${h.user}@${h.host}:${h.port}${h.note ? `\t${h.note}` : ""}`).join("\n"));
-				},
-			});
-			pi.registerTool({
-				name: "ssh_exec",
-				label: "SSH 执行命令",
-				description: "Run a shell command on a configured SSH server and return stdout, stderr and the exit code. Non-interactive only (no TTY, no stdin).",
-				promptSnippet: "ssh_exec: run a command on a configured remote server over SSH",
-				parameters: Type.Object({
-					host: Type.String({ description: "Configured host name or id (see ssh_hosts)" }),
-					command: Type.String({ description: "Shell command to run remotely", maxLength: 20000 }),
-					timeoutSeconds: Type.Optional(Type.Number({ description: "Default 60, max 600" })),
-				}),
-				async execute(_id, p) {
-					const h = await find(p.host);
-					const secs = Math.min(600, Math.max(1, Number(p.timeoutSeconds) || 60));
-					return text(formatResult(await sshExec(h, p.command, secs * 1000)));
-				},
-			});
-			pi.registerTool({
-				name: "ssh_upload",
-				label: "SSH 上传",
-				description: "Copy a local file or folder to a configured SSH server with scp.",
-				promptSnippet: "ssh_upload: copy a local path to a remote server",
-				parameters: Type.Object({ host: Type.String(), localPath: Type.String(), remotePath: Type.String() }),
-				async execute(_id, p) {
-					return text(formatResult(await scpTransfer(await find(p.host), "up", p.localPath, p.remotePath)));
-				},
-			});
-			pi.registerTool({
-				name: "ssh_download",
-				label: "SSH 下载",
-				description: "Copy a file or folder from a configured SSH server to the local machine with scp.",
-				promptSnippet: "ssh_download: copy a remote path to the local machine",
-				parameters: Type.Object({ host: Type.String(), remotePath: Type.String(), localPath: Type.String() }),
-				async execute(_id, p) {
-					return text(formatResult(await scpTransfer(await find(p.host), "down", p.localPath, p.remotePath)));
-				},
-			});
+		ctx.tools.register({
+			name: "ssh_hosts",
+			label: "SSH 主机列表",
+			description: "List the SSH servers the user has configured (name, host, user). Use the name with ssh_exec.",
+			promptSnippet: "ssh_hosts: list configured SSH servers",
+			parameters: Type.Object({}),
+			async execute() {
+				const { hosts } = await store.read();
+				if (!hosts.length) return text("尚未配置任何 SSH 主机。");
+				return text(hosts.map((h) => `${h.name}\t${h.user}@${h.host}:${h.port}${h.note ? `\t${h.note}` : ""}`).join("\n"));
+			},
+		});
+		ctx.tools.register({
+			name: "ssh_exec",
+			label: "SSH 执行命令",
+			description: "Run a shell command on a configured SSH server and return stdout, stderr and the exit code. Non-interactive only (no TTY, no stdin).",
+			promptSnippet: "ssh_exec: run a command on a configured remote server over SSH",
+			parameters: Type.Object({
+				host: Type.String({ description: "Configured host name or id (see ssh_hosts)" }),
+				command: Type.String({ description: "Shell command to run remotely", maxLength: 20000 }),
+				timeoutSeconds: Type.Optional(Type.Number({ description: "Default 60, max 600" })),
+			}),
+			async execute(_id, p) {
+				const h = await find(p.host);
+				const secs = Math.min(600, Math.max(1, Number(p.timeoutSeconds) || 60));
+				return text(formatResult(await sshExec(h, p.command, secs * 1000)));
+			},
+		});
+		ctx.tools.register({
+			name: "ssh_upload",
+			label: "SSH 上传",
+			description: "Copy a local file or folder to a configured SSH server with scp.",
+			promptSnippet: "ssh_upload: copy a local path to a remote server",
+			parameters: Type.Object({ host: Type.String(), localPath: Type.String(), remotePath: Type.String() }),
+			async execute(_id, p) {
+				return text(formatResult(await scpTransfer(await find(p.host), "up", p.localPath, p.remotePath)));
+			},
+		});
+		ctx.tools.register({
+			name: "ssh_download",
+			label: "SSH 下载",
+			description: "Copy a file or folder from a configured SSH server to the local machine with scp.",
+			promptSnippet: "ssh_download: copy a remote path to the local machine",
+			parameters: Type.Object({ host: Type.String(), remotePath: Type.String(), localPath: Type.String() }),
+			async execute(_id, p) {
+				return text(formatResult(await scpTransfer(await find(p.host), "down", p.localPath, p.remotePath)));
+			},
 		});
 	},
 });
