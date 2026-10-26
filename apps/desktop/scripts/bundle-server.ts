@@ -3,8 +3,8 @@
 // so they are inlined here; third-party deps stay external and are installed next to the bundle.
 // --android builds the phone flavour without the native vector DB (it has no Android binding); android-runtime.ts adds Node and packs it.
 import { execSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 
@@ -86,4 +86,25 @@ execSync("npm install --omit=dev --no-audit --no-fund", {
 	stdio: "inherit",
 	env: { ...process.env, ONNXRUNTIME_NODE_INSTALL_CUDA: "skip" },
 });
+if (nodeTarget !== "node22") {
+	// Node 20 has no fs.globSync, and a missing named import fails at link time, so point those imports at the polyfill.
+	const patch = (dir: string) => {
+		for (const ent of readdirSync(dir, { withFileTypes: true })) {
+			const p = join(dir, ent.name);
+			if (ent.isDirectory()) patch(p);
+			else if (ent.name.endsWith(".js")) {
+				const src = readFileSync(p, "utf8");
+				const m = /import \{([^}]*)\} from "node:fs";/.exec(src);
+				if (!m || !/globSync/.test(m[1])) continue;
+				const rest = m[1].split(",").map((x) => x.trim()).filter((x) => x && x !== "globSync");
+				let rel = relative(dirname(p), join(out, "polyfills.js")).split(sep).join("/");
+				if (!rel.startsWith(".")) rel = `./${rel}`;
+				writeFileSync(p, src.replace(m[0], `import { ${rest.join(", ")} } from "node:fs";
+	import { globSync } from "${rel}";`));
+				console.log(`patched globSync import in ${relative(out, p)}`);
+			}
+		}
+	};
+	patch(join(out, "node_modules"));
+}
 console.log(`server bundle -> ${out}`);

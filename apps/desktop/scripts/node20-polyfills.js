@@ -1,8 +1,7 @@
 // APIs newer than Node 20 that the server's dependencies call. The shell loads this with --import, because a missing
-// named export (fs.globSync) fails while modules link, before any code in main.js could patch it.
+// missing named export would fail while modules link, before any code in main.js could patch it.
 import fs from "node:fs";
 import path from "node:path";
-import { syncBuiltinESMExports } from "node:module";
 
 if (!Promise.withResolvers)
 	Promise.withResolvers = function () {
@@ -108,5 +107,7 @@ if (!fs.globSync) {
 		}
 		return [...out];
 	};
-	syncBuiltinESMExports();
 }
+
+// ESM cannot gain a named export on a builtin, so bundle-server.ts rewrites the one dependency that imports it from node:fs to import it from here.
+export const globSync = fs.globSync;
