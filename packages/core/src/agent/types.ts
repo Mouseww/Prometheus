@@ -1,0 +1,171 @@
+// Runtime-neutral agent interfaces (docs/agent-runtime.md §3). Types only: nothing implements or uses them yet.
+// PiRuntime is meant to be the first implementation, lifted from host.ts; the host keeps the session index and RPC.
+import type {
+	ChatMessage,
+	CommandInfo,
+	ImageContent,
+	MessageRef,
+	ModelInfo,
+	ModelRef,
+	PermissionMode,
+	PromptDisposition,
+	RunAccess,
+	SessionEvent,
+	SessionSnapshot,
+	SessionStats,
+	ThinkingLevel,
+	ToolInfo,
+	UsageStats,
+} from "@prometheus/protocol";
+import type { PermissionGate } from "../permission-gate.ts";
+import type { UIBridge } from "../ui-bridge.ts";
+
+/** Which agent drives a session. */
+export type RuntimeKind = "pi" | "claude-code" | "codex";
+
+/** Normalized kinds for runtime-native tools, so existing renderers (diff, bash, todo) apply to every runtime (§4.4). */
+export type CanonicalToolKind = "exec" | "read" | "edit" | "write" | "search" | "fetch" | "todo" | "task" | "plan_exit" | "mcp" | "other";
+
+/** What a runtime can do; unsupported features are greyed out in the UI rather than failing silently. */
+export interface RuntimeCapabilities {
+	/** Inject a message into a running turn. */
+	steering: boolean;
+	followUpQueue: boolean;
+	compaction: "manual+auto" | "auto" | "none";
+	fork: boolean;
+	/** Branching inside the session tree (PI only). */
+	treeNavigation: boolean;
+	thinkingLevels: ThinkingLevel[];
+	images: boolean;
+	/** Tools can be added or removed mid-session. */
+	liveToolListChange: boolean;
+	systemPromptReplace: "live" | "restart" | "none";
+	/** Exact per-component context breakdown (otherwise estimated). */
+	contextBreakdown: boolean;
+	permissionModes: PermissionMode[];
+	nativeTools: CanonicalToolKind[];
+}
+
+/** Result of `AgentRuntime.probe()`: whether the runtime can be offered on this host, and why not. */
+export interface RuntimeHealth {
+	available: boolean;
+	version?: string;
+	/** Only meaningful for native-gateway mode. */
+	loggedIn?: boolean;
+	/** Why the runtime is unavailable (shown to the user). */
+	reason?: string;
+}
+
+/** Where model traffic goes: the runtime's own login/config, or a Prometheus gateway through the local relay (§7). */
+export type GatewayChoice = { mode: "native" } | { mode: "prometheus"; gatewayId: string; model: ModelRef };
+
+/** Identifies a persisted session of a given runtime. */
+export interface SessionRef {
+	runtime: RuntimeKind;
+	/** Prometheus session id. */
+	id: string;
+	/** The runtime's own session / thread id (equal to `id` for PI). */
+	nativeId: string;
+	/** Native transcript file, when the runtime keeps one (PI's session .jsonl). */
+	path?: string;
+}
+
+/** A session found in a runtime's native storage, before Prometheus opens it. */
+export interface NativeSessionInfo {
+	ref: SessionRef;
+	name?: string;
+	cwd: string;
+	/** ISO timestamps. */
+	created: string;
+	modified: string;
+	messageCount: number;
+	firstMessage: string;
+}
+
+/** Everything a runtime needs to start or resume a session. Prometheus-owned services are shared, never duplicated. */
+export interface SessionInit {
+	cwd: string;
+	/** Defaults to the runtime's native gateway. */
+	gateway?: GatewayChoice;
+	/** The single permission gate (§6). */
+	permission: PermissionGate;
+	/** The session's UI bridge for dialogs, statuses and widgets. */
+	ui: UIBridge;
+	/** Set for automations: nothing is asked, whatever this does not cover is refused. */
+	unattended?: RunAccess;
+	// Not yet modelled: the tool bus endpoint (§4) and the context composer (§5).
+}
+
+/** A user turn: text plus optional pictures. */
+export interface UserInput {
+	text: string;
+	images?: ImageContent[];
+}
+
+/** How a prompt is delivered: as a new turn, injected into the running turn, or queued after it. */
+export type PromptDelivery = "send" | "steer" | "followUp";
+
+/** The part of `SessionSnapshot` a runtime owns; the host adds permission mode, pending UI, statuses, widgets and subagents. */
+export type RuntimeSnapshot = Pick<SessionSnapshot, "id" | "name" | "cwd" | "messages" | "model" | "thinkingLevel" | "availableThinkingLevels" | "isStreaming" | "queue">;
+
+/** One agent runtime (PI in-process, Claude Code via its SDK, Codex via app-server). */
+export interface AgentRuntime {
+	readonly kind: RuntimeKind;
+	/** Installed? Which version? Logged in? */
+	probe(): Promise<RuntimeHealth>;
+	listModels(gateway: GatewayChoice): Promise<ModelInfo[]>;
+	create(init: SessionInit): Promise<RuntimeSession>;
+	resume(ref: SessionRef, init: SessionInit): Promise<RuntimeSession>;
+	/** Sessions in the runtime's native storage. */
+	listNative(): Promise<NativeSessionInfo[]>;
+	/** Removes a session's native transcript. */
+	deleteNative(ref: SessionRef): Promise<void>;
+	/** Token and cost totals across native sessions; `days` of 0 means all time. */
+	collectUsage(days: number): Promise<UsageStats>;
+}
+
+/** A live session of some runtime, speaking the wire protocol's events and message shapes. */
+export interface RuntimeSession {
+	/** Prometheus session id. */
+	readonly id: string;
+	/** The runtime's own session / thread id. */
+	readonly nativeId: string;
+	readonly capabilities: RuntimeCapabilities;
+	/** A turn is in progress. */
+	readonly isStreaming: boolean;
+
+	/** Resolves once the runtime accepts the prompt; the run itself streams through `subscribe`. */
+	prompt(input: UserInput, delivery: PromptDelivery): Promise<PromptDisposition>;
+	abort(): Promise<void>;
+	/** Resolves when the current run (if any) has settled. */
+	waitForIdle(): Promise<void>;
+
+	setModel(model: ModelRef): Promise<void>;
+	setThinking(level: ThinkingLevel): Promise<void>;
+	setPermissionMode(mode: PermissionMode): Promise<void>;
+	setName(name: string): void;
+	setAutoCompaction?(enabled: boolean): void;
+	/** Re-read tools and extensions after a plugin install or mode change. */
+	refreshTools(): Promise<void>;
+
+	/** Normalized transcript of the current context. */
+	messages(): ChatMessage[];
+	snapshotState(): RuntimeSnapshot;
+	commands(): CommandInfo[];
+	/** Tools available to the model, with whether each is currently active. */
+	tools(): ToolInfo[];
+	usage(): SessionStats;
+
+	compact?(instructions?: string): Promise<void>;
+	/** Branch back to the user message at or before `ref`; returns its content for resubmission. */
+	rewind?(ref: MessageRef): Promise<UserInput>;
+	/** Drop a message (and the tool results tied to it) from the context. */
+	deleteMessages?(ref: MessageRef): Promise<void>;
+	/** Take a waiting message out of the steer / follow-up queue; `text` guards against a stale index. */
+	unqueue?(kind: "steer" | "followUp", index: number, text: string): UserInput;
+	/** Start a new session from `ref`; forking at a user message returns its text for the editor. */
+	fork?(ref: MessageRef): Promise<SessionRef & { editorText?: string }>;
+
+	subscribe(listener: (event: SessionEvent) => void): () => void;
+	dispose(): Promise<void>;
+}
