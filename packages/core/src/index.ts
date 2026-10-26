@@ -21,4 +21,5 @@ export { type HostListener, PROMETHEUS_VERSION, PrometheusHost, type PrometheusH
 export { type Captured, type CapturedCommand, captureExtension, type CaptureOptions, type Handler as LegacyHookHandler, type HookName } from "./agent/facade/pi-facade.ts";
 export { type ExternalView, PluginHost, type PluginRoute } from "./plugin-host.ts";
 export { bootstrap, type BootstrapOptions, gatewayExtension, type Runtime } from "./runtime.ts";
+export { type BeforeCall, type BusSession, type BusSessionOptions, type BusToolEvent, ToolBus } from "./agent/bus/tool-bus.ts";
 export { UIBridge } from "./ui-bridge.ts";
