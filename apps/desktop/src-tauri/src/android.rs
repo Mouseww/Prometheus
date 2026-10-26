@@ -127,7 +127,7 @@ fn link_tools(data_dir: &Path, native: &Path, guest_ids: &[String]) -> (PathBuf,
 
 /// Links every executable in the rootfs (by name) to the `guestany` dispatcher, in a directory that sits after the system dirs on PATH,
 /// so commands installed with apt inside PRoot work from the host without being listed one by one.
-fn link_guest_bins(data_dir: &Path, rootfs: &Path) -> PathBuf {
+pub fn link_guest_bins(data_dir: &Path, rootfs: &Path) -> PathBuf {
     let dir = data_dir.join("guest-bin");
     let _ = fs::remove_dir_all(&dir);
     let _ = fs::create_dir_all(&dir);
