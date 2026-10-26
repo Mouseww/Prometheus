@@ -95,7 +95,7 @@ if (nodeTarget !== "node22") {
 			else if (ent.name.endsWith(".js")) {
 				const src = readFileSync(p, "utf8");
 				const m = /import \{([^}]*)\} from "node:fs";/.exec(src);
-				if (!m || !/globSync/.test(m[1])) continue;
+				if (!m || !m[1].includes("globSync")) continue;
 				const rest = m[1].split(",").map((x) => x.trim()).filter((x) => x && x !== "globSync");
 				let rel = relative(dirname(p), join(out, "polyfills.js")).split(sep).join("/");
 				if (!rel.startsWith(".")) rel = `./${rel}`;
