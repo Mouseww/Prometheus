@@ -467,6 +467,17 @@ modes 的 replace/strict 会返回完整的 `systemPrompt`。
 9. 模型选择：`model/list` 的默认模型不一定可用（实测 gpt-5.5 在 ChatGPT 登录下不被支持），所以不直接采用其默认值，由用户选择，并以第一次成功的回合为准记录。
 10. 合规（未决）：在 Prometheus 里调用用户本机 CLI 的订阅登录是否符合 Anthropic / OpenAI 条款。在确认之前，“原生登录模式”默认关闭，由用户在设置里自行开启并看到提示；使用 API key 或 Prometheus 网关的路径不受影响。
 
+### 12.4 P4 实施中发现（Claude Code 2.1.310，Prometheus 网关模式）
+
+- **TodoWrite 已被禁用**（CLI 报 "TodoWrite is disabled for this session"，它换成了任务工具）。所以 todo 面板改由总线上的 Prometheus `todo_write` 驱动，不再用原生工具；§4.4 里"todo 用原生"的结论作废。
+- **ExitPlanMode 只在 Claude Code 自己处于 plan 模式时可用**，否则报 "You are not in plan mode"。所以 Prometheus 切到计划模式时，要同步 `query.setPermissionMode("plan")`；批准后切回 `default`。其余权限判断仍然只在 `PreToolUse` 钩子里做。
+- **ExitPlanMode 的 `plan` 字段到不了钩子**（输入里的 plan 被剥掉，Claude Code 把计划放在计划文件里）。批准弹窗退而使用模型在本回合写的文字作为计划；还没在真实模型下验证这种取舍是否够用。
+- `tools/call._meta["claudecode/toolUseId"]` 确实带着 tool_use id，总线事件据此与模型的 `tool_use` 关联，前端看到的是同一个 `toolCallId`。
+- `PreToolUse` 返回 `permissionDecision: "allow"` 后，Claude Code 不会再走自己的询问流程；`canUseTool` 只做兜底。
+- 总线上的拒绝（权限门不放行）以 `isError` 结果返回给模型，不会卡住会话。
+- 会话 resume 用 SDK 的 `resume: <id>`，新会话用 `sessionId: <uuid>`，Prometheus 的会话 id 直接等于 Claude Code 的会话 id。
+- 网关流量钩子（`ctx.hooks.gatewayTraffic`）：veil 的脱敏和还原挂在核心中继上，对所有外部 runtime 生效；PI 仍走 veil 原来的路径。
+
 ## 13. 实施阶段与验收
 
 | 阶段 | 内容 | 验收 |
