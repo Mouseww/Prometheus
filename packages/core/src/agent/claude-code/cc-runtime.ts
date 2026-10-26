@@ -21,15 +21,18 @@ async function sdk() {
 
 export class ClaudeCodeRuntime implements AgentRuntime {
 	readonly kind = "claude-code" as const;
-	private readonly services: RuntimeServices;
+	private readonly getServices: () => Promise<RuntimeServices>;
+	private readonly executable: () => string | undefined;
 
-	constructor(services: RuntimeServices) {
-		this.services = services;
+	/** Services start lazily: listing runtimes must not open the tool bus and relay. */
+	constructor(getServices: () => Promise<RuntimeServices>, executable: () => string | undefined = () => undefined) {
+		this.getServices = getServices;
+		this.executable = executable;
 	}
 
 	async probe(): Promise<RuntimeHealth> {
 		try {
-			const exe = this.services.executable?.();
+			const exe = this.executable();
 			if (exe && !existsSync(exe)) return { available: false, reason: `Claude Code not found at ${exe}` };
 			await sdk();
 			// Login state is read from the credentials file only; probing never sends a request.
@@ -42,7 +45,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
 
 	async listModels(gateway: GatewayChoice): Promise<ModelInfo[]> {
 		if (gateway.mode === "native") return NATIVE_MODELS;
-		const g = this.services.gateway(gateway.gatewayId);
+		const g = (await this.getServices()).gateway(gateway.gatewayId);
 		if (!g || g.format !== "anthropic-messages") return [];
 		return g.models.map((m) => ({
 			provider: g.id,
@@ -62,7 +65,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
 
 	async create(init: SessionInit): Promise<RuntimeSession> {
 		const id = randomUUID();
-		const session = new ClaudeCodeSession({ id, nativeId: id, cwd: init.cwd, resume: false, init, services: this.services, model: this.modelFor(init), history: [] });
+		const session = new ClaudeCodeSession({ id, nativeId: id, cwd: init.cwd, resume: false, init, services: await this.getServices(), model: this.modelFor(init), history: [], executable: this.executable() });
 		init.hooks?.created?.(session);
 		return session;
 	}
@@ -79,10 +82,11 @@ export class ClaudeCodeRuntime implements AgentRuntime {
 			cwd: info.cwd ?? process.cwd(),
 			resume: true,
 			init: { ...init, cwd: info.cwd ?? process.cwd() },
-			services: this.services,
+			services: await this.getServices(),
 			model,
 			history,
 			name: info.customTitle,
+			executable: this.executable(),
 		});
 		init.hooks?.created?.(session);
 		return session;

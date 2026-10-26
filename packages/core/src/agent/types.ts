@@ -1,7 +1,12 @@
 // Runtime-neutral agent interfaces (docs/agent-runtime.md §3). Types only.
 // PiRuntime (./pi/pi-runtime.ts) is the first implementation; the host keeps the session index and RPC.
 import type {
+	CanonicalToolKind,
 	ChatMessage,
+	GatewayChoice,
+	RuntimeCapabilities,
+	RuntimeHealth,
+	RuntimeKind,
 	CommandInfo,
 	ImageContent,
 	MessageRef,
@@ -20,44 +25,7 @@ import type { SubagentRuntime } from "@prometheus/subagents";
 import type { PermissionGate } from "../permission-gate.ts";
 import type { UIBridge } from "../ui-bridge.ts";
 
-/** Which agent drives a session. */
-export type RuntimeKind = "pi" | "claude-code" | "codex";
-
-/** Normalized kinds for runtime-native tools, so existing renderers (diff, bash, todo) apply to every runtime (§4.4). */
-export type CanonicalToolKind = "exec" | "read" | "edit" | "write" | "search" | "fetch" | "todo" | "task" | "plan_exit" | "mcp" | "other";
-
-/** What a runtime can do; unsupported features are greyed out in the UI rather than failing silently. */
-export interface RuntimeCapabilities {
-	/** Inject a message into a running turn. */
-	steering: boolean;
-	followUpQueue: boolean;
-	compaction: "manual+auto" | "auto" | "none";
-	fork: boolean;
-	/** Branching inside the session tree (PI only). */
-	treeNavigation: boolean;
-	thinkingLevels: ThinkingLevel[];
-	images: boolean;
-	/** Tools can be added or removed mid-session. */
-	liveToolListChange: boolean;
-	systemPromptReplace: "live" | "restart" | "none";
-	/** Exact per-component context breakdown (otherwise estimated). */
-	contextBreakdown: boolean;
-	permissionModes: PermissionMode[];
-	nativeTools: CanonicalToolKind[];
-}
-
-/** Result of `AgentRuntime.probe()`: whether the runtime can be offered on this host, and why not. */
-export interface RuntimeHealth {
-	available: boolean;
-	version?: string;
-	/** Only meaningful for native-gateway mode. */
-	loggedIn?: boolean;
-	/** Why the runtime is unavailable (shown to the user). */
-	reason?: string;
-}
-
-/** Where model traffic goes: the runtime's own login/config, or a Prometheus gateway through the local relay (§7). */
-export type GatewayChoice = { mode: "native" } | { mode: "prometheus"; gatewayId: string; model: ModelRef };
+export type { CanonicalToolKind, GatewayChoice, RuntimeCapabilities, RuntimeHealth, RuntimeKind };
 
 /** Identifies a persisted session of a given runtime. */
 export interface SessionRef {
@@ -90,8 +58,6 @@ export interface RuntimeServices {
 	plugins: import("../plugin-host.ts").PluginHost;
 	/** A configured gateway by id (read per request by the relay, so edits apply to running sessions). */
 	gateway(id: string): import("@prometheus/protocol").GatewayConfig | undefined;
-	/** Absolute path of the runtime's CLI when the user wants a specific install; otherwise the bundled one. */
-	executable?(): string | undefined;
 	/** Prometheus data directory. */
 	dataDir: string;
 	log: { info(m: string): void; warn(m: string): void };

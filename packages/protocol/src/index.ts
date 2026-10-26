@@ -140,6 +140,49 @@ export interface ModelInfo extends ModelRef {
 	thinkingLevels?: ThinkingLevel[];
 }
 
+// ---------- Agent runtimes (docs/agent-runtime.md) ----------
+
+/** Which agent drives a session. */
+export type RuntimeKind = "pi" | "claude-code" | "codex";
+export const RUNTIME_KINDS: readonly RuntimeKind[] = ["pi", "claude-code", "codex"];
+
+/** Normalized kinds for runtime-native tools, so existing renderers (diff, bash, todo) apply to every runtime. */
+export type CanonicalToolKind = "exec" | "read" | "edit" | "write" | "search" | "fetch" | "todo" | "task" | "plan_exit" | "mcp" | "other";
+
+/** What a runtime can do; unsupported features are greyed out in the UI rather than failing silently. */
+export interface RuntimeCapabilities {
+	steering: boolean;
+	followUpQueue: boolean;
+	compaction: "manual+auto" | "auto" | "none";
+	fork: boolean;
+	treeNavigation: boolean;
+	thinkingLevels: ThinkingLevel[];
+	images: boolean;
+	liveToolListChange: boolean;
+	systemPromptReplace: "live" | "restart" | "none";
+	contextBreakdown: boolean;
+	permissionModes: PermissionMode[];
+	nativeTools: CanonicalToolKind[];
+}
+
+/** Whether a runtime can be offered on this host, and why not. */
+export interface RuntimeHealth {
+	available: boolean;
+	version?: string;
+	/** Only meaningful for native-gateway mode. */
+	loggedIn?: boolean;
+	reason?: string;
+}
+
+/** Where model traffic goes: the runtime's own login/config, or a Prometheus gateway through the local relay. */
+export type GatewayChoice = { mode: "native" } | { mode: "prometheus"; gatewayId: string; model: ModelRef };
+
+export interface RuntimeInfo {
+	kind: RuntimeKind;
+	health: RuntimeHealth;
+	capabilities: RuntimeCapabilities;
+}
+
 export interface SessionSummary {
 	id: string;
 	name?: string;
@@ -154,6 +197,8 @@ export interface SessionSummary {
 	archived: boolean;
 	/** Workspace (project directory) this session belongs to. */
 	workspaceId: string;
+	/** Which agent runtime drives it; absent means PI. */
+	runtime?: RuntimeKind;
 }
 
 /** A project directory; every session whose cwd resolves to `path` is grouped under it. */
@@ -277,6 +322,8 @@ export interface SessionSnapshot {
 	statuses: Record<string, string>;
 	widgets: Record<string, { lines: string[]; placement: string }>;
 	subagents: SubagentRun[];
+	runtime: RuntimeKind;
+	capabilities: RuntimeCapabilities;
 }
 
 /** Estimated tokens (chars/4) per context component; the sum approximates, not equals, `contextTokens`. */
@@ -837,7 +884,9 @@ export interface RpcMethods {
 	"runtime.env": { params: RuntimeEnv; result: null };
 
 	"session.list": { params: Record<string, never>; result: SessionSummary[] };
-	"session.create": { params: { cwd?: string; name?: string }; result: SessionSnapshot };
+	"session.create": { params: { cwd?: string; name?: string; runtime?: RuntimeKind; gateway?: GatewayChoice }; result: SessionSnapshot };
+	"runtime.list": { params: Record<string, never>; result: RuntimeInfo[] };
+	"runtime.models": { params: { runtime: RuntimeKind; gateway: GatewayChoice }; result: ModelInfo[] };
 	"session.open": { params: { sessionId: string }; result: SessionSnapshot };
 	"session.rename": { params: { sessionId: string; name: string }; result: null };
 	"session.close": { params: { sessionId: string }; result: null };

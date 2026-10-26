@@ -75,6 +75,8 @@ describe("PrometheusHost RPC (characterization)", () => {
 				"name",
 				"pendingUI",
 				"permissionMode",
+				"capabilities",
+				"runtime",
 				"queue",
 				"statuses",
 				"subagents",

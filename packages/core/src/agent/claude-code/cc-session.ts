@@ -43,6 +43,8 @@ export interface CcSessionOptions {
 	model: ModelRef;
 	history: ChatMessage[];
 	name?: string;
+	/** Absolute path of a specific Claude Code install; otherwise the SDK's bundled one. */
+	executable?: string;
 }
 
 export class ClaudeCodeSession implements RuntimeSession {
@@ -72,6 +74,7 @@ export class ClaudeCodeSession implements RuntimeSession {
 	private readonly mode: () => PermissionMode;
 	private pendingError: string | undefined;
 	private readonly initOpts: SessionInit;
+	private readonly executable: string | undefined;
 
 	constructor(opts: CcSessionOptions) {
 		this.id = opts.id;
@@ -79,6 +82,7 @@ export class ClaudeCodeSession implements RuntimeSession {
 		this.cwd = opts.cwd;
 		this.services = opts.services;
 		this.initOpts = opts.init;
+		this.executable = opts.executable;
 		this.gate = opts.init.permission;
 		this.hooks = opts.init.hooks;
 		this.model = opts.model;
@@ -176,8 +180,7 @@ export class ClaudeCodeSession implements RuntimeSession {
 			},
 			stderr: (data: string) => this.services.log.warn(`[claude-code ${this.id}] ${data.trimEnd()}`),
 		};
-		const exe = services.executable?.();
-		if (exe) options.pathToClaudeCodeExecutable = exe;
+		if (this.executable) options.pathToClaudeCodeExecutable = this.executable;
 
 		const gateway = this.initOpts.gateway;
 		if (gateway?.mode === "prometheus") {
@@ -342,6 +345,7 @@ export class ClaudeCodeSession implements RuntimeSession {
 	setName(name: string): void {
 		this.name = name;
 		this.emit({ type: "session_info_changed", name });
+		this.hooks?.sessionsChanged?.();
 	}
 	async refreshTools(): Promise<void> {
 		// The bus reads the tool list per request; Claude Code re-lists on its own schedule.

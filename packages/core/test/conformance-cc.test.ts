@@ -80,7 +80,7 @@ beforeAll(async () => {
 		dataDir: root,
 		log: { info: () => {}, warn: () => {} },
 	};
-	runtime = new ClaudeCodeRuntime(services);
+	runtime = new ClaudeCodeRuntime(async () => services);
 }, 60_000);
 
 afterAll(async () => {
