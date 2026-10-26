@@ -29,6 +29,8 @@ import {
 } from "@prometheus/protocol";
 import { ToolBus } from "./agent/bus/tool-bus.ts";
 import { ClaudeCodeRuntime } from "./agent/claude-code/cc-runtime.ts";
+import { CodexRuntime } from "./agent/codex/codex-runtime.ts";
+import { CODEX_CAPABILITIES } from "./agent/codex/codex-session.ts";
 import { CC_CAPABILITIES } from "./agent/claude-code/cc-session.ts";
 import { PiRuntime } from "./agent/pi/pi-runtime.ts";
 import { PI_CAPABILITIES } from "./agent/pi/pi-session.ts";
@@ -174,8 +176,7 @@ export class PrometheusHost {
 		if (kind === "pi") return this.pi;
 		let rt = this.externalRuntimes.get(kind);
 		if (rt) return rt;
-		if (kind !== "claude-code") throw new AppError("generic");
-		rt = new ClaudeCodeRuntime(() => this.servicesFor());
+		rt = kind === "claude-code" ? new ClaudeCodeRuntime(() => this.servicesFor()) : new CodexRuntime(() => this.servicesFor());
 		this.externalRuntimes.set(kind, rt);
 		return rt;
 	}
@@ -293,7 +294,7 @@ export class PrometheusHost {
 				const entry = this.index.get(sessionId);
 				if (entry && entry.runtime !== "pi") {
 					const rt = await this.runtimeFor(entry.runtime);
-					return this.attach((init) => rt.resume({ runtime: entry.runtime, id: entry.id, nativeId: entry.nativeId }, init), entry.gateway);
+					return this.attach((init) => rt.resume({ runtime: entry.runtime, id: entry.id, nativeId: entry.nativeId, cwd: entry.cwd, name: entry.name }, init), entry.gateway);
 				}
 				const path = await this.resolvePath(sessionId);
 				return this.attach((init) => this.pi.resume({ runtime: "pi", id: sessionId, nativeId: sessionId, path }, init));
@@ -704,6 +705,8 @@ export class PrometheusHost {
 			const out: RuntimeInfo[] = [{ kind: "pi", health: await this.pi.probe(), capabilities: PI_CAPABILITIES }];
 			const cc = await this.runtimeFor("claude-code").catch(() => undefined);
 			out.push({ kind: "claude-code", health: (await cc?.probe()) ?? { available: false, reason: "unavailable" }, capabilities: CC_CAPABILITIES });
+			const codex = await this.runtimeFor("codex").catch(() => undefined);
+			out.push({ kind: "codex", health: (await codex?.probe()) ?? { available: false, reason: "unavailable" }, capabilities: CODEX_CAPABILITIES });
 			return out;
 		},
 		"runtime.models": async ({ runtime: kind, gateway }) => (await this.runtimeFor(kind)).listModels(gateway),

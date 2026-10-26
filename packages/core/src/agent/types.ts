@@ -36,6 +36,9 @@ export interface SessionRef {
 	nativeId: string;
 	/** Native transcript file, when the runtime keeps one (PI's session .jsonl). */
 	path?: string;
+	/** Working directory and name from the Prometheus session index, for runtimes that cannot look them up themselves. */
+	cwd?: string;
+	name?: string;
 }
 
 /** A session found in a runtime's native storage, before Prometheus opens it. */
