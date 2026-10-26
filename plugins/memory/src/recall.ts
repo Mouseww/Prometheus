@@ -68,6 +68,31 @@ export function renderMemorySection(entries: MemoryEntry[]): string {
 	].join("\n");
 }
 
+const INDEX_BUDGET = 800;
+const INDEX_PREVIEW = 50;
+
+/** Always-on compact index so the agent knows memories exist and can query them. */
+export function renderMemoryIndex(visible: MemoryEntry[], injectedIds: Set<string>): string {
+	const rest = visible.filter((e) => !injectedIds.has(e.id));
+	const user = visible.filter((e) => e.scope === "user").length;
+	const project = visible.length - user;
+	const lines = [
+		`Memory store: ${user} global, ${project} project entries. Call memory_search when you need details about the user's preferences, environment or this project, or when unsure.`,
+	];
+	let used = 0;
+	let shown = 0;
+	for (const e of [...rest].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))) {
+		const flat = e.content.replace(/\s+/g, " ");
+		const line = `- [${e.id}]${e.scope === "project" ? " (project)" : ""} ${flat.length > INDEX_PREVIEW ? `${flat.slice(0, INDEX_PREVIEW)}…` : flat}`;
+		if (used + line.length > INDEX_BUDGET) break;
+		lines.push(line);
+		used += line.length;
+		shown++;
+	}
+	if (shown < rest.length) lines.push(`(+${rest.length - shown} more, use memory_search)`);
+	return lines.join("\n");
+}
+
 export function cleanTags(value: unknown): string[] {
 	if (!Array.isArray(value)) return [];
 	return [...new Set(value.filter((t): t is string => typeof t === "string").map((t) => t.trim().slice(0, 32)).filter(Boolean))].slice(0, 12);

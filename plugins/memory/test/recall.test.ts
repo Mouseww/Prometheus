@@ -1,6 +1,6 @@
 import type { MemoryEntry } from "@prometheus/protocol";
 import { describe, expect, it } from "vitest";
-import { cleanTags, normalizeProject, renderMemorySection, search, selectForPrompt, tokenize, visibleTo } from "../src/recall.ts";
+import { cleanTags, normalizeProject, renderMemoryIndex, renderMemorySection, search, selectForPrompt, tokenize, visibleTo } from "../src/recall.ts";
 
 const entry = (id: string, content: string, extra: Partial<MemoryEntry> = {}): MemoryEntry => ({
 	id,
@@ -45,6 +45,15 @@ describe("memory recall", () => {
 		const out = renderMemorySection([entry("a", "line1\nline2")]);
 		expect(out).not.toContain("<memory>");
 		expect(out).toContain("[a] line1 line2");
+	});
+
+	it("renders a compact index excluding injected entries", () => {
+		const entries = [entry("a", "x".repeat(100)), entry("b", "proj", { scope: "project", project: "/p" })];
+		const out = renderMemoryIndex(entries, new Set(["b"]));
+		expect(out).toContain("1 global, 1 project");
+		expect(out).toContain("[a]");
+		expect(out).not.toContain("[b]");
+		expect(out).not.toContain("x".repeat(60));
 	});
 
 	it("cleans tags", () => {

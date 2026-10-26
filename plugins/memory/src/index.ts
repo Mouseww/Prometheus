@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { createJsonStore, definePlugin } from "@prometheus/plugin-sdk";
 import type { MemoryEntry, MemoryScope } from "@prometheus/protocol";
-import { cleanTags, MAX_CONTENT, normalizeProject, renderMemorySection, search, selectForPrompt, visibleTo } from "./recall.ts";
+import { cleanTags, MAX_CONTENT, normalizeProject, renderMemoryIndex, renderMemorySection, search, selectForPrompt, visibleTo } from "./recall.ts";
 
 interface State {
 	entries: MemoryEntry[];
@@ -107,10 +107,14 @@ export default definePlugin({
 				const state = await store.read();
 				if (!state.autoInject) return;
 				const prompt = event.messageType === "user" ? event.prompt : "";
-				const picked = selectForPrompt(visibleTo(state.entries, eventCtx.cwd), prompt);
-				if (!picked.length) return;
+				const visible = visibleTo(state.entries, eventCtx.cwd);
+				if (!visible.length) return;
+				const picked = selectForPrompt(visible, prompt);
+				const parts: string[] = [];
+				if (picked.length) parts.push(renderMemorySection(picked));
+				parts.push(renderMemoryIndex(visible, new Set(picked.map((e) => e.id))));
 				// A returned `systemPrompt` freezes the whole prompt and would hide later sections such as auto mode.
-				event.systemPromptOptions.sections.memory = renderMemorySection(picked);
+				event.systemPromptOptions.sections.memory = parts.join("\n\n");
 			});
 		});
 
