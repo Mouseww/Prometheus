@@ -1021,7 +1021,8 @@ fn run_installer(
         #[cfg(target_os = "android")]
         {
             let rootfs = rootfs_dir(root);
-            let in_guest = format!("/tmp/{}-installer", def.id);
+            // rustup decides its mode from argv[0]: anything but `rustup-init*` is treated as a proxy.
+            let in_guest = if def.id == "rust" { "/tmp/rustup-init".to_string() } else { format!("/tmp/{}-installer", def.id) };
             let host_copy = rootfs.join(in_guest.trim_start_matches('/'));
             fs::copy(installer, &host_copy).map_err(|e| format!("无法复制安装器：{e}"))?;
             set_mode(&host_copy, 0o755, false);
@@ -1040,7 +1041,12 @@ fn run_installer(
             return Err("此平台不支持在 guest 里安装".into());
         }
     }
-    let copy = dest.join(if cfg!(windows) { "installer.exe" } else { "installer" });
+    let copy = dest.join(match (def.id.as_str() == "rust", cfg!(windows)) {
+        (true, true) => "rustup-init.exe",
+        (true, false) => "rustup-init",
+        (false, true) => "installer.exe",
+        (false, false) => "installer",
+    });
     fs::copy(installer, &copy).map_err(|e| format!("无法复制安装器：{e}"))?;
     set_mode(&copy, 0o755, false);
     let mut cmd = std::process::Command::new(&copy);
