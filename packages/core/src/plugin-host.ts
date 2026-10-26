@@ -7,6 +7,8 @@ import type {
 	AgentRunOptions,
 	AgentRunResult,
 	ContextProvider,
+	GatewayTrafficHooks,
+	ResponseRewriter,
 	ContextRequest,
 	ExtensionFactory,
 	HostKind,
@@ -104,6 +106,7 @@ interface Registration {
 	factories: ExtensionFactory[];
 	tools: PluginTool[];
 	providers: ContextProvider[];
+	traffic: GatewayTrafficHooks[];
 	storeIds: string[];
 	rpcKeys: string[];
 	routes: PluginRoute[];
@@ -221,6 +224,43 @@ export class PluginHost {
 	}
 
 	/** Runtime-neutral tools of every active plugin, in plugin order. */
+	/**
+	 * The gateway-relay hooks of every active plugin as one set: requests pass through the plugins in order,
+	 * responses through their rewriters in reverse order (so the last plugin to alter a request is the first to undo it).
+	 */
+	trafficHooks(): GatewayTrafficHooks {
+		const active = () => this.entries.flatMap((e) => (e.reg?.traffic ?? []).map((hooks) => ({ plugin: e.info.name, hooks })));
+		return {
+			request: async (info, body) => {
+				let out = body;
+				for (const { hooks } of active()) if (hooks.request) out = await hooks.request(info, out);
+				return out;
+			},
+			response: (info, head) => {
+				const rewriters: ResponseRewriter[] = [];
+				for (const { plugin, hooks } of active()) {
+					try {
+						const r = hooks.response?.(info, head);
+						if (r) rewriters.push(r);
+					} catch (err) {
+						console.warn(`[plugin:${plugin}] gateway response hook failed: ${err instanceof Error ? err.message : String(err)}`);
+					}
+				}
+				if (!rewriters.length) return undefined;
+				const chain = [...rewriters].reverse();
+				return {
+					write: (text) => chain.reduce((t, r) => (t ? r.write(t) : t), text),
+					end: () => {
+						// Flushing one rewriter feeds the ones after it.
+						let carry = "";
+						for (const r of chain) carry = r.write(carry) + r.end();
+						return carry;
+					},
+				};
+			},
+		};
+	}
+
 	get tools(): { plugin: string; tool: PluginTool }[] {
 		return this.entries.flatMap((e) => (e.reg?.tools ?? []).map((tool) => ({ plugin: e.info.name, tool })));
 	}
@@ -437,7 +477,7 @@ export class PluginHost {
 		info.status = "loaded";
 		info.error = undefined;
 		info.panels = [];
-		const reg: Registration = { factories: [], tools: [], providers: [], storeIds: [], rpcKeys: [], routes: [], disposers: [] };
+		const reg: Registration = { factories: [], tools: [], providers: [], traffic: [], storeIds: [], rpcKeys: [], routes: [], disposers: [] };
 		entry.reg = reg;
 		try {
 			const plugin = await entry.fetch();
@@ -665,6 +705,11 @@ export class PluginHost {
 			context: {
 				provide: (provider) => {
 					reg.providers.push(provider);
+				},
+			},
+			hooks: {
+				gatewayTraffic: (hooks) => {
+					reg.traffic.push(hooks);
 				},
 			},
 			knowledgeStore: (id, factory) => {

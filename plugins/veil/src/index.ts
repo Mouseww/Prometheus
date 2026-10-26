@@ -14,7 +14,7 @@ import { ConfigFile, type VeilConfig } from "./config.ts";
 import { RuleSet, builtinRules, validateRule, type Rule } from "./engine/rules.ts";
 import { MappingStore } from "./engine/store.ts";
 import { desensitizeJson, desensitizeString, parseJson } from "./engine/walk.ts";
-import { VeilRelay } from "./proxy/relay.ts";
+import { createRestorer, redactBuffer, VeilRelay } from "./proxy/relay.ts";
 import { parseProxyUrl, type ProxySettings } from "./proxy/transport.ts";
 
 /** What the native view needs to draw itself. Never includes secrets. */
@@ -173,6 +173,20 @@ export default definePlugin({
 			}
 		};
 
+
+		// Model traffic of the external agent runtimes goes through the core gateway relay; the same rules apply there.
+		ctx.hooks.gatewayTraffic({
+			request: (info, body) => {
+				if (!configFile.get().redaction) return body;
+				try {
+					return redactBuffer(body, info.contentType, currentRules(), store);
+				} catch (err) {
+					ctx.log.error(`脱敏失败，已拦截本次请求：${err instanceof Error ? err.message : String(err)}`);
+					throw new Error("面罩：脱敏失败，已拦截本次请求（未发往上游）");
+				}
+			},
+			response: (_info, head) => (configFile.get().redaction ? createRestorer(head.contentType, store) : undefined),
+		});
 
 		ctx.extension((pi) => {
 			syncGatewayRoutes(pi as unknown as { registerProvider: (name: string, config: Record<string, unknown>) => void });

@@ -40,7 +40,7 @@ export interface GatewayRelayOptions {
 	/** Rewrite the request body before it is forwarded (veil desensitization). Throwing fails the request with 502. */
 	onRequest?: (info: RelayRequestInfo, body: Buffer) => Buffer | Promise<Buffer>;
 	/** Restore the response; return undefined to pass it through byte-for-byte. */
-	onResponse?: (info: RelayRequestInfo) => ResponseRewriter | undefined;
+	onResponse?: (info: RelayRequestInfo, response: { status: number; contentType: string }) => ResponseRewriter | undefined;
 	/** Upstream proxy agent (the veil exit proxy). */
 	agent?: (secure: boolean) => Agent | undefined;
 	/** Called once per finished exchange, for usage and the activity panel. */
@@ -175,7 +175,6 @@ export class GatewayRelay {
 		// Compressed bodies would hide text from the rewriter.
 		if (this.options.onResponse) headers["accept-encoding"] = "identity";
 
-		const rewriter = this.options.onResponse?.(info);
 		const upstream = `${target.protocol}//${target.host}`;
 		const send = secure ? httpsRequest : httpRequest;
 		const upstreamReq = send(
@@ -191,6 +190,7 @@ export class GatewayRelay {
 			},
 			(upstreamRes) => {
 				const status = upstreamRes.statusCode ?? 502;
+				const rewriter = this.options.onResponse?.(info, { status, contentType: String(upstreamRes.headers["content-type"] ?? "") });
 				const outHeaders: Record<string, string | string[]> = {};
 				for (const [name, value] of Object.entries(upstreamRes.headers)) {
 					if (value === undefined || HOP_BY_HOP.has(name.toLowerCase())) continue;

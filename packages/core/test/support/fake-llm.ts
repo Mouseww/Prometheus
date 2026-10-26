@@ -7,7 +7,8 @@ export type FakeBlock = { type: "text"; text: string } | { type: "tool_use"; nam
 
 /** One assistant response. `delayMs` slows the stream so tests can abort mid-way; `status` simulates an upstream error. */
 export interface FakeTurn {
-	blocks?: FakeBlock[];
+	/** Fixed blocks, or computed from the request (to echo what the model was sent). */
+	blocks?: FakeBlock[] | ((req: RecordedRequest) => FakeBlock[]);
 	status?: number;
 	delayMs?: number;
 }
@@ -78,7 +79,8 @@ export class FakeLlm {
 		res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
 		const send = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 		const wait = () => (turn.delayMs ? new Promise((r) => setTimeout(r, turn.delayMs)) : undefined);
-		const blocks = turn.blocks ?? [{ type: "text", text: "ok" }];
+		const recorded = this.requests.at(-1)!;
+		const blocks = (typeof turn.blocks === "function" ? turn.blocks(recorded) : turn.blocks) ?? [{ type: "text" as const, text: "ok" }];
 		send("message_start", {
 			type: "message_start",
 			message: { id: `msg_${this.requests.length}`, type: "message", role: "assistant", model: body.model ?? "fake", content: [], stop_reason: null, usage: { input_tokens: 10, output_tokens: 1 } },

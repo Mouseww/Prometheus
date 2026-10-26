@@ -5,6 +5,9 @@ import { join } from "node:path";
 import type { SessionEvent } from "@prometheus/protocol";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrometheusHost } from "../src/host.ts";
+import memory from "../../../plugins/memory/src/index.ts";
+import veil from "../../../plugins/veil/src/index.ts";
+import todos from "../../../plugins/todos/src/index.ts";
 import { FakeLlm } from "./support/fake-llm.ts";
 
 const AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
@@ -34,6 +37,7 @@ beforeAll(async () => {
 	host = await PrometheusHost.create({
 		dataDir: join(root, "data"),
 		cwd,
+		builtinPlugins: [memory, todos, veil],
 		listener: {
 			event: (sessionId, event) => void events.push({ sessionId, event }),
 			uiRequest: () => {},
@@ -104,5 +108,46 @@ describe("Claude Code through the host", { timeout: 120_000 }, () => {
 		await host.call("session.delete", { sessionId: snap.id });
 		list = await host.call("session.list", {});
 		expect(list.find((s) => s.id === snap.id)).toBeUndefined();
+	});
+
+	it("real plugins: a saved memory reaches the next turn, and todo_write feeds the todo panel", async () => {
+		const gateway = { mode: "prometheus" as const, gatewayId: "fake", model: { provider: "fake", id: "fake-model" } };
+		const snap = await host.call("session.create", { cwd, runtime: "claude-code", gateway });
+		await host.call("permission.set", { sessionId: snap.id, mode: "bypassPermissions" });
+		events = [];
+		llm.enqueue(
+			{ blocks: [{ type: "tool_use", name: "mcp__prometheus__memory_save", input: { content: "the user prefers tabs over spaces" } }] },
+			{ blocks: [{ type: "tool_use", name: "mcp__prometheus__todo_write", input: { todos: [{ content: "write it", status: "in_progress", activeForm: "Writing it" }] } }] },
+			{ blocks: [{ type: "text", text: "saved" }] },
+			{ blocks: [{ type: "text", text: "noted" }] },
+		);
+		await host.call("chat.prompt", { sessionId: snap.id, text: "remember my style" });
+		await settled(snap.id);
+		const names = events.map((e) => e.event).filter((e) => e.type === "tool_execution_end").map((e: any) => e.toolName);
+		expect(names).toEqual(["memory_save", "todo_write"]);
+		expect(events.filter((e) => e.event.type === "tool_execution_end" && (e.event as any).isError).map((e) => JSON.stringify(e.event)).join(" | ")).toBe("");
+
+		events = [];
+		await host.call("chat.prompt", { sessionId: snap.id, text: "tabs or spaces for formatting?" });
+		await settled(snap.id);
+		const last = llm.requests.at(-1)!;
+		expect(JSON.stringify(last.body.messages)).toContain("prefers tabs over spaces");
+		await host.call("session.delete", { sessionId: snap.id });
+	});
+
+	it("veil: secrets are replaced before they reach the model and restored in the reply", async () => {
+		const gateway = { mode: "prometheus" as const, gatewayId: "fake", model: { provider: "fake", id: "fake-model" } };
+		const snap = await host.call("session.create", { cwd, runtime: "claude-code", gateway });
+		events = [];
+		const secret = ["138", "0013", "8000"].join(""); // built at runtime so the literal is not itself a phone number
+		// the model repeats whatever it was sent
+		llm.enqueue({ blocks: (req) => [{ type: "text", text: `you said: ${req.lastUser}` }] });
+		await host.call("chat.prompt", { sessionId: snap.id, text: `call me on ${secret}` });
+		await settled(snap.id);
+		const sent = llm.requests.find((r) => r.lastUser.includes("call me on"))!;
+		expect(sent.lastUser).not.toContain(secret);
+		const reply = JSON.stringify(events.map((e) => e.event).filter((e) => e.type === "message_end").at(-1));
+		expect(reply).toContain(secret);
+		await host.call("session.delete", { sessionId: snap.id });
 	});
 });

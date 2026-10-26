@@ -199,6 +199,33 @@ export interface ContextContribution {
 	turn?: string;
 }
 
+/** Where a gateway request comes from, as the relay sees it. */
+export interface GatewayTrafficInfo {
+	sessionId: string;
+	gatewayId: string;
+	method: string;
+	path: string;
+	contentType: string;
+}
+
+/** Rewrites response text as it streams. `end` flushes anything held back. */
+export interface ResponseRewriter {
+	write(text: string): string;
+	end(): string;
+}
+
+/**
+ * Hooks on model traffic that goes through the gateway relay, so they apply to every agent runtime
+ * (Claude Code, Codex and, when routed through the relay, PI). Veil uses them to swap secrets for placeholders
+ * on the way out and restore them on the way back.
+ */
+export interface GatewayTrafficHooks {
+	/** Rewrite the request body. Throwing refuses the request (it is not sent upstream). */
+	request?(info: GatewayTrafficInfo, body: Buffer): Buffer | Promise<Buffer>;
+	/** One rewriter per response; return undefined to leave it untouched. */
+	response?(info: GatewayTrafficInfo, head: { status: number; contentType: string }): ResponseRewriter | undefined;
+}
+
 export type ContextProvider = (req: ContextRequest) => ContextContribution | undefined | Promise<ContextContribution | undefined>;
 
 export interface PluginContext {
@@ -225,6 +252,8 @@ export interface PluginContext {
 	tools: { register(tool: PluginTool): void };
 	/** Runtime-neutral prompt contributions, asked before each run. */
 	context: { provide(provider: ContextProvider): void };
+	/** Hooks on gateway-relay traffic (see GatewayTrafficHooks). Removed when the plugin is disabled. */
+	hooks: { gatewayTraffic(hooks: GatewayTrafficHooks): void };
 	/** Register a knowledge store backend under an id (e.g. "qdrant"). */
 	knowledgeStore(id: string, factory: KnowledgeStoreFactory): void;
 	/** Mount an HTTP route at /plugins/<name><path>. Server host only. */

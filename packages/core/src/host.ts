@@ -150,7 +150,12 @@ export class PrometheusHost {
 	private servicesFor(): Promise<RuntimeServices> {
 		this.externalServices ??= (async () => {
 			const bus = new ToolBus();
-			const relay = new GatewayRelay();
+			const traffic = this.runtime.plugins.trafficHooks();
+			const relay = new GatewayRelay({
+				onRequest: (info, body) => (traffic.request ? traffic.request(info, body) : body),
+				onResponse: (info, head) => traffic.response?.(info, head),
+				log: { warn: (m) => console.warn(m) },
+			});
 			await bus.start();
 			await relay.start();
 			return {

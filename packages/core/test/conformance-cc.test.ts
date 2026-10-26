@@ -164,7 +164,7 @@ describe("conformance harness on Claude Code", { timeout: 90_000 }, () => {
 	});
 
 	it("a native tool is normalized (bash) and goes through the permission gate", async () => {
-		gate.mode = "default";
+		await session.setPermissionMode("default");
 		llm.enqueue({ blocks: [{ type: "tool_use", name: "Bash", input: { command: "echo from-bash > out.txt", description: "write" } }] }, { blocks: [{ type: "text", text: "ok" }] });
 		await session.prompt({ text: "run bash" }, "send");
 		await settle();
@@ -205,5 +205,37 @@ describe("conformance harness on Claude Code", { timeout: 90_000 }, () => {
 		await session.prompt({ text: "again" }, "send");
 		await settle();
 		expect(JSON.stringify(find("message_end").at(-1)?.message)).toContain("back again");
+	});
+
+	it("plan mode: writes are refused, ExitPlanMode asks for approval and switches mode", async () => {
+		await session.setPermissionMode("plan");
+		gate.ask = async (p: any) => {
+			asked.push(p);
+			return p.kind === "plan" ? "acceptEdits" : "allow";
+		};
+		llm.enqueue(
+			{ blocks: [{ type: "text", text: "1. do the thing" }, { type: "tool_use", name: "Write", input: { file_path: join(cwd, "plan-blocked.txt"), content: "x" } }] },
+			{ blocks: [{ type: "tool_use", name: "ExitPlanMode", input: {} }] },
+			{ blocks: [{ type: "text", text: "planned" }] },
+		);
+		await session.prompt({ text: "plan something" }, "send");
+		await settle();
+		const ends = find("tool_execution_end");
+		expect(ends[0]?.isError, JSON.stringify([asked, ends.map((e) => [e.toolName, e.isError, e.result]), events.map((e) => e.type)])).toBe(true);
+		expect(asked.some((p: any) => p.kind === "plan" && p.plan.includes("do the thing")), JSON.stringify([asked, ends.map((e) => [e.toolName, e.isError, e.result])])).toBe(true);
+		expect(gate.mode).toBe("acceptEdits");
+		await session.setPermissionMode("default");
+	});
+
+	it("a message sent while a turn runs is merged into it (steering)", async () => {
+		llm.enqueue({ blocks: [{ type: "text", text: "working on it for a while" }], delayMs: 600 }, { blocks: [{ type: "text", text: "and the steer was seen" }] });
+		await session.prompt({ text: "start long" }, "send");
+		await new Promise((r) => setTimeout(r, 300));
+		const disposition = await session.prompt({ text: "also include PINEAPPLE" }, "steer");
+		expect(disposition).toBe("queued");
+		await settle();
+		// give a trailing queued turn time to finish too
+		await new Promise((r) => setTimeout(r, 1500));
+		expect(JSON.stringify(llm.requests.map((r) => r.body.messages))).toContain("PINEAPPLE");
 	});
 });

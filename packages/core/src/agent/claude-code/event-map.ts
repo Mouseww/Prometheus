@@ -339,6 +339,19 @@ export class CcMapper {
 		this.emit({ type: "agent_settled", aborted });
 	}
 
+	/** Text the assistant wrote since the last user message (used as the plan when ExitPlanMode carries none). */
+	textSinceUser(): string {
+		const parts: string[] = [];
+		for (let i = this.messages.length - 1; i >= 0; i--) {
+			const m = this.messages[i]!;
+			if (m.role === "user") break;
+			if (m.role === "assistant") parts.unshift((m as AssistantMessage).content.map((c) => (c.type === "text" ? c.text : "")).join(""));
+		}
+		const live = this.current;
+		if (live) parts.push(live.content.map((c) => (c.type === "text" ? c.text : "")).join(""));
+		return parts.join("\n\n").trim();
+	}
+
 	lastReply(): string {
 		for (let i = this.messages.length - 1; i >= 0; i--) {
 			const m = this.messages[i]!;

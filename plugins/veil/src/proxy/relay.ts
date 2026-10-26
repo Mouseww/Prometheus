@@ -210,26 +210,11 @@ export class VeilRelay {
 
 	/** Desensitises a request body, returning a 502 reason when the rule engine cannot complete. */
 	private redact(raw: Buffer, contentType: string | undefined, rules: RuleSet, types: Set<string>): { ok: true; body: Buffer } | { ok: false; error: string } {
-		const looksJson = (contentType ?? "").toLowerCase().includes("json") || /^[\s]*[[{]/.test(raw.subarray(0, 64).toString("utf8"));
-		if (looksJson) {
-			const parsed = parseJson(raw.toString("utf8"));
-			if (parsed === undefined) return { ok: true, body: raw };
-			try {
-				const redacted = desensitizeJson(parsed, rules, this.options.store);
-				collectTypes(parsed, redacted, rules, types);
-				return { ok: true, body: Buffer.from(JSON.stringify(redacted), "utf8") };
-			} catch (err) {
-				return { ok: false, error: `脱敏失败：${err instanceof Error ? err.message : String(err)}` };
-			}
+		try {
+			return { ok: true, body: redactBuffer(raw, contentType, rules, this.options.store, types) };
+		} catch (err) {
+			return { ok: false, error: `脱敏失败：${err instanceof Error ? err.message : String(err)}` };
 		}
-
-		const text = raw.toString("utf8");
-		// Binary or a multimodal blob: leave it byte-identical rather than risk corrupting it.
-		if (shouldSkipDesensitize(undefined, text) || isDataUrlBase64(text)) return { ok: true, body: raw };
-		const hits = rules.findHits(text);
-		if (hits.length === 0) return { ok: true, body: raw };
-		for (const hit of hits) types.add(hit.typePrefix);
-		return { ok: true, body: Buffer.from(desensitizeString(text, rules, this.options.store), "utf8") };
 	}
 
 	private pipeResponse(upstreamRes: IncomingMessage, res: ServerResponse, ctx: { method: string; path: string; upstream: string; types: Set<string>; started: number }): void {
@@ -430,6 +415,66 @@ function jsonError(res: ServerResponse, status: number, message: string): void {
 	const body = JSON.stringify({ error: { type: "veil_relay", message } });
 	res.writeHead(status, { "content-type": "application/json; charset=utf-8", "content-length": Buffer.byteLength(body) });
 	res.end(body);
+}
+
+/**
+ * Desensitises a request body (JSON or text) against the rules; binary and data-URL blobs pass through untouched.
+ * Throws when the rule engine cannot complete: a request must never leave unscanned.
+ */
+export function redactBuffer(raw: Buffer, contentType: string | undefined, rules: RuleSet, store: MappingStore, types: Set<string> = new Set()): Buffer {
+	const looksJson = (contentType ?? "").toLowerCase().includes("json") || /^[\s]*[[{]/.test(raw.subarray(0, 64).toString("utf8"));
+	if (looksJson) {
+		const parsed = parseJson(raw.toString("utf8"));
+		if (parsed === undefined) return raw;
+		const redacted = desensitizeJson(parsed, rules, store);
+		collectTypes(parsed, redacted, rules, types);
+		return Buffer.from(JSON.stringify(redacted), "utf8");
+	}
+	const text = raw.toString("utf8");
+	if (shouldSkipDesensitize(undefined, text) || isDataUrlBase64(text)) return raw;
+	const hits = rules.findHits(text);
+	if (hits.length === 0) return raw;
+	for (const hit of hits) types.add(hit.typePrefix);
+	return Buffer.from(desensitizeString(text, rules, store), "utf8");
+}
+
+/**
+ * Restores placeholders in a response as it streams. SSE goes event by event through a sliding window so a
+ * placeholder split across chunks still resolves; any other body is restored whole once it has arrived.
+ */
+export function createRestorer(contentType: string, store: MappingStore): { write(text: string): string; end(): string } {
+	if (contentType.toLowerCase().includes("text/event-stream")) {
+		const window = new RestoreWindow(store);
+		let buffer = "";
+		return {
+			write(text) {
+				buffer += text;
+				const restored = restoreEventStream(buffer, window, false);
+				buffer = restored.rest;
+				return restored.out;
+			},
+			end() {
+				const tail = restoreEventStream(buffer, window, true);
+				buffer = "";
+				return tail.out + window.flush();
+			},
+		};
+	}
+	let whole = "";
+	return {
+		write(text) {
+			whole += text;
+			return "";
+		},
+		end() {
+			const looksJson = contentType.toLowerCase().includes("json") || /^[\s]*[[{]/.test(whole.slice(0, 64));
+			if (looksJson) {
+				const parsed = parseJson(whole);
+				if (parsed !== undefined) return JSON.stringify(restoreJson(parsed, store));
+			}
+			return shouldSkipDesensitize(undefined, whole) ? whole : restoreString(whole, store);
+		},
+	};
 }
 
 /** Exported for tests: restores one SSE buffer, returning the untouched remainder. */

@@ -24,13 +24,17 @@ export const CC_CAPABILITIES: RuntimeCapabilities = {
 	systemPromptReplace: "restart",
 	contextBreakdown: false,
 	permissionModes: ["default", "acceptEdits", "plan", "bypassPermissions", "auto"],
-	nativeTools: ["exec", "read", "edit", "write", "search", "fetch", "todo", "plan_exit"],
+	nativeTools: ["exec", "read", "edit", "write", "search", "fetch", "plan_exit"],
 };
 
 /** Tools Claude Code ships that Prometheus does not want (docs §4.4); the rest of the default set is allow-listed explicitly. */
-const NATIVE_TOOLS = ["Bash", "Read", "Edit", "MultiEdit", "Write", "Grep", "Glob", "WebFetch", "WebSearch", "TodoWrite", "ExitPlanMode", "NotebookEdit"];
-/** Prometheus tools that Claude Code covers natively; not exported on the bus. */
-const NATIVE_COVERED = new Set(["todo_write"]);
+const NATIVE_TOOLS = ["Bash", "Read", "Edit", "MultiEdit", "Write", "Grep", "Glob", "WebFetch", "WebSearch", "ExitPlanMode", "NotebookEdit"];
+/**
+ * Prometheus tools that Claude Code covers natively and that are therefore not exported on the bus. Empty on
+ * purpose: Claude Code 2.1.310 disables TodoWrite (it moved to task tools), so the todo panel is fed by
+ * Prometheus' own todo_write instead.
+ */
+const NATIVE_COVERED = new Set<string>();
 
 export interface CcSessionOptions {
 	id: string;
@@ -166,7 +170,7 @@ export class ClaudeCodeSession implements RuntimeSession {
 			cwd: this.cwd,
 			model: this.model.id,
 			includePartialMessages: true,
-			permissionMode: "default",
+			permissionMode: this.gate.mode === "plan" ? "plan" : "default",
 			tools: NATIVE_TOOLS,
 			disallowedTools: ["Task", "Agent"],
 			strictMcpConfig: true,
@@ -270,9 +274,12 @@ export class ClaudeCodeSession implements RuntimeSession {
 	private async planExit(args: Record<string, unknown>, _input: unknown): Promise<Record<string, unknown>> {
 		const deny = (reason: string) => ({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } });
 		if (this.gate.mode !== "plan") return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } };
-		const answer = await this.gate.ask?.({ kind: "plan", plan: String(args.plan ?? "") });
+		// Claude Code strips the plan from the tool input and keeps it in a plan file; fall back to what the model wrote.
+		const plan = String(args.plan ?? "").trim() || this.mapper.textSinceUser();
+		const answer = await this.gate.ask?.({ kind: "plan", plan });
 		if (answer === "acceptEdits" || answer === "default") {
 			this.gate.setMode(answer);
+			await this.syncNativeMode();
 			return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } };
 		}
 		return deny("The user did not approve the plan yet. Stay in plan mode: ask what they want changed, or revise the plan and submit it again.");
@@ -341,6 +348,15 @@ export class ClaudeCodeSession implements RuntimeSession {
 	async setThinking(_level: ThinkingLevel): Promise<void> {}
 	async setPermissionMode(mode: PermissionMode): Promise<void> {
 		this.gate.setMode(mode);
+		await this.syncNativeMode();
+	}
+
+	/**
+	 * Claude Code only offers ExitPlanMode while it is itself in plan mode. Every other decision stays with the
+	 * gate, so outside plan mode Claude Code runs in its default mode and defers to the pre-tool hook.
+	 */
+	private async syncNativeMode(): Promise<void> {
+		await this.q?.setPermissionMode(this.gate.mode === "plan" ? "plan" : "default").catch(() => undefined);
 	}
 	setName(name: string): void {
 		this.name = name;
