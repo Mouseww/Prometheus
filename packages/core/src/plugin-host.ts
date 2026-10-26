@@ -21,6 +21,7 @@ import type {
 	WorkspaceRef,
 } from "@prometheus/plugin-sdk";
 import { AppError, encodeError, type GatewayConfig, type PanelInfo, type PluginFile, type PluginInfo, type PluginInstallResult } from "@prometheus/protocol";
+import { type Captured, type CapturedCommand, captureExtension, type Handler, HOOK_NAMES, type HookName } from "./agent/facade/pi-facade.ts";
 
 export interface PluginRoute {
 	method: HttpMethod;
@@ -65,6 +66,29 @@ interface Registration {
 	rpcKeys: string[];
 	routes: PluginRoute[];
 	disposers: (() => void | Promise<void>)[];
+	/** PiFacade result for `factories`; lives and dies with this registration, so teardown/reload/install drop it. */
+	captured?: Promise<Captured>;
+}
+
+/** What non-PI runtimes see of the active plugins: neutral registrations plus translated legacy `extension` factories. */
+export interface ExternalView {
+	tools: { plugin: string; tool: PluginTool }[];
+	contextProviders: { plugin: string; provider: ContextProvider }[];
+	commands: ({ plugin: string } & CapturedCommand)[];
+	mcpServers: { plugin: string; name: string; config: Captured["mcpServers"][number]["config"] }[];
+	hooks: Record<HookName, { plugin: string; handler: Handler }[]>;
+	/** Only plugins that have something to report. */
+	warnings: { plugin: string; messages: string[] }[];
+}
+
+/** Folds one provider's output into a merged context; shared by the PI and external paths. */
+function mergeContribution(out: { static: { sections: Record<string, string>; guidelines: string[] }; turn: string[] }, part: Awaited<ReturnType<ContextProvider>>): void {
+	if (!part) return;
+	for (const [key, text] of Object.entries(part.static?.sections ?? {})) {
+		if (key !== "__proto__" && typeof text === "string") out.static.sections[key] = text;
+	}
+	for (const line of part.static?.guidelines ?? []) if (typeof line === "string" && line.trim()) out.static.guidelines.push(line);
+	if (typeof part.turn === "string" && part.turn.trim()) out.turn.push(part.turn);
 }
 
 interface Entry {
@@ -136,19 +160,79 @@ export class PluginHost {
 		for (const entry of [...this.entries]) {
 			for (const provider of [...(entry.reg?.providers ?? [])]) {
 				try {
-					const part = await provider(req);
-					if (!part) continue;
-					for (const [key, text] of Object.entries(part.static?.sections ?? {})) {
-						if (key !== "__proto__" && typeof text === "string") out.static.sections[key] = text;
-					}
-					for (const line of part.static?.guidelines ?? []) if (typeof line === "string" && line.trim()) out.static.guidelines.push(line);
-					if (typeof part.turn === "string" && part.turn.trim()) out.turn.push(part.turn);
+					mergeContribution(out, await provider(req));
 				} catch (err) {
 					console.warn(`[plugin:${entry.info.name}] 上下文提供者失败：${errorText(err)}`);
 				}
 			}
 		}
 		return out;
+	}
+
+	/** The facade result for one active plugin, computed once per registration. */
+	private captureFor(entry: Entry, reg: Registration): Promise<Captured> {
+		const plugin = entry.info.name;
+		const prefix = (msg: string) => `[plugin:${plugin}] ${msg}`;
+		reg.captured ??= captureExtension(reg.factories, {
+			pluginName: plugin,
+			cwd: this.options.cwd,
+			log: { info: (m) => console.log(prefix(m)), warn: (m) => console.warn(prefix(m)), error: (m) => console.error(prefix(m)) },
+		});
+		return reg.captured;
+	}
+
+	/**
+	 * Tools, context providers, commands, MCP servers and hooks of every active plugin as a non-PI
+	 * runtime sees them: neutral registrations plus legacy `extension` factories replayed on the
+	 * PiFacade. Legacy entries come first, as in PI; a neutral tool replaces a legacy one of the same name.
+	 */
+	async externalView(): Promise<ExternalView> {
+		const view: ExternalView = {
+			tools: [],
+			contextProviders: [],
+			commands: [],
+			mcpServers: [],
+			hooks: Object.fromEntries(HOOK_NAMES.map((name) => [name, []])) as unknown as ExternalView["hooks"],
+			warnings: [],
+		};
+		for (const entry of [...this.entries]) {
+			const reg = entry.reg;
+			if (!reg) continue;
+			const plugin = entry.info.name;
+			const cap = reg.factories.length ? await this.captureFor(entry, reg) : undefined;
+			const messages = [...(cap?.warnings ?? [])];
+			const neutralNames = new Set(reg.tools.map((t) => t.name));
+			for (const tool of cap?.tools ?? []) {
+				if (neutralNames.has(tool.name)) messages.push(`${plugin}: legacy tool ${tool.name} is shadowed by a runtime-neutral tool of the same name`);
+				else view.tools.push({ plugin, tool });
+			}
+			for (const tool of reg.tools) view.tools.push({ plugin, tool });
+			for (const provider of cap?.contextProviders ?? []) view.contextProviders.push({ plugin, provider });
+			for (const provider of reg.providers) view.contextProviders.push({ plugin, provider });
+			for (const command of cap?.commands ?? []) view.commands.push({ plugin, ...command });
+			for (const server of cap?.mcpServers ?? []) view.mcpServers.push({ plugin, ...server });
+			for (const name of HOOK_NAMES) for (const handler of cap?.hooks[name] ?? []) view.hooks[name].push({ plugin, handler });
+			if (messages.length) view.warnings.push({ plugin, messages });
+		}
+		return view;
+	}
+
+	/** Like `collectContext`, but also runs the context providers captured from legacy `extension` factories (their output arrives as `turn`). */
+	async collectContextExternal(req: ContextRequest): Promise<{ static: { sections: Record<string, string>; guidelines: string[] }; turn: string[] }> {
+		const out = { static: { sections: {} as Record<string, string>, guidelines: [] as string[] }, turn: [] as string[] };
+		for (const { plugin, provider } of (await this.externalView()).contextProviders) {
+			try {
+				mergeContribution(out, await provider(req));
+			} catch (err) {
+				console.warn(`[plugin:${plugin}] 上下文提供者失败：${errorText(err)}`);
+			}
+		}
+		return out;
+	}
+
+	/** What does not work outside PI, per plugin; plugins without findings are left out. */
+	async compatibility(): Promise<{ plugin: string; warnings: string[] }[]> {
+		return (await this.externalView()).warnings.map(({ plugin, messages }) => ({ plugin, warnings: messages }));
 	}
 
 	/** One entry per active plugin, for hosts that cannot hot-reload (the TUI). */
