@@ -214,11 +214,25 @@ type CanonicalToolKind = "exec" | "read" | "edit" | "write" | "search" | "fetch"
 把 `before_agent_start` 拆成两类，因为它们在外部 runtime 里的落点不同：
 
 ```ts
-ctx.context.provide(async ({ prompt, cwd, sessionId, runtime, mode }) => ({
+ctx.context.provide(async ({ prompt, cwd, sessionId, runtime, messageType, permissionMode, signal }) => ({
   static?:  { sections?: Record<string,string>; guidelines?: string[] },  // 会话级，稳定，可缓存
   turn?:    string,                                                       // 本回合，随用户消息变化
 }));
 ```
+
+`ContextRequest` 的字段：
+
+- `prompt`：本回合用户消息；不是用户触发的回合为空串。
+- `cwd`、`sessionId?`、`runtime`：工作目录、会话 id、当前 runtime。
+- `messageType?`：PI 的触发类型（`user`、`custom` 等）；其他 runtime 不设。
+- `permissionMode?: PermissionMode`：调用方知道会话权限模式时传入。PI 桥接拿不到它（模式由 PermissionGate 持有，它自己在插件之后写 `unattended` / `auto_mode` / `plan_mode` 段落），所以 PI 下为 `undefined`；外部 runtime 的宿主应当传。`PluginHost.collectContext` / `collectContextExternal` 原样转给提供者。
+- `signal?: AbortSignal`：提供者超时（默认 4 秒，`PluginHostOptions.contextTimeoutMs` 可改）时被中止，提供者应据此停止 I/O；超时后的返回值会被忽略，并输出 `[plugin:<name>] 上下文提供者超时`。
+
+宿主并发启动所有提供者，再按插件顺序合并（同名段落后者覆盖）。提供者可以返回任意东西，宿主会容错：
+
+- 段落名必须匹配 `/^[a-z][a-z0-9_-]*$/`，否则 PI 在构造 system prompt 时会抛错，导致该会话每次 prompt 都失败；不合法的名字会被丢弃并警告。
+- 保留名不可用：`preamble`、`tools`、`rules`、`docs`、`addendum`、`project_context`、`skills`、`cwd`（PI 自带），以及 `turn_context`、`unattended`、`auto_mode`、`plan_mode`（Prometheus 自己写；权限闸门的段落优先）。
+- 空串、非字符串的段落值，非数组的 `guidelines`，非对象的返回值一律忽略。
 
 - `static` 进 system prompt，内容变了才更新。这样提示缓存不会每轮失效。
 - `turn` 跟随用户消息注入，比如记忆命中、知识库命中、权限模式提示。
@@ -232,6 +246,8 @@ ctx.context.provide(async ({ prompt, cwd, sessionId, runtime, mode }) => ({
 | PI | `systemPromptOptions.sections/guidelines`（现状） | 同左（PI 每轮重建 prompt） |
 | Claude Code | `systemPrompt: { type: "preset", preset: "claude_code", append }` | `UserPromptSubmit` hook 返回 `additionalContext` |
 | Codex | thread 启动时的 `developer_instructions` | 本回合输入前插入一段 `<prometheus_context>` 文本项 |
+
+PI 的 `turn` 不是跟在用户消息后面，而是作为 system prompt 段落 `turn_context` 交付：PI 每轮把变化的段落转成一条 system patch，历史里会保留旧的 patch；CC 和 Codex 则把 `turn` 放在用户消息旁边（hook 的 `additionalContext` / 前置文本项）。
 
 static 内容变化时：PI 下一轮自动生效；CC 和 Codex 在下一回合以 resume 重启（成本是一次缓存未命中，只在内容变化时发生）。
 

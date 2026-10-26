@@ -39,7 +39,49 @@ export interface PluginHostOptions {
 	gateways: () => GatewayConfig[];
 	isDisabled?: (id: string) => boolean;
 	setDisabled?: (id: string, disabled: boolean) => Promise<void>;
+	/** How long one context provider may take before it is skipped. Default `CONTEXT_PROVIDER_TIMEOUT_MS`; tests lower it. */
+	contextTimeoutMs?: number;
 }
+
+/** A context provider that has not answered after this long is skipped (and its `signal` aborted), so one hung plugin cannot stall every prompt. */
+export const CONTEXT_PROVIDER_TIMEOUT_MS = 4000;
+
+/** PI throws for any other section name, which would make every prompt of the session reject. */
+const SECTION_NAME = /^[a-z][a-z0-9_-]*$/;
+/** PI's own section names (system-prompt.js) plus the ones Prometheus writes itself after plugins run. */
+export const RESERVED_SECTION_NAMES: ReadonlySet<string> = new Set([
+	"preamble",
+	"tools",
+	"rules",
+	"docs",
+	"addendum",
+	"project_context",
+	"skills",
+	"cwd",
+	"turn_context",
+	"unattended",
+	"auto_mode",
+	"plan_mode",
+]);
+
+const TOOL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
+/** Tools PI or Prometheus provide; a plugin registering one of these would shadow or break it. */
+export const RESERVED_TOOL_NAMES: ReadonlySet<string> = new Set([
+	"bash",
+	"powershell",
+	"read",
+	"edit",
+	"write",
+	"grep",
+	"find",
+	"ls",
+	"codemode",
+	"tool_search",
+	"exit_plan_mode",
+	"prometheus_plugin_install",
+]);
+
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
 export const NAME_PATTERN = /^[a-z0-9][a-z0-9-_.]{0,63}$/;
 /** Windows drops trailing dots and spaces from folder names and refuses these outright. */
@@ -81,13 +123,45 @@ export interface ExternalView {
 	warnings: { plugin: string; messages: string[] }[];
 }
 
-/** Folds one provider's output into a merged context; shared by the PI and external paths. */
-function mergeContribution(out: { static: { sections: Record<string, string>; guidelines: string[] }; turn: string[] }, part: Awaited<ReturnType<ContextProvider>>): void {
-	if (!part) return;
-	for (const [key, text] of Object.entries(part.static?.sections ?? {})) {
-		if (key !== "__proto__" && typeof text === "string") out.static.sections[key] = text;
+/** What `collectContext` returns. */
+export interface CollectedContext {
+	static: { sections: Record<string, string>; guidelines: string[] };
+	turn: string[];
+}
+
+/** Sections live in a Map while merging so a key like `__proto__` can never touch a prototype. */
+interface ContextMerge {
+	sections: Map<string, string>;
+	guidelines: string[];
+	turn: string[];
+}
+
+/**
+ * Folds one provider's output into a merged context; shared by the PI and external paths. Providers
+ * are plugin code, so anything may come back: non-objects, wrong types and bad section names are
+ * dropped (bad names with a warning) rather than reaching PI, which rejects them.
+ */
+function mergeContribution(out: ContextMerge, plugin: string, part: unknown, warn: (plugin: string, message: string) => void): void {
+	if (!isRecord(part)) return;
+	const fixed = part.static;
+	if (isRecord(fixed)) {
+		if (isRecord(fixed.sections)) {
+			for (const [key, text] of Object.entries(fixed.sections)) {
+				if (!SECTION_NAME.test(key)) {
+					warn(plugin, `上下文段落名无效，已忽略：${key}`);
+					continue;
+				}
+				if (RESERVED_SECTION_NAMES.has(key)) {
+					warn(plugin, `上下文段落名是保留名称，已忽略：${key}`);
+					continue;
+				}
+				if (typeof text === "string" && text.trim()) out.sections.set(key, text);
+			}
+		}
+		if (Array.isArray(fixed.guidelines)) {
+			for (const line of fixed.guidelines) if (typeof line === "string" && line.trim()) out.guidelines.push(line);
+		}
 	}
-	for (const line of part.static?.guidelines ?? []) if (typeof line === "string" && line.trim()) out.static.guidelines.push(line);
 	if (typeof part.turn === "string" && part.turn.trim()) out.turn.push(part.turn);
 }
 
@@ -152,21 +226,67 @@ export class PluginHost {
 	}
 
 	/**
-	 * Runs every active plugin's context providers. A provider that throws is skipped; when two
-	 * contribute the same section the later plugin wins.
+	 * Runs every active plugin's context providers concurrently and merges them in plugin order. A
+	 * provider that throws or exceeds the timeout is skipped; when two contribute the same section
+	 * the later plugin wins. Callers that know the session's `permissionMode` put it on `req`.
 	 */
-	async collectContext(req: ContextRequest): Promise<{ static: { sections: Record<string, string>; guidelines: string[] }; turn: string[] }> {
-		const out = { static: { sections: {} as Record<string, string>, guidelines: [] as string[] }, turn: [] as string[] };
-		for (const entry of [...this.entries]) {
-			for (const provider of [...(entry.reg?.providers ?? [])]) {
-				try {
-					mergeContribution(out, await provider(req));
-				} catch (err) {
-					console.warn(`[plugin:${entry.info.name}] 上下文提供者失败：${errorText(err)}`);
-				}
+	async collectContext(req: ContextRequest): Promise<CollectedContext> {
+		const jobs = [...this.entries].flatMap((entry) => [...(entry.reg?.providers ?? [])].map((provider) => ({ plugin: entry.info.name, provider })));
+		return this.gather(jobs, req);
+	}
+
+	/** Section-name warnings repeat on every prompt, so each distinct one is logged once. */
+	private readonly warnedContext = new Set<string>();
+
+	private warnContextOnce(plugin: string, message: string): void {
+		const key = `${plugin}\0${message}`;
+		if (this.warnedContext.has(key)) return;
+		this.warnedContext.add(key);
+		console.warn(`[plugin:${plugin}] ${message}`);
+	}
+
+	/** One provider call with a deadline; never throws. A timed-out provider's `signal` is aborted and its late answer ignored. */
+	private async runProvider(plugin: string, provider: ContextProvider, req: ContextRequest): Promise<unknown> {
+		const timeoutMs = this.options.contextTimeoutMs ?? CONTEXT_PROVIDER_TIMEOUT_MS;
+		const abort = new AbortController();
+		const signal = req.signal ? AbortSignal.any([req.signal, abort.signal]) : abort.signal;
+		const timedOut = Symbol("timeout");
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const deadline = new Promise<typeof timedOut>((resolve) => {
+			timer = setTimeout(() => {
+				abort.abort();
+				resolve(timedOut);
+			}, timeoutMs);
+		});
+		try {
+			const call = (async () => provider({ ...req, signal }))();
+			call.catch(() => {}); // a rejection after the deadline must not surface as unhandled
+			const result = await Promise.race([call, deadline]);
+			if (result === timedOut) {
+				console.warn(`[plugin:${plugin}] 上下文提供者超时`);
+				return undefined;
 			}
+			return result;
+		} catch (err) {
+			console.warn(`[plugin:${plugin}] 上下文提供者失败：${errorText(err)}`);
+			return undefined;
+		} finally {
+			clearTimeout(timer);
 		}
-		return out;
+	}
+
+	/** Starts every provider at once, then merges the answers in the order the providers were given. */
+	private async gather(jobs: { plugin: string; provider: ContextProvider }[], req: ContextRequest): Promise<CollectedContext> {
+		const answers = await Promise.all(jobs.map((job) => this.runProvider(job.plugin, job.provider, req)));
+		const merged: ContextMerge = { sections: new Map(), guidelines: [], turn: [] };
+		jobs.forEach((job, i) => {
+			try {
+				mergeContribution(merged, job.plugin, answers[i], (plugin, message) => this.warnContextOnce(plugin, message));
+			} catch (err) {
+				console.warn(`[plugin:${job.plugin}] 上下文提供者失败：${errorText(err)}`);
+			}
+		});
+		return { static: { sections: Object.fromEntries(merged.sections), guidelines: merged.guidelines }, turn: merged.turn };
 	}
 
 	/** The facade result for one active plugin, computed once per registration. */
@@ -218,16 +338,8 @@ export class PluginHost {
 	}
 
 	/** Like `collectContext`, but also runs the context providers captured from legacy `extension` factories (their output arrives as `turn`). */
-	async collectContextExternal(req: ContextRequest): Promise<{ static: { sections: Record<string, string>; guidelines: string[] }; turn: string[] }> {
-		const out = { static: { sections: {} as Record<string, string>, guidelines: [] as string[] }, turn: [] as string[] };
-		for (const { plugin, provider } of (await this.externalView()).contextProviders) {
-			try {
-				mergeContribution(out, await provider(req));
-			} catch (err) {
-				console.warn(`[plugin:${plugin}] 上下文提供者失败：${errorText(err)}`);
-			}
-		}
-		return out;
+	async collectContextExternal(req: ContextRequest): Promise<CollectedContext> {
+		return this.gather((await this.externalView()).contextProviders, req);
 	}
 
 	/** What does not work outside PI, per plugin; plugins without findings are left out. */
@@ -237,10 +349,12 @@ export class PluginHost {
 
 	/** One entry per active plugin, for hosts that cannot hot-reload (the TUI). */
 	get extensions(): InlineExtension[] {
+		// Shared by every factory below so a duplicate tool name across plugins gets a warning.
+		const seen = new Map<string, string>();
 		const list: InlineExtension[] = this.entries.flatMap((e) => {
 			const name = `prometheus:${e.info.name}`;
-			const items: InlineExtension[] = (e.reg?.factories ?? []).map((factory) => ({ name, factory }));
-			if (e.reg?.tools.length) items.push({ name, factory: (pi) => registerNeutralTools(pi, e.info.name, e.reg?.tools ?? []) });
+			const items: InlineExtension[] = (e.reg?.factories ?? []).map((factory) => ({ name, factory: (pi) => factory(trackTools(pi, e.info.name, seen)) }));
+			if (e.reg?.tools.length) items.push({ name, factory: (pi) => registerNeutralTools(pi, e.info.name, e.reg?.tools ?? [], seen) });
 			return items;
 		});
 		if (this.entries.some((e) => e.reg?.providers.length)) list.push({ name: "prometheus:context", factory: (pi) => this.registerContextBridge(pi) });
@@ -255,15 +369,16 @@ export class PluginHost {
 		return {
 			name: "prometheus:plugins",
 			factory: async (pi) => {
+				const seen = new Map<string, string>();
 				for (const entry of [...this.entries]) {
 					for (const factory of entry.reg?.factories ?? []) {
 						try {
-							await factory(pi);
+							await factory(trackTools(pi, entry.info.name, seen));
 						} catch (err) {
 							console.warn(`[plugin:${entry.info.name}] 扩展加载失败：${errorText(err)}`);
 						}
 					}
-					registerNeutralTools(pi, entry.info.name, entry.reg?.tools ?? []);
+					registerNeutralTools(pi, entry.info.name, entry.reg?.tools ?? [], seen);
 				}
 				if (this.entries.some((e) => e.reg?.providers.length)) this.registerContextBridge(pi);
 			},
@@ -279,6 +394,7 @@ export class PluginHost {
 				sessionId: ctx.sessionManager?.getSessionId?.(),
 				runtime: "pi",
 				messageType: event.messageType,
+				// `permissionMode` stays undefined: the permission gate owns the mode and writes its own sections after this runs.
 			});
 			// Mutate in place and never return `systemPrompt`: that would freeze the prompt and hide later sections.
 			const opts = event.systemPromptOptions;
@@ -534,8 +650,13 @@ export class PluginHost {
 				register: (tool) => {
 					const toolName = typeof tool?.name === "string" ? tool.name.trim() : "";
 					if (!toolName) throw new AppError("pluginToolNameEmpty");
-					if (reg.tools.some((t) => t.name === tool.name)) throw new AppError("pluginToolDuplicate", { name: tool.name });
-					reg.tools.push(tool);
+					if (!TOOL_NAME.test(toolName)) throw new AppError("pluginToolNameInvalid", { name: toolName });
+					if (RESERVED_TOOL_NAMES.has(toolName)) throw new AppError("pluginToolNameReserved", { name: toolName });
+					if (typeof tool.execute !== "function" || !isRecord(tool.parameters)) throw new AppError("pluginToolShape", { name: toolName });
+					// Names are global in the model's tool list, so a clash with any active plugin (this one included) is refused.
+					const owner = this.entries.find((e) => e.reg?.tools.some((t) => t.name === toolName));
+					if (owner) throw new AppError("pluginToolDuplicate", { name: toolName, owner: owner.info.name });
+					reg.tools.push(toolName === tool.name ? tool : { ...tool, name: toolName });
 				},
 			},
 			context: {
@@ -582,15 +703,16 @@ export function adaptTool(tool: PluginTool): ToolDefinition {
 		...(tool.annotations !== undefined && { annotations: tool.annotations }),
 		...(tool.defaultActive !== undefined && { defaultActive: tool.defaultActive }),
 		execute: async (toolCallId, params, signal, onUpdate, ctx) => {
+			// PI always passes a context, but a tool run outside a UI session may lack parts of it.
 			const toolCtx: PluginToolContext = {
-				cwd: ctx.cwd,
-				sessionId: ctx.sessionManager?.getSessionId?.(),
-				hasUI: ctx.hasUI,
+				cwd: ctx?.cwd ?? process.cwd(),
+				sessionId: ctx?.sessionManager?.getSessionId?.(),
+				hasUI: ctx?.hasUI ?? false,
 				ui: {
-					confirm: (title, message, opts) => ctx.ui.confirm(title, message, opts),
-					select: (title, options, opts) => ctx.ui.select(title, options, opts),
-					input: (title, placeholder, opts) => ctx.ui.input(title, placeholder, opts),
-					notify: (message, level) => ctx.ui.notify(message, level),
+					confirm: async (title, message, opts) => (await ctx?.ui?.confirm?.(title, message, opts)) ?? false,
+					select: async (title, options, opts) => ctx?.ui?.select?.(title, options, opts),
+					input: async (title, placeholder, opts) => ctx?.ui?.input?.(title, placeholder, opts),
+					notify: (message, level) => ctx?.ui?.notify?.(message, level),
 				},
 			};
 			const result = await tool.execute(
@@ -600,17 +722,44 @@ export function adaptTool(tool: PluginTool): ToolDefinition {
 				onUpdate && ((partial) => onUpdate({ content: partial.content, details: partial.details })),
 				toolCtx,
 			);
+			const content = Array.isArray(result?.content) ? result.content : [];
 			// PI reports a failed tool by throwing, so `isError` becomes an error carrying the text.
-			if (result.isError) throw new Error(result.content.map((c) => (c.type === "text" ? c.text : "")).join("\n").trim() || tool.name);
-			return { content: result.content, details: result.details };
+			if (result?.isError) {
+				const text = content
+					.map((c) => (c?.type === "text" ? c.text : c?.type === "image" ? "[image]" : ""))
+					.filter((part) => typeof part === "string" && part)
+					.join("\n")
+					.trim();
+				throw new Error(text || "tool failed");
+			}
+			return { content, details: result?.details };
 		},
 	};
 }
 
-function registerNeutralTools(pi: ExtensionAPI, plugin: string, tools: PluginTool[]): void {
+/** Wraps `pi` so every `registerTool` name is recorded in `seen` (name → first plugin); everything else passes through. */
+function trackTools(pi: ExtensionAPI, plugin: string, seen: Map<string, string>): ExtensionAPI {
+	return new Proxy(pi, {
+		get(target, prop) {
+			const value: unknown = Reflect.get(target, prop, target);
+			if (typeof value !== "function") return value;
+			const fn = value as (...args: unknown[]) => unknown;
+			if (prop !== "registerTool") return fn.bind(target);
+			return (def: { name?: unknown }, ...rest: unknown[]) => {
+				if (typeof def?.name === "string" && !seen.has(def.name)) seen.set(def.name, plugin);
+				return fn.call(target, def, ...rest);
+			};
+		},
+	});
+}
+
+function registerNeutralTools(pi: ExtensionAPI, plugin: string, tools: PluginTool[], seen: Map<string, string> = new Map()): void {
 	for (const tool of tools) {
+		const earlier = seen.get(tool.name);
+		if (earlier !== undefined) console.warn(`[plugin:${plugin}] 工具名 ${tool.name} 已被 ${earlier} 注册，本次注册可能覆盖它`);
 		try {
 			pi.registerTool(adaptTool(tool));
+			if (earlier === undefined) seen.set(tool.name, plugin);
 		} catch (err) {
 			console.warn(`[plugin:${plugin}] 工具注册失败（${tool.name}）：${errorText(err)}`);
 		}

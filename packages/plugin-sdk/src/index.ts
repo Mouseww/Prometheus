@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
-import type { GatewayConfig, ModelRef, RunAccess } from "@prometheus/protocol";
+import type { GatewayConfig, ModelRef, PermissionMode, RunAccess } from "@prometheus/protocol";
 
 export type { ExtensionAPI, ExtensionFactory, ToolDefinition } from "@earendil-works/pi-coding-agent";
 export { createJsonStore, type JsonStore } from "./json-store.ts";
@@ -135,7 +135,11 @@ export interface PluginToolResult {
 
 /** A tool the model can call, independent of the agent runtime. */
 export interface PluginTool {
-	/** Unique within the plugin. */
+	/**
+	 * Unique across all active plugins. Must match /^[a-zA-Z0-9_-]{1,64}$/ (surrounding whitespace is
+	 * trimmed) and must not be a built-in tool name (bash, powershell, read, edit, write, grep, find, ls,
+	 * codemode, tool_search, exit_plan_mode, prometheus_plugin_install). `register` throws otherwise.
+	 */
 	name: string;
 	/** Human-readable name for UIs; defaults to `name`. */
 	label?: string;
@@ -163,13 +167,32 @@ export interface ContextRequest {
 	cwd: string;
 	sessionId?: string;
 	runtime: "pi" | "claude-code" | "codex";
+	/** PI's trigger kind ("user", "custom", ...); undefined outside PI. */
 	messageType?: string;
+	/**
+	 * The session's permission mode when the caller knows it. The PI bridge cannot know it (the
+	 * permission gate owns the mode and writes its own prompt sections), so it leaves this undefined;
+	 * hosts that drive other runtimes pass it.
+	 */
+	permissionMode?: PermissionMode;
+	/**
+	 * Aborted when the host gives up on this provider (it exceeded the context timeout, default 4 s).
+	 * Providers doing I/O should pass it on and stop; whatever they return afterwards is ignored.
+	 */
+	signal?: AbortSignal;
 }
 
 /**
  * `static` is stable for a session and goes into the system prompt (sections are keyed so a later
  * contribution with the same key overrides an earlier one). `turn` changes with each user message
  * (memory hits, mode reminders) and is delivered alongside it.
+ *
+ * Section names must match /^[a-z][a-z0-9_-]*$/ (PI rejects anything else and would fail every
+ * prompt, so the host drops offending keys with a warning). Names that PI or Prometheus own are
+ * reserved and cannot be used in `static.sections`: preamble, tools, rules, docs, addendum,
+ * project_context, skills, cwd, turn_context, unattended, auto_mode, plan_mode. `turn_context` is
+ * where PI receives `turn`, and the permission gate writes the mode sections itself after plugins
+ * run, so the gate's sections win. Empty or non-string values are ignored.
  */
 export interface ContextContribution {
 	static?: { sections?: Record<string, string>; guidelines?: string[] };

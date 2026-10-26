@@ -110,8 +110,11 @@ export const ERROR_PARAMS = {
 	pluginStoreDuplicate: ["id"],
 	pluginRoutePath: [],
 	pluginMethodInvalid: ["method"],
-	pluginToolDuplicate: ["name"],
+	pluginToolDuplicate: ["name", "owner"],
 	pluginToolNameEmpty: [],
+	pluginToolNameInvalid: ["name"],
+	pluginToolNameReserved: ["name"],
+	pluginToolShape: ["name"],
 	pluginBackgroundUnsupported: [],
 	pluginLoadError: ["error"],
 
