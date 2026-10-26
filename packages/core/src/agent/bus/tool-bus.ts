@@ -130,7 +130,7 @@ export class ToolBus {
 		const match = /^\/mcp\/([^/?]+)/.exec(req.url ?? "");
 		let sessionId = "";
 		try {
-			sessionId = match ? decodeURIComponent(match[1]) : "";
+			sessionId = match ? decodeURIComponent(match[1]!) : "";
 		} catch {
 			/* falls through to 404 */
 		}

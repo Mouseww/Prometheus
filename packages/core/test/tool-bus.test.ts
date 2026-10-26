@@ -65,10 +65,10 @@ describe("ToolBus", () => {
 	});
 
 	it("initializes and lists tools with annotations", async () => {
-		const init = await (await rpc({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26" } })).json();
+		const init = (await (await rpc({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26" } })).json()) as any;
 		expect(init.result.protocolVersion).toBe("2025-03-26");
 		expect(init.result.capabilities.tools).toBeDefined();
-		const list = await (await rpc({ jsonrpc: "2.0", id: 2, method: "tools/list" })).json();
+		const list = (await (await rpc({ jsonrpc: "2.0", id: 2, method: "tools/list" })).json()) as any;
 		expect(list.result.tools).toEqual([
 			{ name: "echo", title: "echo", description: "echo", inputSchema: echo.parameters, annotations: { readOnlyHint: true } },
 		]);
@@ -77,14 +77,14 @@ describe("ToolBus", () => {
 	it("sees hot-registered tools and honours the allow list", async () => {
 		tools = [echo, { ...echo, name: "other" }];
 		allow = new Set(["other"]);
-		const list = await (await rpc({ jsonrpc: "2.0", id: 1, method: "tools/list" })).json();
+		const list = (await (await rpc({ jsonrpc: "2.0", id: 1, method: "tools/list" })).json()) as any;
 		expect(list.result.tools.map((t: any) => t.name)).toEqual(["other"]);
-		const denied = await (await call("echo", {})).json();
+		const denied = (await (await call("echo", {})).json()) as any;
 		expect(denied.error.code).toBe(-32602);
 	});
 
 	it("runs a tool with the session context and reports events", async () => {
-		const out = await (await call("echo", { text: "hi" })).json();
+		const out = (await (await call("echo", { text: "hi" })).json()) as any;
 		expect(out.result.content).toEqual([{ type: "text", text: "hi@/work:s1:true" }]);
 		expect(out.result.structuredContent).toEqual({ n: 1 });
 		expect(events.map((e) => e.type)).toEqual(["start", "end"]);
@@ -99,9 +99,9 @@ describe("ToolBus", () => {
 			{ ...echo, name: "boom", execute: async () => { throw new Error("nope"); } },
 			{ ...echo, name: "soft", execute: async () => ({ content: [{ type: "text", text: "bad" }], isError: true }) },
 		];
-		const a = await (await call("boom", {})).json();
+		const a = (await (await call("boom", {})).json()) as any;
 		expect(a.result).toMatchObject({ isError: true, content: [{ type: "text", text: "nope" }] });
-		const b = await (await call("soft", {}, 2)).json();
+		const b = (await (await call("soft", {}, 2)).json()) as any;
 		expect(b.result.isError).toBe(true);
 		expect(events.filter((e) => e.type === "end").every((e: any) => e.isError)).toBe(true);
 	});
@@ -117,7 +117,7 @@ describe("ToolBus", () => {
 			tools: () => tools,
 			beforeCall: () => ({ allow: false, reason: "denied by user" }),
 		});
-		const out = await (await call("echo", {})).json();
+		const out = (await (await call("echo", {})).json()) as any;
 		expect(ran).toBe(false);
 		expect(out.result).toMatchObject({ isError: true, content: [{ type: "text", text: "denied by user" }] });
 	});
@@ -166,16 +166,16 @@ describe("ToolBus", () => {
 		const res = await fetch(session.url, { method: "POST", headers: { authorization: `Bearer ${session.token}` }, body: "{" });
 		expect(res.status).toBe(400);
 		expect((await rpc([{ jsonrpc: "2.0", id: 1, method: "ping" }])).status).toBe(400);
-		const unknown = await (await rpc({ jsonrpc: "2.0", id: 3, method: "nope" })).json();
+		const unknown = (await (await rpc({ jsonrpc: "2.0", id: 3, method: "nope" })).json()) as any;
 		expect(unknown.error.code).toBe(-32601);
 		expect((await fetch(session.url, { headers: { authorization: `Bearer ${session.token}` } })).status).toBe(405);
 	});
 
 	it("wraps non-object structured details and non-object schemas", async () => {
 		tools = [{ ...echo, parameters: { type: "string" }, execute: async () => ({ content: [], details: [1, 2] }) }];
-		const list = await (await rpc({ jsonrpc: "2.0", id: 1, method: "tools/list" })).json();
+		const list = (await (await rpc({ jsonrpc: "2.0", id: 1, method: "tools/list" })).json()) as any;
 		expect(list.result.tools[0].inputSchema).toEqual({ type: "object", properties: {} });
-		const out = await (await call("echo", {})).json();
+		const out = (await (await call("echo", {})).json()) as any;
 		expect(out.result.structuredContent).toEqual({ value: [1, 2] });
 	});
 });

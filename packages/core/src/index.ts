@@ -22,4 +22,5 @@ export { type Captured, type CapturedCommand, captureExtension, type CaptureOpti
 export { type ExternalView, PluginHost, type PluginRoute } from "./plugin-host.ts";
 export { bootstrap, type BootstrapOptions, gatewayExtension, type Runtime } from "./runtime.ts";
 export { type BeforeCall, type BusSession, type BusSessionOptions, type BusToolEvent, ToolBus } from "./agent/bus/tool-bus.ts";
+export { GatewayRelay, type GatewayRelayOptions, type RelayExchange, type RelayGrant, type RelayRequestInfo, type ResponseRewriter } from "./agent/relay/gateway-relay.ts";
 export { UIBridge } from "./ui-bridge.ts";
