@@ -137,6 +137,8 @@ export default definePlugin({
 | `rpc` | — | ✅ | `plugin.call({plugin, method, params})`; params come from the client and must be validated |
 | `reloadSessions` | — | ✅ | Idle sessions call `session.reload()` immediately; running ones reload after they settle |
 
+**Neutral API**: `ctx.tools.register(tool)` and `ctx.context.provide(provider)` do not depend on the agent runtime (design in [agent-runtime.md](../agent-runtime.md)). Tools declare parameters as JSON Schema (TypeBox works too) and receive a neutral `PluginToolContext` (`cwd`, `sessionId`, `hasUI`, `ui.*`); context providers return `static` (stable per session, sections/guidelines for the system prompt) and `turn` (changes per user message, e.g. memory hits). Today they are bridged to PI: tools go through `registerTool`, and providers share one `before_agent_start` handler that writes into `systemPromptOptions`. Existing `ctx.extension` plugins are unaffected.
+
 The SDK also provides `createJsonStore(path, fallback)`: atomic writes, serialized, permissions 0600, no read cache, so the TUI and the server can share the same file.
 
 ### 4.2 Discovery and loading

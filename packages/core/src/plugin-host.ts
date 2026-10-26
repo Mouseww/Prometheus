@@ -2,15 +2,19 @@ import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/p
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { InlineExtension } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, InlineExtension, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type {
 	AgentRunOptions,
 	AgentRunResult,
+	ContextProvider,
+	ContextRequest,
 	ExtensionFactory,
 	HostKind,
 	HttpMethod,
 	KnowledgeStoreFactory,
 	PluginContext,
+	PluginTool,
+	PluginToolContext,
 	PrometheusPlugin,
 	RouteHandler,
 	RpcHandler,
@@ -55,6 +59,8 @@ const MAX_TOTAL_BYTES = 1_000_000;
 /** Everything one active plugin contributed, so unloading removes exactly that. */
 interface Registration {
 	factories: ExtensionFactory[];
+	tools: PluginTool[];
+	providers: ContextProvider[];
 	storeIds: string[];
 	rpcKeys: string[];
 	routes: PluginRoute[];
@@ -116,9 +122,45 @@ export class PluginHost {
 		return this.entries.flatMap((e) => e.reg?.routes ?? []);
 	}
 
+	/** Runtime-neutral tools of every active plugin, in plugin order. */
+	get tools(): { plugin: string; tool: PluginTool }[] {
+		return this.entries.flatMap((e) => (e.reg?.tools ?? []).map((tool) => ({ plugin: e.info.name, tool })));
+	}
+
+	/**
+	 * Runs every active plugin's context providers. A provider that throws is skipped; when two
+	 * contribute the same section the later plugin wins.
+	 */
+	async collectContext(req: ContextRequest): Promise<{ static: { sections: Record<string, string>; guidelines: string[] }; turn: string[] }> {
+		const out = { static: { sections: {} as Record<string, string>, guidelines: [] as string[] }, turn: [] as string[] };
+		for (const entry of [...this.entries]) {
+			for (const provider of [...(entry.reg?.providers ?? [])]) {
+				try {
+					const part = await provider(req);
+					if (!part) continue;
+					for (const [key, text] of Object.entries(part.static?.sections ?? {})) {
+						if (key !== "__proto__" && typeof text === "string") out.static.sections[key] = text;
+					}
+					for (const line of part.static?.guidelines ?? []) if (typeof line === "string" && line.trim()) out.static.guidelines.push(line);
+					if (typeof part.turn === "string" && part.turn.trim()) out.turn.push(part.turn);
+				} catch (err) {
+					console.warn(`[plugin:${entry.info.name}] 上下文提供者失败：${errorText(err)}`);
+				}
+			}
+		}
+		return out;
+	}
+
 	/** One entry per active plugin, for hosts that cannot hot-reload (the TUI). */
 	get extensions(): InlineExtension[] {
-		return this.entries.flatMap((e) => (e.reg?.factories ?? []).map((factory) => ({ name: `prometheus:${e.info.name}`, factory })));
+		const list: InlineExtension[] = this.entries.flatMap((e) => {
+			const name = `prometheus:${e.info.name}`;
+			const items: InlineExtension[] = (e.reg?.factories ?? []).map((factory) => ({ name, factory }));
+			if (e.reg?.tools.length) items.push({ name, factory: (pi) => registerNeutralTools(pi, e.info.name, e.reg?.tools ?? []) });
+			return items;
+		});
+		if (this.entries.some((e) => e.reg?.providers.length)) list.push({ name: "prometheus:context", factory: (pi) => this.registerContextBridge(pi) });
+		return list;
 	}
 
 	/**
@@ -137,9 +179,30 @@ export class PluginHost {
 							console.warn(`[plugin:${entry.info.name}] 扩展加载失败：${errorText(err)}`);
 						}
 					}
+					registerNeutralTools(pi, entry.info.name, entry.reg?.tools ?? []);
 				}
+				if (this.entries.some((e) => e.reg?.providers.length)) this.registerContextBridge(pi);
 			},
 		};
+	}
+
+	/** One `before_agent_start` handler per session, however many plugins contribute context. */
+	private registerContextBridge(pi: ExtensionAPI): void {
+		pi.on("before_agent_start", async (event, ctx) => {
+			const found = await this.collectContext({
+				prompt: event.messageType === "user" ? event.prompt : "",
+				cwd: ctx.cwd,
+				sessionId: ctx.sessionManager?.getSessionId?.(),
+				runtime: "pi",
+				messageType: event.messageType,
+			});
+			// Mutate in place and never return `systemPrompt`: that would freeze the prompt and hide later sections.
+			const opts = event.systemPromptOptions;
+			Object.assign(opts.sections, found.static.sections);
+			opts.promptGuidelines.push(...found.static.guidelines);
+			const turn = found.turn.join("\n\n");
+			if (turn) opts.sections.turn_context = turn;
+		});
 	}
 
 	// ---------- loading ----------
@@ -171,7 +234,7 @@ export class PluginHost {
 		info.status = "loaded";
 		info.error = undefined;
 		info.panels = [];
-		const reg: Registration = { factories: [], storeIds: [], rpcKeys: [], routes: [], disposers: [] };
+		const reg: Registration = { factories: [], tools: [], providers: [], storeIds: [], rpcKeys: [], routes: [], disposers: [] };
 		entry.reg = reg;
 		try {
 			const plugin = await entry.fetch();
@@ -383,6 +446,19 @@ export class PluginHost {
 			extension: (factory) => {
 				reg.factories.push(factory);
 			},
+			tools: {
+				register: (tool) => {
+					const toolName = typeof tool?.name === "string" ? tool.name.trim() : "";
+					if (!toolName) throw new AppError("pluginToolNameEmpty");
+					if (reg.tools.some((t) => t.name === tool.name)) throw new AppError("pluginToolDuplicate", { name: tool.name });
+					reg.tools.push(tool);
+				},
+			},
+			context: {
+				provide: (provider) => {
+					reg.providers.push(provider);
+				},
+			},
 			knowledgeStore: (id, factory) => {
 				if (this.stores.has(id)) throw new AppError("pluginStoreDuplicate", { id });
 				this.stores.set(id, factory);
@@ -407,6 +483,53 @@ export class PluginHost {
 				reg.disposers.push(fn);
 			},
 		};
+	}
+}
+
+/** Adapts a runtime-neutral tool to PI's tool definition. The parameter schema is passed through untouched. */
+export function adaptTool(tool: PluginTool): ToolDefinition {
+	return {
+		name: tool.name,
+		label: tool.label ?? tool.name,
+		description: tool.description,
+		parameters: tool.parameters as ToolDefinition["parameters"],
+		...(tool.promptSnippet !== undefined && { promptSnippet: tool.promptSnippet }),
+		...(tool.promptGuidelines !== undefined && { promptGuidelines: tool.promptGuidelines }),
+		...(tool.annotations !== undefined && { annotations: tool.annotations }),
+		...(tool.defaultActive !== undefined && { defaultActive: tool.defaultActive }),
+		execute: async (toolCallId, params, signal, onUpdate, ctx) => {
+			const toolCtx: PluginToolContext = {
+				cwd: ctx.cwd,
+				sessionId: ctx.sessionManager?.getSessionId?.(),
+				hasUI: ctx.hasUI,
+				ui: {
+					confirm: (title, message, opts) => ctx.ui.confirm(title, message, opts),
+					select: (title, options, opts) => ctx.ui.select(title, options, opts),
+					input: (title, placeholder, opts) => ctx.ui.input(title, placeholder, opts),
+					notify: (message, level) => ctx.ui.notify(message, level),
+				},
+			};
+			const result = await tool.execute(
+				toolCallId,
+				params,
+				signal,
+				onUpdate && ((partial) => onUpdate({ content: partial.content, details: partial.details })),
+				toolCtx,
+			);
+			// PI reports a failed tool by throwing, so `isError` becomes an error carrying the text.
+			if (result.isError) throw new Error(result.content.map((c) => (c.type === "text" ? c.text : "")).join("\n").trim() || tool.name);
+			return { content: result.content, details: result.details };
+		},
+	};
+}
+
+function registerNeutralTools(pi: ExtensionAPI, plugin: string, tools: PluginTool[]): void {
+	for (const tool of tools) {
+		try {
+			pi.registerTool(adaptTool(tool));
+		} catch (err) {
+			console.warn(`[plugin:${plugin}] 工具注册失败（${tool.name}）：${errorText(err)}`);
+		}
 	}
 }
 

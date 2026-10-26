@@ -139,6 +139,8 @@ export default definePlugin({
 | `rpc` | — | ✅ | `plugin.call({plugin, method, params})`；参数来自客户端，必须校验 |
 | `reloadSessions` | — | ✅ | 空闲会话立即 `session.reload()`，运行中的在 settle 后重载 |
 
+**中立 API**：`ctx.tools.register(tool)` 与 `ctx.context.provide(provider)` 与具体 agent runtime 无关（设计见 [agent-runtime.md](agent-runtime.md)）。工具用 JSON Schema（TypeBox 也可）声明参数，`execute` 拿到的是中立的 `PluginToolContext`（`cwd`、`sessionId`、`hasUI`、`ui.*`）；上下文提供者返回 `static`（会话级，进 system prompt 的 sections/guidelines）和 `turn`（随用户消息变化，如记忆命中）。目前由 PI 桥接：工具经 `registerTool` 注册，提供者通过一个 `before_agent_start` 处理器写入 `systemPromptOptions`。老插件的 `ctx.extension` 行为不变。
+
 SDK 还提供 `createJsonStore(path, fallback)`：原子写、串行化、权限 0600，读取不缓存，便于 TUI 与 Server 共享同一文件。
 
 ### 4.2 发现与加载

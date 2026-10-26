@@ -97,6 +97,87 @@ export interface AgentRunResult {
 	error?: string;
 }
 
+// ---------- Runtime-neutral tools and context ----------
+
+/** A JSON Schema object. TypeBox schemas (`Type.Object(...)`) are JSON Schema and are accepted as-is. */
+export type PluginJsonSchema = { [key: string]: any };
+
+export interface PluginUiDialogOptions {
+	signal?: AbortSignal;
+	/** Milliseconds before the dialog dismisses itself. */
+	timeout?: number;
+}
+
+/** What a tool gets when it runs, the same whichever agent runtime is driving the session. */
+export interface PluginToolContext {
+	cwd: string;
+	/** Undefined before the session has an id (e.g. a fresh in-memory session). */
+	sessionId: string | undefined;
+	/** False when nobody can answer a dialog (unattended runs). */
+	hasUI: boolean;
+	ui: {
+		confirm(title: string, message: string, opts?: PluginUiDialogOptions): Promise<boolean>;
+		select(title: string, options: string[], opts?: PluginUiDialogOptions): Promise<string | undefined>;
+		input(title: string, placeholder?: string, opts?: PluginUiDialogOptions): Promise<string | undefined>;
+		notify(message: string, level?: "info" | "warning" | "error"): void;
+	};
+}
+
+export type PluginToolContent = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
+
+export interface PluginToolResult {
+	content: PluginToolContent[];
+	/** Structured data for UIs (e.g. a todo list); not shown to the model. */
+	details?: unknown;
+	/** Report the call as failed. Throwing has the same effect. */
+	isError?: boolean;
+}
+
+/** A tool the model can call, independent of the agent runtime. */
+export interface PluginTool {
+	/** Unique within the plugin. */
+	name: string;
+	/** Human-readable name for UIs; defaults to `name`. */
+	label?: string;
+	description: string;
+	parameters: PluginJsonSchema;
+	/** One line for the tool list in the system prompt. */
+	promptSnippet?: string;
+	/** Bullets added to the system prompt guidelines while the tool is active. */
+	promptGuidelines?: string[];
+	annotations?: { readOnlyHint?: boolean };
+	/** Whether the tool is active when registered. Default true. */
+	defaultActive?: boolean;
+	execute(
+		toolCallId: string,
+		params: any,
+		signal: AbortSignal | undefined,
+		onUpdate: ((partial: PluginToolResult) => void) | undefined,
+		ctx: PluginToolContext,
+	): Promise<PluginToolResult>;
+}
+
+export interface ContextRequest {
+	/** The user's message for this turn; empty when the turn was not started by the user. */
+	prompt: string;
+	cwd: string;
+	sessionId?: string;
+	runtime: "pi" | "claude-code" | "codex";
+	messageType?: string;
+}
+
+/**
+ * `static` is stable for a session and goes into the system prompt (sections are keyed so a later
+ * contribution with the same key overrides an earlier one). `turn` changes with each user message
+ * (memory hits, mode reminders) and is delivered alongside it.
+ */
+export interface ContextContribution {
+	static?: { sections?: Record<string, string>; guidelines?: string[] };
+	turn?: string;
+}
+
+export type ContextProvider = (req: ContextRequest) => ContextContribution | undefined | Promise<ContextContribution | undefined>;
+
 export interface PluginContext {
 	readonly host: HostKind;
 	/** Directory owned by this plugin for persistent data. */
@@ -117,6 +198,10 @@ export interface PluginContext {
 
 	/** Contribute a PI extension: tools, commands, providers, lifecycle hooks. */
 	extension(factory: ExtensionFactory): void;
+	/** Runtime-neutral tools; they work under every agent runtime, unlike `extension`. */
+	tools: { register(tool: PluginTool): void };
+	/** Runtime-neutral prompt contributions, asked before each run. */
+	context: { provide(provider: ContextProvider): void };
 	/** Register a knowledge store backend under an id (e.g. "qdrant"). */
 	knowledgeStore(id: string, factory: KnowledgeStoreFactory): void;
 	/** Mount an HTTP route at /plugins/<name><path>. Server host only. */

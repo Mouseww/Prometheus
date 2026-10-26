@@ -107,6 +107,8 @@ const M = defineMessages({
 		pluginStoreDuplicate: "知识库存储 id 已被注册：{id}",
 		pluginRoutePath: "路由 path 必须以 / 开头",
 		pluginMethodInvalid: "RPC 方法名不合法：{method}",
+		pluginToolDuplicate: "该插件已注册同名工具：{name}",
+		pluginToolNameEmpty: "工具名不能为空",
 		pluginBackgroundUnsupported: "当前宿主不支持在后台运行 Agent",
 		pluginLoadError: "插件未能加载，已保持原状：{error}",
 
@@ -253,6 +255,8 @@ const M = defineMessages({
 		pluginStoreDuplicate: "That knowledge base storage id is already registered: {id}",
 		pluginRoutePath: "A route path must start with /",
 		pluginMethodInvalid: "Invalid RPC method name: {method}",
+		pluginToolDuplicate: "This plugin already registered a tool named {name}",
+		pluginToolNameEmpty: "A tool name cannot be empty",
 		pluginBackgroundUnsupported: "This host cannot run agents in the background",
 		pluginLoadError: "The plugin failed to load and the previous version was kept: {error}",
 

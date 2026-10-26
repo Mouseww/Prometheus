@@ -444,7 +444,10 @@ modes 的 replace/strict 会返回完整的 `systemPrompt`。
 4. §7 网关：CC 在 Prometheus 网关模式下排除 user 设置层；Codex 在 Prometheus 网关模式下使用 Prometheus 自己的 `CODEX_HOME`（`<data>/runtimes/codex-home`），不读用户的 config.toml 和 auth.json，原生模式才用用户的 `CODEX_HOME`。
 5. §5.2 static 上下文：CC 设置 `snapshot:false`，内容变化后的下一回合 resume 重启；Codex 在 `thread/resume` 时更新 `developerInstructions`。
 6. 仍待验证：CC 的 `/compact` 在流式输入模式下是否可用、2.1.273 的 `_meta` 和 `list_changed` 行为、Codex 跨回合的 `list_changed`、冷启动性能、Android 上的 musl。
-7. 合规（未决）：在 Prometheus 里调用用户本机 CLI 的订阅登录是否符合 Anthropic / OpenAI 条款。在确认之前，“原生登录模式”默认关闭，由用户在设置里自行开启并看到提示；使用 API key 或 Prometheus 网关的路径不受影响。
+7. Codex 原生登录模式：用户的 ChatGPT 令牌可能很久没刷新，首次以原生模式启动 Codex 可能触发令牌轮换，存在把用户本机 Codex 登出的风险。`probe()` 只检查登录文件是否存在，不发真实请求；首次使用原生模式前在界面上提示。
+8. 会话列表只读 Prometheus 自己的会话索引（§3.1），不依赖 `thread/list`（默认只返回交互式会话）。
+9. 模型选择：`model/list` 的默认模型不一定可用（实测 gpt-5.5 在 ChatGPT 登录下不被支持），所以不直接采用其默认值，由用户选择，并以第一次成功的回合为准记录。
+10. 合规（未决）：在 Prometheus 里调用用户本机 CLI 的订阅登录是否符合 Anthropic / OpenAI 条款。在确认之前，“原生登录模式”默认关闭，由用户在设置里自行开启并看到提示；使用 API key 或 Prometheus 网关的路径不受影响。
 
 ## 13. 实施阶段与验收
 
