@@ -78,7 +78,18 @@ cpSync(webDist, join(out, "web"), { recursive: true });
 
 writeFileSync(
 	join(out, "package.json"),
-	JSON.stringify({ name: "prometheus-server-bundle", private: true, type: "module", dependencies }, null, 2),
+	JSON.stringify(
+		{
+			name: "prometheus-server-bundle",
+			private: true,
+			type: "module",
+			dependencies,
+			// undici 8 needs Node 22 (webidl.util.markAsUncloneable); 7.x still runs on the Node 20 inside Electron 32.
+			...(nodeTarget === "node22" ? {} : { overrides: { undici: "7" } }),
+		},
+		null,
+		2,
+	),
 );
 // onnxruntime-node would otherwise fetch CUDA/TensorRT libs on Linux, which AppImage bundling cannot resolve.
 execSync("npm install --omit=dev --no-audit --no-fund", {
