@@ -1,5 +1,5 @@
-// Runtime-neutral agent interfaces (docs/agent-runtime.md §3). Types only: nothing implements or uses them yet.
-// PiRuntime is meant to be the first implementation, lifted from host.ts; the host keeps the session index and RPC.
+// Runtime-neutral agent interfaces (docs/agent-runtime.md §3). Types only.
+// PiRuntime (./pi/pi-runtime.ts) is the first implementation; the host keeps the session index and RPC.
 import type {
 	ChatMessage,
 	CommandInfo,
@@ -9,7 +9,6 @@ import type {
 	ModelRef,
 	PermissionMode,
 	PromptDisposition,
-	RunAccess,
 	SessionEvent,
 	SessionSnapshot,
 	SessionStats,
@@ -17,6 +16,7 @@ import type {
 	ToolInfo,
 	UsageStats,
 } from "@prometheus/protocol";
+import type { SubagentRuntime } from "@prometheus/subagents";
 import type { PermissionGate } from "../permission-gate.ts";
 import type { UIBridge } from "../ui-bridge.ts";
 
@@ -82,8 +82,23 @@ export interface NativeSessionInfo {
 	firstMessage: string;
 }
 
+/** How a session reports back to the host. The host builds one per session and passes it in `SessionInit`. */
+export interface SessionHooks {
+	/** The session exists and has its id, but its extensions are not bound yet (so UI requests may already name it). */
+	created?(session: RuntimeSession): void;
+	/** Every wire event in order, including `permission_mode_changed` emitted before the session returned (no `subscribe` caller exists yet). The same events also reach `subscribe` listeners. */
+	event?(event: SessionEvent): void;
+	/** Something that shows in the session list changed: a run started or settled, or the name changed. */
+	sessionsChanged?(): void;
+	/** Compaction replaced the context, so clients must rebuild their message list. */
+	contextReplaced?(): void;
+	/** A run settled (the session is idle again). */
+	settled?(): void;
+}
+
 /** Everything a runtime needs to start or resume a session. Prometheus-owned services are shared, never duplicated. */
 export interface SessionInit {
+	/** Working directory of a new session; a resumed session takes it from its transcript (see `ResumeInit`). */
 	cwd: string;
 	/** Defaults to the runtime's native gateway. */
 	gateway?: GatewayChoice;
@@ -91,10 +106,14 @@ export interface SessionInit {
 	permission: PermissionGate;
 	/** The session's UI bridge for dialogs, statuses and widgets. */
 	ui: UIBridge;
-	/** Set for automations: nothing is asked, whatever this does not cover is refused. */
-	unattended?: RunAccess;
+	/** The session's subagent runtime (a Prometheus service the runtime wires in as a tool and restores from the transcript). */
+	subagents?: SubagentRuntime;
+	hooks?: SessionHooks;
 	// Not yet modelled: the tool bus endpoint (§4) and the context composer (§5).
 }
+
+/** What `AgentRuntime.resume` needs: the working directory comes from the stored session. */
+export type ResumeInit = Omit<SessionInit, "cwd">;
 
 /** A user turn: text plus optional pictures. */
 export interface UserInput {
@@ -115,7 +134,7 @@ export interface AgentRuntime {
 	probe(): Promise<RuntimeHealth>;
 	listModels(gateway: GatewayChoice): Promise<ModelInfo[]>;
 	create(init: SessionInit): Promise<RuntimeSession>;
-	resume(ref: SessionRef, init: SessionInit): Promise<RuntimeSession>;
+	resume(ref: SessionRef, init: ResumeInit): Promise<RuntimeSession>;
 	/** Sessions in the runtime's native storage. */
 	listNative(): Promise<NativeSessionInfo[]>;
 	/** Removes a session's native transcript. */
@@ -133,12 +152,20 @@ export interface RuntimeSession {
 	readonly capabilities: RuntimeCapabilities;
 	/** A turn is in progress. */
 	readonly isStreaming: boolean;
+	/** Working directory of the session (cheap; unlike `snapshotState()` it copies nothing). */
+	readonly cwd: string;
+	/** Where the session is stored right now (the path appears once the runtime has one). */
+	ref(): SessionRef;
 
 	/** Resolves once the runtime accepts the prompt; the run itself streams through `subscribe`. */
 	prompt(input: UserInput, delivery: PromptDelivery): Promise<PromptDisposition>;
 	abort(): Promise<void>;
 	/** Resolves when the current run (if any) has settled. */
 	waitForIdle(): Promise<void>;
+	/** Runs a turn to completion (unattended runs): resolves when settled, rejects if the prompt fails. */
+	run(input: UserInput): Promise<void>;
+	/** Text of the last assistant reply. */
+	lastReply(): string;
 
 	setModel(model: ModelRef): Promise<void>;
 	setThinking(level: ThinkingLevel): Promise<void>;
@@ -157,8 +184,8 @@ export interface RuntimeSession {
 	usage(): SessionStats;
 
 	compact?(instructions?: string): Promise<void>;
-	/** Branch back to the user message at or before `ref`; returns its content for resubmission. */
-	rewind?(ref: MessageRef): Promise<UserInput>;
+	/** Branch back to the user message at or before `ref`; returns its content for resubmission. `text` replaces the message text (edit). */
+	rewind?(ref: MessageRef, text?: string): Promise<UserInput>;
 	/** Drop a message (and the tool results tied to it) from the context. */
 	deleteMessages?(ref: MessageRef): Promise<void>;
 	/** Take a waiting message out of the steer / follow-up queue; `text` guards against a stale index. */

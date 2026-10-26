@@ -212,6 +212,28 @@ describe("PrometheusHost RPC (characterization)", () => {
 		await expect(host.call("tools.list", { sessionId: seeded.id })).rejects.toMatchObject({ code: "sessionNotOpen" });
 	});
 
+	it("message.fork resumes the new session from its fork, names it \"(fork)\" and returns the editor text", async () => {
+		const sm = SessionManager.create(cwd);
+		const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+		sm.appendMessage({ role: "user", content: [{ type: "text", text: "question" }], timestamp: 1000 });
+		sm.appendMessage({ role: "assistant", content: [{ type: "text", text: "answer" }], api: "anthropic-messages", provider: "p", model: "m", usage, stopReason: "stop", timestamp: 2000 });
+		sm.appendMessage({ role: "user", content: [{ type: "text", text: "follow up" }], timestamp: 3000 });
+		const id = sm.getSessionId();
+		await host.call("session.open", { sessionId: id });
+		await host.call("session.rename", { sessionId: id, name: "Base" });
+
+		const atReply = await host.call("message.fork", { sessionId: id, ref: { index: 1, role: "assistant", timestamp: 2000 } });
+		expect(atReply.snapshot.id).not.toBe(id);
+		expect(atReply.snapshot.name).toBe("Base (fork)");
+		expect(atReply.snapshot.messages).toHaveLength(2);
+		expect(atReply.editorText).toBeUndefined();
+
+		const atUser = await host.call("message.fork", { sessionId: id, ref: { index: 2, role: "user", timestamp: 3000 } });
+		expect(atUser.editorText).toBe("follow up");
+		expect(atUser.snapshot.messages).toHaveLength(2);
+		expect(atUser.snapshot.id).not.toBe(atReply.snapshot.id);
+	});
+
 	it("session.delete of a never-saved session closes it; it cannot be reopened", async () => {
 		const { id } = await host.call("session.create", { cwd });
 		expect(await host.call("session.delete", { sessionId: id })).toBeNull();

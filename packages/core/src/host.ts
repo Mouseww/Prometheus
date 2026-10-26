@@ -1,33 +1,17 @@
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import {
-	type AgentSession,
-	createAgentSession,
-	createCodemodeExtension,
-	createMcpExtension,
-	createToolSearchExtension,
-	DefaultResourceLoader,
-	getAgentDir,
-	type InlineExtension,
-	ModelRuntime,
-	SessionManager,
-	SettingsManager,
-	VERSION as PI_VERSION,
-} from "@earendil-works/pi-coding-agent";
-import { DEFAULT_CATALOG_URL, listModels, matchModelDefaults, mergeGatewayUpdate, type ModelCatalog, parseModelCatalog, parsePiModels, redactGateway, toProviderConfig } from "@prometheus/gateway";
+import { DEFAULT_CATALOG_URL, listModels, matchModelDefaults, mergeGatewayUpdate, type ModelCatalog, parseModelCatalog, redactGateway } from "@prometheus/gateway";
 import type { AgentRunOptions, AgentRunResult, PrometheusPlugin } from "@prometheus/plugin-sdk";
 import {
 	AppError,
 	encodeError,
-	type CommandInfo,
 	type ModelPricing,
 	type DirListing,
 	type ImageContent,
 	type MessageRef,
-	type ModelInfo,
 	PROTOCOL_VERSION,
 	PERMISSION_MODES,
 	type PromptDisposition,
@@ -38,33 +22,23 @@ import {
 	type SessionEvent,
 	type SessionSnapshot,
 	type SessionSummary,
-	type ThinkingLevel,
 	type UIRequest,
-	type ChatMessage,
 } from "@prometheus/protocol";
-import { contextBreakdown, estimateTokens, firstUserText, hasReportedUsage, lastReply } from "./agent/pi/tokens.ts";
-import { slimEvent, toModelRef } from "./events.ts";
+import { PiRuntime } from "./agent/pi/pi-runtime.ts";
+import { firstUserText } from "./agent/pi/tokens.ts";
+import type { ResumeInit, RuntimeSession, SessionHooks } from "./agent/types.ts";
+import { toModelRef } from "./events.ts";
 import { listExternalApps, openInExternalApp, openUrlNative, pickFolderNative } from "./native-dialog.ts";
-import { checkImages, imageOnlyTitle, skipPiImageAutoResize } from "./images.ts";
+import { checkImages, imageOnlyTitle } from "./images.ts";
 import { PermissionGate } from "./permission-gate.ts";
-import { EXIT_PLAN_MODE } from "./permissions.ts";
-import { pluginBuilderExtension } from "./plugin-tool.ts";
 import { bootstrap, type Runtime } from "./runtime.ts";
-import { AgentStore, createPiRunner, runClaude, runCodex, SubagentRuntime } from "@prometheus/subagents";
+import { AgentStore, runClaude, runCodex, SubagentRuntime } from "@prometheus/subagents";
 import { UIBridge } from "./ui-bridge.ts";
-import { collectUsage } from "./usage.ts";
 import { normalizeDir, WorkspaceStore, workspaceId } from "./workspaces.ts";
 import tauriConf from "../../../apps/desktop/src-tauri/tauri.conf.json" with { type: "json" };
 
 // Single source of truth shared with the desktop release (the tag must match it).
 export const PROMETHEUS_VERSION: string = tauriConf.version;
-
-// Mirrors PI's CLI built-ins (main() adds them for the TUI); names keep `builtin:<name>` settings working.
-const builtInExtensions: InlineExtension[] = [
-	{ name: "codemode", factory: createCodemodeExtension(), replaceable: true, builtin: true },
-	{ name: "tool-search", factory: createToolSearchExtension(), replaceable: true, builtin: true },
-	{ name: "mcp", factory: createMcpExtension(), replaceable: true, builtin: true },
-];
 
 /** Fire-and-forget: the file manager's own exit code is meaningless (explorer.exe exits 1 on success). */
 function openInFileManager(dir: string): void {
@@ -93,33 +67,29 @@ export interface PrometheusHostOptions {
 }
 
 interface LiveSession {
-	session: AgentSession;
+	session: RuntimeSession;
 	bridge: UIBridge;
 	gate: PermissionGate;
 	subagents: SubagentRuntime;
-	unsubscribe: () => void;
 }
 
 type Handlers = { [M in Exclude<RpcMethod, ServerRpcMethod>]: (params: RpcParams<M>) => Promise<RpcResult<M>> | RpcResult<M> };
 
-/** Embeddable Prometheus host: one ModelRuntime, many PI sessions, all exposed through the RPC surface. */
+/** Embeddable Prometheus host: one agent runtime, many sessions, all exposed through the RPC surface. */
 export class PrometheusHost {
 	readonly runtime: Runtime;
-	readonly modelRuntime: ModelRuntime;
+	private readonly pi: PiRuntime;
 	private readonly cwd: string;
-	private readonly agentDir = getAgentDir();
 	private readonly live = new Map<string, LiveSession>();
 	private readonly opening = new Map<string, Promise<LiveSession>>();
 	private readonly paths = new Map<string, string>();
-	private registered = new Set<string>();
 	private readonly pendingReload = new Set<string>();
 	private readonly listener: HostListener;
 	private readonly workspaces: WorkspaceStore;
-	private settingsManager: SettingsManager | undefined;
 
-	private constructor(runtime: Runtime, modelRuntime: ModelRuntime, options: PrometheusHostOptions) {
+	private constructor(runtime: Runtime, pi: PiRuntime, options: PrometheusHostOptions) {
 		this.runtime = runtime;
-		this.modelRuntime = modelRuntime;
+		this.pi = pi;
 		this.cwd = options.cwd ?? process.cwd();
 		this.listener = options.listener;
 		this.workspaces = new WorkspaceStore(join(runtime.dataDir, "workspaces.json"));
@@ -130,13 +100,16 @@ export class PrometheusHost {
 		runtime.plugins.notifyPlugin = (name) => this.listener.pluginNotify(name);
 	}
 
+	/** PI's model registry (shares auth.json/models.json with the TUI). */
+	get modelRuntime(): PiRuntime["modelRuntime"] {
+		return this.pi.modelRuntime;
+	}
+
 	static async create(options: PrometheusHostOptions): Promise<PrometheusHost> {
 		const runtime = await bootstrap({ host: "server", dataDir: options.dataDir, cwd: options.cwd, builtinPlugins: options.builtinPlugins });
-		const agentDir = getAgentDir();
-		// Shares PI's auth.json/models.json so `/login` credentials from the TUI work here too.
-		const modelRuntime = await ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath: join(agentDir, "models.json") });
-		const host = new PrometheusHost(runtime, modelRuntime, options);
-		host.syncGateways();
+		const pi = await PiRuntime.start({ runtime, cwd: options.cwd ?? process.cwd() });
+		const host = new PrometheusHost(runtime, pi, options);
+		pi.syncGateways();
 		return host;
 	}
 
@@ -155,47 +128,6 @@ export class PrometheusHost {
 
 	private readonly catalogs = new Map<string, { at: number; catalog: ModelCatalog }>();
 
-	/** Gateways declared in the PI agent's own models.json (the file PI's /login and manual setups use). */
-	private async readPiGateways(): Promise<ReturnType<typeof parsePiModels>> {
-		let raw: string;
-		try {
-			raw = await readFile(join(this.agentDir, "models.json"), "utf8");
-		} catch {
-			return [];
-		}
-		const auth = await readFile(join(this.agentDir, "auth.json"), "utf8").then(
-			(a) => {
-				try {
-					return JSON.parse(a) as unknown;
-				} catch {
-					return undefined;
-				}
-			},
-			() => undefined,
-		);
-		try {
-			return parsePiModels(JSON.parse(raw), process.env, auth);
-		} catch {
-			throw new AppError("catalogInvalid");
-		}
-	}
-
-	private syncGateways(): void {
-		const next = new Set<string>();
-		for (const g of this.runtime.config.gateways()) {
-			if (g.enabled === false) continue;
-			try {
-				const config = toProviderConfig(g);
-				this.modelRuntime.registerProvider(g.id, config as Parameters<ModelRuntime["registerProvider"]>[1]);
-				next.add(g.id);
-			} catch (err) {
-				console.warn(`[prometheus] 网关注册失败 ${g.id}: ${err instanceof Error ? err.message : err}`);
-			}
-		}
-		for (const id of this.registered) if (!next.has(id)) this.modelRuntime.unregisterProvider(id);
-		this.registered = next;
-	}
-
 	// ---------- sessions ----------
 
 	private async reloadSessions(): Promise<void> {
@@ -213,98 +145,55 @@ export class PrometheusHost {
 	private async reloadOne(id: string, live: LiveSession): Promise<void> {
 		this.pendingReload.delete(id);
 		try {
-			await live.session.reload();
+			await live.session.refreshTools();
 		} catch (err) {
 			live.bridge.context().notify(encodeError(new AppError("reloadFailed", { error: err instanceof Error ? err.message : String(err) })), "error");
 		}
 	}
 
-	/** One loader per session: its extension runtime is invalidated when that session is disposed or reloaded, so sharing it would break sibling sessions. */
-	private async loader(cwd: string, gate: PermissionGate, subagents: SubagentRuntime): Promise<DefaultResourceLoader> {
-		const loader = new DefaultResourceLoader({
-			cwd,
-			agentDir: this.agentDir,
-			// PI's own built-ins (MCP client, codemode, tool search) come first, as in the TUI.
-			extensionFactories: [...builtInExtensions, this.runtime.dynamicExtension(), pluginBuilderExtension(this.runtime.plugins), gate.extension(), subagents.extension()],
-			// The app has its own `subagent` tool; the pi-subagents package would register a second one under the same name.
-			extensionsOverride: (base) => ({ ...base, extensions: base.extensions.filter((x) => !/pi-subagents/i.test(`${x.path} ${x.resolvedPath}`)) }),
-		});
-		await loader.reload();
-		return loader;
-	}
-
-	private async attach(sessionManager: SessionManager): Promise<LiveSession> {
-		const cwd = sessionManager.getCwd();
+	/** Builds the per-session Prometheus services, starts the session through `start`, and registers it as live. */
+	private async attach(start: (init: ResumeInit) => Promise<RuntimeSession>): Promise<LiveSession> {
 		const gate = new PermissionGate();
-		let sessionRef: AgentSession | undefined;
-		let sessionIdRef = "";
+		let session: RuntimeSession | undefined;
+		let id = "";
 		const subagents = new SubagentRuntime({
-			store: new AgentStore(this.agentDir),
-			cwd: () => cwd,
-			emit: (runs) => this.listener.event(sessionIdRef, { type: "subagents_update", runs }),
+			store: new AgentStore(this.pi.agentDir),
+			cwd: () => session?.cwd ?? this.cwd,
+			emit: (runs) => this.listener.event(id, { type: "subagents_update", runs }),
 			runners: {
-				pi: createPiRunner({
-					modelRuntime: this.modelRuntime,
-					agentDir: this.agentDir,
-					parentModel: () => (sessionRef?.model ? `${sessionRef.model.provider}/${sessionRef.model.id}` : undefined),
-					parentThinking: () => sessionRef?.thinkingLevel as "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | undefined,
-				}),
+				// Reads the chat's model and thinking level lazily: the session does not exist yet.
+				pi: this.pi.subagentRunner(() => session),
 				"claude-code": runClaude,
 				codex: runCodex,
 			},
 		});
-		const settingsManager = SettingsManager.create(cwd, this.agentDir);
-		// PI auto-resize needs Photon WASM. A failed load drops every picture with
-		// "Image omitted: could not be resized". The web UI already shrinks attachments.
-		skipPiImageAutoResize(settingsManager);
-		const { session } = await createAgentSession({
-			cwd,
-			agentDir: this.agentDir,
-			modelRuntime: this.modelRuntime,
-			sessionManager,
-			settingsManager,
-			resourceLoader: await this.loader(cwd, gate, subagents),
-		});
-		const id = session.sessionId;
-		sessionRef = session;
-		sessionIdRef = id;
-		subagents.restore(session.messages);
 		const bridge = new UIBridge({
 			request: (r) => this.listener.uiRequest(id, r),
 			resolved: (rid) => this.listener.uiResolved(id, rid),
 		});
-		gate.ask = (prompt, signal) => bridge.askPermission(prompt, signal);
-		gate.onModeChange = (mode) => {
-			bridge.auto = mode === "auto";
-			if (bridge.auto) bridge.autoResolvePending();
-			// The plan-submission tool exists only while planning.
-			const active = session.getActiveToolNames().filter((n) => n !== EXIT_PLAN_MODE);
-			session.setActiveToolsByName(mode === "plan" ? [...active, EXIT_PLAN_MODE] : active);
-			this.listener.event(id, { type: "permission_mode_changed", mode });
-		};
-		const unsubscribe = session.subscribe((e) => {
-			const slim = slimEvent(e);
-			if (slim) this.listener.event(id, slim);
-			if (e.type === "agent_start" || e.type === "agent_settled" || e.type === "session_info_changed") this.listener.sessionsChanged();
+		const hooks: SessionHooks = {
+			created: (s) => {
+				session = s;
+				id = s.id;
+			},
+			event: (e) => this.listener.event(id, e),
+			sessionsChanged: () => this.listener.sessionsChanged(),
 			// Compaction replaces the context; clients rebuild their message list from events and would otherwise keep the old one.
-			if (e.type === "compaction_end" && e.result) {
+			contextReplaced: () => {
 				const current = this.live.get(id);
 				if (current) this.resetMessages(id, current);
-			}
-			if (e.type === "agent_settled" && this.pendingReload.has(id)) {
+			},
+			settled: () => {
+				if (!this.pendingReload.has(id)) return;
 				const current = this.live.get(id);
 				if (current) void this.reloadOne(id, current);
-			}
-		});
-		await session.bindExtensions({
-			uiContext: bridge.context(),
-			mode: "rpc",
-			onError: (err) => bridge.context().notify(encodeError(new AppError("extensionError", { error: String(err.error) })), "error"),
-		});
-		const live = { session, bridge, gate, subagents, unsubscribe };
-		this.live.set(id, live);
-		const file = session.sessionFile;
-		if (file) this.paths.set(id, file);
+			},
+		};
+		const started = await start({ permission: gate, ui: bridge, subagents, hooks });
+		const live = { session: started, bridge, gate, subagents };
+		this.live.set(started.id, live);
+		const file = started.ref().path;
+		if (file) this.paths.set(started.id, file);
 		return live;
 	}
 
@@ -323,7 +212,10 @@ export class PrometheusHost {
 		if (existing) return existing;
 		let pending = this.opening.get(sessionId);
 		if (!pending) {
-			pending = (async () => this.attach(SessionManager.open(await this.resolvePath(sessionId))))();
+			pending = (async () => {
+				const path = await this.resolvePath(sessionId);
+				return this.attach((init) => this.pi.resume({ runtime: "pi", id: sessionId, nativeId: sessionId, path }, init));
+			})();
 			pending.finally(() => this.opening.delete(sessionId)).catch(() => {});
 			this.opening.set(sessionId, pending);
 		}
@@ -341,70 +233,68 @@ export class PrometheusHost {
 		if (!live) return;
 		live.bridge.cancelAll();
 		if (live.session.isStreaming) await live.session.abort().catch(() => {});
-		live.unsubscribe();
 		live.subagents.dispose();
-		live.session.dispose();
 		this.live.delete(sessionId);
+		await live.session.dispose();
 	}
 
 	private async listSessions(): Promise<SessionSummary[]> {
-		const infos = await SessionManager.listAll();
-		for (const info of infos) this.paths.set(info.id, info.path);
-		await this.workspaces.ensure(infos.map((i) => ({ path: i.cwd, modified: i.modified.toISOString() })));
+		const infos = await this.pi.listNative();
+		for (const info of infos) if (info.ref.path) this.paths.set(info.ref.id, info.ref.path);
+		await this.workspaces.ensure(infos.map((i) => ({ path: i.cwd, modified: i.modified })));
 		const archived = await this.workspaces.archived();
-		const listed = new Set(infos.map((i) => i.id));
+		const listed = new Set(infos.map((i) => i.ref.id));
 		const now = new Date().toISOString();
 		// A first reply still in flight has no session file yet, so list it from memory.
 		const unsaved: SessionSummary[] = [];
 		for (const [id, live] of this.live) {
 			if (listed.has(id) || !live.session.isStreaming) continue;
-			const cwd = live.session.sessionManager.getCwd();
+			const state = live.session.snapshotState();
 			unsaved.push({
 				id,
-				name: live.session.sessionName,
-				cwd,
+				name: state.name,
+				cwd: state.cwd,
 				created: now,
 				modified: now,
-				messageCount: live.session.messages.length,
-				firstMessage: firstUserText(live.session.messages).slice(0, 200),
+				messageCount: state.messages.length,
+				firstMessage: firstUserText(state.messages).slice(0, 200),
 				live: true,
 				running: true,
 				archived: false,
-				workspaceId: workspaceId(cwd),
+				workspaceId: workspaceId(state.cwd),
 			});
 		}
 		return [...infos
 			.map((info) => ({
-				id: info.id,
+				id: info.ref.id,
 				name: info.name,
 				cwd: info.cwd,
-				created: info.created.toISOString(),
-				modified: info.modified.toISOString(),
+				created: info.created,
+				modified: info.modified,
 				messageCount: info.messageCount,
 				firstMessage: imageOnlyTitle(info.firstMessage, info.messageCount).slice(0, 200),
-				live: this.live.has(info.id),
-				running: this.live.get(info.id)?.session.isStreaming ?? false,
-				archived: archived.has(info.id),
+				live: this.live.has(info.ref.id),
+				running: this.live.get(info.ref.id)?.session.isStreaming ?? false,
+				archived: archived.has(info.ref.id),
 				workspaceId: info.cwd ? workspaceId(info.cwd) : "",
 			})), ...unsaved]
 			.sort((a, b) => b.modified.localeCompare(a.modified));
 	}
 
 	private snapshot(live: LiveSession): SessionSnapshot {
-		const s = live.session;
-		const cwd = s.sessionManager.getCwd();
+		const s = live.session.snapshotState();
 		return {
-			id: s.sessionId,
-			name: s.sessionName,
-			cwd,
-			workspaceId: workspaceId(cwd),
-			messages: s.messages as unknown as ChatMessage[],
-			model: toModelRef(s.model),
-			thinkingLevel: s.thinkingLevel as ThinkingLevel,
-			availableThinkingLevels: s.getAvailableThinkingLevels() as ThinkingLevel[],
+			id: s.id,
+			name: s.name,
+			cwd: s.cwd,
+			workspaceId: workspaceId(s.cwd),
+			messages: s.messages,
+			model: s.model,
+			thinkingLevel: s.thinkingLevel,
+			availableThinkingLevels: s.availableThinkingLevels,
 			permissionMode: live.gate.mode,
 			isStreaming: s.isStreaming,
-			queue: { steering: [...s.getSteeringMessages()], followUp: [...s.getFollowUpMessages()] },
+			queue: s.queue,
 			pendingUI: live.bridge.pendingRequests(),
 			statuses: Object.fromEntries(live.bridge.statuses),
 			widgets: Object.fromEntries(live.bridge.widgets),
@@ -420,32 +310,28 @@ export class PrometheusHost {
 		const dir = options.cwd?.trim();
 		if (!dir || !existsSync(dir) || !statSync(dir).isDirectory()) throw new AppError("workdirNotFound", { dir });
 		await this.workspaces.add(dir);
-		const live = await this.attach(SessionManager.create(normalizeDir(dir)));
+		const live = await this.attach((init) => this.pi.create({ ...init, cwd: normalizeDir(dir) }));
 		const { session, bridge, gate } = live;
-		const id = session.sessionId;
+		const id = session.id;
 		gate.unattended = options.access;
 		bridge.headless = true;
-		if (options.name?.trim()) session.setSessionName(options.name.trim());
+		if (options.name?.trim()) session.setName(options.name.trim());
 		this.listener.sessionsChanged();
 
 		const stop = () => void session.abort().catch(() => {});
 		const timeout = setTimeout(stop, options.timeoutMs ?? 30 * 60_000);
 		options.signal?.addEventListener("abort", stop, { once: true });
 		try {
-			if (options.model) {
-				const target = this.modelRuntime.getModel(options.model.provider, options.model.id);
-				if (!target) throw new AppError("modelNotFound", { provider: options.model.provider, id: options.model.id });
-				await session.setModel(target);
-			}
-			await session.prompt(options.prompt);
-			await session.waitForIdle();
-			const aborted = options.signal?.aborted || session.messages.some((m) => (m as unknown as { stopReason?: string }).stopReason === "aborted");
-			const last = session.messages[session.messages.length - 1] as unknown as { stopReason?: string; errorMessage?: string } | undefined;
-			if (aborted) return { sessionId: id, status: "aborted", text: lastReply(session), error: encodeError(new AppError("aborted")) };
-			if (last?.stopReason === "error") return { sessionId: id, status: "error", text: lastReply(session), error: last.errorMessage ?? encodeError(new AppError("generic")) };
-			return { sessionId: id, status: "success", text: lastReply(session) };
+			if (options.model) await session.setModel(options.model);
+			await session.run({ text: options.prompt });
+			const messages = session.messages();
+			const aborted = options.signal?.aborted || messages.some((m) => (m as unknown as { stopReason?: string }).stopReason === "aborted");
+			const last = messages[messages.length - 1] as unknown as { stopReason?: string; errorMessage?: string } | undefined;
+			if (aborted) return { sessionId: id, status: "aborted", text: session.lastReply(), error: encodeError(new AppError("aborted")) };
+			if (last?.stopReason === "error") return { sessionId: id, status: "error", text: session.lastReply(), error: last.errorMessage ?? encodeError(new AppError("generic")) };
+			return { sessionId: id, status: "success", text: session.lastReply() };
 		} catch (err) {
-			return { sessionId: id, status: "error", text: lastReply(session), error: err instanceof Error ? err.message : String(err) };
+			return { sessionId: id, status: "error", text: session.lastReply(), error: err instanceof Error ? err.message : String(err) };
 		} finally {
 			clearTimeout(timeout);
 			options.signal?.removeEventListener("abort", stop);
@@ -456,133 +342,51 @@ export class PrometheusHost {
 	}
 
 	private async prompt(sessionId: string, text: string, images: ImageContent[] | undefined, delivery: "steer" | "followUp" | undefined): Promise<PromptDisposition> {
-		const { session, bridge } = this.require(sessionId);
-		// Resolve as soon as PI accepts the prompt; the run itself streams through events.
-		return new Promise<PromptDisposition>((resolve, reject) => {
-			session
-				.prompt(text, {
-					images,
-					streamingBehavior: session.isStreaming ? (delivery ?? "followUp") : undefined,
-					preflightResult: (disposition) => resolve(disposition),
-				})
-				.then(
-					// PI defers a prompt submitted while it settles without reporting a disposition; it still runs.
-					() => resolve("started"),
-					(err: unknown) => {
-						reject(err);
-						bridge.context().notify(err instanceof Error ? err.message : String(err), "error");
-					},
-				);
-		});
+		const { session } = this.require(sessionId);
+		return session.prompt({ text, images }, delivery ?? "send");
 	}
 
 	// ---------- message operations ----------
 
-	/** Map a client-side message position to the session entry that produced it. */
-	private locate(live: LiveSession, ref: MessageRef): { entryId: string; flat: { entryId: string; message: ChatMessage }[]; pos: number } {
-		const s = live.session;
-		if (s.isStreaming) throw new AppError("waitForReply");
-		const projection = s.sessionManager.buildSessionProjection();
-		const flat = projection.entries.flatMap((e) => e.messages.map((m) => ({ entryId: e.sourceEntry.id, message: m as unknown as ChatMessage })));
-		const hit = flat[ref.index];
-		if (!hit || hit.message.role !== ref.role || hit.message.timestamp !== ref.timestamp) throw new AppError("messageChanged");
-		return { entryId: hit.entryId, flat, pos: ref.index };
-	}
-
 	private resetMessages(id: string, live: LiveSession): void {
-		this.listener.event(id, { type: "messages_reset", messages: live.session.messages as unknown as ChatMessage[] });
+		this.listener.event(id, { type: "messages_reset", messages: live.session.messages() });
 		this.listener.sessionsChanged();
-	}
-
-	/** Nearest user message at or before `pos`. */
-	private userAt(flat: { entryId: string; message: ChatMessage }[], pos: number) {
-		for (let i = pos; i >= 0; i--) {
-			const item = flat[i];
-			if (item?.message.role === "user") return item;
-		}
-		throw new AppError("messageNotFound");
 	}
 
 	private async deleteMessage(sessionId: string, ref: MessageRef): Promise<void> {
 		const live = this.require(sessionId);
-		const { entryId, flat, pos } = this.locate(live, ref);
-		const targets = new Set([entryId]);
-		const message = flat[pos]?.message;
-		// Dropping a tool call without its results (or vice versa) would make the context invalid for providers.
-		if (message?.role === "assistant") {
-			const calls = new Set(message.content.flatMap((c) => (c?.type === "toolCall" ? [c.id] : [])));
-			for (const item of flat) if (item.message.role === "toolResult" && calls.has(item.message.toolCallId)) targets.add(item.entryId);
-		}
-		const sm = live.session.sessionManager;
-		for (const target of targets) sm.appendContextEdit(target, null);
-		live.session.refreshContext();
+		if (!live.session.deleteMessages) throw new AppError("generic");
+		await live.session.deleteMessages(ref);
 		this.resetMessages(sessionId, live);
 	}
 
 	private async retryMessage(sessionId: string, ref: MessageRef, edited?: string): Promise<void> {
 		const live = this.require(sessionId);
-		const { flat, pos } = this.locate(live, ref);
-		const user = this.userAt(flat, pos);
-		const m = user.message as Extract<ChatMessage, { role: "user" }>;
-		const text = edited ?? (typeof m.content === "string" ? m.content : m.content.map((c) => (c.type === "text" ? c.text : "")).join(""));
-		const images = typeof m.content === "string" ? [] : m.content.filter((c): c is ImageContent => c.type === "image");
-		if (!text.trim() && !images.length) throw new AppError("messageEmpty");
-		// Branch from before the user message; the old reply stays in the session tree.
-		const result = await live.session.navigateTree(user.entryId);
-		if (result.cancelled) throw new AppError("aborted");
+		if (!live.session.rewind) throw new AppError("generic");
+		const input = await live.session.rewind(ref, edited);
 		this.resetMessages(sessionId, live);
-		await this.prompt(sessionId, text, images.length ? images : undefined, undefined);
+		await this.prompt(sessionId, input.text, input.images, undefined);
 	}
 
 	/** Take one waiting message out of the steer / follow-up queue so it can be edited or dropped. */
 	private takeQueued(sessionId: string, kind: "steer" | "followUp", index: number, text: string): { text: string; images?: ImageContent[] } {
 		const { session } = this.require(sessionId);
-		// PI keeps the display strings and the real messages (with pictures) in parallel lists; both must change together.
-		const internal = session as unknown as { _steeringMessages: string[]; _followUpMessages: string[]; _emitQueueUpdate(): void; agent: { steeringQueue: { messages: unknown[] }; followUpQueue: { messages: unknown[] } } };
-		const labels = kind === "steer" ? internal._steeringMessages : internal._followUpMessages;
-		const queue = kind === "steer" ? internal.agent.steeringQueue : internal.agent.followUpQueue;
-		if (labels[index] !== text) throw new AppError("messageAlreadySent");
-		const [message] = queue.messages.splice(index, 1) as { content?: unknown }[];
-		labels.splice(index, 1);
-		internal._emitQueueUpdate();
-		const content = Array.isArray(message?.content) ? (message.content as ImageContent[]) : [];
-		const images = content.filter((c) => c.type === "image");
-		return { text, ...(images.length ? { images } : {}) };
+		if (!session.unqueue) throw new AppError("generic");
+		return session.unqueue(kind, index, text);
 	}
 
 	private async forkMessage(sessionId: string, ref: MessageRef): Promise<{ snapshot: SessionSnapshot; editorText?: string }> {
 		const live = this.require(sessionId);
-		const { entryId, flat, pos } = this.locate(live, ref);
-		const sm = live.session.sessionManager;
-		const message = flat[pos]?.message;
-		let leaf: string | null = entryId;
-		let editorText: string | undefined;
-		// Forking at a user message starts the new session just before it, with the text ready to edit.
-		if (message?.role === "user") {
-			leaf = sm.getEntry(entryId)?.parentId ?? null;
-			editorText = typeof message.content === "string" ? message.content : message.content.map((c) => (c.type === "text" ? c.text : "")).join("");
-		}
-		const source = live.session.sessionFile;
-		let next: SessionManager;
-		if (leaf && source) {
-			next = SessionManager.open(source);
-			next.createBranchedSession(leaf);
-		} else {
-			next = SessionManager.create(sm.getCwd(), undefined, source ? { parentSession: source } : undefined);
-		}
-		const forked = await this.attach(next);
-		const baseName = live.session.sessionName;
-		if (baseName) forked.session.setSessionName(`${baseName} (fork)`);
+		if (!live.session.fork) throw new AppError("generic");
+		const { editorText, ...forkRef } = await live.session.fork(ref);
+		const forked = await this.attach((init) => this.pi.resume(forkRef, init));
+		const baseName = live.session.snapshotState().name;
+		if (baseName) forked.session.setName(`${baseName} (fork)`);
 		this.listener.sessionsChanged();
 		return { snapshot: this.snapshot(forked), editorText };
 	}
 
 	// ---------- settings & filesystem ----------
-
-	private settings(): SettingsManager {
-		this.settingsManager ??= SettingsManager.create(this.cwd, this.agentDir);
-		return this.settingsManager;
-	}
 
 	private listDirs(path: string | undefined): DirListing {
 		const home = homedir();
@@ -640,7 +444,7 @@ export class PrometheusHost {
 	private readonly handlers: Handlers = {
 		"host.info": () => ({
 			version: PROMETHEUS_VERSION,
-			piVersion: PI_VERSION,
+			piVersion: this.pi.version,
 			protocol: PROTOCOL_VERSION,
 			cwd: this.cwd,
 			platform: process.platform,
@@ -651,14 +455,14 @@ export class PrometheusHost {
 			const dir = cwd?.trim() || this.cwd;
 			if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new AppError("workdirNotFound", { dir });
 			await this.workspaces.add(dir);
-			const live = await this.attach(SessionManager.create(normalizeDir(dir)));
-			if (name?.trim()) live.session.setSessionName(name.trim());
+			const live = await this.attach((init) => this.pi.create({ ...init, cwd: normalizeDir(dir) }));
+			if (name?.trim()) live.session.setName(name.trim());
 			this.listener.sessionsChanged();
 			return this.snapshot(live);
 		},
 		"session.open": async ({ sessionId }) => this.snapshot(await this.open(sessionId)),
 		"session.rename": async ({ sessionId, name }) => {
-			(await this.open(sessionId)).session.setSessionName(name.trim());
+			(await this.open(sessionId)).session.setName(name.trim());
 			this.listener.sessionsChanged();
 			return null;
 		},
@@ -675,9 +479,9 @@ export class PrometheusHost {
 		},
 		"session.delete": async ({ sessionId }) => {
 			const live = this.live.get(sessionId);
-			const path = live?.session.sessionFile ?? (await this.resolvePath(sessionId).catch(() => undefined));
+			const path = live?.session.ref().path ?? (await this.resolvePath(sessionId).catch(() => undefined));
 			await this.closeSession(sessionId);
-			if (path?.endsWith(".jsonl")) await rm(path, { force: true });
+			if (path) await this.pi.deleteNative({ runtime: "pi", id: sessionId, nativeId: sessionId, path });
 			this.paths.delete(sessionId);
 			await this.workspaces.setArchived(sessionId, false);
 			this.listener.sessionsChanged();
@@ -745,52 +549,23 @@ export class PrometheusHost {
 		},
 		"fs.mkdir": ({ parent, name }) => this.createDir(parent, name),
 
-		"settings.get": () => ({ autoCompaction: this.settings().getCompactionEnabled(), workspaceRoot: this.workspaceRoot() }),
+		"settings.get": () => ({ autoCompaction: this.pi.autoCompaction(), workspaceRoot: this.workspaceRoot() }),
 		"settings.set": async ({ autoCompaction, workspaceRoot }) => {
 			if (typeof autoCompaction === "boolean") {
-				this.settings().setCompactionEnabled(autoCompaction);
-				await this.settings().flush();
+				await this.pi.setAutoCompaction(autoCompaction);
 				// Live sessions cache their own SettingsManager.
-				for (const { session } of this.live.values()) session.setAutoCompactionEnabled(autoCompaction);
+				for (const { session } of this.live.values()) session.setAutoCompaction?.(autoCompaction);
 			}
 			if (typeof workspaceRoot === "string") {
 				const next = workspaceRoot.trim();
 				if (next && (!existsSync(next) || !statSync(next).isDirectory())) throw new AppError("dirNotFound", { dir: next });
 				await this.runtime.config.setWorkspaceRoot(next);
 			}
-			return { autoCompaction: this.settings().getCompactionEnabled(), workspaceRoot: this.workspaceRoot() };
+			return { autoCompaction: this.pi.autoCompaction(), workspaceRoot: this.workspaceRoot() };
 		},
-		"session.stats": ({ sessionId }) => {
-			const s = this.require(sessionId).session;
-			const stats = s.getSessionStats();
-			const usage = s.getContextUsage();
-			const breakdown = contextBreakdown(s);
-			const piTokens = usage?.tokens ?? null;
-			let tokens = Object.values(breakdown).reduce((a, b) => a + b, 0);
-			let estimated = true;
-			if (piTokens != null && hasReportedUsage(s)) {
-				tokens = piTokens;
-				estimated = false;
-			}
-			const contextWindow = usage?.contextWindow ?? s.model?.contextWindow ?? 0;
-			return {
-				contextTokens: tokens,
-				contextEstimated: estimated,
-				contextWindow,
-				contextPercent: contextWindow > 0 ? (tokens / contextWindow) * 100 : null,
-				breakdown,
-				totalCost: stats.cost,
-				inputTokens: stats.tokens.input,
-				outputTokens: stats.tokens.output,
-				cacheReadTokens: stats.tokens.cacheRead,
-				cacheWriteTokens: stats.tokens.cacheWrite,
-			};
-		},
+		"session.stats": ({ sessionId }) => this.require(sessionId).session.usage(),
 
-		"usage.stats": async ({ days }) => {
-			const infos = await SessionManager.listAll();
-			return collectUsage(infos.map((i) => i.path), Number.isInteger(days) && (days as number) > 0 ? (days as number) : 0);
-		},
+		"usage.stats": ({ days }) => this.pi.collectUsage(days ?? 0),
 
 		"chat.prompt": async ({ sessionId, text, images, delivery }) => {
 			if (!text.trim() && !images?.length) throw new AppError("messageEmpty");
@@ -804,53 +579,29 @@ export class PrometheusHost {
 		},
 		"chat.compact": ({ sessionId, instructions }) => {
 			const { session } = this.require(sessionId);
-			const settings = session.settingsManager;
-			const model = session.model;
-			// PI keeps the last `keepRecentTokens` (20k) verbatim, so a shorter chat has nothing to summarise; cap it at a third of the chat.
-			const configured = settings.getCompactionKeepRecentTokens(model);
-			const keep = Math.min(configured, Math.floor(session.messages.reduce((n, m) => n + estimateTokens(m), 0) / 3));
-			const key = model ? `${model.provider}/${model.id}` : undefined;
-			const apply = (n: number) => settings.applyOverrides({ compaction: { keepRecentTokens: n, ...(key ? { modelOverrides: { [key]: { keepRecentTokens: n } } } : {}) } });
-			if (keep < configured) apply(keep);
-			// Failures already reach the UI through the `compaction_end` event.
-			session
-				.compact(instructions)
-				.catch(() => undefined)
-				.finally(() => {
-					if (keep < configured) apply(configured);
-				});
+			if (!session.compact) throw new AppError("generic");
+			// Runs on in the background; failures reach the UI through the `compaction_end` event.
+			void session.compact(instructions);
 			return null;
 		},
 
-		"model.list": async () => {
-			const models = await this.modelRuntime.getAvailable();
-			return models.map(
-				(m): ModelInfo => ({
-					provider: m.provider,
-					id: m.id,
-					name: m.name,
-					reasoning: Boolean(m.reasoning),
-					vision: Array.isArray(m.input) && m.input.includes("image"),
-					contextWindow: m.contextWindow,
-				}),
-			);
-		},
+		"model.list": () => this.pi.listModels({ mode: "native" }),
 		"model.set": async ({ sessionId, model }) => {
-			const target = this.modelRuntime.getModel(model.provider, model.id);
+			const target = this.pi.getModel(model.provider, model.id);
 			if (!target) throw new AppError("modelNotFound", { provider: model.provider, id: model.id });
 			const { session } = this.require(sessionId);
-			await session.setModel(target);
+			await session.setModel(model);
 			this.listener.event(sessionId, { type: "model_changed", model: toModelRef(target) });
-			this.listener.event(sessionId, { type: "thinking_level_changed", level: session.thinkingLevel as ThinkingLevel });
+			this.listener.event(sessionId, { type: "thinking_level_changed", level: session.snapshotState().thinkingLevel });
 			return null;
 		},
-		"thinking.set": ({ sessionId, level }) => {
-			this.require(sessionId).session.setThinkingLevel(level);
+		"thinking.set": async ({ sessionId, level }) => {
+			await this.require(sessionId).session.setThinking(level);
 			return null;
 		},
-		"permission.set": ({ sessionId, mode }) => {
+		"permission.set": async ({ sessionId, mode }) => {
 			if (!PERMISSION_MODES.includes(mode)) throw new AppError("unknownPermissionMode", { mode: String(mode) });
-			this.require(sessionId).gate.setMode(mode);
+			await this.require(sessionId).session.setPermissionMode(mode);
 			return null;
 		},
 
@@ -860,19 +611,8 @@ export class PrometheusHost {
 			return null;
 		},
 
-		"commands.list": ({ sessionId }) => {
-			const s = this.require(sessionId).session;
-			const out: CommandInfo[] = [];
-			for (const c of s.extensionRunner.getRegisteredCommands()) out.push({ name: c.invocationName, description: c.description, source: "extension" });
-			for (const t of s.promptTemplates) out.push({ name: t.name, description: t.description, source: "prompt" });
-			for (const k of s.resourceLoader.getSkills().skills) out.push({ name: `skill:${k.name}`, description: k.description, source: "skill" });
-			return out;
-		},
-		"tools.list": ({ sessionId }) => {
-			const s = this.require(sessionId).session;
-			const active = new Set(s.getActiveToolNames());
-			return s.getAllTools().filter((t) => t.name !== EXIT_PLAN_MODE).map((t) => ({ name: t.name, description: t.description ?? "", active: active.has(t.name) }));
-		},
+		"commands.list": ({ sessionId }) => this.require(sessionId).session.commands(),
+		"tools.list": ({ sessionId }) => this.require(sessionId).session.tools(),
 
 		"ui.respond": ({ sessionId, requestId, response }) => {
 			this.require(sessionId).bridge.respond(requestId, response);
@@ -882,13 +622,13 @@ export class PrometheusHost {
 		"gateway.list": () => this.runtime.config.gateways().map(redactGateway),
 		"gateway.save": async ({ gateway }) => {
 			const saved = await this.runtime.config.saveGateway(gateway);
-			this.syncGateways();
+			this.pi.syncGateways();
 			this.listener.gatewaysChanged();
 			return redactGateway(saved);
 		},
 		"gateway.delete": async ({ id }) => {
 			await this.runtime.config.deleteGateway(id);
-			this.syncGateways();
+			this.pi.syncGateways();
 			this.listener.gatewaysChanged();
 			return null;
 		},
@@ -896,11 +636,11 @@ export class PrometheusHost {
 			const g = this.runtime.config.gateways().find((x) => x.id === id);
 			if (!g) throw new AppError("gatewayNotFound", { id });
 			const modelId = model ?? g.models[0]?.id;
-			const target = modelId && this.modelRuntime.getModel(id, modelId);
+			const target = modelId && this.pi.getModel(id, modelId);
 			if (!target) throw new AppError("gatewayNotRegistered");
 			const started = performance.now();
 			try {
-				const reply = await this.modelRuntime.completeSimple(
+				const reply = await this.pi.completeSimple(
 					target,
 					{ messages: [{ role: "user", content: "Reply with the single word: OK", timestamp: Date.now() }] },
 					{ signal: AbortSignal.timeout(30_000) },
@@ -926,8 +666,8 @@ export class PrometheusHost {
 			const norm = (id: string) => id.toLowerCase().replace(/^.*\//, "").replace(/[\s_.:]+/g, "-");
 			const exact = new Map<string, ModelPricing>();
 			const loose = new Map<string, ModelPricing>();
-			for (const m of this.modelRuntime.getModels()) {
-				if (this.registered.has(m.provider)) continue;
+			for (const m of this.pi.getModels()) {
+				if (this.pi.registeredGateways.has(m.provider)) continue;
 				const c = m.cost;
 				if (!c || (!c.input && !c.output)) continue;
 				const price = { input: c.input, output: c.output, cacheRead: c.cacheRead ?? 0, cacheWrite: c.cacheWrite ?? 0 };
@@ -959,7 +699,7 @@ export class PrometheusHost {
 		},
 		"gateway.piList": async () => {
 			const existing = new Set(this.runtime.config.gateways().map((g) => g.id));
-			return (await this.readPiGateways()).map(({ gateway: g, missingKey }) => ({
+			return (await this.pi.readPiGateways()).map(({ gateway: g, missingKey }) => ({
 				id: g.id,
 				name: g.name,
 				baseUrl: g.baseUrl,
@@ -974,7 +714,7 @@ export class PrometheusHost {
 			const wanted = ids ? new Set(ids) : undefined;
 			const imported: string[] = [];
 			const skipped: { id: string; reason: string }[] = [];
-			for (const { gateway, missingKey } of await this.readPiGateways()) {
+			for (const { gateway, missingKey } of await this.pi.readPiGateways()) {
 				if (wanted && !wanted.has(gateway.id)) continue;
 				if (existing.has(gateway.id)) skipped.push({ id: gateway.id, reason: encodeError(new AppError("gatewayExists")) });
 				else if (missingKey) skipped.push({ id: gateway.id, reason: encodeError(new AppError("gatewayKeyUnreadable")) });
@@ -988,7 +728,7 @@ export class PrometheusHost {
 				}
 			}
 			if (imported.length) {
-				this.syncGateways();
+				this.pi.syncGateways();
 				this.listener.gatewaysChanged();
 			}
 			return { imported, skipped };
