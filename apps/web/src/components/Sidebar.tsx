@@ -23,7 +23,8 @@ import {
 	Trash2,
 	X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, type RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { PanelInfo, SessionSummary, WorkspaceInfo } from "@prometheus/protocol";
 import { clearSession, saveMode, saveRemote } from "../lib/backend.ts";
 import type { BackendTarget } from "../lib/client.ts";
@@ -117,6 +118,47 @@ const M = defineMessages({
 
 const menuItem = "flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] max-md:py-2.5";
 
+/**
+ * Dropdown rendered in a portal with fixed coordinates: the sidebar list scrolls and clips (overflow, Collapse, the mobile drawer's
+ * transform), which cut an absolutely positioned menu off. It flips above the button near the bottom edge and stays inside the screen.
+ */
+function FloatingMenu({ anchor, width, onClose, children }: { anchor: RefObject<HTMLElement | null>; width: number; onClose: () => void; children: ReactNode }) {
+	const box = useRef<HTMLDivElement>(null);
+	const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+	useLayoutEffect(() => {
+		const a = anchor.current?.getBoundingClientRect();
+		const h = box.current?.offsetHeight ?? 0;
+		if (!a) return;
+		const margin = 8;
+		const w = Math.min(width, window.innerWidth - margin * 2);
+		const left = Math.max(margin, Math.min(a.right - w, window.innerWidth - w - margin));
+		const below = a.bottom + 4;
+		const top = below + h > window.innerHeight - margin ? Math.max(margin, a.top - 4 - h) : below;
+		setPos({ left, top });
+	}, [anchor, width]);
+	useEffect(() => {
+		const close = () => onClose();
+		window.addEventListener("resize", close);
+		window.addEventListener("scroll", close, true);
+		return () => {
+			window.removeEventListener("resize", close);
+			window.removeEventListener("scroll", close, true);
+		};
+	}, [onClose]);
+	return createPortal(
+		<div
+			ref={box}
+			data-floating-menu
+			style={{ position: "fixed", left: pos?.left ?? 0, top: pos?.top ?? 0, width: Math.min(width, window.innerWidth - 16), visibility: pos ? "visible" : "hidden" }}
+			className="z-[200] animate-rise rounded-lg border border-ink-700 bg-ink-900 p-1 shadow-xl shadow-black/40"
+			onClick={(e) => e.stopPropagation()}
+		>
+			{children}
+		</div>,
+		document.body,
+	);
+}
+
 function SessionMenu({ s, onRename }: { s: SessionSummary; onRename: () => void }) {
 	const t = useT(M);
 	const { open, setOpen, ref } = usePopover();
@@ -132,7 +174,7 @@ function SessionMenu({ s, onRename }: { s: SessionSummary; onRename: () => void 
 				<MoreHorizontal className="size-4" />
 			</button>
 			{open && (
-				<div className="absolute top-full right-0 z-40 mt-1 w-40 animate-rise rounded-lg border border-ink-700 bg-ink-900 p-1 shadow-xl shadow-black/40">
+				<FloatingMenu anchor={ref} width={160} onClose={() => setOpen(false)}>
 					<button
 						type="button"
 						className={clsx(menuItem, "text-ink-200 hover:bg-ink-800")}
@@ -163,7 +205,7 @@ function SessionMenu({ s, onRename }: { s: SessionSummary; onRename: () => void 
 					>
 						<Trash2 className="size-3.5" /> {t("delete")}
 					</button>
-				</div>
+				</FloatingMenu>
 			)}
 		</div>
 	);
@@ -329,7 +371,7 @@ function WorkspaceGroup({ w, sessions, activeId, current }: { w: WorkspaceInfo; 
 						<MoreHorizontal className="size-4" />
 					</button>
 					{menu.open && (
-						<div className="absolute top-full right-0 z-40 mt-1 w-52 animate-rise rounded-lg border border-ink-700 bg-ink-900 p-1 shadow-xl shadow-black/40">
+						<FloatingMenu anchor={menu.ref} width={208} onClose={() => menu.setOpen(false)}>
 							<button
 								type="button"
 								className={clsx(menuItem, "text-ink-200 hover:bg-ink-800")}
@@ -360,7 +402,7 @@ function WorkspaceGroup({ w, sessions, activeId, current }: { w: WorkspaceInfo; 
 							>
 								<X className="size-3.5" /> {t("removeWorkspace")}
 							</button>
-						</div>
+						</FloatingMenu>
 					)}
 				</div>
 				<button type="button" onClick={() => void newChatIn(w)} className="rounded p-0.5 text-ink-500 hover:bg-ink-700 hover:text-ember-300" title={t("newChat")}>

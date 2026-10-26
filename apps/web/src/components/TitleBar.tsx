@@ -43,7 +43,11 @@ export function usePopover() {
 	const ref = useRef<HTMLDivElement>(null);
 	useEffect(() => {
 		if (!open) return;
-		const close = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
+		const close = (e: MouseEvent) => {
+			const target = e.target as Element;
+			// Menus portalled to <body> (FloatingMenu) live outside `ref` but belong to it.
+			if (!ref.current?.contains(target) && !target.closest?.("[data-floating-menu]")) setOpen(false);
+		};
 		const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
 		document.addEventListener("mousedown", close);
 		document.addEventListener("keydown", esc);

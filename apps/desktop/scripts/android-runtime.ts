@@ -227,6 +227,10 @@ try {
 		'if [ ! -x "$PROMETHEUS_ROOTFS/usr/bin/env" ]; then echo "runtime not installed: open Settings > Runtimes" >&2; exit 127; fi',
 		'CA=""',
 		'[ -n "$PROMETHEUS_CACERT" ] && CA="-b $PROMETHEUS_CACERT:/etc/ssl/certs/ca-certificates.crt"',
+		// DNS: the rootfs only knew public resolvers, so names on the phone's own LAN (router DNS, *.lan, NAS hostnames) never resolved.
+		// Put the Wi-Fi gateway first (routers forward and know local names); /proc/net/route gives it in little-endian hex.
+		'GW=""; while read -r _if dst gwh _rest; do if [ "$dst" = 00000000 ] && [ "${#gwh}" = 8 ] && [ "$gwh" != 00000000 ]; then a=${gwh#??????}; r=${gwh%??}; b=${r#????}; r=${r%??}; c=${r#??}; d=${r%??}; GW="$((16#$a)).$((16#$b)).$((16#$c)).$((16#$d))"; break; fi; done < /proc/net/route 2>/dev/null',
+		'if [ -n "$GW" ]; then printf "nameserver %s\\nnameserver 223.5.5.5\\nnameserver 8.8.8.8\\noptions timeout:2 attempts:2\\n" "$GW" > "$PROMETHEUS_ROOTFS/etc/resolv.conf" 2>/dev/null; fi',
 		'BIND=""',
 		'[ "$PWD" != "/" ] && BIND="-b $PWD"',
 		// ssh with a saved password: the askpass helper lives in host storage and its variables must survive `env -i`.
