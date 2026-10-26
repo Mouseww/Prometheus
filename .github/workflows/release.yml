@@ -246,6 +246,7 @@ jobs:
           plutil -extract LSMinimumSystemVersion raw "$app/Contents/Info.plist"
           ls "$app/Contents/Resources/server/main.js" "$app/Contents/Resources/server/web/index.html"
           # Start the server exactly like the shell does and require it to come up under Electron's Node 20.
+          app="$(cd "$(dirname "$app")" && pwd)/$(basename "$app")"
           res="$app/Contents/Resources"
           export ELECTRON_RUN_AS_NODE=1 PROMETHEUS_HOST=127.0.0.1 PROMETHEUS_PORT=0 PROMETHEUS_HOME="$RUNNER_TEMP/prom-home"
           "$app/Contents/MacOS/Prometheus" --version
