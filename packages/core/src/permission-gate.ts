@@ -97,6 +97,32 @@ export class PermissionGate {
 		this.onModeChange?.(mode);
 	}
 
+	/**
+	 * The one permission decision, shared by every runtime: PI calls it from its `tool_call` hook, the external
+	 * runtimes from their pre-tool hook / the tool bus. Tool names and inputs are canonical (docs §4.4).
+	 * Returns undefined to let the call run, or a refusal to hand back to the model.
+	 */
+	async evaluate(call: { toolName: string; input: Record<string, unknown>; readOnly: boolean; cwd: string; signal?: AbortSignal }): Promise<{ block: true; reason: string } | undefined> {
+		const { toolName, input, readOnly } = call;
+		if (this.unattended) {
+			const v = decide(ACCESS_MODE[this.unattended], { toolName, input, readOnly }, { cwd: call.cwd, allowed: this.allowed });
+			if (v.type === "allow" && toolName !== INSTALL_PLUGIN_TOOL) return;
+			return { block: true, reason: `This is an unattended run with ${this.unattended} access and this action is not permitted. Skip it and mention it in your report.` };
+		}
+		const verdict = decide(this.mode, { toolName, input, readOnly }, { cwd: call.cwd, allowed: this.allowed });
+		if (verdict.type === "allow") return;
+		if (verdict.type === "block") return { block: true, reason: verdict.reason };
+
+		const key = ruleKey(toolName, input);
+		const answer = await this.ask?.({ kind: "tool", toolName, ...describe(toolName, input), alwaysLabel: key?.slice(key.indexOf(":") + 1) }, call.signal);
+		if (answer === "allow") return;
+		if (answer === "always" && key) {
+			this.allowed.add(key);
+			return;
+		}
+		return { block: true, reason: "The user denied this tool call. Do not retry it unchanged; ask what they would prefer." };
+	}
+
 	extension(): InlineExtension {
 		return {
 			name: "prometheus:permissions",
@@ -131,26 +157,7 @@ export class PermissionGate {
 				pi.on("tool_call", async (event, ctx) => {
 					const input = event.input as Record<string, unknown>;
 					const readOnly = pi.getAllTools().find((t) => t.name === event.toolName)?.annotations?.readOnlyHint === true;
-					if (this.unattended) {
-						const v = decide(ACCESS_MODE[this.unattended], { toolName: event.toolName, input, readOnly }, { cwd: ctx.cwd, allowed: this.allowed });
-						if (v.type === "allow" && event.toolName !== INSTALL_PLUGIN_TOOL) return;
-						return { block: true, reason: `This is an unattended run with ${this.unattended} access and this action is not permitted. Skip it and mention it in your report.` };
-					}
-					const verdict = decide(this.mode, { toolName: event.toolName, input, readOnly }, { cwd: ctx.cwd, allowed: this.allowed });
-					if (verdict.type === "allow") return;
-					if (verdict.type === "block") return { block: true, reason: verdict.reason };
-
-					const key = ruleKey(event.toolName, input);
-					const answer = await this.ask?.(
-						{ kind: "tool", toolName: event.toolName, ...describe(event.toolName, input), alwaysLabel: key?.slice(key.indexOf(":") + 1) },
-						ctx.signal,
-					);
-					if (answer === "allow") return;
-					if (answer === "always" && key) {
-						this.allowed.add(key);
-						return;
-					}
-					return { block: true, reason: "The user denied this tool call. Do not retry it unchanged; ask what they would prefer." };
+					return this.evaluate({ toolName: event.toolName, input, readOnly, cwd: ctx.cwd, signal: ctx.signal });
 				});
 			},
 		};
