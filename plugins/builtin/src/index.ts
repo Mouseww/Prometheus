@@ -1,5 +1,6 @@
 import lancedb from "@prometheus/knowledge-lancedb";
 import automations from "@prometheus/plugin-automations";
+import computerUse from "@prometheus/plugin-computer-use";
 import connectors from "@prometheus/plugin-connectors";
 import folder from "@prometheus/plugin-folder";
 import git from "@prometheus/plugin-git";
@@ -33,6 +34,7 @@ export const builtinPlugins: PrometheusPlugin[] = [
 	mcp,
 	connectors,
 	ssh,
+	computerUse,
 	packages,
 	// Chat behaviour
 	todos,

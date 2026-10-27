@@ -1,0 +1,39 @@
+name: computer-use-macos
+
+# Builds the macOS Computer Use driver and runs it against TextEdit on a hosted Mac.
+# Manual and path-triggered only; it does not touch the release pipeline.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "plugins/computer-use/drivers/macos/**"
+      - "plugins/computer-use/scripts/e2e-textedit.ts"
+      - ".github/workflows/computer-use-macos.yml"
+
+jobs:
+  driver:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile driver
+        run: |
+          swiftc --version
+          swiftc -O -o cu-driver plugins/computer-use/drivers/macos/driver.swift
+          ls -l cu-driver
+
+      - name: Handshake (permission state, no UI needed)
+        run: |
+          printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"hello"}' '{"jsonrpc":"2.0","id":2,"method":"shutdown"}' | ./cu-driver
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: End-to-end with TextEdit
+        env:
+          PROMETHEUS_CU_DRIVER: ${{ github.workspace }}/cu-driver
+        # Hosted runners may not have granted Accessibility to this process; the script prints what the
+        # driver reports either way, and fails only on a real assertion.
+        run: node --experimental-strip-types --no-warnings plugins/computer-use/scripts/e2e-textedit.ts
