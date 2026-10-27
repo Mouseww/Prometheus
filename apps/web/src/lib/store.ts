@@ -108,6 +108,7 @@ export interface ActiveSession {
 	queue: { steering: string[]; followUp: string[] };
 	runtime: RuntimeKind;
 	capabilities: RuntimeCapabilities;
+	gateway?: GatewayChoice;
 	statuses: Record<string, string>;
 	widgets: Record<string, { lines: string[]; placement: string }>;
 	subagents: SubagentRun[];
@@ -484,6 +485,7 @@ function fromSnapshot(s: SessionSnapshot): ActiveSession {
 		subagents: s.subagents ?? [],
 		runtime: s.runtime ?? "pi",
 		capabilities: s.capabilities,
+		gateway: s.gateway,
 		banner: null,
 		stats: null,
 		pending: null,
@@ -648,6 +650,12 @@ export async function switchRuntime(runtime: RuntimeKind, gatewayId: string | nu
 	const gateway: GatewayChoice = g ? { mode: "prometheus", gatewayId: g.id, model: { provider: g.id, id: g.models[0]?.id ?? "" } } : { mode: "native" };
 	const snap = await call((c) => c.rpc("session.switchRuntime", { sessionId: session.id, runtime, gateway }));
 	if (snap) activate(snap);
+}
+
+/** New-chat runtime and model source in one step (one model-list refresh). */
+export function setDraftSource(runtime: RuntimeKind, gatewayId: string | null): void {
+	set({ draftRuntime: runtime, draftGatewayId: runtime === "pi" ? null : gatewayId, draftModel: null });
+	void refreshDraftModels();
 }
 
 export function setDraftRuntime(runtime: RuntimeKind): void {
