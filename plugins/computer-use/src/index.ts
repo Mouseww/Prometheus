@@ -4,8 +4,9 @@ import { createJsonStore, definePlugin } from "@prometheus/plugin-sdk";
 import { AuditLog } from "./audit.ts";
 import { type ComputerSettings, ComputerService, DEFAULT_SETTINGS } from "./computer.ts";
 import { Decider, type DeciderConfig, describeDecider, parseDeciderConfig } from "./decider.ts";
+import { AdbDriver } from "./driver/adb.ts";
 import { startLocalDriver } from "./driver/local.ts";
-import type { RpcDriver } from "./driver/rpc.ts";
+import type { Driver } from "./protocol.ts";
 import { GUIDELINES, registerTools } from "./tools.ts";
 
 interface Stored {
@@ -29,6 +30,9 @@ function sanitizeSettings(raw: unknown): Partial<ComputerSettings> {
 		settleTimeoutMs: num(r.settleTimeoutMs, 200, 15_000),
 		confirmIrreversible: bool(r.confirmIrreversible),
 		allowIrreversibleUnattended: bool(r.allowIrreversibleUnattended),
+		device: r.device === "adb" || r.device === "local" ? r.device : undefined,
+		adbPath: typeof r.adbPath === "string" && r.adbPath.trim() ? r.adbPath.trim() : undefined,
+		adbSerial: typeof r.adbSerial === "string" ? r.adbSerial.trim() : undefined,
 	};
 	for (const k of Object.keys(out) as (keyof ComputerSettings)[]) if (out[k] === undefined) delete out[k];
 	return out;
@@ -51,13 +55,18 @@ export default definePlugin({
 			stored = { settings: sanitizeSettings(s.settings), decider: parseDeciderConfig(s.decider) };
 		});
 
-		let driver: Promise<RpcDriver> | undefined;
-		const getDriver = async (): Promise<RpcDriver> => {
+		let driver: Promise<Driver> | undefined;
+		let driverKey = "";
+		const getDriver = async (): Promise<Driver> => {
+			const s = settings();
+			const key = s.device === "adb" ? `adb:${s.adbPath}:${s.adbSerial}` : "local";
 			if (driver) {
 				const d = await driver.catch(() => undefined);
-				if (d && !d.closed) return d;
+				if (d && !d.closed && key === driverKey) return d;
+				d?.close(); // device setting changed or the driver died
 			}
-			driver = startLocalDriver(ctx.dataDir, (m) => ctx.log.warn(m));
+			driverKey = key;
+			driver = s.device === "adb" ? AdbDriver.connect(s.adbPath, s.adbSerial || undefined) : startLocalDriver(ctx.dataDir, (m) => ctx.log.warn(m));
 			driver.catch(() => {
 				driver = undefined;
 			});
@@ -71,7 +80,7 @@ export default definePlugin({
 		const audit = new AuditLog(join(ctx.dataDir, "audit.jsonl"));
 		const decider = new Decider(deciderConfig, () => ctx.gateways());
 		const selfPids = new Set([process.pid, process.ppid]);
-		const svc = new ComputerService({ driver: getDriver, settings, decider, audit, selfPids });
+		const svc = new ComputerService({ driver: getDriver, settings, decider, audit, selfPids, device: () => (settings().device === "adb" ? "android" : "local") });
 
 		const save = async (fn: (s: Stored) => Stored) => {
 			await ready;

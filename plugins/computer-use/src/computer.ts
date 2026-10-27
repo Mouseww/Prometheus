@@ -18,6 +18,11 @@ export interface ComputerSettings extends PolicySettings {
 	confirmIrreversible: boolean;
 	/** Unattended runs refuse irreversible actions unless this is on. */
 	allowIrreversibleUnattended: boolean;
+	/** Which machine the tools operate: this computer, or an Android device over adb. */
+	device: "local" | "adb";
+	adbPath: string;
+	/** adb serial when several devices are attached; empty picks the only one. */
+	adbSerial: string;
 }
 
 export const DEFAULT_SETTINGS: ComputerSettings = {
@@ -28,6 +33,9 @@ export const DEFAULT_SETTINGS: ComputerSettings = {
 	settleTimeoutMs: 3000,
 	confirmIrreversible: true,
 	allowIrreversibleUnattended: false,
+	device: "local",
+	adbPath: "adb",
+	adbSerial: "",
 };
 
 interface WindowSnap {
@@ -87,7 +95,7 @@ export interface ServiceOptions {
 	audit: AuditLog;
 	selfPids: ReadonlySet<number>;
 	/** Label of the machine operated, for results and the audit log. */
-	device?: string;
+	device?: () => string;
 }
 
 type RunMode = "interactive" | "auto" | "unattended";
@@ -107,6 +115,10 @@ export class ComputerService {
 	private readonly sessions = new Map<string, SessionState>();
 
 	private readonly opts: ServiceOptions;
+
+	private deviceName(): string {
+		return this.opts.device?.() ?? "local";
+	}
 
 	constructor(opts: ServiceOptions) {
 		this.opts = opts;
@@ -136,7 +148,7 @@ export class ComputerService {
 		const d = await this.opts.driver();
 		const wins = await d.call("windows.list", {});
 		if (!wins.length) return "没有可见窗口。";
-		const lines = [`设备：${this.opts.device ?? "本机"}（${d.hello.platform} ${d.hello.os ?? ""}）`.trim(), ""];
+		const lines = [`设备：${this.deviceName() === "local" ? "本机" : this.deviceName()}（${d.hello.platform} ${d.hello.os ?? ""}）`.trim(), ""];
 		for (const w of wins) {
 			const v = this.verdict(w);
 			const flags = [w.focused ? "前台" : "", w.minimized ? "最小化" : "", v.ok ? "" : `禁止：${v.reason}`].filter(Boolean).join("，");
@@ -415,7 +427,7 @@ export class ComputerService {
 				break;
 			}
 			const check = await this.checkAction(ctx, where, target, a, signal);
-			const base = { session: sessionId, device: this.opts.device ?? "local", app: where.app, window: where.title, op: a.op, ref: a.ref, role: target?.role, name: target?.name, valueLength: a.value?.length, guard: check.guard };
+			const base = { session: sessionId, device: this.deviceName(), app: where.app, window: where.title, op: a.op, ref: a.ref, role: target?.role, name: target?.name, valueLength: a.value?.length, guard: check.guard };
 			if (check.refused) {
 				this.opts.audit.write({ ...base, ok: false, error: `refused: ${check.refused}` });
 				log.push(`✗ ${a.op} ${a.ref}：已拒绝（${check.refused}）`);
@@ -522,12 +534,12 @@ export class ComputerService {
 				guardTag = `keys:${reason}`;
 				const refused = await this.guard(ctx, `确认按键：${keys}`, `在 ${win.app}「${win.title}」中按 ${keys} 可能会发送或提交内容（${reason}）。`);
 				if (refused) {
-					this.opts.audit.write({ session: sessionId, device: this.opts.device ?? "local", app: win.app, window: win.title, op: "keys", ok: false, error: `refused: ${refused}`, guard: guardTag });
+					this.opts.audit.write({ session: sessionId, device: this.deviceName(), app: win.app, window: win.title, op: "keys", ok: false, error: `refused: ${refused}`, guard: guardTag });
 					return `✗ 已拒绝按键 ${keys}：${refused}`;
 				}
 			}
 		}
-		const base = { session: sessionId, device: this.opts.device ?? "local", app: win.app, window: win.title, guard: guardTag };
+		const base = { session: sessionId, device: this.deviceName(), app: win.app, window: win.title, guard: guardTag };
 		const windowsBefore = new Set((await d.call("windows.list", { all: true })).map((w) => w.id));
 		try {
 			if (text) {
@@ -554,7 +566,7 @@ export class ComputerService {
 		const d = await this.opts.driver();
 		const before = new Set((await d.call("windows.list", {})).map((w) => w.id));
 		const r = await d.call("apps.launch", { target, ...(args ? { args } : {}) });
-		this.opts.audit.write({ session: sessionId, device: this.opts.device ?? "local", app: base, window: "", op: "launch", name: target, ok: true });
+		this.opts.audit.write({ session: sessionId, device: this.deviceName(), app: base, window: "", op: "launch", name: target, ok: true });
 		const end = Date.now() + 10_000;
 		while (Date.now() < end) {
 			await sleep(400, signal);
