@@ -249,6 +249,24 @@ export async function call<T>(fn: (c: PrometheusClient) => Promise<T>): Promise<
 	}
 }
 
+/** The connected server predates this method (a client newer than its remote server): the feature is simply absent there. */
+export function isMissingMethod(err: unknown, method: string): boolean {
+	const text = err instanceof Error ? err.message : String(err);
+	return text.includes(method) && /notFound|不存在|not found/i.test(text);
+}
+
+/** Like `call`, for methods newer servers add: a server without them yields `undefined` quietly instead of an error toast. */
+export async function callNewer<T>(method: string, fn: (c: PrometheusClient) => Promise<T>): Promise<T | undefined> {
+	const client = get().client;
+	if (!client) return undefined;
+	try {
+		return await fn(client);
+	} catch (err) {
+		if (!isMissingMethod(err, method)) toast(errorText(err), "error");
+		return undefined;
+	}
+}
+
 // ---------- message reconstruction ----------
 
 function emptyAssistant(): AssistantMessage {
@@ -596,7 +614,7 @@ export async function refreshModels(): Promise<void> {
 /** Model list for an open chat: what its agent can use, across the agent's own login and every compatible gateway. */
 async function refreshSessionModels(runtime: RuntimeKind, agent: string | undefined, sessionId?: string): Promise<void> {
 	if (runtime === "pi") return refreshModels();
-	const models = await call((c) => c.rpc("runtime.models", { runtime, agent }));
+	const models = await callNewer("runtime.models", (c) => c.rpc("runtime.models", { runtime, agent }));
 	if (models && (!sessionId || get().session?.id === sessionId)) set({ models });
 }
 
@@ -616,8 +634,9 @@ export async function refreshStats(): Promise<void> {
 }
 
 export async function refreshRuntimes(): Promise<void> {
-	const runtimes = await call((c) => c.rpc("runtime.list", {}));
-	if (runtimes) set({ runtimes });
+	// An older remote server has no agent runtimes: leave the list empty and the agent menu stays hidden.
+	const runtimes = await callNewer("runtime.list", (c) => c.rpc("runtime.list", {}));
+	set({ runtimes: runtimes ?? [] });
 }
 
 /** Model list of the agent picked on the new-chat page: PI's shared list, or everything the agent can use (own login plus gateways). */

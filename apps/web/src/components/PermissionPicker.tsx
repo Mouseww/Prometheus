@@ -61,7 +61,7 @@ export function PermissionPicker() {
 	const Icon = ICONS[mode];
 
 	return (
-		<div ref={ref} className="md:relative">
+		<div ref={ref} className="shrink-0 md:relative">
 			<button
 				type="button"
 				onClick={() => setOpen(!open)}
@@ -69,7 +69,7 @@ export function PermissionPicker() {
 				title={`${t("title")} · ${t("hint")}`}
 			>
 				<Icon className="size-3.5 shrink-0" />
-				<span>{t(mode)}</span>
+				<span className="whitespace-nowrap">{t(mode)}</span>
 				<ChevronDown className="size-3 shrink-0 opacity-60" />
 			</button>
 			{open && (

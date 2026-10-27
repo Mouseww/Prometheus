@@ -34,6 +34,8 @@ import { ToolBus } from "./agent/bus/tool-bus.ts";
 import { ClaudeCodeRuntime } from "./agent/claude-code/cc-runtime.ts";
 import { CodexRuntime } from "./agent/codex/codex-runtime.ts";
 import { CODEX_CAPABILITIES } from "./agent/codex/codex-session.ts";
+import { OpenCodeRuntime } from "./agent/opencode/opencode-runtime.ts";
+import { OPENCODE_CAPABILITIES } from "./agent/opencode/opencode-session.ts";
 import { CC_CAPABILITIES } from "./agent/claude-code/cc-session.ts";
 import { PiRuntime } from "./agent/pi/pi-runtime.ts";
 import { PI_CAPABILITIES } from "./agent/pi/pi-session.ts";
@@ -83,6 +85,9 @@ export interface PrometheusHostOptions {
 
 /** How many trailing messages of a conversation are carried over for display when it continues in another runtime. */
 const SEED_MESSAGES = 200;
+/** Agents every host offers; the user can configure them but not delete them. */
+const BUILTIN_AGENTS = ["claude-code", "codex", "opencode"] as const;
+const AGENT_LABEL = { "claude-code": "Claude Code", codex: "Codex", opencode: "OpenCode" } as const;
 
 interface LiveSession {
 	session: RuntimeSession;
@@ -194,7 +199,7 @@ export class PrometheusHost {
 		if (rt) return rt;
 		const executable = () => this.profileOf(key)?.executable || undefined;
 		const env = () => this.profileOf(key)?.env ?? {};
-		rt = kind === "claude-code" ? new ClaudeCodeRuntime(() => this.servicesFor(), executable, env) : new CodexRuntime(() => this.servicesFor(), executable, env);
+		rt = kind === "claude-code" ? new ClaudeCodeRuntime(() => this.servicesFor(), executable, env) : kind === "opencode" ? new OpenCodeRuntime(() => this.servicesFor(), executable, env) : new CodexRuntime(() => this.servicesFor(), executable, env);
 		this.externalRuntimes.set(key, rt);
 		return rt;
 	}
@@ -212,8 +217,8 @@ export class PrometheusHost {
 	/** Built-in agents (with the user's overrides) followed by custom ones. */
 	private agentList(): AgentProfile[] {
 		const stored = this.runtime.config.agents();
-		const builtin = (["claude-code", "codex"] as const).map((kind): AgentProfile => stored.find((a) => a.id === kind) ?? { id: kind, name: kind === "codex" ? "Codex" : "Claude Code", kind, enabled: true, builtin: true });
-		return [...builtin, ...stored.filter((a) => a.id !== "claude-code" && a.id !== "codex")];
+		const builtin = BUILTIN_AGENTS.map((kind): AgentProfile => stored.find((a) => a.id === kind) ?? { id: kind, name: AGENT_LABEL[kind], kind, enabled: true, builtin: true });
+		return [...builtin, ...stored.filter((a) => !(BUILTIN_AGENTS as readonly string[]).includes(a.id))];
 	}
 
 	private syncIndex(id: string, live: LiveSession): void {
@@ -620,7 +625,7 @@ export class PrometheusHost {
 			const live = kind !== "pi" ? await this.createExternal(kind, agent, dir, this.gatewayFromModel(model, gateway), seed) : await this.attach((init) => this.pi.create({ ...init, cwd: normalizeDir(dir), history: seed }));
 			if (state.name) live.session.setName(state.name);
 			live.gate.setMode(source.gate.mode);
-			const handoff = buildHandoff(state.messages, from === "pi" ? "PI" : from === "codex" ? "Codex" : "Claude Code");
+			const handoff = buildHandoff(state.messages, from === "pi" ? "PI" : from === "codex" ? "Codex" : from === "opencode" ? "OpenCode" : "Claude Code");
 			// PI carries the history itself; the others get the transcript as hidden first-turn context.
 			if (handoff && kind !== "pi") live.handoff = handoff;
 			this.listener.sessionsChanged();
@@ -771,7 +776,7 @@ export class PrometheusHost {
 					name: agent.name,
 					kind: agent.kind,
 					health: (await rt?.probe()) ?? { available: false, reason: "unavailable" },
-					capabilities: agent.kind === "codex" ? CODEX_CAPABILITIES : CC_CAPABILITIES,
+					capabilities: agent.kind === "codex" ? CODEX_CAPABILITIES : agent.kind === "opencode" ? OPENCODE_CAPABILITIES : CC_CAPABILITIES,
 				});
 			}
 			return out;
@@ -789,7 +794,7 @@ export class PrometheusHost {
 			return saved;
 		},
 		"agent.delete": async ({ id }) => {
-			if (id === "claude-code" || id === "codex") {
+			if ((BUILTIN_AGENTS as readonly string[]).includes(id)) {
 				// Built-ins cannot be removed; dropping the override resets them.
 				await this.runtime.config.deleteAgent(id);
 			} else {

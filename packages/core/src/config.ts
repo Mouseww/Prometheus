@@ -122,8 +122,8 @@ export class ConfigStore {
 	async saveAgent(incoming: AgentProfile): Promise<AgentProfile> {
 		const id = incoming.id.trim();
 		if (!/^[a-z0-9][a-z0-9-_]{0,47}$/.test(id)) throw new AppError("generic");
-		if (incoming.kind !== "claude-code" && incoming.kind !== "codex") throw new AppError("generic");
-		const builtin = id === "claude-code" || id === "codex";
+		if (incoming.kind !== "claude-code" && incoming.kind !== "codex" && incoming.kind !== "opencode") throw new AppError("generic");
+		const builtin = id === "claude-code" || id === "codex" || id === "opencode";
 		if (builtin && incoming.kind !== id) throw new AppError("generic");
 		const env = Object.fromEntries(Object.entries(incoming.env ?? {}).filter(([k]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k)));
 		const saved: AgentProfile = {

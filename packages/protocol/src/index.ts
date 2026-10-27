@@ -143,8 +143,8 @@ export interface ModelInfo extends ModelRef {
 // ---------- Agent runtimes (docs/agent-runtime.md) ----------
 
 /** Which agent drives a session. */
-export type RuntimeKind = "pi" | "claude-code" | "codex";
-export const RUNTIME_KINDS: readonly RuntimeKind[] = ["pi", "claude-code", "codex"];
+export type RuntimeKind = "pi" | "claude-code" | "codex" | "opencode";
+export const RUNTIME_KINDS: readonly RuntimeKind[] = ["pi", "claude-code", "codex", "opencode"];
 
 /** Normalized kinds for runtime-native tools, so existing renderers (diff, bash, todo) apply to every runtime. */
 export type CanonicalToolKind = "exec" | "read" | "edit" | "write" | "search" | "fetch" | "todo" | "task" | "plan_exit" | "mcp" | "other";

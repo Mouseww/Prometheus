@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { AgentProfile, RuntimeInfo } from "@prometheus/protocol";
 import { confirmDialog } from "../lib/dialogs.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { call, refreshRuntimes, toast, useStore } from "../lib/store.ts";
+import { call, callNewer, refreshRuntimes, toast, useStore } from "../lib/store.ts";
 import { Badge, Button, Dialog, Empty, Field, Input, PageHeader, Select } from "./ui.tsx";
 
 const M = defineMessages({
@@ -15,6 +15,7 @@ const M = defineMessages({
 		custom: "自定义",
 		available: "可用",
 		unavailable: "不可用",
+		oldServer: "已连接的服务器版本较旧，不支持多 Agent 运行时。请把服务器升级到 0.12.0 或更高版本。",
 		piNote: "PI 内置，无需配置；它使用「AI 网关」里配置的模型。",
 		executable: "可执行文件",
 		fromPath: "PATH 中的默认命令",
@@ -31,7 +32,7 @@ const M = defineMessages({
 		idHint: "小写字母、数字、-、_；创建后不可修改",
 		name: "显示名称",
 		base: "基于",
-		executableHint: "留空则使用 PATH 中的 claude 或 codex。可填完整路径，例如另一个版本",
+		executableHint: "留空则使用 PATH 中的 claude、codex 或 opencode。可填完整路径，例如另一个版本",
 		envTitle: "环境变量",
 		envHint: "只作用于这个 Agent 的进程，例如 CLAUDE_CONFIG_DIR、HTTPS_PROXY、CODEX_HOME 之外的自定义变量",
 		envKey: "变量名",
@@ -46,6 +47,7 @@ const M = defineMessages({
 		emptyBody: "添加后会出现在新建会话和对话里的 Agent 菜单中，模型来自它自己的登录和与之兼容的网关。",
 		claudeCode: "Claude Code",
 		codex: "Codex",
+		opencode: "OpenCode",
 	},
 	en: {
 		title: "Agent runtimes",
@@ -55,6 +57,7 @@ const M = defineMessages({
 		custom: "Custom",
 		available: "Available",
 		unavailable: "Unavailable",
+		oldServer: "The connected server is older and has no agent runtimes. Upgrade it to 0.12.0 or later.",
 		piNote: "PI is built in and needs no setup; it uses the models set up under AI Gateways.",
 		executable: "Executable",
 		fromPath: "Default command on PATH",
@@ -71,7 +74,7 @@ const M = defineMessages({
 		idHint: "Lowercase letters, digits, - and _; cannot be changed later",
 		name: "Display name",
 		base: "Based on",
-		executableHint: "Empty uses claude or codex from PATH. A full path picks another build",
+		executableHint: "Empty uses claude, codex or opencode from PATH. A full path picks another build",
 		envTitle: "Environment variables",
 		envHint: "Applied to this agent's process only, e.g. CLAUDE_CONFIG_DIR or HTTPS_PROXY",
 		envKey: "Name",
@@ -86,10 +89,11 @@ const M = defineMessages({
 		emptyBody: "Once added it appears in the agent menu of new chats and open chats; its models come from its own login and the gateways it can use.",
 		claudeCode: "Claude Code",
 		codex: "Codex",
+		opencode: "OpenCode",
 	},
 });
 
-const KIND_LABEL = { "claude-code": "claudeCode", codex: "codex" } as const;
+const KIND_LABEL = { "claude-code": "claudeCode", codex: "codex", opencode: "opencode" } as const;
 
 function blank(): AgentProfile {
 	return { id: "", name: "", kind: "claude-code", enabled: true };
@@ -100,9 +104,11 @@ export function AgentsSettings() {
 	const runtimes = useStore((s) => s.runtimes);
 	const [agents, setAgents] = useState<AgentProfile[]>([]);
 	const [editing, setEditing] = useState<{ agent: AgentProfile; isNew: boolean } | null>(null);
+	const [supported, setSupported] = useState(true);
 
 	const load = useCallback(async () => {
-		const list = await call((c) => c.rpc("agent.list", {}));
+		const list = await callNewer("agent.list", (c) => c.rpc("agent.list", {}));
+		setSupported(list !== undefined);
 		if (list) setAgents(list);
 		await refreshRuntimes();
 	}, []);
@@ -125,13 +131,14 @@ export function AgentsSettings() {
 				title={t("title")}
 				subtitle={t("subtitle")}
 				actions={
-					<Button variant="primary" onClick={() => setEditing({ agent: blank(), isNew: true })}>
+					<Button variant="primary" disabled={!supported} onClick={() => setEditing({ agent: blank(), isNew: true })}>
 						<Plus className="size-4" /> {t("add")}
 					</Button>
 				}
 			/>
 			<div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 @3xl:px-8">
 				<div className="mx-auto max-w-3xl space-y-3">
+					{!supported && <p className="rounded-lg bg-ember-500/10 px-3 py-2.5 text-sm text-ember-200">{t("oldServer")}</p>}
 					<p className="flex items-start gap-2 rounded-lg bg-ink-850 px-3 py-2.5 text-sm text-ink-400">
 						<Bot className="mt-0.5 size-4 shrink-0" /> {t("piNote")}
 					</p>
@@ -180,7 +187,7 @@ export function AgentsSettings() {
 							</div>
 						);
 					})}
-					{agents.every((a) => a.builtin) && <Empty icon={<Bot className="size-6" />} title={t("empty")}>{t("emptyBody")}</Empty>}
+					{supported && agents.every((a) => a.builtin) && <Empty icon={<Bot className="size-6" />} title={t("empty")}>{t("emptyBody")}</Empty>}
 				</div>
 			</div>
 			{editing && (
@@ -236,10 +243,11 @@ function AgentEditor({ initial, isNew, taken, onClose, onSaved }: { initial: Age
 					<Select value={a.kind} disabled={!isNew || a.builtin} onChange={(e) => patch({ kind: e.target.value as AgentProfile["kind"] })}>
 						<option value="claude-code">{t("claudeCode")}</option>
 						<option value="codex">{t("codex")}</option>
+						<option value="opencode">{t("opencode")}</option>
 					</Select>
 				</Field>
 				<Field label={t("executable")} hint={t("executableHint")}>
-					<Input value={a.executable ?? ""} onChange={(e) => patch({ executable: e.target.value })} className="font-mono" placeholder={a.kind === "codex" ? "codex" : "claude"} />
+					<Input value={a.executable ?? ""} onChange={(e) => patch({ executable: e.target.value })} className="font-mono" placeholder={a.kind === "codex" ? "codex" : a.kind === "opencode" ? "opencode" : "claude"} />
 				</Field>
 				<Field label={t("envTitle")} hint={t("envHint")}>
 					<div className="space-y-2">

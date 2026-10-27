@@ -166,7 +166,7 @@ export interface ContextRequest {
 	prompt: string;
 	cwd: string;
 	sessionId?: string;
-	runtime: "pi" | "claude-code" | "codex";
+	runtime: "pi" | "claude-code" | "codex" | "opencode";
 	/** PI's trigger kind ("user", "custom", ...); undefined outside PI. */
 	messageType?: string;
 	/**

@@ -17,7 +17,7 @@ import { canonicalTool, PROMETHEUS_MCP_SERVER } from "./tool-map.ts";
 export const CC_CAPABILITIES: RuntimeCapabilities = {
 	steering: true,
 	followUpQueue: false,
-	compaction: "auto",
+	compaction: "manual+auto",
 	fork: false,
 	treeNavigation: false,
 	thinkingLevels: [],
@@ -81,6 +81,8 @@ export class ClaudeCodeSession implements RuntimeSession {
 	private busTools: PluginTool[] = [];
 	private readonly mode: () => PermissionMode;
 	private pendingError: string | undefined;
+	/** Settles when the `/compact` turn started by `compact()` ends; `undefined` while no manual compaction runs. */
+	private compactDone: ((error?: string) => void) | undefined;
 	private pendingContext: string | undefined;
 	private readonly initOpts: SessionInit;
 	private readonly executable: string | undefined;
@@ -243,6 +245,9 @@ export class ClaudeCodeSession implements RuntimeSession {
 			}
 		} finally {
 			this.q = undefined;
+			const compactDone = this.compactDone;
+			this.compactDone = undefined;
+			compactDone?.(this.pendingError ?? "Claude Code stopped during compaction");
 			// A later prompt starts a fresh process that resumes the same session.
 			this.resume = true;
 			if (this.mapper.running) this.mapper.finish(this.abortRequested);
@@ -258,6 +263,13 @@ export class ClaudeCodeSession implements RuntimeSession {
 			error = errors || String(m.result ?? m.subtype);
 		}
 		if (!aborted && m.is_error === true && !error) error = String(m.result ?? "error");
+		const compactDone = this.compactDone;
+		if (compactDone) {
+			// A manual compaction is a turn of its own that shows no messages: report it as compaction events only.
+			this.compactDone = undefined;
+			compactDone(aborted ? "aborted" : error);
+			return;
+		}
 		this.pendingError = error;
 		this.mapper.finish(aborted, error);
 	}
@@ -330,6 +342,24 @@ export class ClaudeCodeSession implements RuntimeSession {
 		this.wake?.();
 		void delivery;
 		return wasRunning ? "queued" : "started";
+	}
+
+	/** Claude Code compacts through its `/compact` command; the result of that turn ends the compaction. */
+	async compact(instructions?: string): Promise<void> {
+		if (this.closed || this.mapper.running || this.compactDone) return;
+		this.emit({ type: "compaction_start", reason: "manual" });
+		try {
+			await this.start();
+			const done = new Promise<string | undefined>((resolve) => (this.compactDone = resolve));
+			const text = `/compact${instructions?.trim() ? ` ${instructions.trim()}` : ""}`;
+			this.inbox.push({ type: "user", message: { role: "user", content: text }, parent_tool_use_id: null } as SDKUserMessage);
+			this.wake?.();
+			const error = await done;
+			this.emit({ type: "compaction_end", reason: "manual", aborted: error === "aborted", ...(error && error !== "aborted" ? { errorMessage: error } : {}) });
+		} catch (err) {
+			this.compactDone = undefined;
+			this.emit({ type: "compaction_end", reason: "manual", aborted: false, errorMessage: err instanceof Error ? err.message : String(err) });
+		}
 	}
 
 	async abort(): Promise<void> {

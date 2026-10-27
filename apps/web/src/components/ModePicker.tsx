@@ -103,7 +103,7 @@ export function ModePicker() {
 	const own = effect?.source === "session";
 
 	return (
-		<div ref={ref} className="md:relative">
+		<div ref={ref} className="shrink-0 md:relative">
 			<button
 				type="button"
 				onClick={() => setOpen(!open)}
@@ -114,7 +114,7 @@ export function ModePicker() {
 				title={t("title")}
 			>
 				<Layers className="size-3.5 shrink-0" />
-				<span className="max-w-40 truncate">{currentTitle}</span>
+				<span className="max-w-20 truncate whitespace-nowrap sm:max-w-40">{currentTitle}</span>
 				<ChevronDown className="size-3 shrink-0 opacity-60" />
 			</button>
 			{open && (

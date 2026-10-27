@@ -246,3 +246,130 @@ export class FakeResponsesLlm {
 		res.end();
 	}
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// The same idea for the OpenAI Chat Completions API (what opencode speaks through @ai-sdk/openai-compatible).
+
+export type FakeCompletionsBlock =
+	| { type: "text"; text: string }
+	/** A call of any tool offered in the request, by its exact name (opencode names our MCP tools `prometheus_<tool>`). */
+	| { type: "tool"; name: string; input: unknown };
+
+export interface FakeCompletionsTurn {
+	blocks?: FakeCompletionsBlock[] | ((req: RecordedCompletionsRequest) => FakeCompletionsBlock[]);
+	/** An HTTP status of 400 or more: the connection is dropped before any answer. */
+	status?: number;
+	delayMs?: number;
+}
+
+export interface RecordedCompletionsRequest {
+	path: string;
+	headers: Record<string, string | string[] | undefined>;
+	body: any;
+	/** All system messages, joined. */
+	instructions: string;
+	/** Text of the last user message, or `[tool_output]...` when the request answers a tool call. */
+	lastUser: string;
+	/** Everything sent as messages, flattened to text. */
+	inputText: string;
+	toolNames: string[];
+}
+
+export class FakeCompletionsLlm {
+	private server: Server | undefined;
+	readonly requests: RecordedCompletionsRequest[] = [];
+	private script: FakeCompletionsTurn[] = [];
+	private seq = 0;
+
+	get baseUrl(): string {
+		return `http://127.0.0.1:${(this.server!.address() as AddressInfo).port}`;
+	}
+
+	enqueue(...turns: FakeCompletionsTurn[]): void {
+		this.script.push(...turns);
+	}
+	reset(): void {
+		this.script = [];
+		this.requests.length = 0;
+	}
+
+	async start(): Promise<void> {
+		this.server = createServer((req, res) => {
+			const chunks: Buffer[] = [];
+			req.on("data", (c) => chunks.push(c));
+			req.on("end", () => void this.answer(req.url ?? "", req.headers, Buffer.concat(chunks).toString(), res));
+		});
+		await new Promise<void>((r) => this.server!.listen(0, "127.0.0.1", () => r()));
+	}
+	async stop(): Promise<void> {
+		await new Promise<void>((r) => (this.server ? this.server.close(() => r()) : r()));
+	}
+
+	private async answer(path: string, headers: RecordedCompletionsRequest["headers"], raw: string, res: import("node:http").ServerResponse): Promise<void> {
+		if (!path.includes("/chat/completions")) {
+			res.writeHead(404).end();
+			return;
+		}
+		let body: any = {};
+		try {
+			body = JSON.parse(raw);
+		} catch {
+			/* not json */
+		}
+		const messages: any[] = body.messages ?? [];
+		const text = (m: any) => (Array.isArray(m.content) ? m.content.map((c: any) => c.text ?? "").join("\n") : String(m.content ?? ""));
+		const system = messages.filter((m) => m.role === "system").map(text).join("\n");
+		const chunk = (delta: object, finish: string | null = null, usage?: object) =>
+			res.write(`data: ${JSON.stringify({ id: `cmpl_${this.seq}`, object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason: finish }], ...(usage ? { usage } : {}) })}\n\n`);
+		// opencode asks a small model for a chat title on the first message: answer it without touching the script.
+		if (system.includes("title generator")) {
+			res.writeHead(200, { "content-type": "text/event-stream" });
+			chunk({ role: "assistant", content: "Title" });
+			chunk({}, "stop");
+			res.end("data: [DONE]\n\n");
+			return;
+		}
+		const last = messages.at(-1);
+		const users = messages.filter((m) => m.role === "user");
+		const recorded: RecordedCompletionsRequest = {
+			path,
+			headers,
+			body,
+			instructions: system,
+			lastUser: last?.role === "tool" ? `[tool_output]${text(last)}` : users.length ? text(users.at(-1)) : "",
+			inputText: messages.map((m) => (m.role === "assistant" && m.tool_calls ? `${text(m)}${JSON.stringify(m.tool_calls)}` : text(m))).join("\n"),
+			toolNames: (body.tools ?? []).map((t: any) => t.function?.name ?? t.name),
+		};
+		this.requests.push(recorded);
+
+		const turn = this.script.shift() ?? { blocks: [{ type: "text" as const, text: "ok" }] };
+		if (turn.status && turn.status >= 400) {
+			res.writeHead(turn.status, { "content-type": "application/json" });
+			res.end(JSON.stringify({ error: { type: "invalid_request_error", message: "scripted failure" } }));
+			return;
+		}
+		res.writeHead(200, { "content-type": "text/event-stream" });
+		const blocks = (typeof turn.blocks === "function" ? turn.blocks(recorded) : turn.blocks) ?? [{ type: "text" as const, text: "ok" }];
+		this.seq++;
+		let toolIndex = 0;
+		let started = false;
+		for (const block of blocks) {
+			if (block.type === "text") {
+				const mid = Math.ceil(block.text.length / 2);
+				for (const part of [block.text.slice(0, mid), block.text.slice(mid)]) {
+					if (!part) continue;
+					chunk(started ? { content: part } : { role: "assistant", content: part });
+					started = true;
+					if (turn.delayMs) await new Promise((r) => setTimeout(r, turn.delayMs));
+				}
+			} else {
+				chunk({ ...(started ? {} : { role: "assistant" }), tool_calls: [{ index: toolIndex, id: `call_${this.seq}_${toolIndex}`, type: "function", function: { name: block.name, arguments: JSON.stringify(block.input) } }] });
+				started = true;
+				toolIndex++;
+				if (turn.delayMs) await new Promise((r) => setTimeout(r, turn.delayMs));
+			}
+		}
+		chunk({}, toolIndex ? "tool_calls" : "stop", { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 });
+		res.end("data: [DONE]\n\n");
+	}
+}

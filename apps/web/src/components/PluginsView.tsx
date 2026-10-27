@@ -4,7 +4,7 @@ import { Blocks, CircleAlert, FolderSearch, Info, RefreshCw, Sparkles, Trash2 } 
 import { useEffect, useState } from "react";
 import type { PluginInfo } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { call, newChatIn, refreshPlugins, toast, useStore } from "../lib/store.ts";
+import { call, callNewer, newChatIn, refreshPlugins, toast, useStore } from "../lib/store.ts";
 import { Badge, Button, Dialog, Empty, PageHeader, Textarea } from "./ui.tsx";
 
 const M = defineMessages({
@@ -126,7 +126,7 @@ export function PluginsView() {
 	const [busy, setBusy] = useState<string | null>(null);
 	const [compat, setCompat] = useState<Record<string, string[]>>({});
 	useEffect(() => {
-		void call((c) => c.rpc("plugin.compatibility", {})).then((r) => setCompat(Object.fromEntries((r ?? []).map((x) => [x.plugin, x.warnings]))));
+		void callNewer("plugin.compatibility", (c) => c.rpc("plugin.compatibility", {})).then((r) => setCompat(Object.fromEntries((r ?? []).map((x) => [x.plugin, x.warnings]))));
 	}, [plugins]);
 	const [generating, setGenerating] = useState(false);
 

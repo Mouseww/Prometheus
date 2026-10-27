@@ -33,8 +33,9 @@ const TINT: Record<RuntimeKind, string> = {
 	pi: "bg-ember-500/15 text-ember-300",
 	"claude-code": "bg-amber-500/15 text-amber-300",
 	codex: "bg-sky-500/15 text-sky-300",
+	opencode: "bg-emerald-500/15 text-emerald-300",
 };
-const GLYPH: Record<RuntimeKind, string> = { pi: "π", "claude-code": "CC", codex: "Cx" };
+const GLYPH: Record<RuntimeKind, string> = { pi: "π", "claude-code": "CC", codex: "Cx", opencode: "OC" };
 
 function Mark({ kind, dim, small }: { kind: RuntimeKind; dim?: boolean; small?: boolean }) {
 	return (
@@ -78,11 +79,11 @@ export function RuntimeMenu({ mode }: { mode: "draft" | "session" }) {
 			<button
 				type="button"
 				onClick={() => setOpen(!open)}
-				className="flex max-w-48 items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-ink-300 transition-colors hover:bg-ink-800 hover:text-ink-100"
+				className="flex max-w-28 items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-ink-300 sm:max-w-48 transition-colors hover:bg-ink-800 hover:text-ink-100"
 				title={`${t("title")} · ${mode === "draft" ? t("hintDraft") : t("hintSession")}`}
 			>
 				<Mark kind={selected?.kind ?? "pi"} small />
-				<span className="min-w-0 truncate">{selected?.name ?? "PI"}</span>
+				<span className="hidden min-w-0 truncate sm:inline">{selected?.name ?? "PI"}</span>
 				<ChevronDown className="size-3 shrink-0 opacity-60" />
 			</button>
 			{open && (

@@ -1,4 +1,4 @@
-# 多 Agent Runtime 设计（PI / Claude Code / Codex）
+# 多 Agent Runtime 设计（PI / Claude Code / Codex / OpenCode）
 
 状态：设计稿，未实现。目标：同一个 Prometheus 会话界面、同一套插件和工具，可以选择由 PI、Claude Code 或 Codex 驱动，并且网关可以用 runtime 自带的，也可以用 Prometheus 的。
 
@@ -477,6 +477,22 @@ modes 的 replace/strict 会返回完整的 `systemPrompt`。
 - 总线上的拒绝（权限门不放行）以 `isError` 结果返回给模型，不会卡住会话。
 - 会话 resume 用 SDK 的 `resume: <id>`，新会话用 `sessionId: <uuid>`，Prometheus 的会话 id 直接等于 Claude Code 的会话 id。
 - 网关流量钩子（`ctx.hooks.gatewayTraffic`）：veil 的脱敏和还原挂在核心中继上，对所有外部 runtime 生效；PI 仍走 veil 原来的路径。
+
+### 12.5 OpenCode（`opencode serve`，1.19.x）
+
+第四个运行时，位于 `packages/core/src/agent/opencode`。不引入新依赖：直接用 HTTP 加 SSE 调它的服务进程。
+
+- **传输：** 每个会话一个 `opencode serve --hostname=127.0.0.1 --port=0` 子进程，从输出里的 `opencode server listening on <url>` 取地址。用随机的 `OPENCODE_SERVER_PASSWORD` 做 HTTP Basic 认证，本机其他进程不能驱动它。事件走 `GET /event`（SSE），断开后自动重连，并用 `GET /session/status` 补一次状态。
+- **配置：** 通过环境变量 `OPENCODE_CONFIG_CONTENT` 叠加在用户自己的配置之上，不写文件：`mcp.prometheus` 指向工具总线（`type: "remote"`，令牌用 `{env:PROMETHEUS_MCP_TOKEN}` 引用），`permission` 里把 `edit / bash / webfetch / external_directory / doom_loop` 设为 `ask`，让所有会改东西的操作都到权限门，由 Prometheus 的权限模式决定。
+- **网关：** Prometheus 网关作为自定义 provider `prometheus` 注册（`@ai-sdk/openai-compatible`、`@ai-sdk/openai` 或 `@ai-sdk/anthropic`，按网关支持的协议依次选），`baseURL` 是中继的 `/v1`，`apiKey` 是会话令牌；同时设置 `enabled_providers: ["prometheus"]`，这个会话不会走用户自己的 provider。模型决定路由：换到别的网关或回到自带登录时，换一个进程，按同一个 opencode 会话继续。
+- **自带登录：** 不覆盖用户的配置和数据目录，`opencode auth login` 的结果直接可用，会话也存在用户自己的 opencode 里。模型列表来自 `opencode models`，另有一项“配置的默认模型”（不传 model，由 opencode 自己选）。
+- **消息：** `POST /session/:id/prompt_async`。静态上下文放在 `system` 字段；本回合的上下文和切换运行时的交接内容作为 `synthetic` 文本片段发送，模型能看到，聊天记录里不显示。计划模式用 opencode 的 `plan` 智能体，其余用 `build`。
+- **事件映射：** `message.updated` 先于它的片段到达，用来区分用户消息、助手消息和压缩产生的摘要（摘要不显示）；`message.part.delta` 的 `text` 字段是增量。text、reasoning、tool 三种片段各生成一条助手消息，工具的 `pending` 状态没有参数，等到 `running` 才生成工具卡片。`step-finish` 的 token 数用于上下文用量。`session.status: idle` 结束一轮。
+- **工具名：** opencode 的 `bash/read/edit/write/grep/glob/list/webfetch/websearch/todowrite/task` 规范化成 `bash/read/edit/write/grep/find/ls/web_fetch/web_search/todo_write/subagent`；我们自己的工具显示为 `prometheus_<tool>`，还原成 `<tool>`。`edit` 的结果带 opencode 给出的统一 diff。opencode 不把调用 id 传给 MCP 服务，所以和 Codex 一样按（工具名，参数哈希）把总线调用和工具卡片对上。
+- **权限：** `permission.asked` 交给权限门，回复 `POST /permission/:id/reply`（`once` 或 `reject`）。`question.asked`（opencode 的提问工具）：有人在线时用 `ui.select` 问用户，无人值守或 auto 模式取第一个选项。
+- **压缩：** `POST /session/:id/summarize`；自动压缩产生的 `compaction` 片段和 `session.compacted` 事件转成 `compaction_start/end`。
+- **会话：** 会话列表由 Prometheus 自己的索引维护（和 Codex 一样）；恢复时 `GET /session/:id/message` 重建聊天记录；删除调用 `opencode session delete`。
+- **未做：** 思考档位（opencode 的 variant）、回退到某条消息、分叉、斜杠命令列表、作为子智能体的执行器。
 
 ## 13. 实施阶段与验收
 

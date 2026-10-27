@@ -102,7 +102,7 @@ export function ContextMeter() {
 	};
 
 	return (
-		<div ref={ref} className="md:relative">
+		<div ref={ref} className="shrink-0 md:relative">
 			<button
 				type="button"
 				onClick={() => {
@@ -113,9 +113,10 @@ export function ContextMeter() {
 				title={t("title")}
 			>
 				<Ring percent={stats.contextPercent} />
-				<span>
+				<span className="hidden whitespace-nowrap sm:inline">
 					{stats.contextEstimated ? "~" : ""}{fmt(used)} / {fmt(window_)}
 				</span>
+				<span className="whitespace-nowrap sm:hidden">{stats.contextPercent != null ? `${Math.round(stats.contextPercent)}%` : fmt(used)}</span>
 			</button>
 			{open && (
 				<div className="absolute right-3 left-3 bottom-full z-40 mb-2 md:left-auto md:right-0 md:w-80 animate-rise rounded-xl border border-ink-700 bg-ink-900/97 p-3.5 shadow-2xl shadow-black/40 backdrop-blur">

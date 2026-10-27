@@ -37,13 +37,13 @@
 
 ## 为什么是 Prometheus
 
-默认基于 [PI Agent](https://github.com/earendil-works/pi) 运行时，也可以由 Claude Code、Codex 驱动同一个会话界面。不重写 Agent 循环，把精力放在“好用”和“好扩展”上。
+默认基于 [PI Agent](https://github.com/earendil-works/pi) 运行时，也可以由 Claude Code、Codex、OpenCode 驱动同一个会话界面。不重写 Agent 循环，把精力放在“好用”和“好扩展”上。
 
 | | |
 | --- | --- |
 | **一个内核，四个入口** | TUI、桌面 GUI（Tauri，Windows / macOS Intel 与 Apple 芯片，内置 Node 与 npm/npx）、Web、安卓共用同一套服务端与协议，会话随处可续。 |
 | **接入任何模型** | 自定义 AI 网关：OpenAI Chat / Responses、Anthropic、Gemini 四种协议，自定义地址、鉴权头与密钥；一个网关可同时声明多种协议，按 Agent 自动选用它支持的那一种。 |
-| **多个 Agent 运行时** | PI、Claude Code、Codex 共用同一套界面、工具、权限与隐私面罩；可添加自己的 Agent（换可执行文件、配置目录、环境变量），并在对话中途切换。 |
+| **多个 Agent 运行时** | PI、Claude Code、Codex、OpenCode 共用同一套界面、工具、权限与隐私面罩；可添加自己的 Agent（换可执行文件、配置目录、环境变量），并在对话中途切换。 |
 | **万物皆插件** | 网关、知识库、工具、命令、HTTP 路由、UI 面板全部通过 `definePlugin` 贡献，连内置功能也是插件。 |
 | **隐私优先** | 隐私面罩在出网前脱敏机密，并可经指定代理出口。 |
 | **可控的权限** | 写文件、执行命令前弹窗确认，可按命令“始终允许”；第三方凭据加密存储，永不进入模型上下文。 |
@@ -71,16 +71,16 @@
 
 <img src="https://raw.githubusercontent.com/Mouseww/Prometheus/main/docs/images/gateways.png" alt="AI 网关" width="900" />
 
-### 多 Agent 运行时：PI、Claude Code、Codex
+### 多 Agent 运行时：PI、Claude Code、Codex、OpenCode
 
 新建会话时在输入框下方选择由哪个 Agent 干活，模型选择器会列出它能用的全部模型：自带登录的模型，加上每个兼容网关的模型。
 
-- **一套体验**：Prometheus 的工具（记忆、知识库、SSH、连接器、子代理……）、权限确认、计划模式与隐私面罩在三个运行时里行为一致；Claude Code、Codex 的内置工具也复用同样的 diff、命令输出与待办面板。
+- **一套体验**：Prometheus 的工具（记忆、知识库、SSH、连接器、子代理……）、权限确认、计划模式与隐私面罩在各个运行时里行为一致；Claude Code、Codex、OpenCode 的内置工具也复用同样的 diff、命令输出与待办面板。
 - **模型决定路由**：选自带登录的模型就走 Agent 自己的账号，选网关里的模型就经本机中继走该网关，会话内可随时换。网关密钥只留在 Prometheus，不会交给命令行进程。
 - **中途切换 Agent**：已有对话可以换一个 Agent 接着聊，原会话保留，对话记录会作为背景交给新的 Agent。
-- **自定义 Agent**：设置 → Agent 里基于 Claude Code 或 Codex 添加自己的 Agent，可指定可执行文件与环境变量。
+- **自定义 Agent**：设置 → Agent 里基于 Claude Code、Codex 或 OpenCode 添加自己的 Agent，可指定可执行文件与环境变量。
 
-Claude Code 与 Codex 需要先在本机安装并登录；Android 本机模式下它们不可用，需连接服务器。详见 [docs/agent-runtime.md](docs/agent-runtime.md)。
+Claude Code、Codex 与 OpenCode 需要先在本机安装并登录；Android 本机模式下它们不可用，需连接服务器。详见 [docs/agent-runtime.md](docs/agent-runtime.md)。
 
 ### 技能与插件
 
@@ -140,7 +140,7 @@ Claude Code 与 Codex 需要先在本机安装并登录；Android 本机模式�
 | 连接器 | GitHub、Jira / Confluence、Bitbucket、Microsoft 365、数据库；OAuth / 令牌授权，写操作可设“只读 / 写前确认 / 允许写”，详见 [连接器设计](docs/connectors.md) |
 | 自动化 | 按计划在后台运行 Agent 任务，每次运行都生成可查看的会话 |
 | 子 Agent | 把任务委派给子 Agent 并行处理 |
-| Agent 运行时 | PI、Claude Code、Codex 可选，可自定义 Agent，对话中途可切换 |
+| Agent 运行时 | PI、Claude Code、Codex、OpenCode 可选，可自定义 Agent，对话中途可切换 |
 | 终端 | 内置终端面板 |
 | 语音 | 语音输入 |
 | PI 配置导入 | 网关默认值与一键导入已有 PI 配置 |

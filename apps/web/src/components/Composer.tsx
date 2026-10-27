@@ -111,7 +111,7 @@ function ModelPicker() {
 	const { open, setOpen, ref } = usePopover();
 	const [q, setQ] = useState("");
 	/** Heading of a model group: the agent's own login, or the gateway the models come from. */
-	const groupName = (provider: string) => (provider === "claude-code" || provider === "codex" ? t("ownLogin") : (gateways.find((g) => g.id === provider)?.name ?? provider));
+	const groupName = (provider: string) => (provider === "claude-code" || provider === "codex" || provider === "opencode" ? t("ownLogin") : (gateways.find((g) => g.id === provider)?.name ?? provider));
 	const groups = useMemo(() => {
 		const filtered = models.filter((m) => `${m.provider} ${m.id} ${m.name}`.toLowerCase().includes(q.toLowerCase()));
 		const map = new Map<string, typeof models>();
