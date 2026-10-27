@@ -1,6 +1,6 @@
 import type { ClassifierAnswer, ClassifierContext, ClassifierQuestion } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { gatewayAs, type GatewayConfig } from "@prometheus/protocol";
+import type { GatewayConfig } from "@prometheus/protocol";
 
 /**
  * Small "decision" questions (is this action irreversible? which of these elements did the user
@@ -130,7 +130,9 @@ export class Decider {
 
 	private gatewayEndpoint(cfg: Extract<DeciderConfig, { kind: "gateway" }>): Endpoint | undefined {
 		const found = this.gateways().find((x) => x.id === cfg.gatewayId && x.enabled !== false);
-		const g = found && gatewayAs(found, "openai-completions");
+		// A gateway may speak Chat Completions as its primary or as an additional protocol (type-only import: the e2e scripts run without installed packages).
+		const alt = found?.alternates?.["openai-completions"]?.trim();
+		const g = found && (found.format === "openai-completions" ? found : alt ? { ...found, format: "openai-completions" as const, baseUrl: alt } : undefined);
 		if (!g) return undefined;
 		const headers: Record<string, string> = { ...(g.headers ?? {}) };
 		if (g.apiKey) {
