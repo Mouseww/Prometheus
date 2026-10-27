@@ -7,6 +7,7 @@ import { defineMessages, useT } from "../lib/i18n.ts";
 import { loadPlatforms, normalizeUrl, type Platform, samePlatform, savePlatforms, switchLocal, switchPlatform } from "../lib/platforms.ts";
 import { toast, useStore } from "../lib/store.ts";
 import { targetFromUrl } from "../lib/backend.ts";
+import { uuid } from "../lib/uuid.ts";
 import { Badge, Button, Empty, Field, Input, PageHeader } from "./ui.tsx";
 
 const M = defineMessages({
@@ -130,7 +131,7 @@ export function PlatformsView() {
 								onClick={() => {
 									const t0 = client?.target;
 									if (!t0) return;
-									update([...list, { id: crypto.randomUUID().slice(0, 8), name: t0.label, url: t0.httpBase, token: t0.token }]);
+									update([...list, { id: uuid().slice(0, 8), name: t0.label, url: t0.httpBase, token: t0.token }]);
 								}}
 							>
 								{t("saveCurrent")}
@@ -215,7 +216,7 @@ function PlatformForm({ onSave, onCancel }: { onSave: (p: Platform, andSwitch: b
 			}
 			secret = r.token;
 		}
-		onSave({ id: crypto.randomUUID().slice(0, 8), name: name.trim() || new URL(origin).host, url: origin, token: secret || undefined, ...(login && remember ? { password: login } : {}) }, andSwitch);
+		onSave({ id: uuid().slice(0, 8), name: name.trim() || new URL(origin).host, url: origin, token: secret || undefined, ...(login && remember ? { password: login } : {}) }, andSwitch);
 	};
 
 	return (

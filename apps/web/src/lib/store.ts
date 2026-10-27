@@ -1,3 +1,4 @@
+import { uuid } from "./uuid.ts";
 import { notifyTurnDone } from "./notify.ts";
 import { OPEN_FILE_TOOL } from "@prometheus/protocol";
 import type {
@@ -225,7 +226,7 @@ const set = useStore.setState;
 const get = useStore.getState;
 
 export function toast(message: string, level: Toast["level"] = "info"): void {
-	const id = crypto.randomUUID();
+	const id = uuid();
 	// 后端错误码在这里统一翻译，所有 toast 路径都不会漏。
 	const text = localizeError(message);
 	set((s) => ({ toasts: [...s.toasts.slice(-4), { id, message: text, level }] }));

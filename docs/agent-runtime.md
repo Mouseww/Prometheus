@@ -519,3 +519,10 @@ P0 到 P5 已完成。P6 已完成：新建会话时选运行时（`RuntimePicke
 
 - **多协议网关**：`GatewayConfig.alternates` 记录同一密钥和模型可走的其它协议及各自的 Base URL，`format`/`baseUrl` 仍是主协议（PI 用它）。`gatewayFormats`、`gatewayAs`、`pickGatewayFormat`（`packages/protocol`）负责解析。Claude Code 取 `anthropic-messages`，Codex 取 `openai-responses`，中继按所选协议换上对应的 Base URL 和鉴权方式；选择器里按"是否支持该运行时的协议"过滤网关。
 - **在另一个运行时继续**：`session.switchRuntime` 在同一目录开一个新会话，保留原会话。原对话整理成文字记录（最近约 4 万字符，工具结果截断），作为不显示的上下文随第一条消息交给新运行时（Claude Code 走 `additionalContext`，Codex 走前置输入项，PI 前置在消息文本里，所以 PI 下会可见）。新会话的界面不显示旧消息。
+
+### 14.2 只选 Agent，模型在模型选择器里选
+
+- **Agent 菜单只列 Agent**（PI、Claude Code、Codex 和自定义 Agent），不再有"模型来源"一级。模型选择器像 PI 一样列出该 Agent 能用的全部模型：自带登录的模型，加上每个兼容网关的模型（组名是网关名，`provider` 即网关 id）。`runtime.models` 因此变为 `{ runtime, agent? }`，返回合并列表。
+- **模型决定路由**：`session.create` / `session.switchRuntime` 的 `model` 的 `provider` 若是某个网关 id，就走 Prometheus 网关，否则走 Agent 自带登录。会话内用 `model.set` 换到另一个网关的模型时，Claude Code 会停掉进程，下一条消息用新端点 resume 同一会话；Codex 会替换 app-server 进程并 resume 同一线程。回复进行中不能换网关。新路由会写回会话索引，重开后保持。
+- **自定义 Agent**（设置 → Agent）：基于 Claude Code 或 Codex，可设可执行文件路径和环境变量；`config.json` 的 `agents` 保存，内置两个也可以加覆盖。`agent.list/save/delete` 管理，改动对之后新建的会话生效。
+- **Codex 自带登录**：每个会话用独立的 `CODEX_HOME`，复制账号的 `auth.json` 和 `config.toml`，再追加 Prometheus 工具总线的配置；模型为账号默认（`codex/default`）。账号自己的 `config.toml` 无法解析时，Codex 会报配置错误。
