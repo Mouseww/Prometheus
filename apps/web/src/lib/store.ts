@@ -12,7 +12,12 @@ import type {
 	ModelRef,
 	PackageJob,
 	PermissionMode,
+	GatewayChoice,
+	GatewayConfig,
 	PluginInfo,
+	RuntimeInfo,
+	RuntimeCapabilities,
+	RuntimeKind,
 	ServerFrame,
 	SessionEvent,
 	SessionSnapshot,
@@ -101,6 +106,8 @@ export interface ActiveSession {
 	permissionMode: PermissionMode;
 	isStreaming: boolean;
 	queue: { steering: string[]; followUp: string[] };
+	runtime: RuntimeKind;
+	capabilities: RuntimeCapabilities;
 	statuses: Record<string, string>;
 	widgets: Record<string, { lines: string[]; placement: string }>;
 	subagents: SubagentRun[];
@@ -166,6 +173,14 @@ interface State {
 	draftModel: ModelRef | null;
 	/** Permission mode picked on the new-chat page before a session exists. */
 	draftPermission: PermissionMode;
+	/** Agent runtime picked on the new-chat page; fixed once the session exists. */
+	draftRuntime: RuntimeKind;
+	/** Runtimes this host can offer, with health and capabilities. */
+	runtimes: RuntimeInfo[];
+	/** Prometheus gateway chosen for a non-PI runtime on the new-chat page; null means the runtime's own login. */
+	draftGatewayId: string | null;
+	/** Gateways the relay can serve to non-PI runtimes. */
+	gateways: GatewayConfig[];
 	/** Background marketplace operations (newest first); kept here so they survive switching Settings tabs. */
 	packageJobs: PackageJob[];
 	/** Bumped whenever a package operation succeeds, so views can reload the installed list. */
@@ -194,6 +209,10 @@ export const useStore = create<State>(() => ({
 	booted: false,
 	draftModel: null,
 	draftPermission: "default",
+	draftRuntime: "pi",
+	runtimes: [],
+	draftGatewayId: null,
+	gateways: [],
 	packageJobs: [],
 	packageRevision: 0,
 	subagentUi: { open: false, listOpen: true, detailOpen: false, selected: null, sort: savedSort(), known: [] },
@@ -458,6 +477,8 @@ function fromSnapshot(s: SessionSnapshot): ActiveSession {
 		statuses: s.statuses,
 		widgets: s.widgets,
 		subagents: s.subagents ?? [],
+		runtime: s.runtime ?? "pi",
+		capabilities: s.capabilities,
 		banner: null,
 		stats: null,
 		pending: null,
@@ -488,6 +509,11 @@ function activate(snapshot: SessionSnapshot): void {
 			...snapshot.pendingUI.filter((r) => !["notify", "setStatus", "setWidget", "setTitle", "setEditorText"].includes(r.method)).map((request) => ({ sessionId: snapshot.id, request })),
 		],
 	});
+	if (snapshot.runtime && snapshot.runtime !== "pi") {
+		void call((c) => c.rpc("runtime.models", { runtime: snapshot.runtime, gateway: { mode: "native" } })).then((models) => {
+			if (models && get().session?.id === snapshot.id) set({ models });
+		});
+	} else if (previous && (previous.runtime ?? "pi") !== "pi") void refreshModels();
 	localStorage.setItem("prometheus.lastSession", snapshot.id);
 	void refreshCommands();
 	void refreshStats();
@@ -575,8 +601,53 @@ export async function refreshStats(): Promise<void> {
 	if (stats && current?.id === session.id) set({ session: { ...current, stats } });
 }
 
+export async function refreshRuntimes(): Promise<void> {
+	const runtimes = await call((c) => c.rpc("runtime.list", {}));
+	if (runtimes) set({ runtimes });
+}
+
+/** The relay speaks one wire format per runtime. */
+export const RUNTIME_GATEWAY_FORMAT: Partial<Record<RuntimeKind, GatewayConfig["format"]>> = { "claude-code": "anthropic-messages", codex: "openai-responses" };
+
+export function gatewaysFor(runtime: RuntimeKind, gateways: GatewayConfig[]): GatewayConfig[] {
+	const format = RUNTIME_GATEWAY_FORMAT[runtime];
+	return gateways.filter((g) => g.enabled !== false && g.format === format && g.models.length > 0);
+}
+
+function draftGateway(model?: ModelRef | null): GatewayChoice {
+	const { draftGatewayId, gateways } = get();
+	const g = gateways.find((x) => x.id === draftGatewayId);
+	if (!g) return { mode: "native" };
+	const id = model && model.provider === g.id ? model.id : g.models[0]?.id;
+	return { mode: "prometheus", gatewayId: g.id, model: { provider: g.id, id: id ?? "" } };
+}
+
+/** Model list for the runtime and gateway picked on the new-chat page (PI uses the shared list). */
+export async function refreshDraftModels(): Promise<void> {
+	const runtime = get().draftRuntime;
+	if (runtime === "pi") return refreshModels();
+	const models = await call((c) => c.rpc("runtime.models", { runtime, gateway: draftGateway() }));
+	if (models) set({ models });
+}
+
+export async function refreshGateways(): Promise<void> {
+	const gateways = await call((c) => c.rpc("gateway.list", {}));
+	if (gateways) set({ gateways });
+}
+
+export function setDraftRuntime(runtime: RuntimeKind): void {
+	set({ draftRuntime: runtime, draftGatewayId: null, draftModel: null });
+	void refreshDraftModels();
+}
+
+export function setDraftGateway(gatewayId: string | null): void {
+	set({ draftGatewayId: gatewayId, draftModel: null });
+	void refreshDraftModels();
+}
+
 export async function createSession(cwd?: string): Promise<void> {
-	const snap = await call((c) => c.rpc("session.create", { cwd }));
+	const { draftRuntime: runtime, draftModel } = get();
+	const snap = await call((c) => c.rpc("session.create", runtime === "pi" ? { cwd } : { cwd, runtime, gateway: draftGateway(draftModel) }));
 	if (snap) activate(snap);
 }
 
@@ -593,7 +664,9 @@ export function startNewChat(): void {
 	if (!current || current.messages.length === 0) return;
 	get().client?.unsubscribe(current.id);
 	buffer = [];
-	set({ session: null, commands: [], draftModel: current.model, draftPermission: "default" });
+	const wasPi = get().draftRuntime === "pi" && (current.runtime ?? "pi") === "pi";
+	set({ session: null, commands: [], draftModel: wasPi ? current.model : null, draftPermission: "default", draftRuntime: "pi", draftGatewayId: null });
+	if (!wasPi) void refreshModels();
 }
 
 /** Pick the workspace of the new-chat page, carrying over any model and thinking level chosen so far. */
@@ -601,14 +674,14 @@ export async function chooseWorkspace(path: string): Promise<void> {
 	const prev = get().session;
 	if (prev && (prev.messages.length > 0 || prev.isStreaming)) return;
 	const model = prev?.model ?? get().draftModel;
-	const thinking = prev?.thinkingLevel;
+	const thinking = get().draftRuntime === "pi" ? prev?.thinkingLevel : undefined;
 	const permission = prev?.permissionMode ?? get().draftPermission;
 	await createSession(path);
 	const created = get().session;
 	if (!created || created.id === prev?.id) return;
 	set({ draftModel: null, draftPermission: "default" });
 	if (permission !== created.permissionMode) await setPermissionMode(permission);
-	if (model && (created.model?.provider !== model.provider || created.model.id !== model.id)) await setModel(model);
+	if (get().draftGatewayId === null && model && (created.model?.provider !== model.provider || created.model.id !== model.id)) await setModel(model);
 	const ready = get().session;
 	if (thinking && ready && thinking !== ready.thinkingLevel && ready.availableThinkingLevels.includes(thinking)) await setThinking(thinking);
 }
@@ -935,7 +1008,7 @@ export function bindClient(client: PrometheusClient): () => void {
 }
 
 async function onConnected(): Promise<void> {
-	await Promise.all([refreshSessions(), refreshModels(), refreshWorkspaces(), refreshPlugins(), refreshHostSettings(), refreshHostInfo(), refreshPackageJobs()]);
+	await Promise.all([refreshSessions(), refreshModels(), refreshWorkspaces(), refreshPlugins(), refreshHostSettings(), refreshHostInfo(), refreshPackageJobs(), refreshRuntimes(), refreshGateways()]);
 	const current = get().session;
 	const target = current?.id ?? (get().booted ? null : localStorage.getItem("prometheus.lastSession"));
 	const exists = target && get().sessions.some((s) => s.id === target && !s.archived);
