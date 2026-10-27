@@ -587,11 +587,12 @@ export class PrometheusHost {
 			const from = source.session.ref().runtime;
 			const dir = state.cwd;
 			const seed = state.messages.slice(-SEED_MESSAGES);
-			const live = kind !== "pi" ? await this.createExternal(kind, dir, gateway, seed) : await this.attach((init) => this.pi.create({ ...init, cwd: normalizeDir(dir) }));
+			const live = kind !== "pi" ? await this.createExternal(kind, dir, gateway, seed) : await this.attach((init) => this.pi.create({ ...init, cwd: normalizeDir(dir), history: seed }));
 			if (state.name) live.session.setName(state.name);
 			live.gate.setMode(source.gate.mode);
 			const handoff = buildHandoff(state.messages, from === "pi" ? "PI" : from === "codex" ? "Codex" : "Claude Code");
-			if (handoff) live.handoff = handoff;
+			// PI carries the history itself; the others get the transcript as hidden first-turn context.
+			if (handoff && kind !== "pi") live.handoff = handoff;
 			this.listener.sessionsChanged();
 			return this.snapshot(live);
 		},

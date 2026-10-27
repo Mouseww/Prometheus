@@ -203,7 +203,19 @@ export class PiRuntime implements AgentRuntime {
 	}
 
 	create(init: SessionInit): Promise<RuntimeSession> {
-		return this.attach(SessionManager.create(init.cwd), init);
+		const manager = SessionManager.create(init.cwd);
+		// A conversation continued from another runtime becomes real PI history: plain user text and assistant text, no tool traffic.
+		for (const m of init.history ?? []) {
+			const msg = m as any;
+			if (msg.role === "user") {
+				const content = typeof msg.content === "string" ? msg.content : (msg.content ?? []).filter((b: any) => b.type === "text");
+				if (typeof content === "string" ? content.trim() : content.length) manager.appendMessage({ role: "user", content, timestamp: msg.timestamp } as never);
+			} else if (msg.role === "assistant") {
+				const content = (msg.content ?? []).filter((b: any) => b.type === "text" && String(b.text ?? "").trim());
+				if (content.length) manager.appendMessage({ ...msg, content, stopReason: "stop" } as never);
+			}
+		}
+		return this.attach(manager, init);
 	}
 
 	async resume(ref: SessionRef, init: ResumeInit): Promise<RuntimeSession> {
