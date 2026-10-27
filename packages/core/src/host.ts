@@ -7,6 +7,7 @@ import { DEFAULT_CATALOG_URL, listModels, matchModelDefaults, mergeGatewayUpdate
 import type { AgentRunOptions, AgentRunResult, PrometheusPlugin } from "@prometheus/plugin-sdk";
 import {
 	AppError,
+	type ChatMessage,
 	encodeError,
 	type ModelPricing,
 	type DirListing,
@@ -77,6 +78,9 @@ export interface PrometheusHostOptions {
 	builtinPlugins?: PrometheusPlugin[];
 	listener: HostListener;
 }
+
+/** How many trailing messages of a conversation are carried over for display when it continues in another runtime. */
+const SEED_MESSAGES = 200;
 
 interface LiveSession {
 	session: RuntimeSession;
@@ -191,13 +195,13 @@ export class PrometheusHost {
 		this.index.patch(id, { name: state.name, modified: new Date().toISOString(), messageCount: state.messages.length, firstMessage: firstUserText(state.messages).slice(0, 200) });
 	}
 
-	private async createExternal(kind: RuntimeKind, dir: string, gateway: GatewayChoice | undefined): Promise<LiveSession> {
+	private async createExternal(kind: RuntimeKind, dir: string, gateway: GatewayChoice | undefined, seed?: ChatMessage[]): Promise<LiveSession> {
 		const rt = await this.runtimeFor(kind);
 		const choice: GatewayChoice = gateway ?? { mode: "native" };
-		const live = await this.attach((init) => rt.create({ ...init, cwd: normalizeDir(dir) }), choice);
+		const live = await this.attach((init) => rt.create({ ...init, cwd: normalizeDir(dir), ...(seed ? { history: seed } : {}) }), choice);
 		const now = new Date().toISOString();
 		const ref = live.session.ref();
-		this.index.upsert({ id: ref.id, runtime: kind, nativeId: ref.nativeId, cwd: normalizeDir(dir), created: now, modified: now, messageCount: 0, firstMessage: "", gateway: choice });
+		this.index.upsert({ id: ref.id, runtime: kind, nativeId: ref.nativeId, cwd: normalizeDir(dir), created: now, modified: now, messageCount: 0, firstMessage: "", gateway: choice, ...(seed ? { seed } : {}) });
 		return live;
 	}
 
@@ -297,7 +301,7 @@ export class PrometheusHost {
 				const entry = this.index.get(sessionId);
 				if (entry && entry.runtime !== "pi") {
 					const rt = await this.runtimeFor(entry.runtime);
-					return this.attach((init) => rt.resume({ runtime: entry.runtime, id: entry.id, nativeId: entry.nativeId, cwd: entry.cwd, name: entry.name }, init), entry.gateway);
+					return this.attach((init) => rt.resume({ runtime: entry.runtime, id: entry.id, nativeId: entry.nativeId, cwd: entry.cwd, name: entry.name }, entry.seed ? { ...init, history: entry.seed } : init), entry.gateway);
 				}
 				const path = await this.resolvePath(sessionId);
 				return this.attach((init) => this.pi.resume({ runtime: "pi", id: sessionId, nativeId: sessionId, path }, init));
@@ -582,7 +586,8 @@ export class PrometheusHost {
 			const state = source.session.snapshotState();
 			const from = source.session.ref().runtime;
 			const dir = state.cwd;
-			const live = kind !== "pi" ? await this.createExternal(kind, dir, gateway) : await this.attach((init) => this.pi.create({ ...init, cwd: normalizeDir(dir) }));
+			const seed = state.messages.slice(-SEED_MESSAGES);
+			const live = kind !== "pi" ? await this.createExternal(kind, dir, gateway, seed) : await this.attach((init) => this.pi.create({ ...init, cwd: normalizeDir(dir) }));
 			if (state.name) live.session.setName(state.name);
 			live.gate.setMode(source.gate.mode);
 			const handoff = buildHandoff(state.messages, from === "pi" ? "PI" : from === "codex" ? "Codex" : "Claude Code");

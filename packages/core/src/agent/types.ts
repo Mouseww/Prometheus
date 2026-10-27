@@ -93,6 +93,8 @@ export interface SessionInit {
 	/** The session's subagent runtime (a Prometheus service the runtime wires in as a tool and restores from the transcript). */
 	subagents?: SubagentRuntime;
 	hooks?: SessionHooks;
+	/** Messages shown before the session's own (a conversation continued from another runtime). */
+	history?: ChatMessage[];
 	// Not yet modelled: the tool bus endpoint (§4) and the context composer (§5).
 }
 

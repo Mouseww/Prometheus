@@ -412,7 +412,12 @@ export function handleFrame(frame: ServerFrame): void {
 			void refreshWorkspaces();
 			return;
 		case "gateways.changed":
-			void refreshModels();
+			void refreshGateways();
+			const open = get().session;
+			if (open) {
+				if ((open.runtime ?? "pi") === "pi") void refreshModels();
+			}
+			else void refreshDraftModels();
 			return;
 		case "plugins.changed":
 			void refreshPlugins();

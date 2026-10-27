@@ -65,7 +65,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
 
 	async create(init: SessionInit): Promise<RuntimeSession> {
 		const id = randomUUID();
-		const session = new ClaudeCodeSession({ id, nativeId: id, cwd: init.cwd, resume: false, init, services: await this.getServices(), model: this.modelFor(init), history: [], executable: this.executable() });
+		const session = new ClaudeCodeSession({ id, nativeId: id, cwd: init.cwd, resume: false, init, services: await this.getServices(), model: this.modelFor(init), history: init.history ?? [], executable: this.executable() });
 		init.hooks?.created?.(session);
 		return session;
 	}
@@ -84,7 +84,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
 			init: { ...init, cwd: info.cwd ?? process.cwd() },
 			services: await this.getServices(),
 			model,
-			history,
+			history: [...(init.history ?? []), ...history],
 			name: info.customTitle,
 			executable: this.executable(),
 		});

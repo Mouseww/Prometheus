@@ -4,7 +4,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { GatewayChoice, RuntimeKind } from "@prometheus/protocol";
+import type { ChatMessage, GatewayChoice, RuntimeKind } from "@prometheus/protocol";
 
 export interface IndexEntry {
 	id: string;
@@ -17,6 +17,8 @@ export interface IndexEntry {
 	messageCount: number;
 	firstMessage: string;
 	gateway?: GatewayChoice;
+	/** Conversation this session was continued from in another runtime; shown ahead of its own messages. */
+	seed?: ChatMessage[];
 }
 
 interface IndexFile {

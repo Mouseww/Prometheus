@@ -52,7 +52,7 @@ export class CodexRuntime implements AgentRuntime {
 	}
 
 	async create(init: SessionInit): Promise<RuntimeSession> {
-		const session = new CodexSession({ id: randomUUID(), cwd: init.cwd, init, services: await this.getServices(), model: this.modelFor(init), executable: this.executable() });
+		const session = new CodexSession({ id: randomUUID(), cwd: init.cwd, init, services: await this.getServices(), model: this.modelFor(init), history: init.history, executable: this.executable() });
 		init.hooks?.created?.(session);
 		try {
 			await session.start();
@@ -65,7 +65,7 @@ export class CodexRuntime implements AgentRuntime {
 
 	async resume(ref: SessionRef, init: ResumeInit): Promise<RuntimeSession> {
 		const cwd = ref.cwd ?? process.cwd();
-		const session = new CodexSession({ id: ref.id, cwd, init: { ...init, cwd }, services: await this.getServices(), model: this.modelFor(init), threadId: ref.nativeId, name: ref.name, executable: this.executable() });
+		const session = new CodexSession({ id: ref.id, cwd, init: { ...init, cwd }, services: await this.getServices(), model: this.modelFor(init), threadId: ref.nativeId, history: init.history, name: ref.name, executable: this.executable() });
 		init.hooks?.created?.(session);
 		try {
 			await session.start();
