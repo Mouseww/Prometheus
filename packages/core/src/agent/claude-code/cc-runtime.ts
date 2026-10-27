@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { AppError, type ModelInfo, type UsageStats } from "@prometheus/protocol";
+import { AppError, gatewayAs, type ModelInfo, type UsageStats } from "@prometheus/protocol";
 import type { AgentRuntime, GatewayChoice, NativeSessionInfo, ResumeInit, RuntimeHealth, RuntimeServices, RuntimeSession, SessionInit, SessionRef } from "../types.ts";
 import { ClaudeCodeSession } from "./cc-session.ts";
 import { transcriptToMessages } from "./transcript.ts";
@@ -46,7 +46,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
 	async listModels(gateway: GatewayChoice): Promise<ModelInfo[]> {
 		if (gateway.mode === "native") return NATIVE_MODELS;
 		const g = (await this.getServices()).gateway(gateway.gatewayId);
-		if (!g || g.format !== "anthropic-messages") return [];
+		if (!g || !gatewayAs(g, "anthropic-messages")) return [];
 		return g.models.map((m) => ({
 			provider: g.id,
 			id: m.id,

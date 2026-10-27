@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { confirmDialog } from "../lib/dialogs.ts";
 import { CloudDownload, Coins, DatabaseZap, Download, ExternalLink, LoaderCircle, Network, Plus, Search, SlidersHorizontal, Trash2, X, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
-import { GATEWAY_PRESETS } from "@prometheus/protocol";
+import { GATEWAY_PRESETS, gatewayFormats } from "@prometheus/protocol";
 import type { GatewayAuth, GatewayConfig, GatewayFormat, GatewayModel, GatewayPreset, ModelPricing, PiGatewayInfo } from "@prometheus/protocol";
 import { localizeError } from "../lib/errors.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
@@ -34,6 +34,8 @@ const M = defineMessages({
 		displayName: "显示名称",
 		namePlaceholder: "公司 Claude 网关",
 		format: "接口格式",
+		alsoOver: "同时支持的其它协议",
+		alsoOverHint: "同一密钥和模型也能走这些协议，各自填 Base URL。Claude Code 用 Anthropic Messages，Codex 用 OpenAI Responses，对话时自动选它支持的协议",
 		auth: "鉴权方式",
 		apiKeyHint: "留空或保持掩码表示不修改",
 		headerName: "请求头名",
@@ -115,6 +117,8 @@ const M = defineMessages({
 		displayName: "Display name",
 		namePlaceholder: "Company Claude gateway",
 		format: "API format",
+		alsoOver: "Also available over",
+		alsoOverHint: "The same key and models are served over these protocols, each with its own Base URL. Claude Code uses Anthropic Messages and Codex uses OpenAI Responses; the right one is picked per chat",
 		auth: "Authentication",
 		apiKeyHint: "Leave blank or masked to keep unchanged",
 		headerName: "Header name",
@@ -182,6 +186,13 @@ const FORMATS: { value: GatewayFormat; label: string; hint: MsgKey; base: string
 	{ value: "anthropic-messages", label: "Anthropic Messages", hint: "hintAnthropic", base: "https://api.anthropic.com" },
 	{ value: "google-generative-ai", label: "Google Gemini", hint: "hintGemini", base: "https://generativelanguage.googleapis.com/v1beta" },
 ];
+
+function omitFormat(alt: GatewayConfig["alternates"], format: GatewayFormat): GatewayConfig["alternates"] {
+	if (!alt) return undefined;
+	const rest = { ...alt };
+	delete rest[format];
+	return Object.keys(rest).length ? rest : undefined;
+}
 
 const AUTH_LABEL: Record<GatewayAuth["type"], MsgKey> = {
 	native: "authNative",
@@ -282,7 +293,7 @@ export function GatewaysView() {
 									</div>
 									<div className="mt-1 truncate font-mono text-xs text-ink-500">{g.baseUrl}</div>
 									<div className="mt-3 flex flex-wrap gap-1.5">
-										<Badge tone="ember">{g.format}</Badge>
+										<Badge tone="ember">{gatewayFormats(g).join(" + ")}</Badge>
 										<Badge>{t(AUTH_LABEL[g.auth.type])}</Badge>
 										<Badge tone="sky">{t("modelCount", { n: g.models.length })}</Badge>
 									</div>
@@ -373,7 +384,7 @@ function PiImport({ onClose, onDone }: { onClose: () => void; onDone: () => Prom
 										</div>
 										<div className="truncate font-mono text-xs text-ink-500">{g.baseUrl}</div>
 										<div className="mt-1.5 flex flex-wrap gap-1.5">
-											<Badge tone="ember">{g.format}</Badge>
+											<Badge tone="ember">{gatewayFormats(g).join(" + ")}</Badge>
 											<Badge tone="sky">{t("modelCount", { n: g.models })}</Badge>
 											{g.exists && <Badge tone="moss">{t("piExists")}</Badge>}
 											{g.missingKey && <Badge>{t("piMissingKey")}</Badge>}
@@ -544,7 +555,7 @@ function GatewayEditor({ initial, isNew, preset, onClose, onSaved }: { initial: 
 							<Input type="password" autoComplete="off" autoFocus value={g.apiKey ?? ""} onChange={(e) => patch({ apiKey: e.target.value })} className="font-mono" />
 						</Field>
 						<div className="flex flex-wrap items-center gap-1.5">
-							<Badge tone="ember">{g.format}</Badge>
+							<Badge tone="ember">{gatewayFormats(g).join(" + ")}</Badge>
 							<Badge tone="sky">{t("modelCount", { n: g.models.length })}</Badge>
 							<span className="truncate font-mono text-xs text-ink-500">{g.baseUrl}</span>
 						</div>
@@ -576,7 +587,7 @@ function GatewayEditor({ initial, isNew, preset, onClose, onSaved }: { initial: 
 							<button
 								key={f.value}
 								type="button"
-								onClick={() => patch({ format: f.value, baseUrl: g.baseUrl && !FORMATS.some((x) => x.base === g.baseUrl) ? g.baseUrl : f.base })}
+								onClick={() => patch({ format: f.value, alternates: omitFormat(g.alternates, f.value), baseUrl: g.baseUrl && !FORMATS.some((x) => x.base === g.baseUrl) ? g.baseUrl : f.base })}
 								className={clsx(
 									"rounded-lg border px-3 py-2.5 text-left text-sm transition-colors",
 									g.format === f.value ? "border-ember-500/60 bg-ember-500/8 text-ink-100" : "border-ink-700 text-ink-400 hover:border-ink-500",
@@ -590,6 +601,31 @@ function GatewayEditor({ initial, isNew, preset, onClose, onSaved }: { initial: 
 
 				<Field label="Base URL">
 					<Input value={g.baseUrl} onChange={(e) => patch({ baseUrl: e.target.value })} className="font-mono" />
+				</Field>
+
+				<Field label={t("alsoOver")} hint={t("alsoOverHint")}>
+					<div className="space-y-2">
+						{FORMATS.filter((f) => f.value !== g.format).map((f) => {
+							const url = g.alternates?.[f.value];
+							const on = url !== undefined;
+							const setAlt = (next: string | undefined) =>
+								setG((x) => {
+									const rest = { ...(x.alternates ?? {}) };
+									if (next === undefined) delete rest[f.value];
+									else rest[f.value] = next;
+									return { ...x, alternates: Object.keys(rest).length ? rest : undefined };
+								});
+							return (
+								<div key={f.value} className="flex items-center gap-2">
+									<label className="flex w-52 shrink-0 items-center gap-2 text-sm text-ink-300">
+										<input type="checkbox" checked={on} onChange={(e) => setAlt(e.target.checked ? (g.baseUrl || f.base) : undefined)} />
+										{f.label}
+									</label>
+									{on && <Input value={url} onChange={(e) => setAlt(e.target.value)} className="min-w-0 flex-1 font-mono" placeholder={f.base} />}
+								</div>
+							);
+						})}
+					</div>
 				</Field>
 
 				<div className="grid gap-4 @xl:grid-cols-2">

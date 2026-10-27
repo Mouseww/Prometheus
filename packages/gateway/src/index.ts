@@ -35,6 +35,15 @@ export function validateGateway(g: GatewayConfig): string[] {
 	if (!ID_PATTERN.test(g.id)) errors.push(encodeError(new AppError("gatewayFieldId")));
 	if (!g.name?.trim()) errors.push(encodeError(new AppError("gatewayFieldName")));
 	if (!GATEWAY_FORMATS.includes(g.format)) errors.push(encodeError(new AppError("gatewayFieldFormat", { format: g.format })));
+	for (const [format, url] of Object.entries(g.alternates ?? {})) {
+		if (!GATEWAY_FORMATS.includes(format as GatewayFormat)) errors.push(encodeError(new AppError("gatewayFieldFormat", { format })));
+		try {
+			const u = new URL(url as string);
+			if (u.protocol !== "http:" && u.protocol !== "https:") errors.push(encodeError(new AppError("gatewayFieldBaseUrlScheme")));
+		} catch {
+			errors.push(encodeError(new AppError("gatewayFieldBaseUrl")));
+		}
+	}
 	try {
 		const url = new URL(g.baseUrl);
 		if (url.protocol !== "http:" && url.protocol !== "https:") errors.push(encodeError(new AppError("gatewayFieldBaseUrlScheme")));

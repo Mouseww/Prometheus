@@ -3,7 +3,7 @@
 // the single PermissionGate (docs/agent-runtime.md §4, §6, §7, §12.1).
 import { withLoopbackNoProxy } from "../loopback-env.ts";
 import { type Options, query, type Query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { AppError, type ChatMessage, type CommandInfo, type ModelRef, type PermissionMode, type PromptDisposition, type SessionEvent, type SessionStats, type ThinkingLevel, type ToolInfo } from "@prometheus/protocol";
+import { AppError, gatewayAs, type ChatMessage, type CommandInfo, type ModelRef, type PermissionMode, type PromptDisposition, type SessionEvent, type SessionStats, type ThinkingLevel, type ToolInfo } from "@prometheus/protocol";
 import type { PluginTool, PluginToolContext } from "@prometheus/plugin-sdk";
 import type { PermissionGate } from "../../permission-gate.ts";
 import { applyPermissionPrompt } from "../../permission-gate.ts";
@@ -190,7 +190,10 @@ export class ClaudeCodeSession implements RuntimeSession {
 
 		const gateway = this.initOpts.gateway;
 		if (gateway?.mode === "prometheus") {
-			this.grant = services.relay.grant(this.id, gateway.gatewayId, () => services.gateway(gateway.gatewayId));
+			this.grant = services.relay.grant(this.id, gateway.gatewayId, () => {
+				const g = services.gateway(gateway.gatewayId);
+				return g && gatewayAs(g, "anthropic-messages");
+			});
 			env.ANTHROPIC_BASE_URL = this.grant.baseUrl;
 			env.ANTHROPIC_AUTH_TOKEN = this.grant.token;
 			delete env.ANTHROPIC_API_KEY;

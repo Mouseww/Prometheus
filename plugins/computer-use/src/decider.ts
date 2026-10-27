@@ -1,6 +1,6 @@
 import type { ClassifierAnswer, ClassifierContext, ClassifierQuestion } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { GatewayConfig } from "@prometheus/protocol";
+import { gatewayAs, type GatewayConfig } from "@prometheus/protocol";
 
 /**
  * Small "decision" questions (is this action irreversible? which of these elements did the user
@@ -129,8 +129,9 @@ export class Decider {
 	}
 
 	private gatewayEndpoint(cfg: Extract<DeciderConfig, { kind: "gateway" }>): Endpoint | undefined {
-		const g = this.gateways().find((x) => x.id === cfg.gatewayId && x.enabled !== false);
-		if (!g || g.format !== "openai-completions") return undefined;
+		const found = this.gateways().find((x) => x.id === cfg.gatewayId && x.enabled !== false);
+		const g = found && gatewayAs(found, "openai-completions");
+		if (!g) return undefined;
 		const headers: Record<string, string> = { ...(g.headers ?? {}) };
 		if (g.apiKey) {
 			if (g.auth.type === "native" || g.auth.type === "bearer") headers.authorization = `Bearer ${g.apiKey}`;

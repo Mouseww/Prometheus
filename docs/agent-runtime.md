@@ -514,3 +514,8 @@ P0 到 P5 已完成。P6 已完成：新建会话时选运行时（`RuntimePicke
 
 1. 连接服务器模式：重复上面 1 到 8，新建会话页的选择器在窄屏下不溢出，弹层贴边显示。
 2. 本机模式：Claude Code 与 Codex 不可用，选择器里置灰并提示"Android 本机模式不可用，请连接服务器"。
+
+### 14.1 多协议网关与运行时切换
+
+- **多协议网关**：`GatewayConfig.alternates` 记录同一密钥和模型可走的其它协议及各自的 Base URL，`format`/`baseUrl` 仍是主协议（PI 用它）。`gatewayFormats`、`gatewayAs`、`pickGatewayFormat`（`packages/protocol`）负责解析。Claude Code 取 `anthropic-messages`，Codex 取 `openai-responses`，中继按所选协议换上对应的 Base URL 和鉴权方式；选择器里按"是否支持该运行时的协议"过滤网关。
+- **在另一个运行时继续**：`session.switchRuntime` 在同一目录开一个新会话，保留原会话。原对话整理成文字记录（最近约 4 万字符，工具结果截断），作为不显示的上下文随第一条消息交给新运行时（Claude Code 走 `additionalContext`，Codex 走前置输入项，PI 前置在消息文本里，所以 PI 下会可见）。新会话的界面不显示旧消息。

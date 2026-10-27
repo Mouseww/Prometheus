@@ -407,6 +407,30 @@ export interface GatewayConfig {
 	headers?: Record<string, string>;
 	models: GatewayModel[];
 	enabled?: boolean;
+	/**
+	 * Further wire protocols the same key and models are served over, each with its own base URL.
+	 * `format`/`baseUrl` stay the primary one (used by PI and as the fallback).
+	 */
+	alternates?: Partial<Record<GatewayFormat, string>>;
+}
+
+/** Every protocol a gateway can be reached over, primary first. */
+export function gatewayFormats(g: Pick<GatewayConfig, "format" | "alternates">): GatewayFormat[] {
+	const extra = (Object.keys(g.alternates ?? {}) as GatewayFormat[]).filter((f) => f !== g.format && g.alternates?.[f]?.trim());
+	return [g.format, ...extra];
+}
+
+/** The gateway as seen over one protocol (format and base URL swapped in), or undefined when it does not speak it. */
+export function gatewayAs<T extends Pick<GatewayConfig, "format" | "baseUrl" | "alternates">>(g: T, format: GatewayFormat): T | undefined {
+	if (g.format === format) return g;
+	const url = g.alternates?.[format]?.trim();
+	return url ? { ...g, format, baseUrl: url } : undefined;
+}
+
+/** First of `preferred` the gateway speaks; the order expresses what the caller handles best. */
+export function pickGatewayFormat(g: Pick<GatewayConfig, "format" | "alternates">, preferred: readonly GatewayFormat[]): GatewayFormat | undefined {
+	const have = gatewayFormats(g);
+	return preferred.find((f) => have.includes(f));
 }
 
 export interface KnowledgeBaseInfo {

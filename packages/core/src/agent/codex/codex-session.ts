@@ -5,7 +5,7 @@ import { withLoopbackNoProxy } from "../loopback-env.ts";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { PluginTool, PluginToolContext } from "@prometheus/plugin-sdk";
-import { AppError, type ChatMessage, type CommandInfo, type ModelRef, type PermissionMode, type PromptDisposition, type SessionEvent, type SessionStats, type ThinkingLevel, type ToolInfo } from "@prometheus/protocol";
+import { AppError, gatewayAs, type ChatMessage, type CommandInfo, type ModelRef, type PermissionMode, type PromptDisposition, type SessionEvent, type SessionStats, type ThinkingLevel, type ToolInfo } from "@prometheus/protocol";
 import type { PermissionGate } from "../../permission-gate.ts";
 import { applyPermissionPrompt } from "../../permission-gate.ts";
 import type { BusSession } from "../bus/tool-bus.ts";
@@ -145,7 +145,7 @@ export class CodexSession implements RuntimeSession {
 		if (choice?.mode !== "prometheus") throw new AppError("generic");
 		const gateway = services.gateway(choice.gatewayId);
 		if (!gateway) throw new AppError("gatewayNotFound", { id: choice.gatewayId } as never);
-		if (gateway.format !== "openai-responses") throw new AppError("generic");
+		if (!gatewayAs(gateway, "openai-responses")) throw new AppError("generic");
 
 		this.busTools = await this.externalTools();
 		this.busSession = services.bus.open({
@@ -160,7 +160,10 @@ export class CodexSession implements RuntimeSession {
 			},
 			onEvent: (e) => this.mapper.bus(e),
 		});
-		this.grant = services.relay.grant(this.id, choice.gatewayId, () => services.gateway(choice.gatewayId));
+		this.grant = services.relay.grant(this.id, choice.gatewayId, () => {
+			const g = services.gateway(choice.gatewayId);
+			return g && gatewayAs(g, "openai-responses");
+		});
 
 		// Codex reads its provider and MCP server from its own config; a per-session home keeps tokens and threads apart.
 		const home = join(services.dataDir, "runtimes", "codex", this.id);

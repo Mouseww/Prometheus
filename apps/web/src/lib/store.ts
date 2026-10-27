@@ -1,5 +1,5 @@
 import { notifyTurnDone } from "./notify.ts";
-import { OPEN_FILE_TOOL } from "@prometheus/protocol";
+import { gatewayFormats, OPEN_FILE_TOOL } from "@prometheus/protocol";
 import type {
 	AssistantMessage,
 	ChatMessage,
@@ -611,7 +611,7 @@ export const RUNTIME_GATEWAY_FORMAT: Partial<Record<RuntimeKind, GatewayConfig["
 
 export function gatewaysFor(runtime: RuntimeKind, gateways: GatewayConfig[]): GatewayConfig[] {
 	const format = RUNTIME_GATEWAY_FORMAT[runtime];
-	return gateways.filter((g) => g.enabled !== false && g.format === format && g.models.length > 0);
+	return gateways.filter((g) => g.enabled !== false && (format ? gatewayFormats(g).includes(format) : false) && g.models.length > 0);
 }
 
 function draftGateway(model?: ModelRef | null): GatewayChoice {

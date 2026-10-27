@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { AppError, type ModelInfo, type UsageStats } from "@prometheus/protocol";
+import { AppError, gatewayAs, type ModelInfo, type UsageStats } from "@prometheus/protocol";
 import type { AgentRuntime, GatewayChoice, NativeSessionInfo, ResumeInit, RuntimeHealth, RuntimeServices, RuntimeSession, SessionInit, SessionRef } from "../types.ts";
 import { resolveCodexCommand } from "./app-server.ts";
 import { CodexSession } from "./codex-session.ts";
@@ -34,7 +34,7 @@ export class CodexRuntime implements AgentRuntime {
 	async listModels(gateway: GatewayChoice): Promise<ModelInfo[]> {
 		if (gateway.mode !== "prometheus") return [];
 		const g = (await this.getServices()).gateway(gateway.gatewayId);
-		if (!g || g.format !== "openai-responses") return [];
+		if (!g || !gatewayAs(g, "openai-responses")) return [];
 		return g.models.map((m) => ({
 			provider: g.id,
 			id: m.id,
