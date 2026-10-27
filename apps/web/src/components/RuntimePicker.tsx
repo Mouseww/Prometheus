@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { useMemo } from "react";
 import { Check, ChevronDown, Cpu } from "lucide-react";
 import type { RuntimeKind } from "@prometheus/protocol";
 import { isAndroid } from "../lib/backend.ts";
@@ -33,7 +34,8 @@ export function RuntimePicker() {
 	const runtime = useStore((s) => s.draftRuntime);
 	const runtimes = useStore((s) => s.runtimes);
 	const gatewayId = useStore((s) => s.draftGatewayId);
-	const gateways = useStore((s) => gatewaysFor(s.draftRuntime, s.gateways));
+	const allGateways = useStore((s) => s.gateways);
+	const gateways = useMemo(() => gatewaysFor(runtime, allGateways), [runtime, allGateways]);
 	const { open, setOpen, ref } = usePopover();
 	if (runtimes.length === 0) return null;
 
