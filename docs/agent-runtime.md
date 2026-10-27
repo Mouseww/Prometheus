@@ -492,3 +492,25 @@ modes 的 replace/strict 会返回完整的 `systemPrompt`。
 | P7（可选） | 中继里的格式转换；"在另一个 runtime 中继续" | — |
 
 P1 到 P3 对现有用户不可见，但做完之后，每接一个 runtime 就只是写一个适配器加通过一致性测试。
+
+## 14. 当前进度与手工验收清单
+
+P0 到 P5 已完成。P6 已完成：新建会话时选运行时（`RuntimePicker`）、运行时自带登录或 Prometheus 网关（按格式过滤：Claude Code 只列 anthropic-messages，Codex 只列 openai-responses）、按运行时和网关取模型列表（`runtime.models`）、按 `capabilities` 置灰（不支持插话时回复中发送改为排队，不支持图片时禁用附件）、插件页的兼容性提示（`plugin.compatibility`）。
+
+已知局限：打开已有的非 PI 会话时，模型列表按运行时自带登录取，用 Prometheus 网关创建的会话列表可能不准（前端拿不到会话所用网关）。P7 未开始。
+
+### 手工验收（桌面）
+
+1. 设置页能看到 PI、Claude Code、Codex；未安装的置灰并显示原因。
+2. 新建会话选 Claude Code + 自带登录：能对话，bash/编辑的卡片和 diff 正常，todo 面板随 `todo_write` 更新。
+3. 同上选 Codex。
+4. 选 Prometheus 网关：模型列表只含对应格式的网关；开启 veil 后上游请求里敏感串已被替换。
+5. 回复中发送：Claude Code 和 Codex 可插话；中止后会话可继续。
+6. 权限模式切换（默认、自动编辑、计划、完全放行）在三个运行时下都生效。
+7. 插件页：有不兼容项的插件显示"在 Claude Code / Codex 下部分不可用"。
+8. 重启后会话仍在侧栏，打开后能续聊。
+
+### 手工验收（Android）
+
+1. 连接服务器模式：重复上面 1 到 8，新建会话页的选择器在窄屏下不溢出，弹层贴边显示。
+2. 本机模式：Claude Code 与 Codex 不可用，选择器里置灰并给出"需连接服务器"的原因。

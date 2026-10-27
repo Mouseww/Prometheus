@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { confirmDialog } from "../lib/dialogs.ts";
 import { Blocks, CircleAlert, FolderSearch, Info, RefreshCw, Sparkles, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { PluginInfo } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { call, newChatIn, refreshPlugins, toast, useStore } from "../lib/store.ts";
@@ -12,6 +12,7 @@ const M = defineMessages({
 		title: "Prometheus 插件",
 		subtitle: "扩展本项目自身：网关、知识库、工具、命令、面板。PI 扩展包请到“PI 插件市场”安装",
 		empty: "没有已加载的插件",
+		externalNote: "在 Claude Code / Codex 下部分不可用：",
 		panels: "面板：{list}",
 		listSep: "、",
 		source_builtin: "内置",
@@ -47,6 +48,7 @@ const M = defineMessages({
 		title: "Prometheus Plugins",
 		subtitle: "Extend this app itself: gateways, knowledge, tools, commands, panels. For PI packages, use the PI Marketplace",
 		empty: "No plugins loaded",
+		externalNote: "Partly unavailable under Claude Code / Codex: ",
 		panels: "Panels: {list}",
 		listSep: ", ",
 		source_builtin: "built-in",
@@ -122,6 +124,10 @@ export function PluginsView() {
 	const t = useT(M);
 	const plugins = useStore((s) => s.plugins);
 	const [busy, setBusy] = useState<string | null>(null);
+	const [compat, setCompat] = useState<Record<string, string[]>>({});
+	useEffect(() => {
+		void call((c) => c.rpc("plugin.compatibility", {})).then((r) => setCompat(Object.fromEntries((r ?? []).map((x) => [x.plugin, x.warnings]))));
+	}, [plugins]);
 	const [generating, setGenerating] = useState(false);
 
 	const act = async (id: string, fn: () => Promise<unknown>, done: string) => {
@@ -170,6 +176,15 @@ export function PluginsView() {
 						</span>
 					</p>
 				)}
+				{(compat[p.name] ?? compat[p.id])?.length ? (
+					<p className="mt-2 flex items-start gap-1.5 rounded-lg bg-ink-800 px-2.5 py-2 text-xs text-ink-300">
+						<Info className="mt-0.5 size-3.5 shrink-0" />
+						<span>
+							<b>{t("externalNote")}</b>
+							{(compat[p.name] ?? compat[p.id])?.join("; ")}
+						</span>
+					</p>
+				) : null}
 				{p.panels.length > 0 && p.status === "loaded" && <p className="mt-2 text-xs text-ink-500">{t("panels", { list: p.panels.map((x) => x.title).join(t("listSep")) })}</p>}
 				<div className="mt-3 flex flex-wrap items-center gap-1.5">
 					{p.toggleable ? (

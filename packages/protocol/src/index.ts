@@ -964,6 +964,8 @@ export interface RpcMethods {
 	"kb.stores": { params: Record<string, never>; result: string[] };
 
 	"plugin.list": { params: Record<string, never>; result: PluginInfo[] };
+	/** What does not work under Claude Code or Codex, per plugin; plugins without findings are left out. */
+	"plugin.compatibility": { params: Record<string, never>; result: { plugin: string; warnings: string[] }[] };
 	"plugin.call": { params: { plugin: string; method: string; params?: Record<string, unknown> }; result: unknown };
 	/** Write a folder plugin (single-file ESM, no imports needed) under the data dir and load it without a restart. */
 	"plugin.install": { params: { name: string; files: PluginFile[]; version?: string }; result: PluginInstallResult };

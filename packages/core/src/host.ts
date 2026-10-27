@@ -880,6 +880,7 @@ export class PrometheusHost {
 		"kb.stores": () => [...this.runtime.plugins.stores.keys()],
 
 		"plugin.list": () => this.runtime.plugins.list(),
+		"plugin.compatibility": () => this.runtime.plugins.compatibility(),
 		"plugin.install": (params) => this.runtime.plugins.install(params),
 		"plugin.setEnabled": ({ id, enabled }) => this.runtime.plugins.setEnabled(id, enabled),
 		"plugin.reload": ({ id }) => this.runtime.plugins.reload(id),
