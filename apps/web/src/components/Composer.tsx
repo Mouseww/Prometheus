@@ -8,7 +8,8 @@ import { type SendMode, setPrefs, usePrefs } from "../lib/prefs.ts";
 import { abortRun, openSettings, pluginCall, sendPrompt, setModel, setPermissionMode, setThinking, toast, unqueue, useStore } from "../lib/store.ts";
 import { ContextMeter } from "./ContextMeter.tsx";
 import { ModePicker } from "./ModePicker.tsx";
-import { RUNTIME_LABEL, RuntimePicker } from "./RuntimePicker.tsx";
+import { RuntimePicker } from "./RuntimePicker.tsx";
+import { RuntimeSwitcher } from "./RuntimeSwitcher.tsx";
 import { nextPermissionMode, PermissionPicker } from "./PermissionPicker.tsx";
 import { VoiceButton } from "./VoiceButton.tsx";
 import { usePopover } from "./TitleBar.tsx";
@@ -738,7 +739,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 					</div>
 				</div>
 				<div className="flex items-center gap-1 border-t border-ink-800/70 px-2 py-1">
-					{newChat ? <RuntimePicker /> : session?.runtime && session.runtime !== "pi" ? <span className="px-2 text-xs text-ink-500">{RUNTIME_LABEL[session.runtime]}</span> : null}
+					{newChat ? <RuntimePicker /> : session ? <RuntimeSwitcher /> : null}
 					<PermissionPicker />
 					<ModePicker />
 					<div className="flex-1" />

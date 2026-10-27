@@ -304,6 +304,7 @@ export class CodexSession implements RuntimeSession {
 		const wasRunning = this.mapper.running && Boolean(this.mapper.turnId);
 		const items: any[] = [];
 		const context = wasRunning ? "" : await this.turnContext(input.text).catch(() => "");
+		if (input.context && !wasRunning) items.push({ type: "text", text: input.context, text_elements: [] });
 		if (context) items.push({ type: "text", text: `<${CONTEXT_TAG}>\n${context}\n</${CONTEXT_TAG}>`, text_elements: [] });
 		if (input.text) items.push({ type: "text", text: input.text, text_elements: [] });
 		for (const img of input.images ?? []) items.push({ type: "image", url: `data:${img.mimeType};base64,${img.data}` });

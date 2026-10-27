@@ -635,6 +635,16 @@ export async function refreshGateways(): Promise<void> {
 	if (gateways) set({ gateways });
 }
 
+/** Continue the open conversation in another runtime: a new session in the same folder that gets the transcript as context. */
+export async function switchRuntime(runtime: RuntimeKind, gatewayId: string | null): Promise<void> {
+	const session = get().session;
+	if (!session || session.isStreaming) return;
+	const g = get().gateways.find((x) => x.id === gatewayId);
+	const gateway: GatewayChoice = g ? { mode: "prometheus", gatewayId: g.id, model: { provider: g.id, id: g.models[0]?.id ?? "" } } : { mode: "native" };
+	const snap = await call((c) => c.rpc("session.switchRuntime", { sessionId: session.id, runtime, gateway }));
+	if (snap) activate(snap);
+}
+
 export function setDraftRuntime(runtime: RuntimeKind): void {
 	set({ draftRuntime: runtime, draftGatewayId: null, draftModel: null });
 	void refreshDraftModels();

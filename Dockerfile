@@ -6,6 +6,7 @@ RUN pnpm install --frozen-lockfile && pnpm --filter @prometheus/web build
 
 FROM node:24-bookworm-slim
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends openssh-client && rm -rf /var/lib/apt/lists/*
 RUN corepack enable && useradd -m -u 10001 prometheus && mkdir /data /workspace && chown prometheus /data /workspace
 COPY --from=build --chown=prometheus /app /app
 USER prometheus

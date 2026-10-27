@@ -888,6 +888,8 @@ export interface RpcMethods {
 	"session.list": { params: Record<string, never>; result: SessionSummary[] };
 	"session.create": { params: { cwd?: string; name?: string; runtime?: RuntimeKind; gateway?: GatewayChoice }; result: SessionSnapshot };
 	"runtime.list": { params: Record<string, never>; result: RuntimeInfo[] };
+	/** Continue a conversation in another runtime: a new session in the same folder that receives the transcript as context on its first turn. The original session is kept. */
+	"session.switchRuntime": { params: { sessionId: string; runtime: RuntimeKind; gateway?: GatewayChoice }; result: SessionSnapshot };
 	"runtime.models": { params: { runtime: RuntimeKind; gateway: GatewayChoice }; result: ModelInfo[] };
 	"session.open": { params: { sessionId: string }; result: SessionSnapshot };
 	"session.rename": { params: { sessionId: string; name: string }; result: null };

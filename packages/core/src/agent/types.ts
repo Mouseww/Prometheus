@@ -103,6 +103,8 @@ export type ResumeInit = Omit<SessionInit, "cwd">;
 export interface UserInput {
 	text: string;
 	images?: ImageContent[];
+	/** Model-facing context that is not shown as part of the user's message (e.g. a handoff from another runtime). */
+	context?: string;
 }
 
 /** How a prompt is delivered: as a new turn, injected into the running turn, or queued after it. */

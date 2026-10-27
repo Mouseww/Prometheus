@@ -78,6 +78,7 @@ export class ClaudeCodeSession implements RuntimeSession {
 	private busTools: PluginTool[] = [];
 	private readonly mode: () => PermissionMode;
 	private pendingError: string | undefined;
+	private pendingContext: string | undefined;
 	private readonly initOpts: SessionInit;
 	private readonly executable: string | undefined;
 
@@ -295,7 +296,9 @@ export class ClaudeCodeSession implements RuntimeSession {
 	}
 
 	private async userPromptSubmit(input: any): Promise<Record<string, unknown>> {
-		const additionalContext = await this.turnContext(String(input.prompt ?? "")).catch(() => "");
+		const extra = this.pendingContext;
+		this.pendingContext = undefined;
+		const additionalContext = [extra, await this.turnContext(String(input.prompt ?? "")).catch(() => "")].filter(Boolean).join("\n\n");
 		if (!additionalContext) return {};
 		return { hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext } };
 	}
@@ -306,6 +309,7 @@ export class ClaudeCodeSession implements RuntimeSession {
 		if (this.closed) throw new AppError("sessionNotFound", { id: this.id });
 		const wasRunning = this.mapper.running;
 		await this.start();
+		if (input.context && !wasRunning) this.pendingContext = input.context;
 		const content: any[] = [];
 		if (input.text) content.push({ type: "text", text: input.text });
 		for (const img of input.images ?? []) content.push({ type: "image", source: { type: "base64", media_type: img.mimeType, data: img.data } });

@@ -133,7 +133,7 @@ export class PiRuntimeSession implements RuntimeSession {
 		// Resolve as soon as PI accepts the prompt; the run itself streams through events.
 		return new Promise<PromptDisposition>((resolve, reject) => {
 			session
-				.prompt(input.text, {
+				.prompt(input.context ? input.context + "\n\n" + input.text : input.text, {
 					images: input.images,
 					streamingBehavior: session.isStreaming ? (delivery === "send" ? "followUp" : delivery) : undefined,
 					preflightResult: (disposition) => resolve(disposition),

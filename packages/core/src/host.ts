@@ -34,6 +34,7 @@ import { CODEX_CAPABILITIES } from "./agent/codex/codex-session.ts";
 import { CC_CAPABILITIES } from "./agent/claude-code/cc-session.ts";
 import { PiRuntime } from "./agent/pi/pi-runtime.ts";
 import { PI_CAPABILITIES } from "./agent/pi/pi-session.ts";
+import { buildHandoff, handoffBlock } from "./agent/handoff.ts";
 import { GatewayRelay } from "./agent/relay/gateway-relay.ts";
 import { SessionIndex } from "./agent/session-index.ts";
 import { firstUserText } from "./agent/pi/tokens.ts";
@@ -82,6 +83,8 @@ interface LiveSession {
 	bridge: UIBridge;
 	gate: PermissionGate;
 	subagents: SubagentRuntime;
+	/** Transcript from another runtime, handed to the model on the first prompt only. */
+	handoff?: string;
 }
 
 type Handlers = { [M in Exclude<RpcMethod, ServerRpcMethod>]: (params: RpcParams<M>) => Promise<RpcResult<M>> | RpcResult<M> };
@@ -452,8 +455,11 @@ export class PrometheusHost {
 	}
 
 	private async prompt(sessionId: string, text: string, images: ImageContent[] | undefined, delivery: "steer" | "followUp" | undefined): Promise<PromptDisposition> {
-		const { session } = this.require(sessionId);
-		return session.prompt({ text, images }, delivery ?? "send");
+		const live = this.require(sessionId);
+		const context = live.handoff ? handoffBlock(live.handoff) : undefined;
+		const disposition = await live.session.prompt({ text, images, ...(context ? { context } : {}) }, delivery ?? "send");
+		if (context) live.handoff = undefined;
+		return disposition;
 	}
 
 	// ---------- message operations ----------
@@ -567,6 +573,20 @@ export class PrometheusHost {
 			await this.workspaces.add(dir);
 			const live = kind && kind !== "pi" ? await this.createExternal(kind, dir, gateway) : await this.attach((init) => this.pi.create({ ...init, cwd: normalizeDir(dir) }));
 			if (name?.trim()) live.session.setName(name.trim());
+			this.listener.sessionsChanged();
+			return this.snapshot(live);
+		},
+		"session.switchRuntime": async ({ sessionId, runtime: kind, gateway }) => {
+			const source = await this.open(sessionId);
+			if (source.session.isStreaming) throw new AppError("generic");
+			const state = source.session.snapshotState();
+			const from = source.session.ref().runtime;
+			const dir = state.cwd;
+			const live = kind !== "pi" ? await this.createExternal(kind, dir, gateway) : await this.attach((init) => this.pi.create({ ...init, cwd: normalizeDir(dir) }));
+			if (state.name) live.session.setName(state.name);
+			live.gate.setMode(source.gate.mode);
+			const handoff = buildHandoff(state.messages, from === "pi" ? "PI" : from === "codex" ? "Codex" : "Claude Code");
+			if (handoff) live.handoff = handoff;
 			this.listener.sessionsChanged();
 			return this.snapshot(live);
 		},
