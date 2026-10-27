@@ -497,7 +497,7 @@ P1 到 P3 对现有用户不可见，但做完之后，每接一个 runtime 就�
 
 P0 到 P5 已完成。P6 已完成：新建会话时选运行时（`RuntimePicker`）、运行时自带登录或 Prometheus 网关（按格式过滤：Claude Code 只列 anthropic-messages，Codex 只列 openai-responses）、按运行时和网关取模型列表（`runtime.models`）、按 `capabilities` 置灰（不支持插话时回复中发送改为排队，不支持图片时禁用附件）、插件页的兼容性提示（`plugin.compatibility`）。
 
-已知局限：打开已有的非 PI 会话时，模型列表按运行时自带登录取，用 Prometheus 网关创建的会话列表可能不准（前端拿不到会话所用网关）。P7 未开始。
+会话快照带有 `gateway`，打开已有的非 PI 会话时模型列表按它取。P7 未开始。
 
 ### 手工验收（桌面）
 
@@ -513,4 +513,4 @@ P0 到 P5 已完成。P6 已完成：新建会话时选运行时（`RuntimePicke
 ### 手工验收（Android）
 
 1. 连接服务器模式：重复上面 1 到 8，新建会话页的选择器在窄屏下不溢出，弹层贴边显示。
-2. 本机模式：Claude Code 与 Codex 不可用，探测不到可执行文件时选择器置灰并显示探测的报错原因（目前没有专门的"需连接服务器"提示，待补）。
+2. 本机模式：Claude Code 与 Codex 不可用，选择器里置灰并提示"Android 本机模式不可用，请连接服务器"。

@@ -324,6 +324,8 @@ export interface SessionSnapshot {
 	subagents: SubagentRun[];
 	runtime: RuntimeKind;
 	capabilities: RuntimeCapabilities;
+	/** Where a non-PI session sends model traffic; absent for PI. */
+	gateway?: GatewayChoice;
 }
 
 /** Estimated tokens (chars/4) per context component; the sum approximates, not equals, `contextTokens`. */

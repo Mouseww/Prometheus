@@ -384,6 +384,10 @@ export class PrometheusHost {
 			.sort((a, b) => b.modified.localeCompare(a.modified));
 	}
 
+	private gatewayOf(ref: { id: string; runtime: RuntimeKind }): GatewayChoice | undefined {
+		return ref.runtime === "pi" ? undefined : this.index.get(ref.id)?.gateway;
+	}
+
 	private snapshot(live: LiveSession): SessionSnapshot {
 		const s = live.session.snapshotState();
 		return {
@@ -404,6 +408,7 @@ export class PrometheusHost {
 			subagents: live.subagents.list(),
 			runtime: live.session.ref().runtime,
 			capabilities: live.session.capabilities,
+			...(this.gatewayOf(live.session.ref()) ? { gateway: this.gatewayOf(live.session.ref()) } : {}),
 		};
 	}
 

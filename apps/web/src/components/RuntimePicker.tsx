@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import { Check, ChevronDown, Cpu } from "lucide-react";
 import type { RuntimeKind } from "@prometheus/protocol";
+import { isAndroid } from "../lib/backend.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { gatewaysFor, setDraftGateway, setDraftRuntime, useStore } from "../lib/store.ts";
 import { usePopover } from "./TitleBar.tsx";
@@ -10,6 +11,7 @@ const M = defineMessages({
 		title: "Agent 运行时",
 		hint: "创建会话后不可更换",
 		unavailable: "不可用",
+		needServer: "Android 本机模式下不可用，需连接服务器",
 		gateway: "模型来源",
 		native: "运行时自带登录",
 	},
@@ -17,6 +19,7 @@ const M = defineMessages({
 		title: "Agent runtime",
 		hint: "Fixed once the chat starts",
 		unavailable: "Unavailable",
+		needServer: "Needs a server in Android local mode",
 		gateway: "Model source",
 		native: "Runtime's own login",
 	},
@@ -69,7 +72,7 @@ export function RuntimePicker() {
 										{RUNTIME_LABEL[r.kind]}
 										{r.health.version ? <span className="ml-1.5 font-mono text-[10.5px] text-ink-500">{r.health.version}</span> : null}
 									</span>
-									{!r.health.available && <span className="block text-xs text-ink-500">{r.health.reason ?? t("unavailable")}</span>}
+									{!r.health.available && <span className="block text-xs text-ink-500">{[r.kind !== "pi" && isAndroid() ? t("needServer") : null, r.health.reason ?? t("unavailable")].filter(Boolean).join(" · ")}</span>}
 								</span>
 								{r.kind === runtime && <Check className="mt-0.5 size-3.5 shrink-0 text-ember-300" />}
 							</button>

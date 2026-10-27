@@ -510,7 +510,7 @@ function activate(snapshot: SessionSnapshot): void {
 		],
 	});
 	if (snapshot.runtime && snapshot.runtime !== "pi") {
-		void call((c) => c.rpc("runtime.models", { runtime: snapshot.runtime, gateway: { mode: "native" } })).then((models) => {
+		void call((c) => c.rpc("runtime.models", { runtime: snapshot.runtime, gateway: snapshot.gateway ?? { mode: "native" } })).then((models) => {
 			if (models && get().session?.id === snapshot.id) set({ models });
 		});
 	} else if (previous && (previous.runtime ?? "pi") !== "pi") void refreshModels();
