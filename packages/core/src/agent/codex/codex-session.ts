@@ -1,6 +1,7 @@
 // CodexSession: one `codex app-server` process and one thread behind the runtime-neutral RuntimeSession.
 // Model traffic goes through the gateway relay, Prometheus tools through the tool bus (as an MCP server),
 // approvals through the single PermissionGate (docs/agent-runtime.md §4, §6, §7, §12.2).
+import { withLoopbackNoProxy } from "../loopback-env.ts";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { PluginTool, PluginToolContext } from "@prometheus/plugin-sdk";
@@ -184,7 +185,7 @@ export class CodexSession implements RuntimeSession {
 		await writeFile(join(home, "config.toml"), toml, "utf8");
 
 		this.server = new AppServer({
-			env: { ...process.env, CODEX_HOME: home, PROMETHEUS_GW_TOKEN: this.grant.token, PROMETHEUS_MCP_TOKEN: this.busSession.token },
+			env: withLoopbackNoProxy({ ...process.env, CODEX_HOME: home, PROMETHEUS_GW_TOKEN: this.grant.token, PROMETHEUS_MCP_TOKEN: this.busSession.token }),
 			cwd: this.cwd,
 			executable: this.opts.executable,
 			onNotification: (method, params) => this.onNotification(method, params),

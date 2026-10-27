@@ -110,7 +110,7 @@ export class CcMapper {
 	private system(msg: any): void {
 		if (msg.subtype === "init" && typeof msg.model === "string") this.model = msg.model;
 		if (msg.subtype === "api_retry") {
-			this.emit({ type: "auto_retry_start", attempt: msg.attempt ?? 1, maxAttempts: msg.max_retries ?? msg.attempt ?? 1, delayMs: msg.retry_delay_ms ?? 0, errorMessage: String(msg.error ?? "") });
+			this.emit({ type: "auto_retry_start", attempt: msg.attempt ?? 1, maxAttempts: msg.max_retries ?? msg.attempt ?? 1, delayMs: msg.retry_delay_ms ?? 0, errorMessage: msg.error && msg.error !== "unknown" ? String(msg.error) : `${msg.error_status ?? "network error"}: cannot reach the model endpoint (check proxy / login / gateway)` });
 		}
 	}
 
