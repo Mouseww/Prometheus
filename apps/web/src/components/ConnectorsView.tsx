@@ -1,3 +1,4 @@
+import { copyToClipboard } from "../lib/clipboard.ts";
 import { Copy, Loader2, Plug, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { openExternal } from "../lib/links.ts";
 import { confirmDialog } from "../lib/dialogs.ts";
@@ -384,7 +385,7 @@ function AddDialog({ providers, onClose, onDone }: { providers: ProviderInfo[]; 
 					<p>{t("deviceHint")}</p>
 					<div className="flex items-center gap-2">
 						<code className="font-mono text-xl tracking-widest text-ember-400">{device.userCode}</code>
-						<Button variant="outline" onClick={() => void navigator.clipboard.writeText(device.userCode)}>
+						<Button variant="outline" onClick={() => void copyToClipboard(device.userCode)}>
 							<Copy className="size-3.5" /> {t("copyCode")}
 						</Button>
 						<Button variant="primary" onClick={() => void openExternal(device.verificationUri)}>

@@ -1,3 +1,4 @@
+import { copyToClipboard } from "../lib/clipboard.ts";
 import clsx from "clsx";
 import { Collapse } from "./ui.tsx";
 import { confirmDialog } from "../lib/dialogs.ts";
@@ -265,7 +266,7 @@ function assistantText(m: AssistantMessage): string {
 
 async function copyText(text: string, done: string): Promise<void> {
 	try {
-		await navigator.clipboard.writeText(text);
+		await copyToClipboard(text);
 		toast(done);
 	} catch (err) {
 		toast(err instanceof Error ? err.message : String(err), "error");
