@@ -4,21 +4,25 @@ import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { AppError, gatewayAs, type ModelInfo, type UsageStats } from "@prometheus/protocol";
+import { AppError, gatewayAs, type GatewayConfig, type ModelInfo, type UsageStats } from "@prometheus/protocol";
 import type { AgentRuntime, GatewayChoice, NativeSessionInfo, ResumeInit, RuntimeHealth, RuntimeServices, RuntimeSession, SessionInit, SessionRef } from "../types.ts";
 import { resolveCodexCommand } from "./app-server.ts";
-import { CodexSession } from "./codex-session.ts";
+import { CodexSession, DEFAULT_MODEL } from "./codex-session.ts";
 
 const run = promisify(execFile);
+
+const NATIVE_MODELS: ModelInfo[] = [{ provider: "codex", id: DEFAULT_MODEL, name: "Codex (account default)", reasoning: true, vision: true, contextWindow: 200_000, thinkingLevels: ["low", "medium", "high"] }];
 
 export class CodexRuntime implements AgentRuntime {
 	readonly kind = "codex" as const;
 	private readonly getServices: () => Promise<RuntimeServices>;
 	private readonly executable: () => string | undefined;
+	private readonly env: () => Record<string, string>;
 
-	constructor(getServices: () => Promise<RuntimeServices>, executable: () => string | undefined = () => undefined) {
+	constructor(getServices: () => Promise<RuntimeServices>, executable: () => string | undefined = () => undefined, env: () => Record<string, string> = () => ({})) {
 		this.getServices = getServices;
 		this.executable = executable;
+		this.env = env;
 	}
 
 	async probe(): Promise<RuntimeHealth> {
@@ -31,8 +35,17 @@ export class CodexRuntime implements AgentRuntime {
 		}
 	}
 
+	async listAllModels(gateways: GatewayConfig[]): Promise<ModelInfo[]> {
+		const out: ModelInfo[] = [...NATIVE_MODELS];
+		for (const g of gateways) {
+			if (g.enabled === false || !gatewayAs(g, "openai-responses")) continue;
+			for (const m of g.models) out.push({ provider: g.id, id: m.id, name: m.name?.trim() || m.id, reasoning: m.reasoning ?? false, vision: m.vision ?? false, contextWindow: m.contextWindow ?? 200_000, thinkingLevels: ["low", "medium", "high"] });
+		}
+		return out;
+	}
+
 	async listModels(gateway: GatewayChoice): Promise<ModelInfo[]> {
-		if (gateway.mode !== "prometheus") return [];
+		if (gateway.mode !== "prometheus") return NATIVE_MODELS;
 		const g = (await this.getServices()).gateway(gateway.gatewayId);
 		if (!g || !gatewayAs(g, "openai-responses")) return [];
 		return g.models.map((m) => ({
@@ -47,12 +60,12 @@ export class CodexRuntime implements AgentRuntime {
 	}
 
 	private modelFor(init: { gateway?: GatewayChoice }): { provider: string; id: string } {
-		if (init.gateway?.mode !== "prometheus") throw new AppError("generic");
+		if (init.gateway?.mode !== "prometheus") return { provider: "codex", id: DEFAULT_MODEL };
 		return init.gateway.model;
 	}
 
 	async create(init: SessionInit): Promise<RuntimeSession> {
-		const session = new CodexSession({ id: randomUUID(), cwd: init.cwd, init, services: await this.getServices(), model: this.modelFor(init), history: init.history, executable: this.executable() });
+		const session = new CodexSession({ id: randomUUID(), cwd: init.cwd, init, services: await this.getServices(), model: this.modelFor(init), history: init.history, executable: this.executable(), env: this.env() });
 		init.hooks?.created?.(session);
 		try {
 			await session.start();
@@ -65,7 +78,7 @@ export class CodexRuntime implements AgentRuntime {
 
 	async resume(ref: SessionRef, init: ResumeInit): Promise<RuntimeSession> {
 		const cwd = ref.cwd ?? process.cwd();
-		const session = new CodexSession({ id: ref.id, cwd, init: { ...init, cwd }, services: await this.getServices(), model: this.modelFor(init), threadId: ref.nativeId, history: init.history, name: ref.name, executable: this.executable() });
+		const session = new CodexSession({ id: ref.id, cwd, init: { ...init, cwd }, services: await this.getServices(), model: this.modelFor(init), threadId: ref.nativeId, history: init.history, name: ref.name, executable: this.executable(), env: this.env() });
 		init.hooks?.created?.(session);
 		try {
 			await session.start();

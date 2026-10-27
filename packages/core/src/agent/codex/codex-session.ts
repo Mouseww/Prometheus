@@ -1,6 +1,8 @@
 // CodexSession: one `codex app-server` process and one thread behind the runtime-neutral RuntimeSession.
 // Model traffic goes through the gateway relay, Prometheus tools through the tool bus (as an MCP server),
 // approvals through the single PermissionGate (docs/agent-runtime.md §4, §6, §7, §12.2).
+import { copyFile, readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { withLoopbackNoProxy } from "../loopback-env.ts";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -10,7 +12,7 @@ import type { PermissionGate } from "../../permission-gate.ts";
 import { applyPermissionPrompt } from "../../permission-gate.ts";
 import type { BusSession } from "../bus/tool-bus.ts";
 import type { RelayGrant } from "../relay/gateway-relay.ts";
-import type { PromptDelivery, RuntimeCapabilities, RuntimeServices, RuntimeSession, RuntimeSnapshot, SessionHooks, SessionInit, SessionRef, UserInput } from "../types.ts";
+import type { GatewayChoice, PromptDelivery, RuntimeCapabilities, RuntimeServices, RuntimeSession, RuntimeSnapshot, SessionHooks, SessionInit, SessionRef, UserInput } from "../types.ts";
 import { AppServer } from "./app-server.ts";
 import { CodexMapper, replayThread } from "./codex-mapper.ts";
 
@@ -42,6 +44,8 @@ export interface CodexSessionOptions {
 	history?: ChatMessage[];
 	name?: string;
 	executable?: string;
+	/** Extra environment from the agent profile. */
+	env?: Record<string, string>;
 }
 
 type Sandbox = { type: "dangerFullAccess" } | { type: "readOnly"; networkAccess: boolean } | { type: "workspaceWrite"; writableRoots: string[]; networkAccess: boolean; excludeTmpdirEnvVar: boolean; excludeSlashTmp: boolean };
@@ -70,6 +74,9 @@ export class CodexSession implements RuntimeSession {
 	private abortRequested = false;
 	private pendingError: string | undefined;
 	private closed = false;
+	/** Set while the process is replaced on purpose, so its exit is not reported as a crash. */
+	private rerouting = false;
+	private gatewayChoice: GatewayChoice | undefined;
 	private readonly fileItems = new Map<string, any[]>();
 	private readonly opts: CodexSessionOptions;
 
@@ -79,6 +86,7 @@ export class CodexSession implements RuntimeSession {
 		this.cwd = opts.cwd;
 		this.services = opts.services;
 		this.initOpts = opts.init;
+		this.gatewayChoice = opts.init.gateway;
 		this.gate = opts.init.permission;
 		this.hooks = opts.init.hooks;
 		this.model = opts.model;
@@ -141,11 +149,12 @@ export class CodexSession implements RuntimeSession {
 	/** Starts the process and the thread. Called by the runtime before the session is handed out. */
 	async start(): Promise<void> {
 		const { services } = this;
-		const choice = this.initOpts.gateway;
-		if (choice?.mode !== "prometheus") throw new AppError("generic");
-		const gateway = services.gateway(choice.gatewayId);
-		if (!gateway) throw new AppError("gatewayNotFound", { id: choice.gatewayId } as never);
-		if (!gatewayAs(gateway, "openai-responses")) throw new AppError("generic");
+		const choice = this.gatewayChoice;
+		if (choice?.mode === "prometheus") {
+			const gateway = services.gateway(choice.gatewayId);
+			if (!gateway) throw new AppError("gatewayNotFound", { id: choice.gatewayId } as never);
+			if (!gatewayAs(gateway, "openai-responses")) throw new AppError("generic");
+		}
 
 		this.busTools = await this.externalTools();
 		this.busSession = services.bus.open({
@@ -160,24 +169,33 @@ export class CodexSession implements RuntimeSession {
 			},
 			onEvent: (e) => this.mapper.bus(e),
 		});
-		this.grant = services.relay.grant(this.id, choice.gatewayId, () => {
-			const g = services.gateway(choice.gatewayId);
-			return g && gatewayAs(g, "openai-responses");
-		});
+		if (choice?.mode === "prometheus") {
+			this.grant = services.relay.grant(this.id, choice.gatewayId, () => {
+				const g = services.gateway(choice.gatewayId);
+				return g && gatewayAs(g, "openai-responses");
+			});
+		}
 
 		// Codex reads its provider and MCP server from its own config; a per-session home keeps tokens and threads apart.
 		const home = join(services.dataDir, "runtimes", "codex", this.id);
 		await mkdir(home, { recursive: true });
+		// With its own login Codex keeps the account's auth and config; they are copied into the per-session home.
+		const native = choice?.mode !== "prometheus";
+		const userHome = process.env.CODEX_HOME || join(homedir(), ".codex");
+		const userConfig = native ? await readFile(join(userHome, "config.toml"), "utf8").catch(() => "") : "";
+		if (native) await copyFile(join(userHome, "auth.json"), join(home, "auth.json")).catch(() => undefined);
 		const toml = [
-			`model = ${tomlString(this.model.id)}`,
-			`model_provider = "prometheus"`,
-			`check_for_update_on_startup = false`,
-			``,
-			`[model_providers.prometheus]`,
-			`name = "Prometheus"`,
-			`base_url = ${tomlString(`${this.grant.baseUrl}/v1`)}`,
-			`env_key = "PROMETHEUS_GW_TOKEN"`,
-			`wire_api = "responses"`,
+			...(native ? [userConfig.trimEnd()] : [
+				`model = ${tomlString(this.model.id)}`,
+				`model_provider = "prometheus"`,
+				`check_for_update_on_startup = false`,
+				``,
+				`[model_providers.prometheus]`,
+				`name = "Prometheus"`,
+				`base_url = ${tomlString(`${this.grant?.baseUrl}/v1`)}`,
+				`env_key = "PROMETHEUS_GW_TOKEN"`,
+				`wire_api = "responses"`,
+			]),
 			``,
 			`[mcp_servers.prometheus]`,
 			`url = ${tomlString(this.busSession.url)}`,
@@ -188,7 +206,7 @@ export class CodexSession implements RuntimeSession {
 		await writeFile(join(home, "config.toml"), toml, "utf8");
 
 		this.server = new AppServer({
-			env: withLoopbackNoProxy({ ...process.env, CODEX_HOME: home, PROMETHEUS_GW_TOKEN: this.grant.token, PROMETHEUS_MCP_TOKEN: this.busSession.token }),
+			env: withLoopbackNoProxy({ ...process.env, ...(this.opts.env ?? {}), CODEX_HOME: home, ...(this.grant ? { PROMETHEUS_GW_TOKEN: this.grant.token } : {}), PROMETHEUS_MCP_TOKEN: this.busSession.token }),
 			cwd: this.cwd,
 			executable: this.opts.executable,
 			onNotification: (method, params) => this.onNotification(method, params),
@@ -201,14 +219,14 @@ export class CodexSession implements RuntimeSession {
 		const policy = this.policy();
 		const developerInstructions = (await this.staticContext()) || null;
 		if (this.threadId) {
-			await this.server.request("thread/resume", { threadId: this.threadId, cwd: this.cwd, model: this.model.id, approvalPolicy: policy.approval, developerInstructions });
+			await this.server.request("thread/resume", { threadId: this.threadId, cwd: this.cwd, ...this.modelArg(), approvalPolicy: policy.approval, developerInstructions });
 			if (!this.mapper.messages.length) {
 				const read = await this.server.request("thread/read", { threadId: this.threadId, includeTurns: true }).catch(() => undefined);
 				const turns = read?.thread?.turns;
 				if (Array.isArray(turns)) this.mapper.setMessages(replayThread(turns, this.model.provider, this.model.id));
 			}
 		} else {
-			const res = await this.server.request("thread/start", { cwd: this.cwd, model: this.model.id, approvalPolicy: policy.approval, sandbox: sandboxMode(policy.sandbox), developerInstructions });
+			const res = await this.server.request("thread/start", { cwd: this.cwd, ...this.modelArg(), approvalPolicy: policy.approval, sandbox: sandboxMode(policy.sandbox), developerInstructions });
 			this.threadId = String(res?.thread?.id ?? "");
 			if (!this.threadId) throw new Error("codex did not return a thread id");
 		}
@@ -284,7 +302,7 @@ export class CodexSession implements RuntimeSession {
 	}
 
 	private onExit(code: number | null, stderr: string): void {
-		if (this.closed) return;
+		if (this.closed || this.rerouting) return;
 		const message = `codex exited (${code})${stderr ? `: ${stderr.trim().split("\n").at(-1)}` : ""}`;
 		this.services.log.warn(`[codex ${this.id}] ${message}`);
 		this.server = undefined;
@@ -322,7 +340,7 @@ export class CodexSession implements RuntimeSession {
 			threadId: this.threadId,
 			input: items,
 			cwd: this.cwd,
-			model: this.model.id,
+			...this.modelArg(),
 			approvalPolicy: policy.approval,
 			sandboxPolicy: policy.sandbox,
 			...(this.effort ? { effort: this.effort } : {}),
@@ -354,8 +372,32 @@ export class CodexSession implements RuntimeSession {
 		return this.mapper.lastReply();
 	}
 
+	/** `model` is left out for the account default, so Codex uses what its own configuration says. */
+	private modelArg(): { model?: string } {
+		return this.model.provider === "codex" && this.model.id === DEFAULT_MODEL ? {} : { model: this.model.id };
+	}
+
 	async setModel(model: ModelRef): Promise<void> {
+		const next: GatewayChoice = model.provider === "codex" ? { mode: "native" } : { mode: "prometheus", gatewayId: model.provider, model };
+		const current = this.gatewayChoice;
+		const changed = (current?.mode ?? "native") !== next.mode || (current?.mode === "prometheus" && next.mode === "prometheus" && current.gatewayId !== next.gatewayId);
+		if (changed && this.mapper.running) throw new AppError("waitForReply");
 		this.model = model;
+		if (changed) {
+			// Another route means another provider config: replace the process, resuming the same thread.
+			this.gatewayChoice = next;
+			this.rerouting = true;
+			try {
+				this.busSession?.close();
+				this.grant?.revoke();
+				this.grant = undefined;
+				await this.server?.close();
+				this.server = undefined;
+				await this.start();
+			} finally {
+				this.rerouting = false;
+			}
+		}
 		this.emit({ type: "model_changed", model });
 	}
 	async setThinking(level: ThinkingLevel): Promise<void> {
@@ -449,5 +491,8 @@ function sandboxMode(s: Sandbox): "danger-full-access" | "read-only" | "workspac
 function asObject(v: unknown): Record<string, unknown> {
 	return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 }
+
+/** Codex picks the model from the account's own configuration when none is named. */
+export const DEFAULT_MODEL = "default";
 
 export { CONTEXT_TAG };

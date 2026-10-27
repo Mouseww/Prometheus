@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { DEFAULT_CATALOG_URL, listModels, matchModelDefaults, mergeGatewayUpdate, type ModelCatalog, parseModelCatalog, redactGateway } from "@prometheus/gateway";
 import type { AgentRunOptions, AgentRunResult, PrometheusPlugin } from "@prometheus/plugin-sdk";
 import {
+	type AgentProfile,
 	AppError,
 	type ChatMessage,
 	encodeError,
@@ -13,6 +14,7 @@ import {
 	type DirListing,
 	type ImageContent,
 	type MessageRef,
+	type ModelRef,
 	PROTOCOL_VERSION,
 	PERMISSION_MODES,
 	type PromptDisposition,
@@ -105,7 +107,7 @@ export class PrometheusHost {
 	private readonly listener: HostListener;
 	private readonly workspaces: WorkspaceStore;
 	private readonly index: SessionIndex;
-	private readonly externalRuntimes = new Map<RuntimeKind, AgentRuntime>();
+	private readonly externalRuntimes = new Map<string, AgentRuntime>();
 	private externalServices: Promise<RuntimeServices> | undefined;
 
 	private constructor(runtime: Runtime, pi: PiRuntime, options: PrometheusHostOptions) {
@@ -179,13 +181,39 @@ export class PrometheusHost {
 		return this.externalServices;
 	}
 
-	private async runtimeFor(kind: RuntimeKind): Promise<AgentRuntime> {
+	/** The agent profile behind an id; built-ins have none unless the user configured an override. */
+	private profileOf(id: string): AgentProfile | undefined {
+		return this.runtime.config.agents().find((a) => a.id === id);
+	}
+
+	/** Runtime for a kind and, for custom agents, the profile whose executable and environment it uses. Profiles are read per use, so edits reach new sessions. */
+	private async runtimeFor(kind: RuntimeKind, agent?: string): Promise<AgentRuntime> {
 		if (kind === "pi") return this.pi;
-		let rt = this.externalRuntimes.get(kind);
+		const key = agent ?? kind;
+		let rt = this.externalRuntimes.get(key);
 		if (rt) return rt;
-		rt = kind === "claude-code" ? new ClaudeCodeRuntime(() => this.servicesFor()) : new CodexRuntime(() => this.servicesFor());
-		this.externalRuntimes.set(kind, rt);
+		const executable = () => this.profileOf(key)?.executable || undefined;
+		const env = () => this.profileOf(key)?.env ?? {};
+		rt = kind === "claude-code" ? new ClaudeCodeRuntime(() => this.servicesFor(), executable, env) : new CodexRuntime(() => this.servicesFor(), executable, env);
+		this.externalRuntimes.set(key, rt);
 		return rt;
+	}
+
+	/** Where a chosen model's traffic goes: a Prometheus gateway when the model's provider is one, else the agent's own login. */
+	private gatewayFromModel(model: ModelRef | undefined, fallback?: GatewayChoice): GatewayChoice {
+		if (model) {
+			const g = this.runtime.config.gateways().find((x) => x.id === model.provider);
+			if (g) return { mode: "prometheus", gatewayId: g.id, model };
+			return { mode: "native" };
+		}
+		return fallback ?? { mode: "native" };
+	}
+
+	/** Built-in agents (with the user's overrides) followed by custom ones. */
+	private agentList(): AgentProfile[] {
+		const stored = this.runtime.config.agents();
+		const builtin = (["claude-code", "codex"] as const).map((kind): AgentProfile => stored.find((a) => a.id === kind) ?? { id: kind, name: kind === "codex" ? "Codex" : "Claude Code", kind, enabled: true, builtin: true });
+		return [...builtin, ...stored.filter((a) => a.id !== "claude-code" && a.id !== "codex")];
 	}
 
 	private syncIndex(id: string, live: LiveSession): void {
@@ -195,13 +223,13 @@ export class PrometheusHost {
 		this.index.patch(id, { name: state.name, modified: new Date().toISOString(), messageCount: state.messages.length, firstMessage: firstUserText(state.messages).slice(0, 200) });
 	}
 
-	private async createExternal(kind: RuntimeKind, dir: string, gateway: GatewayChoice | undefined, seed?: ChatMessage[]): Promise<LiveSession> {
-		const rt = await this.runtimeFor(kind);
+	private async createExternal(kind: RuntimeKind, agent: string | undefined, dir: string, gateway: GatewayChoice | undefined, seed?: ChatMessage[]): Promise<LiveSession> {
+		const rt = await this.runtimeFor(kind, agent);
 		const choice: GatewayChoice = gateway ?? { mode: "native" };
 		const live = await this.attach((init) => rt.create({ ...init, cwd: normalizeDir(dir), ...(seed ? { history: seed } : {}) }), choice);
 		const now = new Date().toISOString();
 		const ref = live.session.ref();
-		this.index.upsert({ id: ref.id, runtime: kind, nativeId: ref.nativeId, cwd: normalizeDir(dir), created: now, modified: now, messageCount: 0, firstMessage: "", gateway: choice, ...(seed ? { seed } : {}) });
+		this.index.upsert({ id: ref.id, runtime: kind, nativeId: ref.nativeId, cwd: normalizeDir(dir), created: now, modified: now, messageCount: 0, firstMessage: "", gateway: choice, ...(agent && agent !== kind ? { agent } : {}), ...(seed ? { seed } : {}) });
 		return live;
 	}
 
@@ -300,7 +328,7 @@ export class PrometheusHost {
 			pending = (async () => {
 				const entry = this.index.get(sessionId);
 				if (entry && entry.runtime !== "pi") {
-					const rt = await this.runtimeFor(entry.runtime);
+					const rt = await this.runtimeFor(entry.runtime, entry.agent);
 					return this.attach((init) => rt.resume({ runtime: entry.runtime, id: entry.id, nativeId: entry.nativeId, cwd: entry.cwd, name: entry.name }, entry.seed ? { ...init, history: entry.seed } : init), entry.gateway);
 				}
 				const path = await this.resolvePath(sessionId);
@@ -371,6 +399,7 @@ export class PrometheusHost {
 				archived: archived.has(e.id),
 				workspaceId: e.cwd ? workspaceId(e.cwd) : "",
 				runtime: e.runtime,
+				...(e.agent ? { agent: e.agent } : {}),
 			});
 		}
 		await this.workspaces.ensure(external.map((e) => ({ path: e.cwd, modified: e.modified })));
@@ -416,6 +445,7 @@ export class PrometheusHost {
 			runtime: live.session.ref().runtime,
 			capabilities: live.session.capabilities,
 			...(this.gatewayOf(live.session.ref()) ? { gateway: this.gatewayOf(live.session.ref()) } : {}),
+			...(this.index.get(s.id)?.agent ? { agent: this.index.get(s.id)?.agent } : {}),
 		};
 	}
 
@@ -571,23 +601,23 @@ export class PrometheusHost {
 		}),
 
 		"session.list": () => this.listSessions(),
-		"session.create": async ({ cwd, name, runtime: kind, gateway }) => {
+		"session.create": async ({ cwd, name, runtime: kind, agent, model, gateway }) => {
 			const dir = cwd?.trim() || this.cwd;
 			if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new AppError("workdirNotFound", { dir });
 			await this.workspaces.add(dir);
-			const live = kind && kind !== "pi" ? await this.createExternal(kind, dir, gateway) : await this.attach((init) => this.pi.create({ ...init, cwd: normalizeDir(dir) }));
+			const live = kind && kind !== "pi" ? await this.createExternal(kind, agent, dir, this.gatewayFromModel(model, gateway)) : await this.attach((init) => this.pi.create({ ...init, cwd: normalizeDir(dir) }));
 			if (name?.trim()) live.session.setName(name.trim());
 			this.listener.sessionsChanged();
 			return this.snapshot(live);
 		},
-		"session.switchRuntime": async ({ sessionId, runtime: kind, gateway }) => {
+		"session.switchRuntime": async ({ sessionId, runtime: kind, agent, model, gateway }) => {
 			const source = await this.open(sessionId);
 			if (source.session.isStreaming) throw new AppError("generic");
 			const state = source.session.snapshotState();
 			const from = source.session.ref().runtime;
 			const dir = state.cwd;
 			const seed = state.messages.slice(-SEED_MESSAGES);
-			const live = kind !== "pi" ? await this.createExternal(kind, dir, gateway, seed) : await this.attach((init) => this.pi.create({ ...init, cwd: normalizeDir(dir), history: seed }));
+			const live = kind !== "pi" ? await this.createExternal(kind, agent, dir, this.gatewayFromModel(model, gateway), seed) : await this.attach((init) => this.pi.create({ ...init, cwd: normalizeDir(dir), history: seed }));
 			if (state.name) live.session.setName(state.name);
 			live.gate.setMode(source.gate.mode);
 			const handoff = buildHandoff(state.messages, from === "pi" ? "PI" : from === "codex" ? "Codex" : "Claude Code");
@@ -733,19 +763,48 @@ export class PrometheusHost {
 
 		"model.list": () => this.pi.listModels({ mode: "native" }),
 		"runtime.list": async (): Promise<RuntimeInfo[]> => {
-			const out: RuntimeInfo[] = [{ kind: "pi", health: await this.pi.probe(), capabilities: PI_CAPABILITIES }];
-			const cc = await this.runtimeFor("claude-code").catch(() => undefined);
-			out.push({ kind: "claude-code", health: (await cc?.probe()) ?? { available: false, reason: "unavailable" }, capabilities: CC_CAPABILITIES });
-			const codex = await this.runtimeFor("codex").catch(() => undefined);
-			out.push({ kind: "codex", health: (await codex?.probe()) ?? { available: false, reason: "unavailable" }, capabilities: CODEX_CAPABILITIES });
+			const out: RuntimeInfo[] = [{ id: "pi", name: "PI", kind: "pi", health: await this.pi.probe(), capabilities: PI_CAPABILITIES }];
+			for (const agent of this.agentList().filter((a) => a.enabled !== false)) {
+				const rt = await this.runtimeFor(agent.kind, agent.id).catch(() => undefined);
+				out.push({
+					id: agent.id,
+					name: agent.name,
+					kind: agent.kind,
+					health: (await rt?.probe()) ?? { available: false, reason: "unavailable" },
+					capabilities: agent.kind === "codex" ? CODEX_CAPABILITIES : CC_CAPABILITIES,
+				});
+			}
 			return out;
 		},
-		"runtime.models": async ({ runtime: kind, gateway }) => (await this.runtimeFor(kind)).listModels(gateway),
+		"runtime.models": async ({ runtime: kind, agent }) => {
+			if (kind === "pi") return this.pi.listModels({ mode: "native" });
+			const rt = await this.runtimeFor(kind, agent);
+			return rt.listAllModels ? rt.listAllModels(this.runtime.config.gateways()) : rt.listModels({ mode: "native" });
+		},
+		"agent.list": () => this.agentList(),
+		"agent.save": async ({ agent }) => {
+			const saved = await this.runtime.config.saveAgent(agent);
+			// A new executable or environment applies to chats started from now on.
+			this.externalRuntimes.delete(saved.id);
+			return saved;
+		},
+		"agent.delete": async ({ id }) => {
+			if (id === "claude-code" || id === "codex") {
+				// Built-ins cannot be removed; dropping the override resets them.
+				await this.runtime.config.deleteAgent(id);
+			} else {
+				await this.runtime.config.deleteAgent(id);
+			}
+			this.externalRuntimes.delete(id);
+			return null;
+		},
 		"model.set": async ({ sessionId, model }) => {
 			const { session } = this.require(sessionId);
 			if (session.ref().runtime !== "pi") {
 				// The external runtime owns the model list; it emits `model_changed` itself.
 				await session.setModel(model);
+				// The model decides the route, so a gateway change must survive reopening the chat.
+				this.index.patch(sessionId, { gateway: this.gatewayFromModel(model) });
 				return null;
 			}
 			const target = this.pi.getModel(model.provider, model.id);

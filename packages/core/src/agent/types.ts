@@ -21,6 +21,7 @@ import type {
 	ToolInfo,
 	UsageStats,
 } from "@prometheus/protocol";
+import type { GatewayConfig } from "@prometheus/protocol";
 import type { SubagentRuntime } from "@prometheus/subagents";
 import type { PermissionGate } from "../permission-gate.ts";
 import type { UIBridge } from "../ui-bridge.ts";
@@ -121,6 +122,8 @@ export interface AgentRuntime {
 	/** Installed? Which version? Logged in? */
 	probe(): Promise<RuntimeHealth>;
 	listModels(gateway: GatewayChoice): Promise<ModelInfo[]>;
+	/** Every model the runtime can use: its own login's plus those of each gateway it can talk to (provider = gateway id). */
+	listAllModels?(gateways: GatewayConfig[]): Promise<ModelInfo[]>;
 	create(init: SessionInit): Promise<RuntimeSession>;
 	resume(ref: SessionRef, init: ResumeInit): Promise<RuntimeSession>;
 	/** Sessions in the runtime's native storage. */

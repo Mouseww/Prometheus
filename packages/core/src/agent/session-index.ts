@@ -17,6 +17,8 @@ export interface IndexEntry {
 	messageCount: number;
 	firstMessage: string;
 	gateway?: GatewayChoice;
+	/** Custom agent profile that runs it; absent for the built-in agent of `runtime`. */
+	agent?: string;
 	/** Conversation this session was continued from in another runtime; shown ahead of its own messages. */
 	seed?: ChatMessage[];
 }

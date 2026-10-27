@@ -2,7 +2,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { mergeGatewayUpdate, validateGateway } from "@prometheus/gateway";
-import { AppError, type GatewayConfig } from "@prometheus/protocol";
+import { type AgentProfile, AppError, type GatewayConfig } from "@prometheus/protocol";
 
 export interface NetworkConfig {
 	/** Also listen on all network interfaces. */
@@ -20,6 +20,8 @@ export const DEFAULT_LAN_PORT = 7421;
 
 export interface PrometheusConfig {
 	gateways: GatewayConfig[];
+	/** Custom agents, plus overrides (executable, env) of the built-in ones, keyed by id. */
+	agents: AgentProfile[];
 	/** npm package names or paths (relative to dataDir) of extra plugins. */
 	plugins: string[];
 	/** Plugin ids the user switched off. */
@@ -45,7 +47,7 @@ export function defaultDataDir(): string {
 	return process.env.PROMETHEUS_HOME || join(homedir(), ".prometheus");
 }
 
-const EMPTY: PrometheusConfig = { gateways: [], plugins: [], disabledPlugins: [], pluginSettings: {}, network: normalizeNetwork(undefined), workspaceRoot: "" };
+const EMPTY: PrometheusConfig = { gateways: [], agents: [], plugins: [], disabledPlugins: [], pluginSettings: {}, network: normalizeNetwork(undefined), workspaceRoot: "" };
 
 /** config.json holds API keys, so it is always written owner-only. */
 export class ConfigStore {
@@ -65,6 +67,7 @@ export class ConfigStore {
 			const raw = JSON.parse(await readFile(this.path, "utf8")) as Partial<PrometheusConfig>;
 			this.config = {
 				gateways: Array.isArray(raw.gateways) ? raw.gateways : [],
+				agents: Array.isArray(raw.agents) ? raw.agents : [],
 				plugins: Array.isArray(raw.plugins) ? raw.plugins : [],
 				disabledPlugins: Array.isArray(raw.disabledPlugins) ? raw.disabledPlugins : [],
 				pluginSettings: raw.pluginSettings ?? {},
@@ -110,6 +113,37 @@ export class ConfigStore {
 			: [...this.config.gateways, merged];
 		await this.persist();
 		return merged;
+	}
+
+	agents(): AgentProfile[] {
+		return this.config.agents;
+	}
+
+	async saveAgent(incoming: AgentProfile): Promise<AgentProfile> {
+		const id = incoming.id.trim();
+		if (!/^[a-z0-9][a-z0-9-_]{0,47}$/.test(id)) throw new AppError("generic");
+		if (incoming.kind !== "claude-code" && incoming.kind !== "codex") throw new AppError("generic");
+		const builtin = id === "claude-code" || id === "codex";
+		if (builtin && incoming.kind !== id) throw new AppError("generic");
+		const env = Object.fromEntries(Object.entries(incoming.env ?? {}).filter(([k]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k)));
+		const saved: AgentProfile = {
+			id,
+			name: incoming.name?.trim() || id,
+			kind: incoming.kind,
+			...(incoming.executable?.trim() ? { executable: incoming.executable.trim() } : {}),
+			...(Object.keys(env).length ? { env } : {}),
+			enabled: incoming.enabled !== false,
+			...(builtin ? { builtin: true } : {}),
+		};
+		const exists = this.config.agents.some((a) => a.id === id);
+		this.config.agents = exists ? this.config.agents.map((a) => (a.id === id ? saved : a)) : [...this.config.agents, saved];
+		await this.persist();
+		return saved;
+	}
+
+	async deleteAgent(id: string): Promise<void> {
+		this.config.agents = this.config.agents.filter((a) => a.id !== id);
+		await this.persist();
 	}
 
 	async deleteGateway(id: string): Promise<void> {

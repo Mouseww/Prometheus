@@ -3,6 +3,7 @@
 // the single PermissionGate (docs/agent-runtime.md §4, §6, §7, §12.1).
 import { withLoopbackNoProxy } from "../loopback-env.ts";
 import { type Options, query, type Query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { GatewayChoice } from "../types.ts";
 import { AppError, gatewayAs, type ChatMessage, type CommandInfo, type ModelRef, type PermissionMode, type PromptDisposition, type SessionEvent, type SessionStats, type ThinkingLevel, type ToolInfo } from "@prometheus/protocol";
 import type { PluginTool, PluginToolContext } from "@prometheus/plugin-sdk";
 import type { PermissionGate } from "../../permission-gate.ts";
@@ -50,6 +51,8 @@ export interface CcSessionOptions {
 	name?: string;
 	/** Absolute path of a specific Claude Code install; otherwise the SDK's bundled one. */
 	executable?: string;
+	/** Extra environment from the agent profile. */
+	env?: Record<string, string>;
 }
 
 export class ClaudeCodeSession implements RuntimeSession {
@@ -81,6 +84,9 @@ export class ClaudeCodeSession implements RuntimeSession {
 	private pendingContext: string | undefined;
 	private readonly initOpts: SessionInit;
 	private readonly executable: string | undefined;
+	private readonly extraEnv: Record<string, string>;
+	/** Where model traffic goes; changes when the user picks a model of another gateway. */
+	private gatewayChoice: GatewayChoice | undefined;
 
 	constructor(opts: CcSessionOptions) {
 		this.id = opts.id;
@@ -89,6 +95,8 @@ export class ClaudeCodeSession implements RuntimeSession {
 		this.services = opts.services;
 		this.initOpts = opts.init;
 		this.executable = opts.executable;
+		this.extraEnv = opts.env ?? {};
+		this.gatewayChoice = opts.init.gateway;
 		this.gate = opts.init.permission;
 		this.hooks = opts.init.hooks;
 		this.model = opts.model;
@@ -167,7 +175,7 @@ export class ClaudeCodeSession implements RuntimeSession {
 			onEvent: (e) => this.mapper.bus(e),
 		});
 
-		const env: Record<string, string | undefined> = { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: "prometheus", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" };
+		const env: Record<string, string | undefined> = { ...process.env, ...this.extraEnv, CLAUDE_AGENT_SDK_CLIENT_APP: "prometheus", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" };
 		const options: Options = {
 			cwd: this.cwd,
 			model: this.model.id,
@@ -188,7 +196,7 @@ export class ClaudeCodeSession implements RuntimeSession {
 		};
 		if (this.executable) options.pathToClaudeCodeExecutable = this.executable;
 
-		const gateway = this.initOpts.gateway;
+		const gateway = this.gatewayChoice;
 		if (gateway?.mode === "prometheus") {
 			this.grant = services.relay.grant(this.id, gateway.gatewayId, () => {
 				const g = services.gateway(gateway.gatewayId);
@@ -348,10 +356,35 @@ export class ClaudeCodeSession implements RuntimeSession {
 	}
 
 	async setModel(model: ModelRef): Promise<void> {
+		// A model of another gateway (or back to the own login) needs a new process with a different endpoint.
+		const next: GatewayChoice = model.provider === "claude-code" ? { mode: "native" } : { mode: "prometheus", gatewayId: model.provider, model };
+		const current = this.gatewayChoice;
+		const changed = (current?.mode ?? "native") !== next.mode || (current?.mode === "prometheus" && next.mode === "prometheus" && current.gatewayId !== next.gatewayId);
+		if (changed && this.mapper.running) throw new AppError("waitForReply");
 		this.model = model;
 		this.mapper.model = model.id;
-		await this.q?.setModel(model.id);
+		if (changed) await this.reroute(next);
+		else await this.q?.setModel(model.id);
 		this.emit({ type: "model_changed", model });
+	}
+
+	/** Stops the process and lets the next prompt start one that resumes the same session against the new route. */
+	private async reroute(next: GatewayChoice): Promise<void> {
+		this.gatewayChoice = next;
+		const q = this.q;
+		const pump = this.pump;
+		try {
+			q?.close();
+		} catch {
+			/* already closed */
+		}
+		await pump?.catch(() => undefined);
+		this.busSession?.close();
+		this.busSession = undefined;
+		this.grant?.revoke();
+		this.grant = undefined;
+		this.q = undefined;
+		this.resume = true;
 	}
 	async setThinking(_level: ThinkingLevel): Promise<void> {}
 	async setPermissionMode(mode: PermissionMode): Promise<void> {

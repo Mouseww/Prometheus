@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { AppError, gatewayAs, type ModelInfo, type UsageStats } from "@prometheus/protocol";
+import { AppError, gatewayAs, type GatewayConfig, type ModelInfo, type UsageStats } from "@prometheus/protocol";
 import type { AgentRuntime, GatewayChoice, NativeSessionInfo, ResumeInit, RuntimeHealth, RuntimeServices, RuntimeSession, SessionInit, SessionRef } from "../types.ts";
 import { ClaudeCodeSession } from "./cc-session.ts";
 import { transcriptToMessages } from "./transcript.ts";
@@ -23,11 +23,13 @@ export class ClaudeCodeRuntime implements AgentRuntime {
 	readonly kind = "claude-code" as const;
 	private readonly getServices: () => Promise<RuntimeServices>;
 	private readonly executable: () => string | undefined;
+	private readonly env: () => Record<string, string>;
 
 	/** Services start lazily: listing runtimes must not open the tool bus and relay. */
-	constructor(getServices: () => Promise<RuntimeServices>, executable: () => string | undefined = () => undefined) {
+	constructor(getServices: () => Promise<RuntimeServices>, executable: () => string | undefined = () => undefined, env: () => Record<string, string> = () => ({})) {
 		this.getServices = getServices;
 		this.executable = executable;
+		this.env = env;
 	}
 
 	async probe(): Promise<RuntimeHealth> {
@@ -57,6 +59,15 @@ export class ClaudeCodeRuntime implements AgentRuntime {
 		}));
 	}
 
+	async listAllModels(gateways: GatewayConfig[]): Promise<ModelInfo[]> {
+		const out = [...NATIVE_MODELS];
+		for (const g of gateways) {
+			if (g.enabled === false || !gatewayAs(g, "anthropic-messages")) continue;
+			for (const m of g.models) out.push({ provider: g.id, id: m.id, name: m.name?.trim() || m.id, reasoning: m.reasoning ?? false, vision: m.vision ?? false, contextWindow: m.contextWindow ?? 200_000 });
+		}
+		return out;
+	}
+
 	private modelFor(init: { gateway?: GatewayChoice }, fallback?: string): { provider: string; id: string } {
 		const g = init.gateway;
 		if (g?.mode === "prometheus") return g.model;
@@ -65,7 +76,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
 
 	async create(init: SessionInit): Promise<RuntimeSession> {
 		const id = randomUUID();
-		const session = new ClaudeCodeSession({ id, nativeId: id, cwd: init.cwd, resume: false, init, services: await this.getServices(), model: this.modelFor(init), history: init.history ?? [], executable: this.executable() });
+		const session = new ClaudeCodeSession({ id, nativeId: id, cwd: init.cwd, resume: false, init, services: await this.getServices(), model: this.modelFor(init), history: init.history ?? [], executable: this.executable(), env: this.env() });
 		init.hooks?.created?.(session);
 		return session;
 	}
@@ -87,6 +98,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
 			history: [...(init.history ?? []), ...history],
 			name: info.customTitle,
 			executable: this.executable(),
+			env: this.env(),
 		});
 		init.hooks?.created?.(session);
 		return session;

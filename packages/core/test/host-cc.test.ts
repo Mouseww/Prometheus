@@ -67,8 +67,10 @@ describe("Claude Code through the host", { timeout: 120_000 }, () => {
 		expect(list.map((r) => r.kind)).toEqual(["pi", "claude-code", "codex"]);
 		expect(list[1]!.health.available).toBe(true);
 		expect(list[1]!.capabilities.followUpQueue).toBe(false);
-		const models = await host.call("runtime.models", { runtime: "claude-code", gateway: { mode: "prometheus", gatewayId: "fake", model: { provider: "fake", id: "fake-model" } } });
-		expect(models.map((m) => m.id)).toEqual(["fake-model"]);
+		const models = await host.call("runtime.models", { runtime: "claude-code" });
+		// Own-login models first, then every compatible gateway's.
+		expect(models.map((m) => m.id)).toEqual(["sonnet", "opus", "haiku", "fake-model"]);
+		expect(models.at(-1)!.provider).toBe("fake");
 	});
 
 	it("creates, chats, lists, closes, resumes and deletes", async () => {

@@ -177,7 +177,28 @@ export interface RuntimeHealth {
 /** Where model traffic goes: the runtime's own login/config, or a Prometheus gateway through the local relay. */
 export type GatewayChoice = { mode: "native" } | { mode: "prometheus"; gatewayId: string; model: ModelRef };
 
+/**
+ * An agent the user can start chats with: one of the built-ins (id equals its kind) or a custom profile built on
+ * Claude Code or Codex (own executable, environment, config directory).
+ */
+export interface AgentProfile {
+	id: string;
+	name: string;
+	kind: Exclude<RuntimeKind, "pi">;
+	/** Path of the CLI to run; empty means the one found on PATH. */
+	executable?: string;
+	/** Extra environment for the CLI process (e.g. CLAUDE_CONFIG_DIR, proxy, a different API key). */
+	env?: Record<string, string>;
+	/** Hidden from the chat menu when false. */
+	enabled?: boolean;
+	/** Built-in entries can be configured but not deleted. */
+	builtin?: boolean;
+}
+
 export interface RuntimeInfo {
+	/** Agent id: the kind for built-ins, the profile id for custom agents. */
+	id: string;
+	name: string;
 	kind: RuntimeKind;
 	health: RuntimeHealth;
 	capabilities: RuntimeCapabilities;
@@ -326,6 +347,8 @@ export interface SessionSnapshot {
 	capabilities: RuntimeCapabilities;
 	/** Where a non-PI session sends model traffic; absent for PI. */
 	gateway?: GatewayChoice;
+	/** Custom agent profile id; absent for PI and the built-in agents. */
+	agent?: string;
 }
 
 /** Estimated tokens (chars/4) per context component; the sum approximates, not equals, `contextTokens`. */
@@ -910,11 +933,15 @@ export interface RpcMethods {
 	"runtime.env": { params: RuntimeEnv; result: null };
 
 	"session.list": { params: Record<string, never>; result: SessionSummary[] };
-	"session.create": { params: { cwd?: string; name?: string; runtime?: RuntimeKind; gateway?: GatewayChoice }; result: SessionSnapshot };
+	"session.create": { params: { cwd?: string; name?: string; runtime?: RuntimeKind; agent?: string; /** Chosen model; its provider decides where traffic goes. */ model?: ModelRef; gateway?: GatewayChoice }; result: SessionSnapshot };
 	"runtime.list": { params: Record<string, never>; result: RuntimeInfo[] };
 	/** Continue a conversation in another runtime: a new session in the same folder that receives the transcript as context on its first turn. The original session is kept. */
-	"session.switchRuntime": { params: { sessionId: string; runtime: RuntimeKind; gateway?: GatewayChoice }; result: SessionSnapshot };
-	"runtime.models": { params: { runtime: RuntimeKind; gateway: GatewayChoice }; result: ModelInfo[] };
+	"session.switchRuntime": { params: { sessionId: string; runtime: RuntimeKind; agent?: string; model?: ModelRef; gateway?: GatewayChoice }; result: SessionSnapshot };
+	/** Every model the agent can use: its own login's models plus the models of each compatible gateway (provider = gateway id). */
+	"runtime.models": { params: { runtime: RuntimeKind; agent?: string }; result: ModelInfo[] };
+	"agent.list": { params: Record<string, never>; result: AgentProfile[] };
+	"agent.save": { params: { agent: AgentProfile }; result: AgentProfile };
+	"agent.delete": { params: { id: string }; result: null };
 	"session.open": { params: { sessionId: string }; result: SessionSnapshot };
 	"session.rename": { params: { sessionId: string; name: string }; result: null };
 	"session.close": { params: { sessionId: string }; result: null };
