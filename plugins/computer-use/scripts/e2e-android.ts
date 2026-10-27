@@ -32,8 +32,17 @@ try {
 	await step("launch settings", () => svc.launch(S, "com.android.settings", undefined));
 	await new Promise((r) => setTimeout(r, 2000));
 	const obs = await step("observe", () => svc.observe(S, "screen", {}));
-	// Open the first clickable list entry that has a name and check the screen changed.
-	const line = obs.split("\n").find((l) => /\] (text|button|listitem|group) "[^"]+".*\{.*click/.test(l)) ?? obs.split("\n").find((l) => /"[^"]+"/.test(l) && /click/.test(l));
+	// Click the settings row whose label is "Network & internet": the nearest enclosing element that has the click action.
+	const lines = obs.split("\n");
+	const at = lines.findIndex((l) => /text "Network & internet"/.test(l));
+	const indent = (l: string) => l.length - l.trimStart().length;
+	let line: string | undefined;
+	for (let i = at - 1; at >= 0 && i >= 0; i--) {
+		if (indent(lines[i]!) < indent(lines[at]!) && /\{[^}]*click/.test(lines[i]!)) {
+			line = lines[i];
+			break;
+		}
+	}
 	const ref = line?.match(/\[(e\d+)\]/)?.[1];
 	console.log("clicking:", line);
 	let pass = obs.split("\n").length > 5;

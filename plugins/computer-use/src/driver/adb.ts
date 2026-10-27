@@ -247,15 +247,23 @@ export class AdbDriver implements Driver {
 		return r;
 	};
 
-	private async dump(): Promise<AndroidTree> {
-		const xml = await new Promise<string>((resolve, reject) => {
+	private dumpOnce(): Promise<string> {
+		return new Promise<string>((resolve, reject) => {
 			execFile(this.adb, this.args(["uiautomator", "dump", "/dev/tty"], true), { maxBuffer: 64 * 1024 * 1024, encoding: "utf8", timeout: 30_000 }, (err, stdout) => {
 				if (err) reject(new DriverCallError("internal", `uiautomator dump 失败：${err.message}`));
 				else resolve(String(stdout));
 			});
 		});
-		const raw = parseDump(xml);
-		if (!raw) throw new DriverCallError("internal", "uiautomator 没有返回界面（屏幕可能已锁定，或应用禁止了无障碍读取）");
+	}
+
+	private async dump(): Promise<AndroidTree> {
+		// While a transition or animation runs, uiautomator cannot reach an idle state and prints an error instead of XML.
+		let raw: RawNode | undefined;
+		for (let attempt = 0; attempt < 5 && !raw; attempt++) {
+			if (attempt) await sleep(600);
+			raw = parseDump(await this.dumpOnce());
+		}
+		if (!raw) throw new DriverCallError("internal", "uiautomator 没有返回界面（屏幕可能已锁定、一直在动画，或应用禁止了无障碍读取）");
 		this.last = toTree(raw, this.refFor);
 		return this.last;
 	}
