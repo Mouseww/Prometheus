@@ -1,99 +1,76 @@
 import clsx from "clsx";
 import { Check, ChevronDown } from "lucide-react";
-import { useMemo } from "react";
 import type { RuntimeInfo, RuntimeKind } from "@prometheus/protocol";
 import { isAndroid } from "../lib/backend.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { gatewaysFor, setDraftSource, switchRuntime, useStore } from "../lib/store.ts";
+import { openSettings, setDraftAgent, switchRuntime, useStore } from "../lib/store.ts";
 import { usePopover } from "./TitleBar.tsx";
 
 const M = defineMessages({
 	zh: {
-		title: "Agent 运行时",
-		hintDraft: "决定由哪个 Agent 来干活。开始后仍可随时切换",
+		title: "Agent",
+		hintDraft: "选择由哪个 Agent 干活，模型在旁边的选择器里选。开始后仍可随时切换",
 		hintSession: "切换会新开一个会话并带上当前记录，原会话保留",
 		busy: "回复结束后才能切换",
-		current: "当前",
-		own: "自带登录",
-		ownHint: "使用该 CLI 自己的账号或配置",
 		builtin: "内置，使用「网关」里配置的模型",
 		unavailable: "不可用",
 		needServer: "Android 本机模式下需连接服务器",
-		source: "模型来源",
+		manage: "管理 Agent…",
 	},
 	en: {
-		title: "Agent runtime",
-		hintDraft: "Which agent does the work. You can switch any time after starting",
+		title: "Agent",
+		hintDraft: "Pick which agent does the work; choose the model in the picker next to it. You can switch any time after starting",
 		hintSession: "Switching opens a new chat with the current transcript; this one is kept",
 		busy: "Wait for the reply to finish",
-		current: "Current",
-		own: "Own login",
-		ownHint: "Uses the CLI's own account or config",
 		builtin: "Built in; uses the models set up under Gateways",
 		unavailable: "Unavailable",
 		needServer: "Needs a server in Android local mode",
-		source: "Model source",
+		manage: "Manage agents…",
 	},
 });
-
-export const RUNTIME_LABEL: Record<RuntimeKind, string> = { pi: "PI", "claude-code": "Claude Code", codex: "Codex" };
 
 const TINT: Record<RuntimeKind, string> = {
 	pi: "bg-ember-500/15 text-ember-300",
 	"claude-code": "bg-amber-500/15 text-amber-300",
 	codex: "bg-sky-500/15 text-sky-300",
 };
+const GLYPH: Record<RuntimeKind, string> = { pi: "π", "claude-code": "CC", codex: "Cx" };
 
-function Mark({ kind, dim }: { kind: RuntimeKind; dim?: boolean }) {
+function Mark({ kind, dim, small }: { kind: RuntimeKind; dim?: boolean; small?: boolean }) {
 	return (
-		<span className={clsx("flex size-7 shrink-0 items-center justify-center rounded-lg font-mono text-[11px] font-semibold", dim ? "bg-ink-800 text-ink-500" : TINT[kind])}>
-			{kind === "pi" ? "π" : kind === "codex" ? "Cx" : "CC"}
+		<span
+			className={clsx(
+				"flex shrink-0 items-center justify-center font-mono font-semibold",
+				small ? "size-4 rounded text-[9px]" : "size-7 rounded-lg text-[11px]",
+				dim ? "bg-ink-800 text-ink-500" : TINT[kind],
+			)}
+		>
+			{GLYPH[kind]}
 		</span>
 	);
 }
 
-interface Source {
-	id: string | null;
-	name: string;
-	hint?: string;
-}
-
 /**
- * One chooser for both moments: on the new-chat page it sets the draft, in an open chat it continues the
- * conversation in another runtime. Each runtime is a card; its model sources are the options beneath it.
+ * Chooser of the agent that drives a chat. On the new-chat page it sets the draft; in an open chat it continues
+ * the conversation with another agent. Models are picked in the model picker, which lists what the agent can use.
  */
 export function RuntimeMenu({ mode }: { mode: "draft" | "session" }) {
 	const t = useT(M);
-	const runtimes = useStore((s) => s.runtimes);
-	const allGateways = useStore((s) => s.gateways);
-	const draftRuntime = useStore((s) => s.draftRuntime);
-	const draftGatewayId = useStore((s) => s.draftGatewayId);
+	const agents = useStore((s) => s.runtimes);
+	const draftAgentId = useStore((s) => s.draftAgentId);
 	const session = useStore((s) => s.session);
 	const { open, setOpen, ref } = usePopover();
 
-	const selected = useMemo(() => {
-		if (mode === "draft") return { kind: draftRuntime, gatewayId: draftGatewayId };
-		const g = session?.gateway;
-		return { kind: session?.runtime ?? "pi", gatewayId: g?.mode === "prometheus" ? g.gatewayId : null };
-	}, [mode, draftRuntime, draftGatewayId, session?.runtime, session?.gateway]);
+	const selectedId = mode === "draft" ? draftAgentId : (session?.agent ?? session?.runtime ?? "pi");
+	const selected = agents.find((a) => a.id === selectedId) ?? agents.find((a) => a.kind === (session?.runtime ?? "pi"));
 	const busy = mode === "session" && (session?.isStreaming ?? false);
+	if (agents.length === 0) return null;
 
-	const groups = useMemo(
-		() =>
-			runtimes.map((info: RuntimeInfo) => ({
-				info,
-				sources: (info.kind === "pi" ? [] : [{ id: null, name: t("own"), hint: t("ownHint") }, ...gatewaysFor(info.kind, allGateways).map((g) => ({ id: g.id, name: g.name }))]) as Source[],
-			})),
-		[runtimes, allGateways, t],
-	);
-	if (runtimes.length === 0) return null;
-
-	const sourceName = selected.gatewayId ? (allGateways.find((g) => g.id === selected.gatewayId)?.name ?? selected.gatewayId) : null;
-	const choose = (kind: RuntimeKind, gatewayId: string | null) => {
-		if (busy || (kind === selected.kind && gatewayId === selected.gatewayId)) return;
+	const choose = (info: RuntimeInfo) => {
+		if (busy || !info.health.available || info.id === selected?.id) return;
 		setOpen(false);
-		if (mode === "draft") setDraftSource(kind, gatewayId);
-		else void switchRuntime(kind, gatewayId);
+		if (mode === "draft") setDraftAgent(info);
+		else void switchRuntime(info);
 	};
 
 	return (
@@ -101,80 +78,65 @@ export function RuntimeMenu({ mode }: { mode: "draft" | "session" }) {
 			<button
 				type="button"
 				onClick={() => setOpen(!open)}
-				className="flex max-w-56 items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-ink-300 transition-colors hover:bg-ink-800 hover:text-ink-100"
+				className="flex max-w-48 items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-ink-300 transition-colors hover:bg-ink-800 hover:text-ink-100"
 				title={`${t("title")} · ${mode === "draft" ? t("hintDraft") : t("hintSession")}`}
 			>
-				<span className={clsx("flex size-4 shrink-0 items-center justify-center rounded font-mono text-[9px] font-semibold", TINT[selected.kind])}>{selected.kind === "pi" ? "π" : selected.kind === "codex" ? "Cx" : "CC"}</span>
-				<span className="min-w-0 truncate">
-					{RUNTIME_LABEL[selected.kind]}
-					{sourceName && <span className="text-ink-500"> · {sourceName}</span>}
-				</span>
+				<Mark kind={selected?.kind ?? "pi"} small />
+				<span className="min-w-0 truncate">{selected?.name ?? "PI"}</span>
 				<ChevronDown className="size-3 shrink-0 opacity-60" />
 			</button>
 			{open && (
-				<div className="absolute bottom-full left-3 right-3 z-40 mb-2 max-h-[70vh] overflow-y-auto md:left-0 md:right-auto md:w-[22rem] animate-rise rounded-xl border border-ink-700 bg-ink-900/97 shadow-2xl shadow-black/40 backdrop-blur">
+				<div className="absolute bottom-full left-3 right-3 z-40 mb-2 max-h-[70vh] overflow-y-auto md:left-0 md:right-auto md:w-80 animate-rise rounded-xl border border-ink-700 bg-ink-900/97 shadow-2xl shadow-black/40 backdrop-blur">
 					<div className="px-3.5 pt-3 pb-2">
 						<div className="text-sm font-medium text-ink-100">{t("title")}</div>
 						<div className="mt-0.5 text-xs text-ink-500">{busy ? t("busy") : mode === "draft" ? t("hintDraft") : t("hintSession")}</div>
 					</div>
-					<div className="space-y-1.5 px-2 pb-2">
-						{groups.map(({ info, sources }) => {
-							const ok = info.health.available;
-							const isCurrentRuntime = info.kind === selected.kind;
-							const reason = ok ? "" : [info.kind !== "pi" && isAndroid() ? t("needServer") : null, info.health.reason ?? t("unavailable")].filter(Boolean).join(" · ");
-							const head = (
-								<div className="flex items-center gap-2.5">
-									<Mark kind={info.kind} dim={!ok} />
-									<div className="min-w-0 flex-1">
-										<div className="flex items-baseline gap-1.5">
-											<span className={clsx("text-sm font-medium", ok ? "text-ink-100" : "text-ink-500")}>{RUNTIME_LABEL[info.kind]}</span>
-											{info.health.version && <span className="font-mono text-[10.5px] text-ink-500">{info.health.version}</span>}
-										</div>
-										{reason ? <div className="truncate text-[11px] text-ink-500" title={reason}>{reason}</div> : info.kind === "pi" ? <div className="text-[11px] text-ink-500">{t("builtin")}</div> : null}
-									</div>
-									{info.kind === "pi" && isCurrentRuntime && (mode === "session" ? <span className="text-[11px] text-ember-300">{t("current")}</span> : <Check className="size-4 shrink-0 text-ember-300" />)}
-								</div>
-							);
+					<div className="px-1.5 pb-1.5">
+						{agents.map((a) => {
+							const ok = a.health.available;
+							const on = a.id === selected?.id;
+							const reason = ok ? "" : [a.kind !== "pi" && isAndroid() ? t("needServer") : null, a.health.reason ?? t("unavailable")].filter(Boolean).join(" · ");
 							return (
-								<div key={info.kind} className={clsx("rounded-lg border transition-colors", isCurrentRuntime ? "border-ember-500/40 bg-ember-500/5" : "border-ink-800")}>
-									{info.kind === "pi" ? (
-										<button type="button" disabled={!ok || busy || isCurrentRuntime} onClick={() => choose("pi", null)} className="w-full rounded-lg p-2.5 text-left disabled:cursor-default enabled:hover:bg-ink-800">
-											{head}
-										</button>
-									) : (
-										<>
-											<div className="p-2.5 pb-1.5">{head}</div>
-											{ok && (
-												<div className="flex flex-wrap gap-1.5 px-2.5 pb-2.5 pl-[3.1rem]" role="radiogroup" aria-label={t("source")}>
-													{sources.map((s) => {
-														const on = isCurrentRuntime && s.id === selected.gatewayId;
-														return (
-															<button
-																key={s.id ?? "own"}
-																type="button"
-																role="radio"
-																aria-checked={on}
-																disabled={busy}
-																title={s.hint}
-																onClick={() => choose(info.kind, s.id)}
-																className={clsx(
-																	"flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-																	on ? "border-ember-500/60 bg-ember-500/15 text-ember-200" : "border-ink-700 text-ink-300 hover:border-ink-500 hover:text-ink-100",
-																)}
-															>
-																{on && <Check className="size-3" />}
-																{s.name}
-															</button>
-														);
-													})}
-												</div>
-											)}
-										</>
+								<button
+									key={a.id}
+									type="button"
+									disabled={!ok || busy}
+									onClick={() => choose(a)}
+									className={clsx(
+										"flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors disabled:cursor-not-allowed",
+										on ? "bg-ember-500/10" : "enabled:hover:bg-ink-800",
+										(!ok || busy) && !on && "opacity-60",
 									)}
-								</div>
+								>
+									<Mark kind={a.kind} dim={!ok} />
+									<span className="min-w-0 flex-1">
+										<span className="flex items-baseline gap-1.5">
+											<span className={clsx("truncate text-sm font-medium", on ? "text-ember-200" : ok ? "text-ink-100" : "text-ink-500")}>{a.name}</span>
+											{a.health.version && <span className="font-mono text-[10.5px] text-ink-500">{a.health.version}</span>}
+										</span>
+										{reason ? (
+											<span className="block truncate text-[11px] text-ink-500" title={reason}>
+												{reason}
+											</span>
+										) : a.kind === "pi" ? (
+											<span className="block text-[11px] text-ink-500">{t("builtin")}</span>
+										) : null}
+									</span>
+									{on && <Check className="size-4 shrink-0 text-ember-300" />}
+								</button>
 							);
 						})}
 					</div>
+					<button
+						type="button"
+						onClick={() => {
+							setOpen(false);
+							openSettings("agents");
+						}}
+						className="w-full border-t border-ink-800 px-3.5 py-2 text-left text-xs text-ink-400 hover:bg-ink-800 hover:text-ink-200"
+					>
+						{t("manage")}
+					</button>
 				</div>
 			)}
 		</div>

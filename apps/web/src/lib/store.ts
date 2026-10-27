@@ -1,5 +1,5 @@
 import { notifyTurnDone } from "./notify.ts";
-import { gatewayFormats, OPEN_FILE_TOOL } from "@prometheus/protocol";
+import { OPEN_FILE_TOOL } from "@prometheus/protocol";
 import type {
 	AssistantMessage,
 	ChatMessage,
@@ -109,6 +109,7 @@ export interface ActiveSession {
 	runtime: RuntimeKind;
 	capabilities: RuntimeCapabilities;
 	gateway?: GatewayChoice;
+	agent?: string;
 	statuses: Record<string, string>;
 	widgets: Record<string, { lines: string[]; placement: string }>;
 	subagents: SubagentRun[];
@@ -147,7 +148,7 @@ function savedSort(): SubagentSort {
 	return v === "started" || v === "ended" ? v : "status";
 }
 
-export type SettingsTab = "general" | "gateways" | "mcp" | "connectors" | "skills" | "modes" | "subagents" | "market" | "veil" | "plugins" | "voice" | "network" | "runtimes" | "platforms" | "ssh" | "usage";
+export type SettingsTab = "general" | "agents" | "gateways" | "mcp" | "connectors" | "skills" | "modes" | "subagents" | "market" | "veil" | "plugins" | "voice" | "network" | "runtimes" | "platforms" | "ssh" | "usage";
 export type View = "chat" | "knowledge" | "memory" | "automations" | "git" | "settings" | { panel: string };
 
 interface State {
@@ -178,9 +179,9 @@ interface State {
 	draftRuntime: RuntimeKind;
 	/** Runtimes this host can offer, with health and capabilities. */
 	runtimes: RuntimeInfo[];
-	/** Prometheus gateway chosen for a non-PI runtime on the new-chat page; null means the runtime's own login. */
-	draftGatewayId: string | null;
-	/** Gateways the relay can serve to non-PI runtimes. */
+	/** Agent (built-in id or custom profile id) picked on the new-chat page. */
+	draftAgentId: string;
+	/** Configured gateways, for naming the model groups. */
 	gateways: GatewayConfig[];
 	/** Background marketplace operations (newest first); kept here so they survive switching Settings tabs. */
 	packageJobs: PackageJob[];
@@ -212,7 +213,7 @@ export const useStore = create<State>(() => ({
 	draftPermission: "default",
 	draftRuntime: "pi",
 	runtimes: [],
-	draftGatewayId: null,
+	draftAgentId: "pi",
 	gateways: [],
 	packageJobs: [],
 	packageRevision: 0,
@@ -414,11 +415,11 @@ export function handleFrame(frame: ServerFrame): void {
 			return;
 		case "gateways.changed":
 			void refreshGateways();
-			const open = get().session;
-			if (open) {
-				if ((open.runtime ?? "pi") === "pi") void refreshModels();
+			{
+				const open = get().session;
+				if (!open) void refreshDraftModels();
+				else void refreshSessionModels(open.runtime ?? "pi", open.agent);
 			}
-			else void refreshDraftModels();
 			return;
 		case "plugins.changed":
 			void refreshPlugins();
@@ -486,6 +487,7 @@ function fromSnapshot(s: SessionSnapshot): ActiveSession {
 		runtime: s.runtime ?? "pi",
 		capabilities: s.capabilities,
 		gateway: s.gateway,
+		agent: s.agent,
 		banner: null,
 		stats: null,
 		pending: null,
@@ -516,11 +518,8 @@ function activate(snapshot: SessionSnapshot): void {
 			...snapshot.pendingUI.filter((r) => !["notify", "setStatus", "setWidget", "setTitle", "setEditorText"].includes(r.method)).map((request) => ({ sessionId: snapshot.id, request })),
 		],
 	});
-	if (snapshot.runtime && snapshot.runtime !== "pi") {
-		void call((c) => c.rpc("runtime.models", { runtime: snapshot.runtime, gateway: snapshot.gateway ?? { mode: "native" } })).then((models) => {
-			if (models && get().session?.id === snapshot.id) set({ models });
-		});
-	} else if (previous && (previous.runtime ?? "pi") !== "pi") void refreshModels();
+	if (snapshot.runtime && snapshot.runtime !== "pi") void refreshSessionModels(snapshot.runtime, snapshot.agent, snapshot.id);
+	else if (previous && (previous.runtime ?? "pi") !== "pi") void refreshModels();
 	localStorage.setItem("prometheus.lastSession", snapshot.id);
 	void refreshCommands();
 	void refreshStats();
@@ -593,6 +592,13 @@ export async function refreshModels(): Promise<void> {
 	if (models) set({ models });
 }
 
+/** Model list for an open chat: what its agent can use, across the agent's own login and every compatible gateway. */
+async function refreshSessionModels(runtime: RuntimeKind, agent: string | undefined, sessionId?: string): Promise<void> {
+	if (runtime === "pi") return refreshModels();
+	const models = await call((c) => c.rpc("runtime.models", { runtime, agent }));
+	if (models && (!sessionId || get().session?.id === sessionId)) set({ models });
+}
+
 async function refreshCommands(): Promise<void> {
 	const id = get().session?.id;
 	if (!id) return;
@@ -613,27 +619,11 @@ export async function refreshRuntimes(): Promise<void> {
 	if (runtimes) set({ runtimes });
 }
 
-/** The relay speaks one wire format per runtime. */
-export const RUNTIME_GATEWAY_FORMAT: Partial<Record<RuntimeKind, GatewayConfig["format"]>> = { "claude-code": "anthropic-messages", codex: "openai-responses" };
-
-export function gatewaysFor(runtime: RuntimeKind, gateways: GatewayConfig[]): GatewayConfig[] {
-	const format = RUNTIME_GATEWAY_FORMAT[runtime];
-	return gateways.filter((g) => g.enabled !== false && (format ? gatewayFormats(g).includes(format) : false) && g.models.length > 0);
-}
-
-function draftGateway(model?: ModelRef | null): GatewayChoice {
-	const { draftGatewayId, gateways } = get();
-	const g = gateways.find((x) => x.id === draftGatewayId);
-	if (!g) return { mode: "native" };
-	const id = model && model.provider === g.id ? model.id : g.models[0]?.id;
-	return { mode: "prometheus", gatewayId: g.id, model: { provider: g.id, id: id ?? "" } };
-}
-
-/** Model list for the runtime and gateway picked on the new-chat page (PI uses the shared list). */
+/** Model list of the agent picked on the new-chat page: PI's shared list, or everything the agent can use (own login plus gateways). */
 export async function refreshDraftModels(): Promise<void> {
-	const runtime = get().draftRuntime;
+	const { draftRuntime: runtime, draftAgentId: agent } = get();
 	if (runtime === "pi") return refreshModels();
-	const models = await call((c) => c.rpc("runtime.models", { runtime, gateway: draftGateway() }));
+	const models = await call((c) => c.rpc("runtime.models", { runtime, agent }));
 	if (models) set({ models });
 }
 
@@ -642,35 +632,36 @@ export async function refreshGateways(): Promise<void> {
 	if (gateways) set({ gateways });
 }
 
-/** Continue the open conversation in another runtime: a new session in the same folder that gets the transcript as context. */
-export async function switchRuntime(runtime: RuntimeKind, gatewayId: string | null): Promise<void> {
+/** The agent id a session carries: only custom agents need one, the built-ins are identified by their kind. */
+function customAgent(info: Pick<RuntimeInfo, "id" | "kind">): string | undefined {
+	return info.id === info.kind ? undefined : info.id;
+}
+
+/** Continue the open conversation with another agent: a new session in the same folder that gets the transcript. The current model is kept when the new agent can use it. */
+export async function switchRuntime(info: RuntimeInfo): Promise<void> {
 	const session = get().session;
 	if (!session || session.isStreaming) return;
-	const g = get().gateways.find((x) => x.id === gatewayId);
-	const gateway: GatewayChoice = g ? { mode: "prometheus", gatewayId: g.id, model: { provider: g.id, id: g.models[0]?.id ?? "" } } : { mode: "native" };
-	const snap = await call((c) => c.rpc("session.switchRuntime", { sessionId: session.id, runtime, gateway }));
+	const models = info.kind === "pi" ? [] : ((await call((c) => c.rpc("runtime.models", { runtime: info.kind, agent: info.id }))) ?? []);
+	const cur = session.model;
+	const keep = cur && models.find((m) => m.provider === cur.provider && m.id === cur.id);
+	const snap = await call((c) =>
+		c.rpc("session.switchRuntime", { sessionId: session.id, runtime: info.kind, agent: customAgent(info), ...(keep ? { model: { provider: keep.provider, id: keep.id } } : {}) }),
+	);
 	if (snap) activate(snap);
 }
 
-/** New-chat runtime and model source in one step (one model-list refresh). */
-export function setDraftSource(runtime: RuntimeKind, gatewayId: string | null): void {
-	set({ draftRuntime: runtime, draftGatewayId: runtime === "pi" ? null : gatewayId, draftModel: null });
-	void refreshDraftModels();
-}
-
-export function setDraftRuntime(runtime: RuntimeKind): void {
-	set({ draftRuntime: runtime, draftGatewayId: null, draftModel: null });
-	void refreshDraftModels();
-}
-
-export function setDraftGateway(gatewayId: string | null): void {
-	set({ draftGatewayId: gatewayId, draftModel: null });
+/** New-chat agent; its model list replaces the current one. */
+export function setDraftAgent(info: RuntimeInfo): void {
+	set({ draftRuntime: info.kind, draftAgentId: info.id, draftModel: null });
 	void refreshDraftModels();
 }
 
 export async function createSession(cwd?: string): Promise<void> {
-	const { draftRuntime: runtime, draftModel } = get();
-	const snap = await call((c) => c.rpc("session.create", runtime === "pi" ? { cwd } : { cwd, runtime, gateway: draftGateway(draftModel) }));
+	const { draftRuntime: runtime, draftAgentId, draftModel } = get();
+	const agent = customAgent({ id: draftAgentId, kind: runtime });
+	const snap = await call((c) =>
+		c.rpc("session.create", runtime === "pi" ? { cwd } : { cwd, runtime, ...(agent ? { agent } : {}), ...(draftModel ? { model: draftModel } : {}) }),
+	);
 	if (snap) activate(snap);
 }
 
@@ -688,7 +679,7 @@ export function startNewChat(): void {
 	get().client?.unsubscribe(current.id);
 	buffer = [];
 	const wasPi = get().draftRuntime === "pi" && (current.runtime ?? "pi") === "pi";
-	set({ session: null, commands: [], draftModel: wasPi ? current.model : null, draftPermission: "default", draftRuntime: "pi", draftGatewayId: null });
+	set({ session: null, commands: [], draftModel: wasPi ? current.model : null, draftPermission: "default", draftRuntime: "pi", draftAgentId: "pi" });
 	if (!wasPi) void refreshModels();
 }
 
@@ -697,14 +688,15 @@ export async function chooseWorkspace(path: string): Promise<void> {
 	const prev = get().session;
 	if (prev && (prev.messages.length > 0 || prev.isStreaming)) return;
 	const model = prev?.model ?? get().draftModel;
-	const thinking = get().draftRuntime === "pi" ? prev?.thinkingLevel : undefined;
+	const draftWasPi = get().draftRuntime === "pi";
+	const thinking = draftWasPi ? prev?.thinkingLevel : undefined;
 	const permission = prev?.permissionMode ?? get().draftPermission;
 	await createSession(path);
 	const created = get().session;
 	if (!created || created.id === prev?.id) return;
 	set({ draftModel: null, draftPermission: "default" });
 	if (permission !== created.permissionMode) await setPermissionMode(permission);
-	if (get().draftGatewayId === null && model && (created.model?.provider !== model.provider || created.model.id !== model.id)) await setModel(model);
+	if (draftWasPi && model && (created.model?.provider !== model.provider || created.model.id !== model.id)) await setModel(model);
 	const ready = get().session;
 	if (thinking && ready && thinking !== ready.thinkingLevel && ready.availableThinkingLevels.includes(thinking)) await setThinking(thinking);
 }
@@ -926,7 +918,7 @@ export async function setModel(model: ModelRef): Promise<void> {
 	await call((c) => c.rpc("model.set", { sessionId: session.id, model }));
 	const snap = await call((c) => c.rpc("session.open", { sessionId: session.id }));
 	const current = get().session;
-	if (snap && current) set({ session: { ...current, model: snap.model, thinkingLevel: snap.thinkingLevel, availableThinkingLevels: snap.availableThinkingLevels } });
+	if (snap && current) set({ session: { ...current, model: snap.model, thinkingLevel: snap.thinkingLevel, availableThinkingLevels: snap.availableThinkingLevels, gateway: snap.gateway } });
 	void refreshStats();
 }
 

@@ -16,6 +16,7 @@ import { MarketView } from "./MarketView.tsx";
 import { ConnectorsView } from "./ConnectorsView.tsx";
 import { McpView } from "./McpView.tsx";
 import { NetworkSettings } from "./NetworkSettings.tsx";
+import { AgentsSettings } from "./AgentsSettings.tsx";
 import { RuntimesSettings } from "./RuntimesSettings.tsx";
 import { PlatformsView } from "./PlatformsView.tsx";
 import { SshView } from "./SshView.tsx";
@@ -31,6 +32,7 @@ import { VoiceSettings } from "./VoiceSettings.tsx";
 const M = defineMessages({
 	zh: {
 		general: "通用",
+		agents: "Agent",
 		gateways: "AI 网关",
 		mcp: "MCP",
 		connectors: "连接器",
@@ -105,6 +107,7 @@ const M = defineMessages({
 	},
 	en: {
 		general: "General",
+		agents: "Agents",
 		gateways: "AI Gateways",
 		mcp: "MCP",
 		connectors: "Connectors",
@@ -475,6 +478,7 @@ function GeneralSettings() {
 const TAB_GROUPS: { id: SettingsTab; icon: typeof Network; plugin?: string; local?: boolean }[][] = [
 	[
 		{ id: "general", icon: SlidersHorizontal },
+		{ id: "agents", icon: Bot },
 		{ id: "gateways", icon: Network },
 		{ id: "voice", icon: Mic, plugin: "voice" },
 	],
@@ -533,6 +537,7 @@ export function SettingsView() {
 			</nav>
 			<div className="@container flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
 				{tab === "general" && <GeneralSettings />}
+				{tab === "agents" && <AgentsSettings />}
 				{tab === "gateways" && <GatewaysView />}
 				{tab === "mcp" && <McpView />}
 				{tab === "connectors" && <ConnectorsView />}

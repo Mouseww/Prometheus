@@ -37,6 +37,7 @@ const M = defineMessages({
 		pickModel: "选择模型",
 		searchModel: "搜索模型…",
 		noModels: "没有可用模型",
+		ownLogin: "自带登录",
 		addGateway: "去添加 AI 网关",
 		thinking: "思考",
 		vision: "视觉",
@@ -78,6 +79,7 @@ const M = defineMessages({
 		pickModel: "Choose model",
 		searchModel: "Search models…",
 		noModels: "No models available",
+		ownLogin: "Own login",
 		addGateway: "Add an AI gateway",
 		thinking: "reasoning",
 		vision: "vision",
@@ -104,9 +106,12 @@ const M = defineMessages({
 function ModelPicker() {
 	const t = useT(M);
 	const models = useStore((s) => s.models);
+	const gateways = useStore((s) => s.gateways);
 	const current = useStore((s) => s.session?.model ?? s.draftModel);
 	const { open, setOpen, ref } = usePopover();
 	const [q, setQ] = useState("");
+	/** Heading of a model group: the agent's own login, or the gateway the models come from. */
+	const groupName = (provider: string) => (provider === "claude-code" || provider === "codex" ? t("ownLogin") : (gateways.find((g) => g.id === provider)?.name ?? provider));
 	const groups = useMemo(() => {
 		const filtered = models.filter((m) => `${m.provider} ${m.id} ${m.name}`.toLowerCase().includes(q.toLowerCase()));
 		const map = new Map<string, typeof models>();
@@ -155,7 +160,7 @@ function ModelPicker() {
 						)}
 						{groups.map(([provider, list]) => (
 							<div key={provider}>
-								<div className="px-3.5 pt-2.5 pb-1 font-mono text-[10.5px] tracking-widest text-ink-500 uppercase">{provider}</div>
+								<div className="px-3.5 pt-2.5 pb-1 font-mono text-[10.5px] tracking-widest text-ink-500 uppercase">{groupName(provider)}</div>
 								{list.map((m) => {
 									const active = current?.provider === m.provider && current.id === m.id;
 									return (
