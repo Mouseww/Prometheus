@@ -82,6 +82,8 @@ export class ClaudeCodeSession implements RuntimeSession {
 	private readonly mode: () => PermissionMode;
 	private pendingError: string | undefined;
 	/** Settles when the `/compact` turn started by `compact()` ends; `undefined` while no manual compaction runs. */
+	/** Context fill reported by Claude Code itself after the latest turn. */
+	private contextUsage: { tokens: number; max: number } | undefined;
 	private compactDone: ((error?: string) => void) | undefined;
 	private pendingContext: string | undefined;
 	private readonly initOpts: SessionInit;
@@ -268,10 +270,22 @@ export class ClaudeCodeSession implements RuntimeSession {
 			// A manual compaction is a turn of its own that shows no messages: report it as compaction events only.
 			this.compactDone = undefined;
 			compactDone(aborted ? "aborted" : error);
+			void this.refreshContext();
 			return;
 		}
 		this.pendingError = error;
 		this.mapper.finish(aborted, error);
+		void this.refreshContext();
+	}
+
+	/** Asks Claude Code how full the context is (it knows its own window and system prompt); the estimate below covers until it answers. */
+	private async refreshContext(): Promise<void> {
+		try {
+			const u = await this.q?.getContextUsage({ detail: "summary" });
+			if (u && u.maxTokens > 0) this.contextUsage = { tokens: u.totalTokens, max: u.maxTokens };
+		} catch {
+			/* keeps the previous value */
+		}
 	}
 
 	// ---------- hooks ----------
@@ -465,11 +479,17 @@ export class ClaudeCodeSession implements RuntimeSession {
 	}
 	usage(): SessionStats {
 		const t = this.mapper.total;
+		// Claude Code's own figure when it has answered; otherwise the last model call against the gateway's (or a default) window.
+		const reported = this.contextUsage;
+		const choice = this.gatewayChoice;
+		const configured = choice?.mode === "prometheus" ? this.services.gateway(choice.gatewayId)?.models.find((m) => m.id === this.model.id)?.contextWindow : undefined;
+		const contextWindow = reported?.max ?? configured ?? 200_000;
+		const contextTokens = reported?.tokens ?? this.mapper.lastContext;
 		return {
-			contextTokens: t.totalTokens,
-			contextEstimated: true,
-			contextWindow: 0,
-			contextPercent: null,
+			contextTokens,
+			contextEstimated: !reported,
+			contextWindow,
+			contextPercent: contextTokens > 0 ? Math.min(100, (contextTokens / contextWindow) * 100) : null,
 			breakdown: { system: 0, tools: 0, user: 0, assistant: 0, toolResults: 0, other: 0 },
 			totalCost: 0,
 			inputTokens: t.input,

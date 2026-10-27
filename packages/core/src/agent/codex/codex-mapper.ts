@@ -33,6 +33,9 @@ const stable = (v: unknown): string => JSON.stringify(v, (_k, val) => (val && ty
 export class CodexMapper {
 	readonly messages: ChatMessage[] = [];
 	readonly total = zeroUsage();
+	/** Tokens in the context after the latest model call, and the model's window, as Codex reports them. */
+	contextTokens = 0;
+	contextWindow = 0;
 	turnId: string | undefined;
 	private inRun = false;
 	private turnOpen = false;
@@ -116,7 +119,9 @@ export class CodexMapper {
 				return this.plan(p);
 			case "thread/tokenUsage/updated": {
 				const last = p?.tokenUsage?.last;
+				if (typeof p?.tokenUsage?.modelContextWindow === "number") this.contextWindow = p.tokenUsage.modelContextWindow;
 				if (last) {
+					this.contextTokens = last.totalTokens ?? (last.inputTokens ?? 0) + (last.outputTokens ?? 0);
 					this.total.input += last.inputTokens ?? 0;
 					this.total.output += last.outputTokens ?? 0;
 					this.total.cacheRead += last.cachedInputTokens ?? 0;

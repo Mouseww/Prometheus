@@ -455,10 +455,10 @@ export class CodexSession implements RuntimeSession {
 	usage(): SessionStats {
 		const t = this.mapper.total;
 		return {
-			contextTokens: t.totalTokens,
-			contextEstimated: true,
-			contextWindow: 0,
-			contextPercent: null,
+			contextTokens: this.mapper.contextTokens,
+			contextEstimated: this.mapper.contextTokens === 0,
+			contextWindow: this.mapper.contextWindow,
+			contextPercent: this.mapper.contextWindow > 0 && this.mapper.contextTokens > 0 ? Math.min(100, (this.mapper.contextTokens / this.mapper.contextWindow) * 100) : null,
 			breakdown: { system: 0, tools: 0, user: 0, assistant: 0, toolResults: 0, other: 0 },
 			totalCost: 0,
 			inputTokens: t.input,

@@ -39,6 +39,8 @@ export class CcMapper {
 	/** bus call id -> tool_use id */
 	private busIds = new Map<string, string>();
 	readonly total = zeroUsage();
+	/** Tokens the context held at the latest model call (input + cache + output); the totals above only grow. */
+	lastContext = 0;
 	private readonly opts: MapperOptions;
 
 	constructor(opts: MapperOptions) {
@@ -230,6 +232,7 @@ export class CcMapper {
 		this.total.cacheRead += cur.usage.cacheRead;
 		this.total.cacheWrite += cur.usage.cacheWrite;
 		this.total.totalTokens += cur.usage.totalTokens;
+		if (cur.usage.totalTokens > 0) this.lastContext = cur.usage.totalTokens;
 		this.current = undefined;
 		this.blocks.clear();
 		if (cur.stopReason !== "toolUse") this.closeTurn();
