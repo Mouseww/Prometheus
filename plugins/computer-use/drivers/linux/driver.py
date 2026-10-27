@@ -276,7 +276,7 @@ def describe(acc, win):
         actions.append("toggle")
     if rname in ("list item", "page tab", "radio button", "table row", "table cell", "tree item", "menu item") or "select" in names:
         actions.append("select")
-    if role in ("pane", "list", "table", "document") or has_state(acc, Atspi.StateType.SCROLLABLE):
+    if role in ("pane", "list", "table", "document"):
         actions.append("scroll")
 
     b = extents(acc)
