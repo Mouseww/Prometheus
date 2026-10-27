@@ -1,6 +1,6 @@
 # Computer Use 插件设计
 
-> 状态：v0.2 · **M0（Windows）已实现**，位于 `plugins/computer-use`（见 §11）· 目标：在 Windows / macOS / Linux / Android 上让 Agent 像 Codex Computer Use 一样操作本机应用，默认不依赖截屏。
+> 状态：v0.3 · **Windows / macOS / Linux / Android（adb）已实现并通过端到端测试**，位于 `plugins/computer-use`（见 §11、§12）· 目标：在 Windows / macOS / Linux / Android 上让 Agent 像 Codex Computer Use 一样操作本机应用，默认不依赖截屏。
 
 ---
 
@@ -331,7 +331,30 @@ TUI：工具一样可用；授权确认使用 `ctx.ui.confirm`；面板功能用
 
 验证：`plugins/computer-use/test` 有 27 个单元测试（快照引擎、diff、脱敏、策略、决策模型的三种后端、用假驱动测试的服务流程）。`scripts/e2e-notepad.ts` 是真机验收脚本：启动记事本 → 写入中英文 → Ctrl+S → 在另存为对话框中填写路径并点保存 → 校验文件内容 → 关闭。全程没有截屏，结果 PASS。
 
-## 12. 待决问题
+## 12. 多平台实现记录
+
+四个平台都走同一套 JSON-RPC 协议和同一个快照引擎。热加载的内容（驱动源码）由 `pnpm --filter @prometheus/plugin-computer-use embed` 内联。
+
+| 平台 | 驱动 | 验证方式 | 结果 |
+|------|------|----------|------|
+| Windows | C# + UI Automation，由 PowerShell `Add-Type` 编译 | 本机记事本：写入、另存为、校验文件 | PASS |
+| macOS | Swift + AXUIElement / AXObserver，首次使用由 `swiftc` 编译并缓存（也支持 `PROMETHEUS_CU_DRIVER` 指向预编译二进制） | GitHub Actions `macos-latest`（macOS 26）上的 TextEdit：设置值、在光标处插入、读回中文 | PASS |
+| Linux | Python + AT-SPI2（`python3-gi`） | GitHub Actions `ubuntu-24.04` + Xvfb，gedit | PASS |
+| Android | `adb` + `uiautomator dump` / `input`（`src/driver/adb.ts`） | GitHub Actions Android 14 模拟器，设置应用：启动、读取、点击「网络和互联网」、返回 | PASS |
+
+macOS 的做法：
+
+- 点击、设置值、展开、滚动都用 AX 动作和属性，不移动用户的鼠标，也不把应用切到前台；只有最后兜底的合成点击才会激活窗口，并把鼠标放回原位。
+- 按键用 `CGEvent.postToPid` 直接投递给目标进程，用户可以继续用自己的应用。`ctrl` 在 macOS 上按 Command 处理（与其他平台的习惯一致），需要真正的 Control 键写 `control`。
+- 稳定判定用 AXObserver 事件（`ui.settle`）；没有事件能力的驱动仍然由主机轮询。Chromium / Electron 会自动打开 `AXManualAccessibility`。
+- 菜单栏作为窗口树的子树返回（默认折叠，`scope=<ref>` 展开）。
+- 权限：需要给启动驱动的应用（Prometheus 或终端）授予「辅助功能」。未授权时驱动会弹出系统提示，并返回 `permission_denied` 和具体的设置路径。
+
+Linux 的限制：Wayland 不允许合成按键和指针，驱动会明确报 `input_blocked`，元素操作（点击 / 设置值 / 插入文本）仍然可用。
+
+Android 的限制（adb 后端）：每次读取 1–2 秒；没有变化事件；`input text` 不支持中文，需要在手机上装并启用 ADB Keyboard；密码框的文本不会出现在名称或值里。用「设置 → computer-use → `device: "adb"`」切换（可选 `adbPath`、`adbSerial`）。**仍未实现**：Prometheus APK 内的 AccessibilityService（不需要 adb、有事件、支持中文输入），以及手机反向连接服务器。
+
+## 13. 待决问题
 
 1. 是否需要"沙箱桌面"（Windows 独立 Desktop / Linux Xvfb / macOS 无官方方案），让 Agent 在完全隔离的环境中运行？建议放到 M5 之后。
 2. Driver 发布方式：随安装包打包（体积约增加 3–5MB）还是首次使用时从工具商店下载？建议桌面端随包、Server/TUI 按需下载。
