@@ -489,6 +489,13 @@ pub fn run() {
             runtimes::runtime_install_msvc,
             runtimes::runtime_cancel,
             runtimes::runtime_uninstall,
+            runtimes::apt_status,
+            runtimes::apt_search,
+            runtimes::apt_install,
+            runtimes::apt_uninstall,
+            runtimes::pm_status,
+            runtimes::pm_install,
+            runtimes::pm_uninstall,
             tray::set_close_to_tray,
             tray::show_main_window,
             tray::open_session_in_main,
@@ -508,6 +515,13 @@ pub fn run() {
             runtimes::runtime_install_msvc,
             runtimes::runtime_cancel,
             runtimes::runtime_uninstall,
+            runtimes::apt_status,
+            runtimes::apt_search,
+            runtimes::apt_install,
+            runtimes::apt_uninstall,
+            runtimes::pm_status,
+            runtimes::pm_install,
+            runtimes::pm_uninstall,
         ]);
     let app = builder
         .manage(backend.clone())

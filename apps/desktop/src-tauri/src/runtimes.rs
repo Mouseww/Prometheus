@@ -1021,7 +1021,8 @@ fn run_installer(
         #[cfg(target_os = "android")]
         {
             let rootfs = rootfs_dir(root);
-            let in_guest = format!("/tmp/{}-installer", def.id);
+            // rustup decides its mode from argv[0]: anything but `rustup-init*` is treated as a proxy.
+            let in_guest = if def.id == "rust" { "/tmp/rustup-init".to_string() } else { format!("/tmp/{}-installer", def.id) };
             let host_copy = rootfs.join(in_guest.trim_start_matches('/'));
             fs::copy(installer, &host_copy).map_err(|e| format!("无法复制安装器：{e}"))?;
             set_mode(&host_copy, 0o755, false);
@@ -1040,7 +1041,12 @@ fn run_installer(
             return Err("此平台不支持在 guest 里安装".into());
         }
     }
-    let copy = dest.join(if cfg!(windows) { "installer.exe" } else { "installer" });
+    let copy = dest.join(match (def.id.as_str() == "rust", cfg!(windows)) {
+        (true, true) => "rustup-init.exe",
+        (true, false) => "rustup-init",
+        (false, true) => "installer.exe",
+        (false, false) => "installer",
+    });
     fs::copy(installer, &copy).map_err(|e| format!("无法复制安装器：{e}"))?;
     set_mode(&copy, 0o755, false);
     let mut cmd = std::process::Command::new(&copy);
@@ -1279,6 +1285,351 @@ pub async fn runtime_uninstall(app: AppHandle, state: tauri::State<'_, Installs>
     .map_err(|e| e.to_string())?
 }
 
+// ------------------------------------------------------- apt store (Android)
+
+/// A Debian package name: lowercase letters, digits and `+ . -`, never starting with a symbol (also keeps `-o` style options out).
+fn valid_package(name: &str) -> bool {
+    name.chars().next().is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && name.len() <= 100
+        && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '+' | '.' | '-'))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AptStatus {
+    /// The Linux base system (rootfs) is unpacked.
+    rootfs: bool,
+    /// Names of every package dpkg reports as installed.
+    installed: Vec<String>,
+}
+
+/// Packages installed in the rootfs, read straight from dpkg's database (no process is started).
+#[tauri::command]
+pub fn apt_status(app: AppHandle) -> Result<AptStatus, String> {
+    let rootfs = rootfs_dir(&root_dir(&app)?);
+    let ready = rootfs.join("usr/bin/env").exists();
+    let mut installed = Vec::new();
+    if let Ok(text) = fs::read_to_string(rootfs.join("var/lib/dpkg/status")) {
+        for block in text.split("\n\n") {
+            let mut name = None;
+            let mut ok = false;
+            for line in block.lines() {
+                if let Some(n) = line.strip_prefix("Package: ") {
+                    name = Some(n.trim());
+                } else if let Some(s) = line.strip_prefix("Status: ") {
+                    ok = s.trim().ends_with(" installed");
+                }
+            }
+            if let (Some(n), true) = (name, ok) {
+                installed.push(n.to_string());
+            }
+        }
+    }
+    Ok(AptStatus { rootfs: ready, installed })
+}
+
+#[derive(Serialize)]
+pub struct AptHit {
+    name: String,
+    description: String,
+}
+
+/// Searches the Ubuntu package index by name. Refreshes the index first when it has never been downloaded.
+#[tauri::command]
+pub async fn apt_search(app: AppHandle, query: String) -> Result<Vec<AptHit>, String> {
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, query);
+        Err("只有 Android 版支持软件包搜索".into())
+    }
+    #[cfg(target_os = "android")]
+    {
+        let query = query.trim().to_lowercase();
+        if query.is_empty() || query.len() > 60 || !query.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-' | '_')) {
+            return Err("搜索词只能包含字母、数字和 + . - _".into());
+        }
+        let root = root_dir(&app)?;
+        let rootfs = rootfs_dir(&root);
+        if !rootfs.join("usr/bin/env").exists() {
+            return Err("还没有 Linux 基础系统：先安装任意一个环境".into());
+        }
+        tauri::async_runtime::spawn_blocking(move || {
+            let env = vec![("DEBIAN_FRONTEND".to_string(), "noninteractive".to_string())];
+            let has_index = fs::read_dir(rootfs.join("var/lib/apt/lists"))
+                .map(|d| d.flatten().any(|e| e.file_name().to_string_lossy().contains("Packages")))
+                .unwrap_or(false);
+            if !has_index {
+                let update: Vec<String> = ["apt-get", "update"].map(String::from).to_vec();
+                let out = crate::android::guest_command(&app, &root, &update, &env)?.output().map_err(|e| format!("无法更新软件源：{e}"))?;
+                if !out.status.success() {
+                    return Err(format!("更新软件源失败：{}", String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("")));
+                }
+            }
+            let args: Vec<String> = ["apt-cache", "search", "--names-only", &query].map(String::from).to_vec();
+            let out = crate::android::guest_command(&app, &root, &args, &env)?.output().map_err(|e| format!("搜索失败：{e}"))?;
+            let mut hits: Vec<AptHit> = String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .filter_map(|l| l.split_once(" - "))
+                .map(|(n, d)| AptHit { name: n.trim().to_string(), description: d.trim().to_string() })
+                .collect();
+            // Exact and prefix matches first, then shorter names.
+            hits.sort_by_key(|h| (h.name != query, !h.name.starts_with(&query), h.name.len(), h.name.clone()));
+            hits.truncate(60);
+            Ok(hits)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+}
+
+/// Installs (or removes) Ubuntu packages in the rootfs in the background; progress arrives as `runtime://progress` events
+/// under `job`. The Linux base system is installed first when it is missing.
+fn apt_job(app: AppHandle, state: &Installs, job: String, packages: Vec<String>, remove: bool) -> Result<(), String> {
+    if !is_android() {
+        return Err("只有 Android 版支持用 apt 安装软件包".into());
+    }
+    if packages.is_empty() || packages.len() > 20 || !packages.iter().all(|p| valid_package(p)) {
+        return Err("软件包名不合法".into());
+    }
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut running = state.0.lock().unwrap();
+        if !running.is_empty() {
+            return Err("已有安装任务在进行，请等待完成或先取消".into());
+        }
+        running.insert(job.clone(), cancel.clone());
+    }
+    tauri::async_runtime::spawn(async move {
+        let em = Emitter2::new(&app, &job);
+        let result = apt_run(&app, &packages, remove, &em, &cancel).await;
+        if let Err(e) = &result {
+            em.log(format!("失败：{e}"));
+        }
+        app.state::<Installs>().0.lock().unwrap().remove(&job);
+        em.finish(&result);
+    });
+    Ok(())
+}
+
+async fn apt_run(app: &AppHandle, packages: &[String], remove: bool, em: &Emitter2, cancel: &Arc<AtomicBool>) -> Result<(), String> {
+    let root = root_dir(app)?;
+    if !remove {
+        let base = find_def(ROOTFS_ID)?;
+        if installed_version(&root, &base).is_none() {
+            em.log("先安装 Linux 基础系统");
+            install_one(app, &base, None, None, em, cancel).await?;
+        }
+    }
+    em.stage("apt", &packages.join(" "), 0, 0, 0);
+    let (a, r, p, e, c) = (app.clone(), root.clone(), packages.to_vec(), em.clone(), cancel.clone());
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        if remove {
+            apt_remove(&a, &r, &p, &e, &c)
+        } else {
+            guest_apt(&a, &r, &p, &e, &c)
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    // Make the new commands (or the loss of them) visible on the host PATH at once.
+    let _ = runtime_env(app.clone());
+    if !remove {
+        let status = apt_status(app.clone())?;
+        if let Some(missing) = packages.iter().find(|p| !status.installed.contains(p)) {
+            return Err(format!("apt 已结束，但 {missing} 没有出现在已安装列表里"));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
+fn apt_remove(app: &AppHandle, root: &Path, packages: &[String], em: &Emitter2, cancel: &AtomicBool) -> Result<(), String> {
+    let env = vec![("DEBIAN_FRONTEND".to_string(), "noninteractive".to_string())];
+    let mut args: Vec<String> = ["apt-get", "remove", "-y", "--autoremove"].map(String::from).to_vec();
+    args.extend(packages.iter().cloned());
+    run_logged(crate::android::guest_command(app, root, &args, &env)?, em, cancel, "apt-get remove")
+}
+
+#[cfg(not(target_os = "android"))]
+fn apt_remove(_: &AppHandle, _: &Path, _: &[String], _: &Emitter2, _: &AtomicBool) -> Result<(), String> {
+    Err("此平台不支持在 guest 里卸载".into())
+}
+
+#[tauri::command]
+pub fn apt_install(app: AppHandle, state: tauri::State<'_, Installs>, job: String, packages: Vec<String>) -> Result<(), String> {
+    apt_job(app, &state, job, packages, false)
+}
+
+#[tauri::command]
+pub fn apt_uninstall(app: AppHandle, state: tauri::State<'_, Installs>, job: String, packages: Vec<String>) -> Result<(), String> {
+    apt_job(app, &state, job, packages, true)
+}
+
+// ------------------------------------------- native package managers (desktop)
+
+/// The package manager the desktop store drives: winget (Windows), Homebrew (macOS), apt through pkexec (Debian/Ubuntu desktops).
+fn pm_kind() -> Option<&'static str> {
+    if cfg!(windows) {
+        return has_winget().then_some("winget");
+    }
+    if cfg!(target_os = "macos") {
+        return brew_path().map(|_| "brew");
+    }
+    if cfg!(target_os = "linux") && find_on_path(&["apt-get".into()]).is_some() && find_on_path(&["pkexec".into()]).is_some() {
+        return Some("apt");
+    }
+    None
+}
+
+/// A GUI app does not inherit the shell's PATH, so Homebrew's usual homes are tried as well.
+fn brew_path() -> Option<PathBuf> {
+    if let Some(p) = find_on_path(&["brew".into()]) {
+        return Some(PathBuf::from(p));
+    }
+    ["/opt/homebrew/bin/brew", "/usr/local/bin/brew", "/home/linuxbrew/.linuxbrew/bin/brew"].iter().map(PathBuf::from).find(|p| p.is_file())
+}
+
+/// Package ids as winget (`Vendor.App`), Homebrew (`openjdk@21`) and apt accept them; nothing that could pass as an option.
+fn valid_pm_id(id: &str) -> bool {
+    id.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && id.len() <= 100
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-' | '_' | '@'))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PmStatus {
+    /// winget | brew | apt, or None when this machine has none of them.
+    manager: Option<&'static str>,
+    /// Lowercased ids / package names / tokens of everything installed.
+    installed: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn pm_status() -> Result<PmStatus, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let manager = pm_kind();
+        let mut installed: Vec<String> = Vec::new();
+        let mut take = |text: &str| installed.extend(text.split_whitespace().map(|w| w.to_lowercase()));
+        match manager {
+            Some("winget") => {
+                let mut cmd = std::process::Command::new("winget");
+                cmd.args(["list", "--accept-source-agreements", "--disable-interactivity"]);
+                if let Ok(out) = quiet(&mut cmd).output() {
+                    take(&String::from_utf8_lossy(&out.stdout));
+                }
+            }
+            Some("brew") => {
+                if let Some(brew) = brew_path() {
+                    for kind in ["--formula", "--cask"] {
+                        if let Ok(out) = std::process::Command::new(&brew).args(["list", kind, "-1"]).output() {
+                            take(&String::from_utf8_lossy(&out.stdout));
+                        }
+                    }
+                }
+            }
+            Some("apt") => {
+                if let Ok(text) = fs::read_to_string("/var/lib/dpkg/status") {
+                    for block in text.split("\n\n") {
+                        let name = block.lines().find_map(|l| l.strip_prefix("Package: "));
+                        let ok = block.lines().any(|l| l.strip_prefix("Status: ").is_some_and(|s| s.trim().ends_with(" installed")));
+                        if let (Some(n), true) = (name, ok) {
+                            installed.push(n.trim().to_string());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        installed.sort();
+        installed.dedup();
+        Ok(PmStatus { manager, installed })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn pm_command(kind: &str, remove: bool, ids: &[String]) -> Result<std::process::Command, String> {
+    let mut cmd;
+    match kind {
+        "winget" => {
+            cmd = std::process::Command::new("winget");
+            let id = ids.first().ok_or("缺少软件包名")?;
+            cmd.args([if remove { "uninstall" } else { "install" }, "--id", id, "-e", "--silent", "--disable-interactivity", "--accept-source-agreements"]);
+            if !remove {
+                cmd.arg("--accept-package-agreements");
+            }
+        }
+        "brew" => {
+            cmd = std::process::Command::new(brew_path().ok_or("找不到 Homebrew，请先从 brew.sh 安装")?);
+            cmd.env("HOMEBREW_NO_ENV_HINTS", "1").env("HOMEBREW_NO_INSTALL_CLEANUP", "1");
+            cmd.arg(if remove { "uninstall" } else { "install" }).args(ids);
+        }
+        "apt" => {
+            // pkexec shows the desktop's own password prompt; the app never sees the password.
+            cmd = std::process::Command::new("pkexec");
+            cmd.args(["env", "DEBIAN_FRONTEND=noninteractive", "apt-get"]);
+            if remove {
+                cmd.args(["remove", "-y", "--autoremove"]);
+            } else {
+                cmd.args(["install", "-y", "--no-install-recommends"]);
+            }
+            cmd.args(ids);
+        }
+        _ => return Err("找不到可用的包管理器".into()),
+    }
+    Ok(cmd)
+}
+
+fn pm_job(app: AppHandle, state: &Installs, job: String, ids: Vec<String>, remove: bool) -> Result<(), String> {
+    let kind = pm_kind().ok_or("这台电脑上没有可用的包管理器（Windows 需要 winget，macOS 需要 Homebrew，Linux 需要 apt 和 pkexec）")?;
+    if ids.is_empty() || ids.len() > 20 || !ids.iter().all(|p| valid_pm_id(p)) {
+        return Err("软件包名不合法".into());
+    }
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut running = state.0.lock().unwrap();
+        if !running.is_empty() {
+            return Err("已有安装任务在进行，请等待完成或先取消".into());
+        }
+        running.insert(job.clone(), cancel.clone());
+    }
+    tauri::async_runtime::spawn(async move {
+        let em = Emitter2::new(&app, &job);
+        let (e2, c2) = (em.clone(), cancel.clone());
+        let result = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+            e2.stage("setup", &ids.join(" "), 0, 0, 0);
+            // winget takes one package per call.
+            let calls: Vec<Vec<String>> = if kind == "winget" { ids.iter().map(|i| vec![i.clone()]).collect() } else { vec![ids.clone()] };
+            for call in calls {
+                let mut cmd = pm_command(kind, remove, &call)?;
+                quiet(&mut cmd);
+                run_logged(cmd, &e2, &c2, kind)?;
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|e| e.to_string())
+        .and_then(|r| r);
+        if let Err(e) = &result {
+            em.log(format!("失败：{e}"));
+        }
+        app.state::<Installs>().0.lock().unwrap().remove(&job);
+        em.finish(&result);
+    });
+    Ok(())
+}
+
+#[tauri::command]
+pub fn pm_install(app: AppHandle, state: tauri::State<'_, Installs>, job: String, packages: Vec<String>) -> Result<(), String> {
+    pm_job(app, &state, job, packages, false)
+}
+
+#[tauri::command]
+pub fn pm_uninstall(app: AppHandle, state: tauri::State<'_, Installs>, job: String, packages: Vec<String>) -> Result<(), String> {
+    pm_job(app, &state, job, packages, true)
+}
+
 /// Directories to put on PATH and variables to set for installed desktop runtimes (Android resolves them through PRoot shims).
 #[cfg(not(target_os = "android"))]
 pub fn desktop_env(app: &AppHandle) -> (Vec<PathBuf>, Vec<(String, OsString)>) {
@@ -1316,6 +1667,10 @@ pub fn runtime_env(app: AppHandle) -> EnvDelta {
     {
         if let Ok(data) = app.path().app_data_dir() {
             crate::android::refresh_guest_shims(&data, &installed_guest_ids(&app));
+            // Commands apt put in the rootfs become runnable from the host PATH.
+            if let Ok(root) = root_dir(&app) {
+                crate::android::link_guest_bins(&data, &rootfs_dir(&root));
+            }
         }
         return EnvDelta::default();
     }

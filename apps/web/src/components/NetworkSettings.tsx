@@ -1,3 +1,4 @@
+import { copyToClipboard } from "../lib/clipboard.ts";
 import clsx from "clsx";
 import { Copy, LoaderCircle, Lock, ShieldAlert, Wifi } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
@@ -211,7 +212,7 @@ export function NetworkSettings() {
 	}
 
 	const editable = status.canEdit;
-	const copy = (text: string) => navigator.clipboard.writeText(text).then(() => toast(t("copied")), () => undefined);
+	const copy = (text: string) => copyToClipboard(text).then(() => toast(t("copied")), () => undefined);
 	const urls = status.addresses.map((a) => `http://${a}:${status.port}`);
 	const firstHost = status.allowedHosts.find((h) => !h.startsWith("*.")) ?? "agent.example.com";
 	const pwReady = pw.next.length >= 8 && pw.next === pw.again;

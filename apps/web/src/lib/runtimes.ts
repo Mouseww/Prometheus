@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { isTauri, loadMode } from "./backend.ts";
+import { isAndroid, isTauri, loadMode } from "./backend.ts";
 
 /** One on-demand runtime (Python, Go, Rust, Git, ...) as reported by the desktop/Android shell. */
 export interface RuntimeItem {
@@ -68,9 +68,65 @@ interface RuntimesState {
 	jobs: Record<string, RuntimeJob>;
 	/** A runtime was installed or removed since the local server started; new PATH needs a restart. */
 	restartNeeded: boolean;
+	/** Android: the Linux base system exists and these apt packages are installed in it. */
+	/** `manager` (desktop): winget | brew | apt, null when none is usable. */
+	apt: { rootfs: boolean; installed: string[]; loaded: boolean; manager: string | null };
 }
 
-export const useRuntimes = create<RuntimesState>(() => ({ requests: {}, available: false, loadError: null, items: [], jobs: {}, restartNeeded: false }));
+export const useRuntimes = create<RuntimesState>(() => ({
+	requests: {},
+	available: false,
+	loadError: null,
+	items: [],
+	jobs: {},
+	restartNeeded: false,
+	apt: { rootfs: false, installed: [], loaded: false, manager: null },
+}));
+
+/** Job ids of apt installs start with this; the rest is the catalog id or the package name. */
+export const APT_JOB = "apt-";
+/** Display names for apt jobs started from the store (the floating card has no catalog access otherwise). */
+const jobLabels = new Map<string, string>();
+export const jobLabel = (id: string): string | undefined => jobLabels.get(id);
+
+export async function refreshApt(): Promise<void> {
+	if (!isTauri()) return;
+	try {
+		if (isAndroid()) {
+			const r = await invoke<{ rootfs: boolean; installed: string[] }>("apt_status");
+			useRuntimes.setState({ apt: { ...r, loaded: true, manager: "apt" } });
+		} else {
+			const r = await invoke<{ manager: string | null; installed: string[] }>("pm_status");
+			useRuntimes.setState({ apt: { rootfs: true, installed: r.installed, loaded: true, manager: r.manager } });
+		}
+	} catch {
+		// An older shell without the store commands: the store simply stays empty.
+	}
+}
+
+export interface AptHit {
+	name: string;
+	description: string;
+}
+
+/** Searches the Ubuntu package index inside the phone's rootfs (downloads the index the first time). */
+export function searchApt(query: string): Promise<AptHit[]> {
+	return invoke<AptHit[]>("apt_search", { query });
+}
+
+async function aptJob(action: "install" | "uninstall", id: string, label: string, packages: string[]): Promise<void> {
+	const job = `${APT_JOB}${id}`;
+	jobLabels.set(job, label);
+	useRuntimes.setState((s) => ({ jobs: { ...s.jobs, [job]: blankJob(job) } }));
+	try {
+		await invoke(`${isAndroid() ? "apt" : "pm"}_${action}`, { job, packages });
+	} catch (err) {
+		onEvent({ id: job, stage: "finish", message: "", done: 0, total: 0, speed: 0, finished: true, ok: false, error: String(err), line: null });
+	}
+}
+
+export const installApt = (id: string, label: string, packages: string[]) => aptJob("install", id, label, packages);
+export const uninstallApt = (id: string, label: string, packages: string[]) => aptJob("uninstall", id, label, packages);
 
 const MAX_LOG = 300;
 let started = false;
@@ -117,6 +173,7 @@ function onEvent(e: ProgressEvent): void {
 	});
 	if (e.finished) {
 		void refreshRuntimes();
+		if (e.id.startsWith(APT_JOB)) void refreshApt();
 		if (e.ok) {
 			useRuntimes.setState((s) => {
 				const { [e.id]: _done, ...requests } = s.requests;
@@ -132,7 +189,7 @@ export async function initRuntimes(): Promise<void> {
 	if (started || !isTauri()) return;
 	started = true;
 	// The list first: it must not wait on the event subscription.
-	const loading = refreshRuntimes();
+	const loading = Promise.all([refreshRuntimes(), refreshApt()]);
 	try {
 		const { listen } = await import("@tauri-apps/api/event");
 		await listen<ProgressEvent>("runtime://progress", (ev) => onEvent(ev.payload));

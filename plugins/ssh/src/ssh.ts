@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,16 +35,87 @@ export function validateHost(h: Pick<SshHost, "host" | "user" | "port">): void {
 	if (!Number.isInteger(h.port) || h.port < 1 || h.port > 65535) throw new Error("端口不合法");
 }
 
+/** Android: tools run inside the PRoot Ubuntu rootfs (set by the app), so ssh may need installing there first. */
+const guestRoot = () => process.env.PROMETHEUS_ROOTFS;
+
 function baseArgs(h: SshHost, portFlag: "-p" | "-P"): string[] {
 	const args = ["-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15", portFlag, String(h.port)];
+	// Under PRoot on a phone: no TOS marking (some Android/WiFi stacks refuse the socket option), and IPv4 only for names
+	// (a LAN host usually has no working IPv6 route; ssh would otherwise stall on the AAAA record first).
+	if (guestRoot()) {
+		args.push("-o", "IPQoS=none");
+		if (!h.host.includes(":")) args.push("-o", "AddressFamily=inet");
+	}
 	if (h.auth === "password") args.push("-o", "BatchMode=no", "-o", "NumberOfPasswordPrompts=1", "-o", "PreferredAuthentications=password,keyboard-interactive");
 	else args.push("-o", "BatchMode=yes");
 	if (h.auth === "key" && h.identityFile) args.push("-i", h.identityFile, "-o", "IdentitiesOnly=yes");
 	return args;
 }
 
-/** Runs `bin` with the host's auth settings. Passwords reach ssh through a throwaway SSH_ASKPASS helper, never argv. */
+let installing: Promise<void> | undefined;
+
+/** Runs a command inside the rootfs through the app's `guestrun` shim and fails with its tail output. */
+function guestSh(args: string[], timeoutMs: number): Promise<void> {
+	const tools = process.env.PROMETHEUS_TOOLS_BIN ?? "";
+	return new Promise((resolve, reject) => {
+		const child = spawn(join(tools, "guestrun"), args, { stdio: ["ignore", "pipe", "pipe"] });
+		let tail = "";
+		const keep = (d: Buffer) => (tail = (tail + d.toString("utf8")).slice(-1500));
+		child.stdout.on("data", keep);
+		child.stderr.on("data", keep);
+		const timer = setTimeout(() => child.kill(), timeoutMs);
+		child.on("error", (e) => {
+			clearTimeout(timer);
+			reject(e);
+		});
+		child.on("close", (code) => {
+			clearTimeout(timer);
+			code === 0 ? resolve() : reject(new Error(tail.trim() || `exit ${code}`));
+		});
+	});
+}
+
+/** Installs openssh-client into the PRoot rootfs with apt (once at a time) and exposes ssh/scp on PATH. */
+function installGuestSsh(): Promise<void> {
+	installing ??= (async () => {
+		const root = guestRoot();
+		const tools = process.env.PROMETHEUS_TOOLS_BIN;
+		if (!root || !tools) throw new Error("找不到 PRoot 环境");
+		if (!existsSync(join(root, "usr/bin/env"))) {
+			throw new Error("Android 上还没有 Linux 基础系统，无法自动安装 OpenSSH 客户端。请在 设置 > 运行环境 的“工具商店”里安装 openssh-client（会自动准备基础系统），然后重试。");
+		}
+		const env = ["env", "DEBIAN_FRONTEND=noninteractive"];
+		await guestSh([...env, "apt-get", "update"], 300_000);
+		await guestSh([...env, "apt-get", "install", "-y", "--no-install-recommends", "openssh-client"], 600_000);
+		// Link the new commands (ssh, scp, ...) into the PATH directory the server was started with.
+		await new Promise<void>((resolve) => {
+			const c = spawn(join(tools, "guestsync"), [], { stdio: "ignore" });
+			c.on("error", () => resolve());
+			c.on("close", () => resolve());
+		});
+	})().finally(() => {
+		installing = undefined;
+	});
+	return installing;
+}
+
+/** Runs `bin` with the host's auth settings. If ssh is missing on Android it is installed into PRoot first, then the call is retried once. */
 async function run(bin: "ssh" | "scp", h: SshHost, args: string[], timeoutMs: number): Promise<SshResult> {
+	try {
+		return await runOnce(bin, h, args, timeoutMs);
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code !== "ENOENT" || !guestRoot()) throw err;
+	}
+	try {
+		await installGuestSsh();
+	} catch (err) {
+		throw new Error(`找不到 ${bin}，自动安装 OpenSSH 客户端失败：${(err as Error).message}`);
+	}
+	return runOnce(bin, h, args, timeoutMs);
+}
+
+/** Passwords reach ssh through a throwaway SSH_ASKPASS helper, never argv. */
+async function runOnce(bin: "ssh" | "scp", h: SshHost, args: string[], timeoutMs: number): Promise<SshResult> {
 	let dir: string | undefined;
 	const env: NodeJS.ProcessEnv = { ...process.env };
 	if (h.auth === "password") {
@@ -80,7 +152,12 @@ async function run(bin: "ssh" | "scp", h: SshHost, args: string[], timeoutMs: nu
 			}, timeoutMs);
 			child.on("error", (err) => {
 				clearTimeout(timer);
-				reject(new Error((err as NodeJS.ErrnoException).code === "ENOENT" ? `找不到 ${bin}，请先安装 OpenSSH 客户端${process.env.PROMETHEUS_ROOTFS ? "（Android：先在设置 > 运行环境安装“Linux 基础系统”，在其中执行 apt install openssh-client，然后重启应用）" : ""}` : err.message));
+				if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+					// run() installs ssh on Android and retries; elsewhere the user has to install it.
+					reject(Object.assign(new Error(`找不到 ${bin}，请先安装 OpenSSH 客户端`), { code: "ENOENT" }));
+				} else {
+					reject(err);
+				}
 			});
 			child.on("close", (code) => {
 				clearTimeout(timer);

@@ -231,6 +231,9 @@ importers:
       '@prometheus/plugin-automations':
         specifier: workspace:*
         version: link:../automations
+      '@prometheus/plugin-computer-use':
+        specifier: workspace:*
+        version: link:../computer-use
       '@prometheus/plugin-connectors':
         specifier: workspace:*
         version: link:../connectors
@@ -279,6 +282,21 @@ importers:
       '@prometheus/plugin-workbench':
         specifier: workspace:*
         version: link:../workbench
+
+  plugins/computer-use:
+    dependencies:
+      '@earendil-works/pi-ai':
+        specifier: 1.2.0
+        version: 1.2.0(@aws-sdk/credential-provider-node@3.972.86)(@smithy/signature-v4@5.7.4)(undici@8.10.2)(ws@8.22.0)
+      '@earendil-works/pi-coding-agent':
+        specifier: 1.2.0
+        version: 1.2.0(@aws-sdk/credential-provider-node@3.972.86)(@smithy/signature-v4@5.7.4)(ws@8.22.0)
+      '@prometheus/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      '@prometheus/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
 
   plugins/connectors:
     dependencies:

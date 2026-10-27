@@ -1,0 +1,41 @@
+name: computer-use-linux
+
+# Runs the Linux (AT-SPI) Computer Use driver against gedit on a virtual display.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "plugins/computer-use/drivers/linux/**"
+      - "plugins/computer-use/scripts/e2e-gedit.ts"
+      - ".github/workflows/computer-use-linux.yml"
+
+jobs:
+  driver:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install desktop pieces
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb dbus-x11 at-spi2-core gir1.2-atspi-2.0 python3-gi gedit
+
+      - name: Handshake
+        run: |
+          xvfb-run -a dbus-run-session -- sh -c '
+            /usr/libexec/at-spi-bus-launcher --launch-immediately >/dev/null 2>&1 &
+            sleep 2
+            printf "%s\n" "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"hello\"}" "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"shutdown\"}" | python3 plugins/computer-use/drivers/linux/driver.py'
+
+      - name: End-to-end with gedit
+        run: |
+          xvfb-run -a dbus-run-session -- sh -c '
+            export GTK_A11Y=atspi
+            /usr/libexec/at-spi-bus-launcher --launch-immediately >/dev/null 2>&1 &
+            sleep 2
+            node --experimental-strip-types --no-warnings plugins/computer-use/scripts/e2e-gedit.ts'

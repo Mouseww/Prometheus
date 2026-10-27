@@ -1,3 +1,4 @@
+import { copyToClipboard } from "../lib/clipboard.ts";
 import clsx from "clsx";
 import { BarChart3, Blocks, Boxes, Bot, Cable, Check, Copy, FolderOpen, Globe, Laptop, Layers, Mic, Moon, Network, Package, Plug, Server, Shield, Sparkles, Sun, SlidersHorizontal, Terminal } from "lucide-react";
 import type { ReactNode } from "react";
@@ -313,7 +314,7 @@ function AboutRow() {
 				<Button
 					variant="outline"
 					onClick={() =>
-						void navigator.clipboard.writeText(summary).then(
+						void copyToClipboard(summary).then(
 							() => toast(t("copied")),
 							() => toast(summary),
 						)

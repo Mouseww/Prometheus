@@ -12,6 +12,7 @@ import {
 	installMsvc,
 	installRuntime,
 	jobFraction,
+	jobLabel,
 	refreshRuntimes,
 	restartApp,
 	type RuntimeItem,
@@ -20,6 +21,7 @@ import {
 	useRuntimes,
 } from "../lib/runtimes.ts";
 import { openSettings, toast } from "../lib/store.ts";
+import { ToolStore } from "./ToolStore.tsx";
 import { Button, PageHeader } from "./ui.tsx";
 
 const M = defineMessages({
@@ -116,7 +118,7 @@ function stageLabel(t: (k: Key, v?: Record<string, string | number>) => string, 
 }
 
 /** Progress bar, stage, speed, ETA and a collapsible log: shared by the settings page and the floating card. */
-function JobView({ job, compact }: { job: RuntimeJob; compact?: boolean }) {
+export function JobView({ job, compact }: { job: RuntimeJob; compact?: boolean }) {
 	const t = useT(M);
 	const [open, setOpen] = useState(false);
 	const fraction = jobFraction(job);
@@ -277,6 +279,7 @@ export function RuntimesSettings() {
 	const items = useRuntimes((s) => s.items);
 	const restartNeeded = useRuntimes((s) => s.restartNeeded);
 	const loadError = useRuntimes((s) => s.loadError);
+	const available = useRuntimes((s) => s.available);
 	useEffect(() => {
 		void initRuntimes();
 	}, []);
@@ -304,6 +307,7 @@ export function RuntimesSettings() {
 				{items.map((item) => (
 					<Row key={item.id} item={item} />
 				))}
+				{available && <ToolStore />}
 			</div>
 		</div>
 	);
@@ -352,7 +356,7 @@ export function RuntimeProgressCard() {
 				);
 			})}
 			{shown.map((job) => {
-				const name = job.id === "msvc" ? t("msvcName") : (items.find((i) => i.id === job.id)?.name ?? job.id);
+				const name = job.id === "msvc" ? t("msvcName") : (items.find((i) => i.id === job.id)?.name ?? jobLabel(job.id) ?? job.id);
 				return (
 					<div key={job.id} className="pointer-events-auto space-y-2 rounded-2xl border border-ink-700 bg-ink-900 p-4 shadow-xl">
 						<div className="flex items-center gap-2">
