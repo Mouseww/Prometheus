@@ -1,10 +1,9 @@
-// Previews documents the text viewer cannot show (Word, Excel, PowerPoint, PDF, archives, audio, video, ...) with Open File
+// Previews documents the text viewer cannot show (Word, Excel, PowerPoint, PDF, ...) with Open File
 // Viewer. The bytes come over the same chunked file.read as a download; this module is loaded only when such a file is opened.
 import { FileViewer } from "@open-file-viewer/react";
-import { archivePlugin, audioPlugin, emailPlugin, epubPlugin, fallbackPlugin, imagePlugin, officePlugin, pdfPlugin, textPlugin, videoPlugin } from "@open-file-viewer/core";
+import { fallbackPlugin, imagePlugin, officePlugin, pdfPlugin, textPlugin } from "@open-file-viewer/core";
 import "@open-file-viewer/core/style.css";
 import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.mjs?url";
-import pdfLegacyWorkerSrc from "pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 import { LoaderCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { defineMessages, useT } from "../lib/i18n.ts";
@@ -21,13 +20,8 @@ const LIMIT_MB = 100;
 const plugins = [
 	imagePlugin(),
 	textPlugin(),
-	pdfPlugin({ workerSrc: pdfWorkerSrc, legacyWorkerSrc: pdfLegacyWorkerSrc }),
+	pdfPlugin({ workerSrc: pdfWorkerSrc }),
 	officePlugin(),
-	epubPlugin(),
-	archivePlugin(),
-	emailPlugin(),
-	audioPlugin(),
-	videoPlugin(),
 	fallbackPlugin(),
 ];
 
