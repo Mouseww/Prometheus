@@ -167,6 +167,8 @@ interface State {
 	view: View;
 	settingsTab: SettingsTab;
 	sessions: SessionSummary[];
+	/** Result of a run that finished in a conversation the user was not looking at; cleared when it is opened. */
+	marks: Record<string, "done" | "error">;
 	workspaces: WorkspaceInfo[];
 	/** Every plugin the host knows, loaded or not; views use it to show or hide plugin-backed features. */
 	plugins: PluginInfo[];
@@ -209,6 +211,7 @@ export const useStore = create<State>(() => ({
 	view: "chat",
 	settingsTab: "general",
 	sessions: [],
+	marks: {},
 	workspaces: [],
 	plugins: [],
 	hostSettings: null,
@@ -434,10 +437,24 @@ function enqueue(e: SessionEvent): void {
 export function handleFrame(frame: ServerFrame): void {
 	const active = get().session;
 	switch (frame.type) {
-		case "event":
+		case "event": {
+			const t = frame.event.type;
+			if (t === "agent_start" || t === "agent_settled") {
+				const running = t === "agent_start";
+				set((s) => ({ sessions: s.sessions.map((x) => (x.id === frame.sessionId && x.running !== running ? { ...x, running } : x)) }));
+				if (running) {
+					erroredRuns.delete(frame.sessionId);
+					clearMark(frame.sessionId);
+				} else if (frame.event.type === "agent_settled" && !frame.event.aborted && frame.sessionId !== active?.id) {
+					const mark = erroredRuns.has(frame.sessionId) ? "error" : "done";
+					set((s) => ({ marks: { ...s.marks, [frame.sessionId]: mark } }));
+				}
+			}
+			if (frame.event.type === "message_end" && frame.event.message.role === "assistant" && (frame.event.message as AssistantMessage).stopReason === "error") erroredRuns.add(frame.sessionId);
 			if (frame.event.type === "agent_settled" && !frame.event.aborted) notifyTurnDone(get().sessions.find((x) => x.id === frame.sessionId)?.name ?? active?.name ?? "");
 			if (frame.sessionId === active?.id) enqueue(frame.event);
 			return;
+		}
 		case "ui.request":
 			return handleUIRequest(frame.sessionId, frame.request);
 		case "ui.resolved":
@@ -743,6 +760,13 @@ function remember(s: ActiveSession): void {
 
 let openSeq = 0;
 
+function clearMark(id: string): void {
+	if (get().marks[id]) set((s) => ({ marks: Object.fromEntries(Object.entries(s.marks).filter(([k]) => k !== id)) }));
+}
+
+/** Sessions whose latest run produced an error reply. */
+const erroredRuns = new Set<string>();
+
 /**
  * Switch to a conversation. Its contents come from the server, which on a slow link takes a while, so the switch shows at
  * once: the copy kept from the last visit if there is one (refreshed when the server answers), a placeholder otherwise.
@@ -750,6 +774,7 @@ let openSeq = 0;
  */
 export async function openSession(sessionId: string): Promise<void> {
 	const seq = ++openSeq;
+	clearMark(sessionId);
 	const current = get().session;
 	const summary = get().sessions.find((s) => s.id === sessionId);
 	const cached = current?.id === sessionId ? undefined : recent.get(sessionId);

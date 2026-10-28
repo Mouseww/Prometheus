@@ -220,6 +220,7 @@ function SessionRow({ s, active }: { s: SessionSummary; active: boolean }) {
 	const [name, setName] = useState("");
 	const title = s.name || localizeError(s.firstMessage ?? "") || t("newSession");
 	// Clicked, contents still on the way (or only the copy from the last visit is shown).
+	const mark = useStore((st) => (st.session?.id === s.id ? undefined : st.marks[s.id]));
 	const loading = useStore((st) => st.opening?.id === s.id || (st.session?.id === s.id && !!st.session.preview));
 	const startRename = () => {
 		setName(s.name || localizeError(s.firstMessage ?? "") || "");
@@ -267,7 +268,13 @@ function SessionRow({ s, active }: { s: SessionSummary; active: boolean }) {
 			<div className="min-w-0 flex-1">
 				<div className="truncate text-[13px] text-ink-200">{title}</div>
 				<div className="flex items-center gap-1.5 text-[10.5px] text-ink-500">
-					{loading ? <LoaderCircle className="size-2.5 animate-spin text-ember-400" /> : s.live && <span className="size-1.5 rounded-full bg-moss-400" />}
+					{loading ? (
+			<LoaderCircle className="size-2.5 animate-spin text-ember-400" />
+			) : s.running ? (
+				<span className="size-1.5 animate-breathe rounded-full bg-amber-400" />
+			) : mark ? (
+				<span className={clsx("size-1.5 rounded-full", mark === "error" ? "bg-rose-400" : "bg-moss-400")} />
+			) : null}
 					<span>{relativeTime(s.modified, lang)}</span>
 					<span>·</span>
 					<span>{t("messages", { n: s.messageCount })}</span>

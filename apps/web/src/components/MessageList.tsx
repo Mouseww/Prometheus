@@ -575,6 +575,19 @@ export function MessageList({
 	});
 	useEffect(() => () => clearTimeout(releaseTimer.current), []);
 
+	// Set while earlier turns are fetched: the absolute index of the first message that was shown. Once they arrive,
+	// only a few turns are revealed (in the same commit, before paint) instead of the whole fetched chunk at once.
+	const reveal = useRef<number | null>(null);
+	useLayoutEffect(() => {
+		const from = reveal.current;
+		if (from === null || offset >= from) return;
+		reveal.current = null;
+		let seenUsers = 0;
+		let i = Math.max(0, from - offset) - 1;
+		for (; i > 0; i--) if (messages[i]?.role === "user" && ++seenUsers === MORE_TURNS) break;
+		setShownFrom(offset + Math.max(0, i));
+	}, [offset, messages]);
+
 	const loading = useRef(false);
 	const showMore = useCallback(async () => {
 		if (loading.current) return;
@@ -588,9 +601,12 @@ export function MessageList({
 			return;
 		}
 		loading.current = true;
+		// Pin the current view so the arriving messages do not change what is shown until they are revealed in steps.
+		const from = offset + start;
+		reveal.current = from;
+		setShownFrom(from);
 		try {
 			await onLoadEarlier();
-			setShownFrom(0);
 		} finally {
 			loading.current = false;
 		}
