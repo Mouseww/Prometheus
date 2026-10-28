@@ -1,4 +1,4 @@
-import { Bot, CircleAlert, Download, Pencil, Plus, RotateCcw, Trash2 } from "lucide-react";
+import { Bot, CircleAlert, Download, Pencil, Plus, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { AgentProfile, RuntimeInfo } from "@prometheus/protocol";
 import { confirmDialog } from "../lib/dialogs.ts";
@@ -20,6 +20,10 @@ const M = defineMessages({
 		installDone: "{name} 已安装",
 		installHint: "会把 {pkg} 安装到 Prometheus 自己的目录，并加入这个运行时的 PATH；本机需要能用 npm。",
 		installNoNpm: "没有安装，也无法在这里一键安装：找不到 npm。请先安装 Node.js，或给这个 Agent 指定已有的可执行文件。",
+		sync: "同步会话",
+		syncing: "同步中…",
+		syncTitle: "把这个 Agent 自己保存的工作区和会话同步到 Prometheus",
+		syncDone: "{name}：找到 {found} 个会话，新增 {added} 个，新增 {ws} 个工作区",
 		uninstall: "卸载",
 		confirmUninstall: "删除 Prometheus 为 {name} 安装的命令行工具？机器上其他位置安装的不受影响。",
 		installedAt: "由 Prometheus 安装",
@@ -70,6 +74,10 @@ const M = defineMessages({
 		installDone: "{name} installed",
 		installHint: "Installs {pkg} into Prometheus' own folder and puts it on this runtime's PATH. npm must be available on this machine.",
 		installNoNpm: "It is not installed and cannot be installed here: npm was not found. Install Node.js, or point this agent at an existing executable.",
+		sync: "Sync chats",
+		syncing: "Syncing…",
+		syncTitle: "Bring the workspaces and chats this agent keeps in its own store into Prometheus",
+		syncDone: "{name}: found {found} chats, added {added}, {ws} new workspaces",
 		uninstall: "Uninstall",
 		confirmUninstall: "Remove the CLI that Prometheus installed for {name}? An installation elsewhere on this machine is left alone.",
 		installedAt: "Installed by Prometheus",
@@ -151,6 +159,16 @@ export function AgentsSettings() {
 		}
 	};
 
+	const sync = async (a: AgentProfile) => {
+		setBusyId(a.id);
+		try {
+			const r = await call((c) => c.rpc("agent.syncSessions", { id: a.id }));
+			if (r) toast(t("syncDone", { name: a.name, found: r.found, added: r.added, ws: r.workspaces }), "info");
+		} finally {
+			setBusyId(null);
+		}
+	};
+
 	const uninstall = async (a: AgentProfile) => {
 		if (!(await confirmDialog(t("confirmUninstall", { name: a.name }), { danger: true }))) return;
 		setBusyId(a.id);
@@ -227,6 +245,11 @@ export function AgentsSettings() {
 									{info && !info.health.available && info.health.installable !== false && (
 										<Button variant="primary" className="px-2.5 py-1 text-xs" disabled={busyId === a.id} onClick={() => void install(a)}>
 											<Download className="size-3.5" /> {t(busyId === a.id ? "installing" : "install")}
+										</Button>
+									)}
+									{info?.health.available && (
+										<Button variant="outline" className="px-2.5 py-1 text-xs" title={t("syncTitle")} disabled={busyId === a.id} onClick={() => void sync(a)}>
+											<RefreshCw className={`size-3.5 ${busyId === a.id ? "animate-spin" : ""}`} /> {t(busyId === a.id ? "syncing" : "sync")}
 										</Button>
 									)}
 									{info?.health.installed && (

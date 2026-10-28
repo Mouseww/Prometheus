@@ -3,6 +3,8 @@
 // a destination (File System Access API) the pieces are written straight to disk, which has no size limit; elsewhere
 // they are collected in memory and handed to the browser as a download, which is capped.
 import { defineMessages, tr } from "./i18n.ts";
+import { isTauri } from "./backend.ts";
+import { openExternal } from "./links.ts";
 import { call, toast, useStore } from "./store.ts";
 
 const M = defineMessages({
@@ -56,6 +58,15 @@ export async function downloadFile(path: string, suggestedName?: string): Promis
 	const session = useStore.getState().session;
 	if (!session) return false;
 	const name = suggestedName || baseName(path);
+
+	// App shells (desktop, Android) cannot save a blob: the system browser fetches the file from the server instead.
+	if (isTauri()) {
+		const client = useStore.getState().client;
+		const link = await call((c) => c.rpc("file.link", { sessionId: session.id, path }));
+		if (!client || !link) return false;
+		await openExternal(`${client.target.httpBase}/api/download/${encodeURIComponent(link.id)}`);
+		return true;
+	}
 
 	// The destination dialog needs the click that started this, so it comes before any waiting.
 	let sink: Awaited<ReturnType<Awaited<ReturnType<SavePicker>>["createWritable"]>> | undefined;

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { delimiter, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -223,6 +224,25 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, kind: Kind)
 		return json(res, 200, { ok: true }, needsLogin ? { "set-cookie": cookieHeader(String(body.token), req) } : {});
 	}
 	if (url.pathname === "/api/logout" && req.method === "POST") return json(res, 200, { ok: true }, { "set-cookie": cookieHeader("", req, 0) });
+
+	// One-time link from `file.link`: the system browser (which has no login) streams the file with a save name.
+	if (url.pathname.startsWith("/api/download/") && (req.method === "GET" || req.method === "HEAD")) {
+		const file = host.takeDownload(decodeURIComponent(url.pathname.slice("/api/download/".length)));
+		if (!file) return json(res, 404, { error: "not found" });
+		res.writeHead(200, {
+			"content-type": "application/octet-stream",
+			"content-length": file.size,
+			"content-disposition": `attachment; filename="download"; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+			"cache-control": "no-store",
+			"x-content-type-options": "nosniff",
+		});
+		if (req.method === "HEAD") return void res.end();
+		const stream = createReadStream(file.path);
+		stream.on("error", () => res.destroy());
+		res.on("close", () => stream.destroy());
+		stream.pipe(res);
+		return;
+	}
 
 	if (url.pathname.startsWith("/plugins/")) {
 		if (!httpAuthorized(req, kind)) return json(res, 401, { error: "unauthorized" });

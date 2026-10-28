@@ -953,6 +953,8 @@ export interface RpcMethods {
 	"agent.save": { params: { agent: AgentProfile }; result: AgentProfile };
 	"agent.delete": { params: { id: string }; result: null };
 	/** Installs or upgrades the CLI of a third-party runtime into the server's own folder. */
+	/** Brings the workspaces and conversations kept in an agent's own store (Claude Code, Codex, OpenCode) into Prometheus. */
+	"agent.syncSessions": { params: { id: string }; result: { found: number; added: number; workspaces: number } };
 	"agent.install": { params: { kind: RuntimeKind }; result: { command: string } };
 	"agent.uninstall": { params: { kind: RuntimeKind }; result: null };
 	/** `tail`: send only the latest N turns (user messages and what followed); earlier ones come from `session.messages`. */
@@ -966,6 +968,8 @@ export interface RpcMethods {
 	"file.stat": { params: { sessionId: string; path: string }; result: { exists: boolean; name?: string; size?: number } };
 	/** Up to 4 MB of the file from `offset`, base64; call again from `offset + length` until `eof`. */
 	"file.read": { params: { sessionId: string; path: string; offset: number; length: number }; result: { data: string; size: number; eof: boolean } };
+	/** A one-time address (valid for a minute) at `/api/download/<id>` that streams the file; for shells that cannot save a blob. */
+	"file.link": { params: { sessionId: string; path: string }; result: { id: string; name: string } };
 	"session.messages": { params: { sessionId: string; before: number; turns: number }; result: { messages: ChatMessage[]; offset: number } };
 	"session.rename": { params: { sessionId: string; name: string }; result: null };
 	"session.close": { params: { sessionId: string }; result: null };

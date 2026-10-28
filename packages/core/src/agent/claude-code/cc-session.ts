@@ -69,6 +69,8 @@ export class ClaudeCodeSession implements RuntimeSession {
 	private model: ModelRef;
 	private name: string | undefined;
 	private resume: boolean;
+	/** Claude Code has stored a transcript for this session; before that there is nothing to resume. */
+	private persisted: boolean;
 	private q: Query | undefined;
 	private pump: Promise<void> | undefined;
 	private busSession: BusSession | undefined;
@@ -106,6 +108,7 @@ export class ClaudeCodeSession implements RuntimeSession {
 		this.model = opts.model;
 		this.name = opts.name;
 		this.resume = opts.resume;
+		this.persisted = opts.resume;
 		this.mode = () => this.gate.mode;
 		this.mapper = new CcMapper({ provider: opts.model.provider, emit: (e) => this.emit(e) });
 		this.mapper.setMessages(opts.history);
@@ -236,6 +239,7 @@ export class ClaudeCodeSession implements RuntimeSession {
 				this.mapper.handle(msg);
 				const m = msg as any;
 				if (m.type === "system" && m.subtype === "init" && typeof m.model === "string") this.mapper.model = m.model;
+				if (m.type === "assistant" || m.type === "result") this.persisted = true;
 				if (m.type === "result") this.onResult(m);
 			}
 		} catch (err) {
@@ -251,7 +255,7 @@ export class ClaudeCodeSession implements RuntimeSession {
 			this.compactDone = undefined;
 			compactDone?.(this.pendingError ?? "Claude Code stopped during compaction");
 			// A later prompt starts a fresh process that resumes the same session.
-			this.resume = true;
+			this.resume = this.persisted;
 			if (this.mapper.running) this.mapper.finish(this.abortRequested);
 		}
 	}
@@ -428,7 +432,7 @@ export class ClaudeCodeSession implements RuntimeSession {
 		this.grant?.revoke();
 		this.grant = undefined;
 		this.q = undefined;
-		this.resume = true;
+		this.resume = this.persisted;
 	}
 	async setThinking(_level: ThinkingLevel): Promise<void> {}
 	async setPermissionMode(mode: PermissionMode): Promise<void> {

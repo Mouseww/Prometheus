@@ -2,6 +2,7 @@
 // a path is only served from the places the conversation works in: its own folder and the folder its uploads went to.
 // (Not the system temp folder as a whole: it holds other programs' files.) Links are resolved first, so a symlink in
 // the workspace cannot point outside; anything else looks exactly like a file that does not exist.
+import { randomUUID } from "node:crypto";
 import { open, realpath, stat } from "node:fs/promises";
 import { basename, isAbsolute, relative, resolve, sep } from "node:path";
 import { AppError } from "@prometheus/protocol";
@@ -61,6 +62,25 @@ export async function readChunk(file: Downloadable, offset: number, length: numb
 	} finally {
 		await handle.close();
 	}
+}
+
+const TICKET_TTL_MS = 60_000;
+const tickets = new Map<string, { file: Downloadable; expires: number }>();
+
+/** A one-time id under which `file` may be fetched over plain HTTP for a short while. */
+export function issueTicket(file: Downloadable): string {
+	const now = Date.now();
+	for (const [id, t] of tickets) if (t.expires < now) tickets.delete(id);
+	const id = randomUUID();
+	tickets.set(id, { file, expires: now + TICKET_TTL_MS });
+	return id;
+}
+
+/** The file behind a ticket, or undefined when unknown or expired. Tickets are single-use. */
+export function takeTicket(id: string): Downloadable | undefined {
+	const t = tickets.get(id);
+	tickets.delete(id);
+	return t && t.expires >= Date.now() ? t.file : undefined;
 }
 
 /** Folders that, besides the conversation's own, may be downloaded from. */

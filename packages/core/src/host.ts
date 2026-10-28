@@ -48,7 +48,7 @@ import type { AgentRuntime, ResumeInit, RuntimeServices, RuntimeSession, Session
 import { toModelRef } from "./events.ts";
 import { listExternalApps, openInExternalApp, openUrlNative, pickFolderNative } from "./native-dialog.ts";
 import { checkImages, imageOnlyTitle, titleWithoutNote } from "./images.ts";
-import { extraRoots, readChunk, resolveDownload } from "./downloads.ts";
+import { extraRoots, issueTicket, readChunk, resolveDownload, takeTicket } from "./downloads.ts";
 import { UPLOAD_ROOT, pruneUploads, removeSessionUploads, saveAttachments } from "./uploads.ts";
 import { fullResultContent, slimMessage, slimMessages } from "./slim.ts";
 import { PermissionGate } from "./permission-gate.ts";
@@ -167,6 +167,11 @@ export class PrometheusHost {
 		const handler = (this.handlers as Partial<Record<RpcMethod, unknown>>)[method] as ((p: RpcParams<M>) => Promise<RpcResult<M>> | RpcResult<M>) | undefined;
 		if (!handler) throw new AppError("notFound", { what: method });
 		return handler(params ?? ({} as RpcParams<M>));
+	}
+
+	/** The file a `file.link` ticket stands for (consumed by the HTTP download route). */
+	takeDownload(id: string) {
+		return takeTicket(id);
 	}
 
 	async dispose(): Promise<void> {
@@ -702,6 +707,11 @@ export class PrometheusHost {
 			const file = await this.downloadable(sessionId, path);
 			return file ? { exists: true, name: file.name, size: file.size } : { exists: false };
 		},
+		"file.link": async ({ sessionId, path }) => {
+			const file = await this.downloadable(sessionId, path);
+			if (!file) throw new AppError("fileNotFound", { path });
+			return { id: issueTicket(file), name: file.name };
+		},
 		"file.read": async ({ sessionId, path, offset, length }) => {
 			const file = await this.downloadable(sessionId, path);
 			if (!file) throw new AppError("fileNotFound", { path });
@@ -873,6 +883,37 @@ export class PrometheusHost {
 			return rt.listAllModels ? rt.listAllModels(this.runtime.config.gateways()) : rt.listModels({ mode: "native" });
 		},
 		"agent.list": () => this.agentList(),
+		"agent.syncSessions": async ({ id }) => {
+			const agent = this.agentList().find((a) => a.id === id);
+			if (!agent) throw new AppError("notFound", { what: id });
+			const rt = await this.runtimeFor(agent.kind, agent.id);
+			const native = (await rt.listNative()).filter((n) => n.cwd);
+			const known = new Set(this.index.list().filter((e) => e.runtime === agent.kind).map((e) => e.nativeId));
+			const before = (await this.workspaces.list()).length;
+			await this.workspaces.ensure(native.map((n) => ({ path: n.cwd, modified: n.modified })));
+			let added = 0;
+			for (const n of native) {
+				if (known.has(n.ref.nativeId)) continue;
+				known.add(n.ref.nativeId);
+				this.index.upsert({
+					id: n.ref.id,
+					runtime: agent.kind,
+					nativeId: n.ref.nativeId,
+					cwd: normalizeDir(n.cwd),
+					...(n.name ? { name: n.name } : {}),
+					created: n.created,
+					modified: n.modified,
+					messageCount: n.messageCount,
+					firstMessage: titleWithoutNote(n.firstMessage).slice(0, 200),
+					gateway: { mode: "native" },
+					...(agent.id !== agent.kind ? { agent: agent.id } : {}),
+				});
+				added++;
+			}
+			await this.index.flush();
+			if (added) this.listener.sessionsChanged();
+			return { found: native.length, added, workspaces: (await this.workspaces.list()).length - before };
+		},
 		"agent.save": async ({ agent }) => {
 			const saved = await this.runtime.config.saveAgent(agent);
 			// A new executable or environment applies to chats started from now on.
