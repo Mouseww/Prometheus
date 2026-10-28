@@ -92,6 +92,7 @@ flowchart TB
     KB["knowledge"]
     Veil["veil：隐私面罩"]
   end
+  Model["模型服务"]
   subgraph Runtimes["Agent 运行时（会话内可切换）"]
     PI["PI"]
     CC["Claude Code"]
@@ -101,7 +102,9 @@ flowchart TB
   Desktop & Android & Browser --> WS --> Core
   TUI --> Core
   Core <-->|"switchRuntime：记录随会话带过去"| Runtimes
-  GW --> Runtimes
+  Runtimes -->|"模型请求"| Veil
+  Veil -->|"脱敏后"| GW
+  GW -->|"出网"| Model
   KB --> Core
 ```
 
