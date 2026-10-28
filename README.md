@@ -77,12 +77,32 @@ docker run -p 7420:7420 -e PROMETHEUS_TOKEN=<至少16位随机串> \
 
 ## 架构
 
-```text
-客户端：TUI / 桌面 / Web / 安卓
-        │  HTTP + WebSocket
-Prometheus Host（packages/core）：会话、插件、权限、UI 桥
-        │
-运行时：PI / Claude Code / Codex / OpenCode
+```mermaid
+flowchart TB
+  subgraph Clients["客户端：同一个会话"]
+    TUI["TUI 终端"]
+    Desktop["桌面 (Tauri 2)"]
+    Android["安卓"]
+    Browser["浏览器"]
+  end
+  subgraph Host["Prometheus Host"]
+    WS["HTTP + WebSocket"]
+    Core["core：会话 / 插件 / 权限 / UI 桥"]
+    GW["gateway：模型网关与本机中继"]
+    KB["knowledge"]
+    Veil["veil：隐私面罩"]
+  end
+  subgraph Runtimes["Agent 运行时（会话内可切换）"]
+    PI["PI"]
+    CC["Claude Code"]
+    CX["Codex"]
+    OC["OpenCode"]
+  end
+  Desktop & Android & Browser --> WS --> Core
+  TUI --> Core
+  Core <-->|"switchRuntime：记录随会话带过去"| Runtimes
+  GW --> Runtimes
+  KB --> Core
 ```
 
 | 目录 | 内容 |
