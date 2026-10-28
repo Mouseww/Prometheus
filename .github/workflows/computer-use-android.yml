@@ -4,6 +4,8 @@ name: computer-use-android
 on:
   workflow_dispatch:
   push:
+    # Branches only: a tag push ignores `paths` and would run this on every release.
+    branches: ["**"]
     paths:
       - "plugins/computer-use/src/driver/adb.ts"
       - "plugins/computer-use/scripts/e2e-android.ts"

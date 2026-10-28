@@ -5,6 +5,8 @@ name: computer-use-macos
 on:
   workflow_dispatch:
   push:
+    # Branches only: a tag push ignores `paths` and would run this on every release.
+    branches: ["**"]
     paths:
       - "plugins/computer-use/drivers/macos/**"
       - "plugins/computer-use/scripts/e2e-textedit.ts"
