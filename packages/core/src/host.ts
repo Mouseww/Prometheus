@@ -407,6 +407,28 @@ export class PrometheusHost {
 		await live.session.dispose();
 	}
 
+	/** Removes a session for good: its live state, transcript, uploads and list entry. */
+	private async deleteSession(sessionId: string): Promise<void> {
+		void removeSessionUploads(sessionId).catch(() => {});
+		const entry = this.index.get(sessionId);
+		if (entry && entry.runtime !== "pi") {
+			await this.closeSession(sessionId);
+			const rt = await this.runtimeFor(entry.runtime, entry.agent);
+			await rt.deleteNative({ runtime: entry.runtime, id: entry.id, nativeId: entry.nativeId }).catch(() => {});
+			this.index.delete(sessionId);
+			await this.workspaces.setArchived(sessionId, false);
+			this.listener.sessionsChanged();
+			return;
+		}
+		const live = this.live.get(sessionId);
+		const path = live?.session.ref().path ?? (await this.resolvePath(sessionId).catch(() => undefined));
+		await this.closeSession(sessionId);
+		if (path) await this.pi.deleteNative({ runtime: "pi", id: sessionId, nativeId: sessionId, path });
+		this.paths.delete(sessionId);
+		await this.workspaces.setArchived(sessionId, false);
+		this.listener.sessionsChanged();
+	}
+
 	private async listSessions(): Promise<SessionSummary[]> {
 		const infos = await this.pi.listNative();
 		for (const info of infos) if (info.ref.path) this.paths.set(info.ref.id, info.ref.path);
@@ -676,6 +698,7 @@ export class PrometheusHost {
 			const handoff = buildHandoff(state.messages, from === "pi" ? "PI" : from === "codex" ? "Codex" : from === "opencode" ? "OpenCode" : "Claude Code");
 			// PI carries the history itself; the others get the transcript as hidden first-turn context.
 			if (handoff && kind !== "pi") live.handoff = handoff;
+			await this.deleteSession(sessionId);
 			this.listener.sessionsChanged();
 			return this.snapshot(live);
 		},
@@ -740,24 +763,7 @@ export class PrometheusHost {
 			return null;
 		},
 		"session.delete": async ({ sessionId }) => {
-			void removeSessionUploads(sessionId).catch(() => {});
-			const entry = this.index.get(sessionId);
-			if (entry && entry.runtime !== "pi") {
-				await this.closeSession(sessionId);
-				const rt = await this.runtimeFor(entry.runtime);
-				await rt.deleteNative({ runtime: entry.runtime, id: entry.id, nativeId: entry.nativeId }).catch(() => {});
-				this.index.delete(sessionId);
-				await this.workspaces.setArchived(sessionId, false);
-				this.listener.sessionsChanged();
-				return null;
-			}
-			const live = this.live.get(sessionId);
-			const path = live?.session.ref().path ?? (await this.resolvePath(sessionId).catch(() => undefined));
-			await this.closeSession(sessionId);
-			if (path) await this.pi.deleteNative({ runtime: "pi", id: sessionId, nativeId: sessionId, path });
-			this.paths.delete(sessionId);
-			await this.workspaces.setArchived(sessionId, false);
-			this.listener.sessionsChanged();
+			await this.deleteSession(sessionId);
 			return null;
 		},
 

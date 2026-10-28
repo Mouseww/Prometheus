@@ -10,7 +10,7 @@ const M = defineMessages({
 	zh: {
 		title: "Agent",
 		hintDraft: "选择由哪个 Agent 干活，模型在旁边的选择器里选。开始后仍可随时切换",
-		hintSession: "切换会新开一个会话并带上当前记录，原会话保留",
+		hintSession: "切换后在当前会话里继续，已有记录会带过去",
 		busy: "回复结束后才能切换",
 		builtin: "内置，使用「网关」里配置的模型",
 		unavailable: "不可用",
@@ -20,7 +20,7 @@ const M = defineMessages({
 	en: {
 		title: "Agent",
 		hintDraft: "Pick which agent does the work; choose the model in the picker next to it. You can switch any time after starting",
-		hintSession: "Switching opens a new chat with the current transcript; this one is kept",
+		hintSession: "Switching continues in this chat; the transcript so far carries over",
 		busy: "Wait for the reply to finish",
 		builtin: "Built in; uses the models set up under Gateways",
 		unavailable: "Unavailable",

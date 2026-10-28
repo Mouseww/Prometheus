@@ -663,7 +663,7 @@ function customAgent(info: Pick<RuntimeInfo, "id" | "kind">): string | undefined
 	return info.id === info.kind ? undefined : info.id;
 }
 
-/** Continue the open conversation with another agent: a new session in the same folder that gets the transcript. The current model is kept when the new agent can use it. */
+/** Continue the open conversation with another agent: the conversation moves to another runtime in the same folder and the old session is deleted. The current model is kept when the new agent can use it. */
 export async function switchRuntime(info: RuntimeInfo): Promise<void> {
 	const session = get().session;
 	if (!session || session.isStreaming) return;
@@ -673,7 +673,9 @@ export async function switchRuntime(info: RuntimeInfo): Promise<void> {
 	const snap = await call((c) =>
 		c.rpc("session.switchRuntime", { sessionId: session.id, runtime: info.kind, agent: customAgent(info), ...(keep ? { model: { provider: keep.provider, id: keep.id } } : {}) }),
 	);
-	if (snap) activate(snap);
+	if (!snap) return;
+	get().client?.unsubscribe(session.id);
+	activate(snap);
 }
 
 /**
@@ -690,9 +692,12 @@ export async function setDraftAgent(info: RuntimeInfo): Promise<void> {
 		return;
 	}
 	const permission = replace.permissionMode;
+	get().client?.unsubscribe(replace.id);
 	await createSession(replace.cwd);
 	const created = get().session;
 	if (!created || created.id === replace.id) return;
+	// The empty session of the previous agent is of no use any more.
+	void get().client?.rpc("session.delete", { sessionId: replace.id }).catch(() => {});
 	set({ draftModel: null });
 	if (permission !== created.permissionMode) await setPermissionMode(permission);
 }

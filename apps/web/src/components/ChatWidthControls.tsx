@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
-import { CHAT_WIDTH_VAR, preferenceFromDrag, resolveChatWidth } from "../lib/chatWidth.ts";
+import { CHAT_WIDTH_EDGE, CHAT_WIDTH_MIN, CHAT_WIDTH_VAR, preferenceFromDrag, resolveChatWidth } from "../lib/chatWidth.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { setPrefs, usePrefs } from "../lib/prefs.ts";
 
@@ -85,11 +85,14 @@ export function ChatWidthControls({ container }: { container: HTMLElement | null
 	const preference = usePrefs((p) => p.chatWidth);
 	const column = useRef(0);
 	const startRef = useRef({ preference: 0, display: 0 });
+	// A column narrower than the minimum width has nothing to resize, and the handles would land outside it.
+	const [resizable, setResizable] = useState(true);
 
 	const publish = useCallback(
 		(width?: number) => {
 			if (!container) return;
 			column.current = container.offsetWidth;
+			setResizable(column.current >= CHAT_WIDTH_MIN + CHAT_WIDTH_EDGE);
 			container.style.setProperty(CHAT_WIDTH_VAR, `${resolveChatWidth(column.current, width ?? usePrefs.getState().chatWidth)}px`);
 		},
 		[container],
@@ -117,7 +120,7 @@ export function ChatWidthControls({ container }: { container: HTMLElement | null
 		reset: () => setPrefs({ chatWidth: null }),
 	};
 
-	if (!container) return null;
+	if (!container || !resizable) return null;
 	return (
 		<>
 			<Handle side="left" h={handlers} />
