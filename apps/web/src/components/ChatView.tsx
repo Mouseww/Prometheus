@@ -1,5 +1,6 @@
 import { LoaderCircle, RotateCcw } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import clsx from "clsx";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { loadEarlier, useStore } from "../lib/store.ts";
 import { ChatWidthControls } from "./ChatWidthControls.tsx";
@@ -11,12 +12,16 @@ import { Flame } from "./ui.tsx";
 const M = defineMessages({
 	zh: {
 		reconnecting: "连接中断，正在重连…",
+		opening: "正在打开会话…",
+		syncing: "正在同步最新内容…",
 		headline1: "想做什么，",
 		headline2: "直接告诉我",
 		tagline: "我是 Prometheus，你的 AI 助手。可以帮你读写文件、执行命令、查资料、写代码，先想清楚再动手。",
 	},
 	en: {
 		reconnecting: "Connection lost, reconnecting…",
+		opening: "Opening conversation…",
+		syncing: "Syncing the latest…",
 		headline1: "What do you want to do? ",
 		headline2: "Just tell me",
 		tagline: "I'm Prometheus, your AI assistant. I can read and write files, run commands, look things up and write code, thinking first before acting.",
@@ -53,8 +58,16 @@ function ChatBody() {
 	const session = useStore((s) => s.session);
 	const booted = useStore((s) => s.booted);
 	const conn = useStore((s) => s.conn);
+	const opening = useStore((s) => s.opening);
 	const scroller = useRef<HTMLDivElement>(null);
 	const pinned = useRef(true);
+
+	// Another conversation opens at its end, whatever was scrolled in the previous one, before it is painted.
+	useLayoutEffect(() => {
+		pinned.current = true;
+		const el = scroller.current;
+		if (el) el.scrollTop = el.scrollHeight;
+	}, [session?.id, opening]);
 
 	useEffect(() => {
 		const el = scroller.current;
@@ -68,6 +81,9 @@ function ChatBody() {
 			</div>
 		);
 	}
+
+	// Switched to a conversation whose contents are still on the way: show that the click landed.
+	if (opening && session?.id !== opening.id) return <Opening title={opening.title} />;
 
 	// No session yet, or one that has not received its first message: the new-chat page, which also hosts the workspace chooser.
 	if (!session || (session.messages.length === 0 && !session.pending)) return <NewChat reconnecting={conn !== "open"} />;
@@ -91,15 +107,51 @@ function ChatBody() {
 					const el = e.currentTarget;
 					pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
 				}}
-				className="min-h-0 flex-1 overflow-y-auto"
+				className="relative min-h-0 flex-1 overflow-y-auto"
 			>
-				<MessageList key={session.id} messages={session.messages} offset={session.messageOffset} onLoadEarlier={loadEarlier} tools={session.tools} streaming={session.isStreaming} pending={session.pending} />
+				{session.preview && (
+					<div className="sticky top-0 z-10 flex h-0 justify-center">
+						<span className="mt-2 flex h-6 items-center gap-1.5 rounded-full border border-ink-700 bg-ink-900/90 px-2.5 text-[11px] text-ink-400 shadow-lg backdrop-blur">
+							<LoaderCircle className="size-3 animate-spin" /> {t("syncing")}
+						</span>
+					</div>
+				)}
+				<div key={session.id} className="animate-fade">
+					<MessageList key={session.id} messages={session.messages} offset={session.messageOffset} onLoadEarlier={loadEarlier} tools={session.tools} streaming={session.isStreaming} pending={session.pending} />
+				</div>
 			</div>
 			<Widgets placement="aboveEditor" />
 			<TaskPanel />
 			<Composer />
 			<Widgets placement="belowEditor" />
 		</>
+	);
+}
+
+/** Placeholder while a conversation never seen in this tab comes over the network: its title, and the shape of a chat. */
+function Opening({ title }: { title?: string }) {
+	const t = useT(M);
+	const bar = "rounded-2xl bg-ink-800/70 animate-pulse";
+	return (
+		<div className="flex min-h-0 flex-1 flex-col animate-fade" aria-busy="true">
+			<div className="chat-col mx-auto flex w-full flex-1 flex-col justify-end gap-5 overflow-hidden px-5 pb-6">
+				<div className={clsx(bar, "ml-auto h-10 w-2/5")} />
+				<div className="space-y-2.5">
+					<div className={clsx(bar, "h-3.5 w-11/12")} />
+					<div className={clsx(bar, "h-3.5 w-4/5")} />
+					<div className={clsx(bar, "h-3.5 w-3/5")} />
+				</div>
+				<div className={clsx(bar, "ml-auto h-10 w-1/3")} />
+				<div className="space-y-2.5">
+					<div className={clsx(bar, "h-3.5 w-5/6")} />
+					<div className={clsx(bar, "h-3.5 w-2/3")} />
+				</div>
+			</div>
+			<div className="chat-col mx-auto flex w-full items-center justify-center gap-2 px-5 pb-6 text-sm text-ink-400">
+				<LoaderCircle className="size-4 shrink-0 animate-spin text-ember-400" />
+				<span className="truncate">{title || t("opening")}</span>
+			</div>
+		</div>
 	);
 }
 

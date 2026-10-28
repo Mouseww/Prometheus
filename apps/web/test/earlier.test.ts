@@ -53,9 +53,9 @@ describe("a conversation opened with only its latest turns", () => {
 		useStore.setState({ client: client as never, session: null });
 	});
 
-	it("asks for the latest turns only and remembers where they start", async () => {
+	it("leaves how many turns to send to the server and remembers where they start", async () => {
 		await openSession("s1");
-		expect(calls.find((c) => c.method === "session.open")?.params.tail).toBeGreaterThan(0);
+		expect(calls.find((c) => c.method === "session.open")?.params.tail).toBeUndefined();
 		expect(useStore.getState().session?.messageOffset).toBe(6);
 	});
 

@@ -2,9 +2,9 @@ import { copyToClipboard } from "../lib/clipboard.ts";
 import clsx from "clsx";
 import { Collapse } from "./ui.tsx";
 import { confirmDialog } from "../lib/dialogs.ts";
-import { Brain, Check, Eye, ChevronDown, ChevronRight, CircleAlert, Copy, GitBranch, LoaderCircle, Pencil, RotateCcw, Trash2 } from "lucide-react";
+import { Brain, Check, Eye, ChevronDown, ChevronRight, CircleAlert, Copy, GitBranch, LoaderCircle, Pencil, RotateCcw, Target, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { type AssistantMessage, type ChatMessage, type ImageContent, type SavedAttachment, splitAttachmentNote, type ToolCallContent, type ToolResultMessage, type UserMessage, withAttachmentNote } from "@prometheus/protocol";
+import { type AssistantMessage, type ChatMessage, type ImageContent, parseGoalDirective, type SavedAttachment, splitAttachmentNote, stripGoalStatus, type ToolCallContent, type ToolResultMessage, type UserMessage, withAttachmentNote } from "@prometheus/protocol";
 import { FileText } from "lucide-react";
 import { DownloadButton } from "./FileDownloadButton.tsx";
 import { formatSize } from "../lib/attachments.ts";
@@ -43,6 +43,7 @@ const M = defineMessages({
 		loadingFull: "加载中…",
 		earlier: "加载更早的 {n} 轮对话",
 		earlierMore: "加载更早的对话",
+		goalTurn: "目标自动推进 · 第 {n}/{max} 轮",
 	},
 	en: {
 		thinkingLive: "Thinking…",
@@ -65,6 +66,7 @@ const M = defineMessages({
 		loadingFull: "Loading…",
 		earlier: "Load {n} earlier turns",
 		earlierMore: "Load earlier turns",
+		goalTurn: "Working toward the goal · turn {n}/{max}",
 	},
 });
 
@@ -79,6 +81,32 @@ function userParts(m: UserMessage): { text: string; files: SavedAttachment[]; sk
 	const hit = /^<skill name="([^"]*)"[^>]*>[\s\S]*?<\/skill>(?:\r?\n){0,2}/.exec(text);
 	if (!hit) return { text, files };
 	return { text: text.slice(hit[0].length), files, skill: { name: hit[1] ?? "", raw: hit[0] } };
+}
+
+/** A turn the host sent for /goal: the objective once, then a thin divider per continuation, never the instructions. */
+function GoalMarker({ turn, maxTurns, objective }: { turn: number; maxTurns: number; objective: string }) {
+	const t = useT(M);
+	if (turn <= 1) {
+		return (
+			<div className="flex justify-end animate-rise">
+				<div className="flex max-w-[85%] flex-col items-end gap-1.5">
+					<div className="flex items-center gap-1.5 font-mono text-[11px] text-ember-300">
+						<Target className="size-3.5" /> /goal
+					</div>
+					<div className="rounded-2xl rounded-br-md border border-ember-500/30 bg-gradient-to-b from-ink-800 to-ink-850 px-4 py-2.5 text-[15px] whitespace-pre-wrap text-ink-100">{objective}</div>
+				</div>
+			</div>
+		);
+	}
+	return (
+		<div className="flex items-center gap-3 text-[11px] text-ink-500" title={objective}>
+			<span className="h-px flex-1 bg-ink-800" />
+			<span className="flex items-center gap-1.5">
+				<Target className="size-3 text-ember-400/70" /> {t("goalTurn", { n: turn, max: maxTurns })}
+			</span>
+			<span className="h-px flex-1 bg-ink-800" />
+		</div>
+	);
 }
 
 /** Attached documents as small cards. */
@@ -317,7 +345,7 @@ function AssistantBlock({
 				}
 				return (
 					<div key={i} className={clsx(live && i === last && "caret")}>
-						<Markdown text={block.text} />
+						<Markdown text={stripGoalStatus(block.text)} />
 					</div>
 				);
 			})}
@@ -332,7 +360,7 @@ function AssistantBlock({
 
 function assistantText(m: AssistantMessage): string {
 	return m.content
-		.map((c) => (c?.type === "text" ? c.text : ""))
+		.map((c) => (c?.type === "text" ? stripGoalStatus(c.text) : ""))
 		.filter(Boolean)
 		.join("\n\n");
 }
@@ -589,6 +617,8 @@ export function MessageList({
 			{messages.map((m, i) => {
 				if (i < start) return null;
 				if (m.role === "user") {
+					const goal = parseGoalDirective(rawUserText(m));
+					if (goal) return <GoalMarker key={i + offset} turn={goal.turn} maxTurns={goal.maxTurns} objective={goal.objective} />;
 					const { text, files: attachedFiles, skill } = userParts(m);
 					const editing = editingAt === i && !streaming;
 					return (

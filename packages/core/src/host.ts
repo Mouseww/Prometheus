@@ -12,7 +12,10 @@ import {
 	type ChatMessage,
 	encodeError,
 	type ModelPricing,
+	type CommandInfo,
 	type DirListing,
+	type HostSettings,
+	parseGoalCommand,
 	type ImageContent,
 	type MessageRef,
 	type ModelRef,
@@ -46,6 +49,7 @@ import { SessionIndex } from "./agent/session-index.ts";
 import { firstUserText } from "./agent/pi/tokens.ts";
 import type { AgentRuntime, ResumeInit, RuntimeServices, RuntimeSession, SessionHooks } from "./agent/types.ts";
 import { toModelRef } from "./events.ts";
+import { GoalTracker, type GoalView } from "./goal.ts";
 import { listExternalApps, openInExternalApp, openUrlNative, pickFolderNative } from "./native-dialog.ts";
 import { checkImages, imageOnlyTitle, titleWithoutNote } from "./images.ts";
 import { extraRoots, issueTicket, readChunk, resolveDownload, takeTicket } from "./downloads.ts";
@@ -96,6 +100,40 @@ const MAX_WARMED = 3;
  * Index where the last `turns` turns of `messages[0..end)` begin. A turn starts at a user message, so a reply and its
  * tool calls are never split from the question; 0 when the whole range is shorter than that.
  */
+/**
+ * How much of a conversation goes out at a time is the server's call, whatever a client asks: the latest OPEN_TURNS turns
+ * when one opens, PAGE_TURNS more per page when scrolling up, and either way no more than about PAGE_BYTES (after tool
+ * results are cut down) unless a single turn is bigger. A client may ask for fewer, never more.
+ */
+export const OPEN_TURNS = 6;
+export const PAGE_TURNS = 10;
+export const PAGE_BYTES = 160 * 1024;
+
+/**
+ * The slimmed messages of whole turns ending before `end`, newest last: at most `turns` turns, and stopping at the first
+ * turn boundary past `budget` bytes of JSON. Always at least one turn, so a page is never empty while there is history.
+ */
+export function tailPage(messages: readonly ChatMessage[], end: number, turns: number, budget = PAGE_BYTES): { messages: ChatMessage[]; offset: number } {
+	const newestFirst: ChatMessage[] = [];
+	let bytes = 0;
+	let seen = 0;
+	let start = 0;
+	for (let i = end - 1; i >= 0; i--) {
+		const m = slimMessage(messages[i]!);
+		newestFirst.push(m);
+		bytes += JSON.stringify(m).length;
+		if (m.role === "user" && (++seen >= turns || bytes >= budget)) {
+			start = i;
+			break;
+		}
+	}
+	// Ran out of history before either limit: everything up to `end` goes, including anything before the first user message.
+	return { messages: newestFirst.reverse(), offset: start };
+}
+
+/** A client's requested number of turns, held to the server's limit. */
+const turnsWanted = (asked: number | undefined, limit: number) => (asked && asked > 0 ? Math.min(Math.floor(asked), limit) : limit);
+
 export function turnStart(messages: readonly { role: string }[], end: number, turns: number): number {
 	let seen = 0;
 	for (let i = end - 1; i >= 0; i--) {
@@ -104,6 +142,9 @@ export function turnStart(messages: readonly { role: string }[], end: number, tu
 	}
 	return 0;
 }
+/** Offered in every chat's slash menu, whatever the agent. */
+const GOAL_COMMAND: CommandInfo = { name: "goal", description: "Set an objective; the agent keeps working on its own until it is done (/goal pause | resume | clear)", source: "builtin" };
+
 /** Agents every host offers; the user can configure them but not delete them. */
 const BUILTIN_AGENTS = ["claude-code", "codex", "opencode"] as const;
 const AGENT_LABEL = { "claude-code": "Claude Code", codex: "Codex", opencode: "OpenCode" } as const;
@@ -133,6 +174,12 @@ export class PrometheusHost {
 	private readonly index: SessionIndex;
 	private readonly externalRuntimes = new Map<string, AgentRuntime>();
 	private externalServices: Promise<RuntimeServices> | undefined;
+	/** /goal: keeps a conversation going on its own until the agent reports its objective done. */
+	private readonly goals = new GoalTracker({
+		prompt: (id, text) => this.prompt(id, text, undefined, undefined),
+		view: (id) => this.goalView(id),
+		emit: (id, goal) => this.listener.event(id, { type: "goal_update", goal }),
+	});
 
 	private constructor(runtime: Runtime, pi: PiRuntime, options: PrometheusHostOptions) {
 		this.runtime = runtime;
@@ -175,6 +222,7 @@ export class PrometheusHost {
 	}
 
 	async dispose(): Promise<void> {
+		this.goals.dispose();
 		for (const [id] of this.live) await this.closeSession(id);
 		if (this.externalServices) {
 			const services = await this.externalServices.catch(() => undefined);
@@ -317,7 +365,10 @@ export class PrometheusHost {
 				session = s;
 				id = s.id;
 			},
-			event: (e) => this.listener.event(id, e.type === "message_start" || e.type === "message_end" ? { ...e, message: slimMessage(e.message) } : e),
+			event: (e) => {
+				this.listener.event(id, e.type === "message_start" || e.type === "message_end" ? { ...e, message: slimMessage(e.message) } : e);
+				if (e.type === "agent_settled") this.goals.settled(id, e.aborted);
+			},
 			sessionsChanged: () => {
 				const current = this.live.get(id);
 				if (current) this.syncIndex(id, current);
@@ -397,7 +448,55 @@ export class PrometheusHost {
 	/** Sessions opened by `session.warm` that no one has opened for real yet, oldest first. */
 	private warmed: string[] = [];
 
+	/** What the goal loop needs to decide on the next turn. */
+	private goalView(sessionId: string): GoalView | undefined {
+		const live = this.live.get(sessionId);
+		if (!live) return undefined;
+		const { session } = live;
+		const { queue } = session.snapshotState();
+		const messages = session.messages();
+		const last = [...messages].reverse().find((m) => m.role === "assistant") as { stopReason?: string; errorMessage?: string } | undefined;
+		const failed = last?.stopReason === "error";
+		return {
+			isStreaming: session.isStreaming,
+			queued: queue.steering.length + queue.followUp.length > 0,
+			lastReply: session.lastReply(),
+			...(failed ? { error: last?.errorMessage || "error" } : {}),
+		};
+	}
+
+	/** `/goal ...` typed in the chat; null when the text is something else. */
+	private async goalCommand(sessionId: string, text: string): Promise<PromptDisposition | null> {
+		const command = parseGoalCommand(text);
+		if (!command) return null;
+		const live = this.require(sessionId);
+		switch (command.action) {
+			case "set": {
+				const idle = !live.session.isStreaming;
+				await this.goals.set(sessionId, command.objective, command.maxTurns);
+				return idle && live.session.isStreaming ? "started" : "handled";
+			}
+			case "pause":
+				this.goals.pause(sessionId);
+				return "handled";
+			case "resume":
+				await this.goals.resume(sessionId);
+				return "handled";
+			case "clear":
+				this.goals.clear(sessionId);
+				return "handled";
+			case "show": {
+				// Re-announce the goal so every client shows it again; nothing to show tells the user how to set one.
+				const goal = this.goals.get(sessionId);
+				if (goal) this.listener.event(sessionId, { type: "goal_update", goal });
+				else this.listener.uiRequest(sessionId, { id: `goal-${Date.now()}`, method: "notify", message: "/goal <objective> [--max N] · /goal pause · /goal resume · /goal clear", level: "info" });
+				return "handled";
+			}
+		}
+	}
+
 	private async closeSession(sessionId: string): Promise<void> {
+		this.goals.drop(sessionId);
 		const live = this.live.get(sessionId);
 		if (!live) return;
 		live.bridge.cancelAll();
@@ -439,7 +538,8 @@ export class PrometheusHost {
 		// A first reply still in flight has no session file yet, so list it from memory.
 		const unsaved: SessionSummary[] = [];
 		for (const [id, live] of this.live) {
-			if (listed.has(id) || !live.session.isStreaming) continue;
+			// Other agents' conversations are listed from the index below; listing them here too showed the same id twice.
+			if (listed.has(id) || !live.session.isStreaming || live.session.ref().runtime !== "pi" || this.index.get(id)) continue;
 			const state = live.session.snapshotState();
 			unsaved.push({
 				id,
@@ -499,14 +599,14 @@ export class PrometheusHost {
 
 	private snapshot(live: LiveSession, tail?: number): SessionSnapshot {
 		const s = live.session.snapshotState();
-		const from = tail && tail > 0 ? turnStart(s.messages, s.messages.length, tail) : 0;
+		const page = tailPage(s.messages, s.messages.length, turnsWanted(tail, OPEN_TURNS));
 		return {
 			id: s.id,
 			name: s.name,
 			cwd: s.cwd,
 			workspaceId: workspaceId(s.cwd),
-			messages: slimMessages(from > 0 ? s.messages.slice(from) : s.messages),
-			...(from > 0 ? { messageOffset: from } : {}),
+			messages: page.messages,
+			...(page.offset > 0 ? { messageOffset: page.offset } : {}),
 			model: s.model,
 			thinkingLevel: s.thinkingLevel,
 			availableThinkingLevels: s.availableThinkingLevels,
@@ -521,6 +621,7 @@ export class PrometheusHost {
 			capabilities: live.session.capabilities,
 			...(this.gatewayOf(live.session.ref()) ? { gateway: this.gatewayOf(live.session.ref()) } : {}),
 			...(this.index.get(s.id)?.agent ? { agent: this.index.get(s.id)?.agent } : {}),
+			...(this.goals.get(s.id) ? { goal: this.goals.get(s.id) } : {}),
 		};
 	}
 
@@ -574,7 +675,9 @@ export class PrometheusHost {
 	// ---------- message operations ----------
 
 	private resetMessages(id: string, live: LiveSession): void {
-		this.listener.event(id, { type: "messages_reset", messages: slimMessages(live.session.messages()) });
+		const all = live.session.messages();
+		const page = tailPage(all, all.length, OPEN_TURNS);
+		this.listener.event(id, { type: "messages_reset", messages: page.messages, ...(page.offset > 0 ? { offset: page.offset } : {}) });
 		this.listener.sessionsChanged();
 	}
 
@@ -640,6 +743,17 @@ export class PrometheusHost {
 		return { path: dir, parent: parent === dir ? null : parent, dirs, roots, home, ...(configured ? { workspaceRoot: configured } : {}) };
 	}
 
+	private hostSettings(): HostSettings {
+		return { autoCompaction: this.pi.autoCompaction(), workspaceRoot: this.workspaceRoot(), defaultAgent: this.defaultAgent() };
+	}
+
+	/** The agent new chats start with; falls back to PI when the configured one was deleted or hidden. */
+	private defaultAgent(): string {
+		const id = this.runtime.config.get().defaultAgent?.trim();
+		if (!id || id === "pi") return "pi";
+		return this.agentList().some((a) => a.id === id && a.enabled !== false) ? id : "pi";
+	}
+
 	/** The configured default workspace root, or "" when unset or gone from this machine. */
 	private workspaceRoot(): string {
 		const root = this.runtime.config.get().workspaceRoot?.trim();
@@ -698,6 +812,8 @@ export class PrometheusHost {
 			const handoff = buildHandoff(state.messages, from === "pi" ? "PI" : from === "codex" ? "Codex" : from === "opencode" ? "OpenCode" : "Claude Code");
 			// PI carries the history itself; the others get the transcript as hidden first-turn context.
 			if (handoff && kind !== "pi") live.handoff = handoff;
+			// A goal in progress carries on with the new agent.
+			this.goals.move(sessionId, live.session.id);
 			await this.deleteSession(sessionId);
 			this.listener.sessionsChanged();
 			return this.snapshot(live);
@@ -743,8 +859,7 @@ export class PrometheusHost {
 		"session.messages": async ({ sessionId, before, turns }) => {
 			const messages = (await this.open(sessionId)).session.snapshotState().messages;
 			const end = Math.max(0, Math.min(before, messages.length));
-			const offset = turnStart(messages, end, turns);
-			return { messages: slimMessages(messages.slice(offset, end)), offset };
+			return tailPage(messages, end, turnsWanted(turns, PAGE_TURNS));
 		},
 		"session.rename": async ({ sessionId, name }) => {
 			(await this.open(sessionId)).session.setName(name.trim());
@@ -828,8 +943,8 @@ export class PrometheusHost {
 		},
 		"fs.mkdir": ({ parent, name }) => this.createDir(parent, name),
 
-		"settings.get": () => ({ autoCompaction: this.pi.autoCompaction(), workspaceRoot: this.workspaceRoot() }),
-		"settings.set": async ({ autoCompaction, workspaceRoot }) => {
+		"settings.get": () => this.hostSettings(),
+		"settings.set": async ({ autoCompaction, workspaceRoot, defaultAgent }) => {
 			if (typeof autoCompaction === "boolean") {
 				await this.pi.setAutoCompaction(autoCompaction);
 				// Live sessions cache their own SettingsManager.
@@ -840,7 +955,12 @@ export class PrometheusHost {
 				if (next && (!existsSync(next) || !statSync(next).isDirectory())) throw new AppError("dirNotFound", { dir: next });
 				await this.runtime.config.setWorkspaceRoot(next);
 			}
-			return { autoCompaction: this.pi.autoCompaction(), workspaceRoot: this.workspaceRoot() };
+			if (typeof defaultAgent === "string") {
+				const next = defaultAgent.trim() || "pi";
+				if (next !== "pi" && !this.agentList().some((a) => a.id === next)) throw new AppError("notFound", { what: next });
+				await this.runtime.config.setDefaultAgent(next);
+			}
+			return this.hostSettings();
 		},
 		"session.stats": ({ sessionId }) => this.require(sessionId).session.usage(),
 
@@ -852,8 +972,21 @@ export class PrometheusHost {
 			// Documents the model cannot read itself: stored in a temporary folder, and the message says where.
 			const saved = files?.length ? await saveAttachments(sessionId, files) : [];
 			const body = withAttachmentNote(text, saved);
+			const goal = !saved.length && !images?.length ? await this.goalCommand(sessionId, text) : null;
+			if (goal) return { disposition: goal };
 			const disposition = await this.prompt(sessionId, body, images, delivery);
 			return { disposition };
+		},
+		"goal.set": async ({ sessionId, objective, maxTurns }) => {
+			this.require(sessionId);
+			if (!objective?.trim()) throw new AppError("messageEmpty");
+			return this.goals.set(sessionId, objective, maxTurns);
+		},
+		"goal.control": async ({ sessionId, action }) => {
+			this.require(sessionId);
+			if (action === "pause") return this.goals.pause(sessionId);
+			if (action === "resume") return this.goals.resume(sessionId);
+			return this.goals.clear(sessionId);
 		},
 		"chat.abort": async ({ sessionId }) => {
 			await this.require(sessionId).session.abort();
@@ -981,7 +1114,7 @@ export class PrometheusHost {
 			return null;
 		},
 
-		"commands.list": ({ sessionId }) => this.require(sessionId).session.commands(),
+		"commands.list": async ({ sessionId }) => [GOAL_COMMAND, ...(await this.require(sessionId).session.commands())],
 		"tools.list": ({ sessionId }) => this.require(sessionId).session.tools(),
 
 		"ui.respond": ({ sessionId, requestId, response }) => {

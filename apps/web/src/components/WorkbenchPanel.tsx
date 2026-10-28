@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import { Eye, FileText, FolderTree, LoaderCircle, RefreshCw, SquareTerminal, X } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { highlightLines, languageFor } from "../lib/highlight.ts";
 import type { WorkbenchFile } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { activateWorkbenchTab, closeWorkbenchTab, pluginCall, useStore, type WorkbenchTab } from "../lib/store.ts";
@@ -106,8 +107,14 @@ function FileView({ tab }: { tab: Extract<WorkbenchTab, { kind: "file" }> }) {
 		lineRef.current?.scrollIntoView({ block: "center" });
 	}, [file, tab.line]);
 
-	const lines = file?.kind === "text" ? (file.text ?? "").split("\n") : [];
+	const lines = useMemo(() => (file?.kind === "text" ? (file.text ?? "").split("\n") : []), [file]);
 	const isMd = file?.language === "markdown";
+	// Coloured lines, same count as `lines`; null shows the text plain (unknown language, or too big to colour quickly).
+	const colored = useMemo(() => {
+		if (file?.kind !== "text") return null;
+		const html = highlightLines(file.text ?? "", languageFor(file.name, file.language));
+		return html && html.length === lines.length ? html : null;
+	}, [file, lines]);
 	return (
 		<div className="flex h-full flex-col">
 			<div className="flex shrink-0 items-center gap-2 border-b hairline px-3 py-1.5 text-xs">
@@ -147,12 +154,16 @@ function FileView({ tab }: { tab: Extract<WorkbenchTab, { kind: "file" }> }) {
 					</div>
 				)}
 				{file?.kind === "text" && !(isMd && rendered) && (
-					<table className="w-full border-collapse font-mono text-[12px] leading-5">
+					<table className={clsx("code-view w-full border-collapse font-mono text-[12px] leading-5", colored && "hljs")}>
 						<tbody>
 							{lines.map((line, i) => (
 								<tr key={i} ref={tab.line === i + 1 ? lineRef : undefined} className={clsx(tab.line === i + 1 && "bg-ember-500/15")}>
 									<td className="w-10 select-none px-2 text-right align-top text-ink-600">{i + 1}</td>
-									<td className="whitespace-pre-wrap break-all pr-3 text-ink-200">{line || " "}</td>
+									{colored ? (
+										<td className="whitespace-pre-wrap break-all pr-3" dangerouslySetInnerHTML={{ __html: colored[i] || " " }} />
+									) : (
+										<td className="whitespace-pre-wrap break-all pr-3 text-ink-200">{line || " "}</td>
+									)}
 								</tr>
 							))}
 						</tbody>

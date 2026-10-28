@@ -276,7 +276,20 @@ function makeServer(kind: Kind): Server {
 	return server;
 }
 
-const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
+/**
+ * permessage-deflate: conversations are JSON text and shrink several times over, which is what decides how long opening
+ * one takes on a slow link. Browsers negotiate it on their own. Small frames (streamed deltas, acks) are sent as they are,
+ * where compressing would cost more time than it saves bytes; the context kept between frames makes the rest smaller still.
+ */
+const wss = new WebSocketServer({
+	noServer: true,
+	maxPayload: MAX_FRAME_BYTES,
+	perMessageDeflate: {
+		threshold: 1024,
+		zlibDeflateOptions: { level: 6, memLevel: 8 },
+		concurrencyLimit: 8,
+	},
+});
 
 // ---------- network settings ----------
 

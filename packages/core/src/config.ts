@@ -30,6 +30,8 @@ export interface PrometheusConfig {
 	network: NetworkConfig;
 	/** Default parent directory for workspaces: the folder picker opens here and new workspaces are created inside it. */
 	workspaceRoot: string;
+	/** Agent id new chats start with; empty means PI. */
+	defaultAgent: string;
 }
 
 function normalizeNetwork(raw: Partial<NetworkConfig> | undefined): NetworkConfig {
@@ -47,7 +49,7 @@ export function defaultDataDir(): string {
 	return process.env.PROMETHEUS_HOME || join(homedir(), ".prometheus");
 }
 
-const EMPTY: PrometheusConfig = { gateways: [], agents: [], plugins: [], disabledPlugins: [], pluginSettings: {}, network: normalizeNetwork(undefined), workspaceRoot: "" };
+const EMPTY: PrometheusConfig = { gateways: [], agents: [], plugins: [], disabledPlugins: [], pluginSettings: {}, network: normalizeNetwork(undefined), workspaceRoot: "", defaultAgent: "" };
 
 /** config.json holds API keys, so it is always written owner-only. */
 export class ConfigStore {
@@ -73,6 +75,7 @@ export class ConfigStore {
 				pluginSettings: raw.pluginSettings ?? {},
 				network: normalizeNetwork(raw.network),
 				workspaceRoot: typeof raw.workspaceRoot === "string" ? raw.workspaceRoot : "",
+				defaultAgent: typeof raw.defaultAgent === "string" ? raw.defaultAgent : "",
 			};
 		} catch (err) {
 			if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
@@ -100,6 +103,13 @@ export class ConfigStore {
 	/** Empty string clears the setting, falling back to the server's home directory. */
 	async setWorkspaceRoot(path: string): Promise<void> {
 		this.config.workspaceRoot = path.trim();
+		await this.persist();
+	}
+
+	/** Empty string (or "pi") goes back to PI. */
+	async setDefaultAgent(id: string): Promise<void> {
+		const next = id.trim();
+		this.config.defaultAgent = next === "pi" ? "" : next;
 		await this.persist();
 	}
 

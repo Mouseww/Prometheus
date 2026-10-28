@@ -14,6 +14,7 @@ import {
 	FolderSearch,
 	FolderPlus,
 	GitBranch,
+	LoaderCircle,
 	LogOut,
 	MoreHorizontal,
 	Pencil,
@@ -218,6 +219,8 @@ function SessionRow({ s, active }: { s: SessionSummary; active: boolean }) {
 	const [editing, setEditing] = useState(false);
 	const [name, setName] = useState("");
 	const title = s.name || localizeError(s.firstMessage ?? "") || t("newSession");
+	// Clicked, contents still on the way (or only the copy from the last visit is shown).
+	const loading = useStore((st) => st.opening?.id === s.id || (st.session?.id === s.id && !!st.session.preview));
 	const startRename = () => {
 		setName(s.name || localizeError(s.firstMessage ?? "") || "");
 		setEditing(true);
@@ -264,7 +267,7 @@ function SessionRow({ s, active }: { s: SessionSummary; active: boolean }) {
 			<div className="min-w-0 flex-1">
 				<div className="truncate text-[13px] text-ink-200">{title}</div>
 				<div className="flex items-center gap-1.5 text-[10.5px] text-ink-500">
-					{s.live && <span className="size-1.5 rounded-full bg-moss-400" />}
+					{loading ? <LoaderCircle className="size-2.5 animate-spin text-ember-400" /> : s.live && <span className="size-1.5 rounded-full bg-moss-400" />}
 					<span>{relativeTime(s.modified, lang)}</span>
 					<span>·</span>
 					<span>{t("messages", { n: s.messageCount })}</span>
@@ -451,6 +454,8 @@ export function Sidebar({ target, onDisconnect }: { target: BackendTarget; onDis
 	const sessions = useStore((s) => s.sessions);
 	const workspaces = useStore((s) => s.workspaces);
 	const active = useStore((s) => s.session);
+	// The row clicked lights up at once, before its contents arrive.
+	const openingId = useStore((s) => s.opening?.id);
 	const view = useStore((s) => s.view);
 	const conn = useStore((s) => s.conn);
 	const plugins = useStore((s) => s.plugins);
@@ -526,7 +531,7 @@ export function Sidebar({ target, onDisconnect }: { target: BackendTarget; onDis
 					</button>
 				)}
 				{workspaces.map((w) => (
-					<WorkspaceGroup key={w.id} w={w} sessions={grouped.get(w.id) ?? []} activeId={active?.id} current={active?.workspaceId === w.id} />
+					<WorkspaceGroup key={w.id} w={w} sessions={grouped.get(w.id) ?? []} activeId={openingId ?? active?.id} current={active?.workspaceId === w.id} />
 				))}
 			</div>
 

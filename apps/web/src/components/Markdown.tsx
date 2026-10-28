@@ -18,11 +18,11 @@ const components = {
 	},
 };
 
-// No language auto-detection: it runs every grammar over each unlabeled code block, which dominates the cost of opening a long chat.
+// Unlabeled code blocks get their language detected, so every code block is coloured.
 export const Markdown = memo(function Markdown({ text }: { text: string }) {
 	return (
 		<div className="prose-forge">
-			<ReactMarkdown components={components} remarkPlugins={[remarkGfm]} rehypePlugins={[[rehypeHighlight, { ignoreMissing: true }]]}>
+			<ReactMarkdown components={components} remarkPlugins={[remarkGfm]} rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}>
 				{text}
 			</ReactMarkdown>
 		</div>

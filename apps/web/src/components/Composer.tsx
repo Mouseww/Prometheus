@@ -10,6 +10,7 @@ import { abortRun, openSettings, pluginCall, sendPrompt, setModel, setPermission
 import { ContextMeter } from "./ContextMeter.tsx";
 import { ModePicker } from "./ModePicker.tsx";
 import { RuntimeMenu } from "./RuntimeMenu.tsx";
+import { GoalBar } from "./GoalBar.tsx";
 import { nextPermissionMode, PermissionPicker } from "./PermissionPicker.tsx";
 import { VoiceButton } from "./VoiceButton.tsx";
 import { usePopover } from "./TitleBar.tsx";
@@ -433,6 +434,8 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 	const submit = async () => {
 		const value = text.trim();
 		if ((!value && !images.length && !docs.length) || reading > 0) return;
+		// The copy from the last visit is on screen and not followed yet; sending waits the moment until the real one is in.
+		if (session?.preview) return;
 		if (!session) {
 			toast(t("needWorkspace"), "warning");
 			return;
@@ -667,6 +670,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 				</div>
 			)}
 
+			{!newChat && <GoalBar />}
 			<SessionChanges />
 
 			<div className="mb-2 px-1">
@@ -784,7 +788,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 							<button
 								type="button"
 								onClick={() => void submit()}
-								disabled={(!text.trim() && images.length === 0 && docs.length === 0) || reading > 0 || !session}
+								disabled={(!text.trim() && images.length === 0 && docs.length === 0) || reading > 0 || !session || !!session.preview}
 								title={session ? (streaming ? t("sendAs", { mode: t(sendMode) }) : undefined) : t("needWorkspace")}
 								className={clsx(
 									"grid h-8 place-items-center bg-ember-500 text-white transition hover:bg-ember-400 disabled:bg-ink-800 disabled:text-ink-600",

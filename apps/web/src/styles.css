@@ -55,12 +55,17 @@ html[data-chat-resizing] { cursor: col-resize; user-select: none; }
 	--color-rose-400: #f0767a;
 
 	--animate-rise: rise 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+	--animate-fade: fade 0.18s ease-out both;
 	/* Slow, subtle life signs: the flame and the connection dot should never nag for attention. */
 	--animate-flicker: flicker 7s ease-in-out infinite;
 	--animate-breathe: breathe 3.2s ease-in-out infinite;
 	--animate-spin: spin 2.4s linear infinite;
 	--animate-pulse: pulse 3.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 
+	@keyframes fade {
+		from { opacity: 0; }
+		to { opacity: 1; }
+	}
 	@keyframes rise {
 		from { opacity: 0; transform: translateY(8px); }
 		to { opacity: 1; transform: none; }
@@ -215,6 +220,9 @@ body { margin: 0; overflow: hidden; overscroll-behavior: none; }
 .prose-forge pre code.hljs { background: transparent; padding: 0; }
 /* highlight.js theme is dark-only; keep code blocks dark in the light theme. */
 :root[data-theme="light"] .prose-forge pre { background: #1f1b18 !important; color: #f2e9df; border-color: transparent; }
+/* Side file viewer: highlight.js colours on the panel's own background. The theme is dark-only, so the light theme keeps code dark. */
+.code-view.hljs { background: transparent; color: var(--color-ink-200); padding: 0; }
+:root[data-theme="light"] .code-view.hljs { background: #1f1b18; color: #f2e9df; }
 .prose-forge table { border-collapse: collapse; font-size: 0.88rem; display: block; overflow-x: auto; }
 .prose-forge th, .prose-forge td { border: 1px solid var(--color-ink-700); padding: 0.4em 0.8em; }
 .prose-forge th { background: var(--color-ink-850); font-weight: 600; }

@@ -1,9 +1,9 @@
-import { Bot, CircleAlert, Download, Pencil, Plus, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
+import { Bot, CircleAlert, Download, Pencil, Plus, RefreshCw, RotateCcw, Star, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { AgentProfile, RuntimeInfo } from "@prometheus/protocol";
 import { confirmDialog } from "../lib/dialogs.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { call, callNewer, refreshRuntimes, toast, useStore } from "../lib/store.ts";
+import { call, callNewer, refreshHostSettings, refreshRuntimes, setDefaultAgent, toast, useStore } from "../lib/store.ts";
 import { Badge, Button, Dialog, Empty, Field, Input, PageHeader, Select } from "./ui.tsx";
 
 const M = defineMessages({
@@ -29,6 +29,11 @@ const M = defineMessages({
 		installedAt: "由 Prometheus 安装",
 		oldServer: "已连接的服务器版本较旧，不支持多 Agent 运行时。请把服务器升级到 0.12.0 或更高版本。",
 		piNote: "PI 内置，无需配置；它使用「AI 网关」里配置的模型。",
+		default: "默认",
+		setDefault: "设为默认",
+		setDefaultTitle: "新建会话时默认使用这个 Agent",
+		defaultSet: "新会话将默认使用 {name}",
+		defaultHidden: "已隐藏的 Agent 不能设为默认",
 		executable: "可执行文件",
 		fromPath: "PATH 中的默认命令",
 		env: "{n} 个环境变量",
@@ -83,6 +88,11 @@ const M = defineMessages({
 		installedAt: "Installed by Prometheus",
 		oldServer: "The connected server is older and has no agent runtimes. Upgrade it to 0.12.0 or later.",
 		piNote: "PI is built in and needs no setup; it uses the models set up under AI Gateways.",
+		default: "Default",
+		setDefault: "Set as default",
+		setDefaultTitle: "New chats start with this agent",
+		defaultSet: "New chats now start with {name}",
+		defaultHidden: "A hidden agent cannot be the default",
 		executable: "Executable",
 		fromPath: "Default command on PATH",
 		env: "{n} environment variables",
@@ -129,6 +139,9 @@ function blank(): AgentProfile {
 export function AgentsSettings() {
 	const t = useT(M);
 	const runtimes = useStore((s) => s.runtimes);
+	const defaultId = useStore((s) => s.hostSettings?.defaultAgent);
+	// An older server has no default-agent setting: hide the control instead of offering one that does nothing.
+	const canDefault = defaultId !== undefined;
 	const [agents, setAgents] = useState<AgentProfile[]>([]);
 	const [editing, setEditing] = useState<{ agent: AgentProfile; isNew: boolean } | null>(null);
 	const [supported, setSupported] = useState(true);
@@ -138,7 +151,7 @@ export function AgentsSettings() {
 		const list = await callNewer("agent.list", (c) => c.rpc("agent.list", {}));
 		setSupported(list !== undefined);
 		if (list) setAgents(list);
-		await refreshRuntimes();
+		await Promise.all([refreshRuntimes(), refreshHostSettings()]);
 	}, []);
 	useEffect(() => {
 		void load();
@@ -180,6 +193,29 @@ export function AgentsSettings() {
 		}
 	};
 
+	const makeDefault = async (id: string, name: string) => {
+		await setDefaultAgent(id);
+		if (useStore.getState().hostSettings?.defaultAgent === id) toast(t("defaultSet", { name }), "info");
+	};
+
+	/** "Default" badge, or the button that makes this agent the default. */
+	const defaultControl = (id: string, name: string, available: boolean, hidden: boolean) => {
+		if (!canDefault || defaultId === id) return null;
+		return (
+			<Button
+				variant="outline"
+				className="px-2.5 py-1 text-xs"
+				title={hidden ? t("defaultHidden") : t("setDefaultTitle")}
+				disabled={hidden || !available}
+				onClick={() => void makeDefault(id, name)}
+			>
+				<Star className="size-3.5" /> {t("setDefault")}
+			</Button>
+		);
+	};
+
+	const pi = health("pi");
+
 	const remove = async (a: AgentProfile) => {
 		const ok = await confirmDialog(t(a.builtin ? "confirmReset" : "confirmRemove", { name: a.name }), { danger: true });
 		if (!ok) return;
@@ -201,9 +237,20 @@ export function AgentsSettings() {
 			<div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 @3xl:px-8">
 				<div className="mx-auto max-w-3xl space-y-3">
 					{!supported && <p className="rounded-lg bg-ember-500/10 px-3 py-2.5 text-sm text-ember-200">{t("oldServer")}</p>}
-					<p className="flex items-start gap-2 rounded-lg bg-ink-850 px-3 py-2.5 text-sm text-ink-400">
-						<Bot className="mt-0.5 size-4 shrink-0" /> {t("piNote")}
-					</p>
+					<div className="rounded-xl border border-ink-800 bg-ink-900/60 p-4">
+						<div className="flex flex-wrap items-center gap-2">
+							<span className="text-sm font-medium text-ink-100">PI</span>
+							<Badge tone="ember">PI</Badge>
+							<Badge>{t("builtin")}</Badge>
+							{canDefault && (defaultId ?? "pi") === "pi" && <Badge tone="moss">{t("default")}</Badge>}
+							<span className="flex-1" />
+							{pi && <Badge tone={pi.health.available ? "moss" : "rose"}>{pi.health.available ? `${t("available")}${pi.health.version ? ` ${pi.health.version}` : ""}` : t("unavailable")}</Badge>}
+						</div>
+						<p className="mt-2 flex items-start gap-1.5 text-xs text-ink-400">
+							<Bot className="mt-0.5 size-3.5 shrink-0" /> {t("piNote")}
+						</p>
+						{canDefault && defaultId !== "pi" && <div className="mt-3 flex flex-wrap items-center gap-1.5">{defaultControl("pi", "PI", pi?.health.available ?? true, false)}</div>}
+					</div>
 					{agents.map((a) => {
 						const info = health(a.id);
 						return (
@@ -213,6 +260,7 @@ export function AgentsSettings() {
 									<Badge tone="ember">{t(KIND_LABEL[a.kind])}</Badge>
 									<Badge>{a.builtin ? t("builtin") : t("custom")}</Badge>
 									{a.enabled === false && <Badge>{t("disabled")}</Badge>}
+									{canDefault && defaultId === a.id && <Badge tone="moss">{t("default")}</Badge>}
 									<span className="flex-1" />
 									{info && <Badge tone={info.health.available ? "moss" : "rose"}>{info.health.available ? `${t("available")}${info.health.version ? ` ${info.health.version}` : ""}` : t("unavailable")}</Badge>}
 								</div>
@@ -242,6 +290,7 @@ export function AgentsSettings() {
 									)}
 								</dl>
 								<div className="mt-3 flex flex-wrap items-center gap-1.5">
+									{defaultControl(a.id, a.name, info?.health.available ?? false, a.enabled === false)}
 									{info && !info.health.available && info.health.installable !== false && (
 										<Button variant="primary" className="px-2.5 py-1 text-xs" disabled={busyId === a.id} onClick={() => void install(a)}>
 											<Download className="size-3.5" /> {t(busyId === a.id ? "installing" : "install")}

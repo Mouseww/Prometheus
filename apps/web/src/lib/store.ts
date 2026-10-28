@@ -27,6 +27,7 @@ import type {
 	SessionStats,
 	SessionSummary,
 	SubagentRun,
+	GoalState,
 	SubagentSortKey,
 	ThinkingLevel,
 	UIRequest,
@@ -104,6 +105,8 @@ export interface ActiveSession {
 	messages: ChatMessage[];
 	/** Messages of the conversation before `messages[0]` that are not loaded yet; they come from the server as the user scrolls up. */
 	messageOffset: number;
+	/** A copy kept from an earlier visit, shown while the server sends the current one; not subscribed, so read-only. */
+	preview?: boolean;
 	tools: Record<string, ToolRun>;
 	model: ModelRef | null;
 	thinkingLevel: ThinkingLevel;
@@ -118,6 +121,8 @@ export interface ActiveSession {
 	statuses: Record<string, string>;
 	widgets: Record<string, { lines: string[]; placement: string }>;
 	subagents: SubagentRun[];
+	/** /goal the agent works toward on its own; null when there is none. */
+	goal: GoalState | null;
 	banner: Banner | null;
 	stats: SessionStats | null;
 	/** Prompt just sent and not yet echoed by the server; shown at once so the UI reacts before the upstream does. */
@@ -176,6 +181,8 @@ interface State {
 	editorText: { text: string; nonce: number; images?: ImageContent[]; append?: boolean } | null;
 	/** True once the first connection has restored (or decided not to restore) a session. */
 	booted: boolean;
+	/** Conversation the user switched to whose contents are still on the way, with the title to show meanwhile. */
+	opening: { id: string; title?: string } | null;
 	/** Model picked on the new-chat page before any workspace (and so any session) exists. */
 	draftModel: ModelRef | null;
 	/** Permission mode picked on the new-chat page before a session exists. */
@@ -214,6 +221,7 @@ export const useStore = create<State>(() => ({
 	title: null,
 	editorText: null,
 	booted: false,
+	opening: null,
 	draftModel: null,
 	draftPermission: "default",
 	draftRuntime: "pi",
@@ -376,8 +384,8 @@ function reduce(session: ActiveSession, e: SessionEvent): ActiveSession {
 			if (!e.success && e.finalError) toast(tr(M, "retryFailed", { e: e.finalError }), "error");
 			return { ...session, banner: null };
 		case "messages_reset":
-			// A reset carries the whole conversation.
-			return { ...session, messages: e.messages, messageOffset: 0 };
+			// A reset carries the latest turns; earlier ones load on scroll like after opening.
+			return { ...session, messages: e.messages, messageOffset: e.offset ?? 0 };
 		case "session_info_changed":
 			return { ...session, name: e.name };
 		case "thinking_level_changed":
@@ -388,6 +396,8 @@ function reduce(session: ActiveSession, e: SessionEvent): ActiveSession {
 			return { ...session, permissionMode: e.mode };
 		case "subagents_update":
 			return { ...session, subagents: e.runs };
+		case "goal_update":
+			return { ...session, goal: e.goal };
 		default:
 			return session;
 	}
@@ -513,20 +523,27 @@ function fromSnapshot(s: SessionSnapshot): ActiveSession {
 		capabilities: s.capabilities,
 		gateway: s.gateway,
 		agent: s.agent,
+		goal: s.goal ?? null,
 		banner: null,
 		stats: null,
 		pending: null,
 	};
 }
 
+/** Stop following the conversation on screen, keeping a copy so coming back to it paints at once. */
+function leave(previous: ActiveSession | null, nextId: string): void {
+	if (!previous || previous.id === nextId) return;
+	const client = get().client;
+	if (!previous.preview) client?.unsubscribe(previous.id);
+	remember(previous);
+	// An untouched new-chat session is never listed, so nothing else would ever release it.
+	if (previous.messages.length === 0 && !previous.isStreaming) void client?.rpc("session.close", { sessionId: previous.id }).catch(() => undefined);
+}
+
 function activate(snapshot: SessionSnapshot): void {
 	const client = get().client;
 	const previous = get().session;
-	if (previous && previous.id !== snapshot.id) {
-		client?.unsubscribe(previous.id);
-		// An untouched new-chat session is never listed, so nothing else would ever release it.
-		if (previous.messages.length === 0 && !previous.isStreaming) void client?.rpc("session.close", { sessionId: previous.id }).catch(() => undefined);
-	}
+	leave(previous, snapshot.id);
 	client?.subscribe(snapshot.id);
 	buffer = [];
 	const runs = snapshot.subagents ?? [];
@@ -552,7 +569,8 @@ function activate(snapshot: SessionSnapshot): void {
 
 export async function refreshSessions(): Promise<void> {
 	const sessions = await coalesce("sessions", () => call((c) => c.rpc("session.list", {})));
-	if (sessions) set({ sessions });
+	// One row per id: two rows of the same conversation would share every action, including delete.
+	if (sessions) set({ sessions: sessions.filter((s, i) => sessions.findIndex((x) => x.id === s.id) === i) });
 }
 
 export async function refreshWorkspaces(): Promise<void> {
@@ -711,13 +729,48 @@ export async function createSession(cwd?: string): Promise<void> {
 	if (snap) activate(snap);
 }
 
-/** Turns sent when a conversation opens and per scroll-back step; the rest of a long conversation stays on the server until asked for. */
-export const OPEN_TURNS = 12;
-const EARLIER_TURNS = 10;
 
+/** Conversations shown recently, as they were when left. Reopening one paints this copy while the fresh one comes over the network. */
+const recent = new Map<string, ActiveSession>();
+const RECENT_MAX = 12;
+
+function remember(s: ActiveSession): void {
+	if (s.messages.length === 0) return;
+	recent.delete(s.id);
+	recent.set(s.id, { ...s, preview: undefined, pending: null, banner: null });
+	while (recent.size > RECENT_MAX) recent.delete(recent.keys().next().value as string);
+}
+
+let openSeq = 0;
+
+/**
+ * Switch to a conversation. Its contents come from the server, which on a slow link takes a while, so the switch shows at
+ * once: the copy kept from the last visit if there is one (refreshed when the server answers), a placeholder otherwise.
+ * Only the last of several quick clicks wins, whatever order the answers arrive in.
+ */
 export async function openSession(sessionId: string): Promise<void> {
-	const snap = await call((c) => c.rpc("session.open", { sessionId, tail: OPEN_TURNS }));
-	if (snap) activate(snap);
+	const seq = ++openSeq;
+	const current = get().session;
+	const summary = get().sessions.find((s) => s.id === sessionId);
+	const cached = current?.id === sessionId ? undefined : recent.get(sessionId);
+	if (cached) {
+		leave(current, sessionId);
+		set({ session: { ...cached, preview: true }, opening: null, view: "chat" });
+	} else if (current?.id !== sessionId || current.preview) {
+		set({ opening: { id: sessionId, title: summary?.name || summary?.firstMessage }, view: "chat" });
+	}
+	// The server decides how much of the conversation comes now; the rest loads as the user scrolls up.
+	const snap = await call((c) => c.rpc("session.open", { sessionId }));
+	if (seq !== openSeq) return;
+	if (snap) {
+		activate(snap);
+		set({ opening: null });
+		return;
+	}
+	// Could not open it (gone, or the connection dropped): do not leave a copy on screen that nothing keeps up to date.
+	recent.delete(sessionId);
+	set({ opening: null });
+	if (get().session?.preview) set({ session: null });
 }
 
 const warmedAt = new Map<string, number>();
@@ -757,7 +810,7 @@ export async function loadEarlier(): Promise<void> {
 	if (!session || session.messageOffset <= 0 || loadingEarlier) return;
 	loadingEarlier = true;
 	try {
-		const chunk = await call((c) => c.rpc("session.messages", { sessionId: session.id, before: session.messageOffset, turns: EARLIER_TURNS }));
+		const chunk = await call((c) => c.rpc("session.messages", { sessionId: session.id, before: session.messageOffset }));
 		const now = get().session;
 		// The conversation changed underneath (another one opened, or it was reset): the chunk no longer fits.
 		if (!chunk || !now || now.id !== session.id || now.messageOffset !== session.messageOffset) return;
@@ -770,14 +823,35 @@ export async function loadEarlier(): Promise<void> {
 /** Show the new-chat page: leave the current conversation (it keeps running) until a workspace is chosen. */
 export function startNewChat(): void {
 	const current = get().session;
-	set({ view: "chat" });
+	// A conversation still loading must not take over the screen when it arrives.
+	openSeq++;
+	set({ view: "chat", opening: null });
 	// Already on the new-chat page: keep the workspace chosen so far.
 	if (!current || current.messages.length === 0) return;
-	get().client?.unsubscribe(current.id);
+	if (!current.preview) get().client?.unsubscribe(current.id);
+	remember(current);
 	buffer = [];
-	const wasPi = get().draftRuntime === "pi" && (current.runtime ?? "pi") === "pi";
-	set({ session: null, commands: [], draftModel: wasPi ? current.model : null, draftPermission: "default", draftRuntime: "pi", draftAgentId: "pi" });
-	if (!wasPi) void refreshModels();
+	const draft = defaultDraft();
+	const wasPi = draft.draftRuntime === "pi" && get().draftRuntime === "pi" && (current.runtime ?? "pi") === "pi";
+	set({ session: null, commands: [], draftModel: wasPi ? current.model : null, draftPermission: "default", ...draft });
+	if (!wasPi) void refreshDraftModels();
+}
+
+/** The agent a new chat starts with: the one set as default under Agent runtimes, or PI when it is missing or unavailable. */
+function defaultDraft(): { draftRuntime: RuntimeKind; draftAgentId: string } {
+	const id = get().hostSettings?.defaultAgent ?? "pi";
+	const info = id === "pi" ? undefined : get().runtimes.find((r) => r.id === id && r.health.available);
+	return info ? { draftRuntime: info.kind, draftAgentId: info.id } : { draftRuntime: "pi", draftAgentId: "pi" };
+}
+
+/** Make `agentId` the agent of new chats; the new-chat page, if showing and untouched, follows right away. */
+export async function setDefaultAgent(agentId: string): Promise<void> {
+	await updateHostSettings({ defaultAgent: agentId });
+	if (get().session) return;
+	const draft = defaultDraft();
+	if (draft.draftAgentId === get().draftAgentId) return;
+	set({ ...draft, draftModel: null });
+	void refreshDraftModels();
 }
 
 /** Pick the workspace of the new-chat page, carrying over any model and thinking level chosen so far. */
@@ -811,6 +885,7 @@ export async function newChatIn(workspace: WorkspaceInfo): Promise<void> {
 
 /** After the active session disappears, fall back to the newest one in the same workspace, else the new-chat page. */
 async function leaveSession(sessionId: string): Promise<void> {
+	recent.delete(sessionId);
 	const current = get().session;
 	if (current?.id !== sessionId) return;
 	get().client?.unsubscribe(sessionId);
@@ -902,6 +977,15 @@ export async function sendPrompt(text: string, delivery?: "steer" | "followUp", 
 		if (current?.id === session.id && current.pending === mark) set({ session: { ...current, pending: null } });
 	}
 	return result !== undefined;
+}
+
+/** Pause, resume or drop the open conversation's goal. */
+export async function controlGoal(action: "pause" | "resume" | "clear"): Promise<void> {
+	const session = get().session;
+	if (!session) return;
+	const goal = await callNewer("goal.control", (c) => c.rpc("goal.control", { sessionId: session.id, action }));
+	const current = get().session;
+	if (goal !== undefined && current?.id === session.id) set({ session: { ...current, goal } });
 }
 
 export async function abortRun(): Promise<void> {
@@ -1127,5 +1211,13 @@ async function onConnected(): Promise<void> {
 	const target = current?.id ?? (get().booted ? null : localStorage.getItem("prometheus.lastSession"));
 	const exists = target && get().sessions.some((s) => s.id === target && !s.archived);
 	if (exists) await openSession(target);
+	else if (!get().booted && !get().session) {
+		// First start on the new-chat page: begin with the default agent.
+		const draft = defaultDraft();
+		if (draft.draftAgentId !== get().draftAgentId) {
+			set({ ...draft, draftModel: null });
+			void refreshDraftModels();
+		}
+	}
 	set({ booted: true });
 }

@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { SessionEvent } from "@prometheus/protocol";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { PrometheusHost, turnStart } from "../src/host.ts";
+import { OPEN_TURNS, PAGE_TURNS, PrometheusHost, tailPage, turnStart } from "../src/host.ts";
 
 // PI's getAgentDir() reads this; it decides where sessions, auth.json, models.json and settings.json live.
 const AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
@@ -183,7 +183,22 @@ describe("PrometheusHost RPC (characterization)", () => {
 		const { id } = await host.call("session.create", { cwd });
 		const commands = await host.call("commands.list", { sessionId: id });
 		expect(Array.isArray(commands)).toBe(true);
-		for (const c of commands) expect(["extension", "prompt", "skill"]).toContain(c.source);
+		for (const c of commands) expect(["extension", "prompt", "skill", "builtin"]).toContain(c.source);
+		expect(commands.some((c) => c.name === "goal" && c.source === "builtin")).toBe(true);
+	});
+
+	it("/goal commands are handled by the host, and the goal shows in the snapshot", async () => {
+		const { id } = await host.call("session.create", { cwd });
+		expect(await host.call("chat.prompt", { sessionId: id, text: "/goal clear" })).toEqual({ disposition: "handled" });
+		expect(await host.call("goal.control", { sessionId: id, action: "pause" })).toBeNull();
+		// No model is configured here, so the first turn cannot start: the goal is kept, paused, with the reason.
+		const goal = await host.call("goal.set", { sessionId: id, objective: "  ship it  ", maxTurns: 3 });
+		expect(goal).toMatchObject({ objective: "ship it", maxTurns: 3, turns: 1 });
+		const snap = await host.call("session.open", { sessionId: id });
+		expect(snap.goal?.objective).toBe("ship it");
+		expect(events.some((e) => e.sessionId === id && e.event.type === "goal_update")).toBe(true);
+		expect(await host.call("goal.control", { sessionId: id, action: "clear" })).toBeNull();
+		expect((await host.call("session.open", { sessionId: id })).goal).toBeUndefined();
 	});
 
 	it("permission.set emits permission_mode_changed and toggles exit_plan_mode in the context", async () => {
@@ -221,6 +236,14 @@ describe("PrometheusHost RPC (characterization)", () => {
 		const settings = await host.call("settings.get", {});
 		expect(typeof settings.autoCompaction).toBe("boolean");
 		expect(settings.workspaceRoot).toBe("");
+		expect(settings.defaultAgent).toBe("pi");
+	});
+
+	it("settings.set stores the default agent of new chats and rejects unknown ones", async () => {
+		expect((await host.call("settings.set", { defaultAgent: "codex" })).defaultAgent).toBe("codex");
+		expect((await host.call("settings.get", {})).defaultAgent).toBe("codex");
+		await expect(host.call("settings.set", { defaultAgent: "nope" })).rejects.toMatchObject({ code: "notFound" });
+		expect((await host.call("settings.set", { defaultAgent: "pi" })).defaultAgent).toBe("pi");
 	});
 
 	it("session.delete removes a saved session and its file", async () => {
@@ -286,14 +309,37 @@ describe("long conversations are sent in pieces", () => {
 		expect(earlier.messages).toHaveLength(20);
 		expect(JSON.stringify(earlier.messages[0])).toContain("question 15");
 
-		const rest = await host.call("session.messages", { sessionId: id, before: earlier.offset, turns: 100 });
+		// Asking for more than a page gets a page.
+		const capped = await host.call("session.messages", { sessionId: id, before: earlier.offset, turns: 100 });
+		expect(capped.offset).toBe(earlier.offset - PAGE_TURNS * 2);
+		const rest = await host.call("session.messages", { sessionId: id, before: capped.offset });
 		expect(rest.offset).toBe(0);
-		expect(rest.messages).toHaveLength(30);
 
 		// Together the pieces are the whole conversation, in order.
-		const full = await host.call("session.open", { sessionId: id });
-		expect(full.messageOffset).toBeUndefined();
-		expect([...rest.messages, ...earlier.messages, ...opened.messages]).toEqual(full.messages);
+		const all = [...rest.messages, ...capped.messages, ...earlier.messages, ...opened.messages];
+		expect(all).toHaveLength(60);
+		all.forEach((m, i) => expect(JSON.stringify(m)).toContain(i % 2 === 0 ? `"question ${i / 2}"` : `"answer ${(i - 1) / 2}"`));
+	});
+
+	it("the server decides how much goes out: a few turns by default, never more than asked for or its limit", async () => {
+		const { id } = seedLong(30);
+		const byDefault = await host.call("session.open", { sessionId: id });
+		expect(byDefault.messages).toHaveLength(OPEN_TURNS * 2);
+		expect(byDefault.messageOffset).toBe(60 - OPEN_TURNS * 2);
+		const greedy = await host.call("session.open", { sessionId: id, tail: 1000 });
+		expect(greedy.messages).toHaveLength(OPEN_TURNS * 2);
+	});
+
+	it("tailPage stops early at a turn boundary once the page is big, but always sends one whole turn", () => {
+		const big = "x".repeat(4000);
+		const m = Array.from({ length: 20 }, (_, i) => ({ role: i % 2 === 0 ? "user" : "assistant", content: big, timestamp: i }) as never);
+		// Each turn is ~8 KB: a 20 KB budget takes three turns (the third crosses it), not the ten asked for.
+		const page = tailPage(m, 20, 10, 20_000);
+		expect(page.offset).toBe(14);
+		expect(page.messages).toHaveLength(6);
+		const tiny = tailPage(m, 20, 10, 10);
+		expect(tiny.offset).toBe(18);
+		expect(tailPage(m, 20, 100, Infinity)).toEqual({ messages: m, offset: 0 });
 	});
 
 	it("a conversation shorter than the tail is sent whole, without an offset", async () => {

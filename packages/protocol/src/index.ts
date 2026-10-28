@@ -2,6 +2,8 @@
 // Zero runtime dependencies: types mirror the subset of PI shapes that cross the wire.
 
 export * from "./errors.ts";
+export * from "./goal.ts";
+import type { GoalState } from "./goal.ts";
 
 export const PROTOCOL_VERSION = 1;
 
@@ -92,7 +94,10 @@ export type SessionEvent =
 	/** The full subagent list of this conversation changed (a child started, progressed or finished). */
 	| { type: "subagents_update"; runs: SubagentRun[] }
 	/** History rewritten (delete / retry / tree navigation): replace the client's message list. */
-	| { type: "messages_reset"; messages: ChatMessage[] }
+	/** The latest turns after the history changed; `offset` is the index of `messages[0]` in the whole conversation (absent: 0). */
+	| { type: "messages_reset"; messages: ChatMessage[]; offset?: number }
+	/** The conversation's goal (/goal) was set, progressed, finished or cleared; `null` means there is none. */
+	| { type: "goal_update"; goal: GoalState | null }
 	| { type: "bash_execution_update"; delta: string };
 
 // ---------- Extension UI bridge (mirrors PI ExtensionUIContext) ----------
@@ -265,6 +270,8 @@ export interface HostSettings {
 	autoCompaction: boolean;
 	/** Where the folder picker starts and where new workspaces are created; empty means the server's home directory. */
 	workspaceRoot: string;
+	/** Agent id (a `RuntimeInfo.id`) new chats start with; "pi" when unset. Older servers omit it. */
+	defaultAgent?: string;
 }
 
 // ---------- Subagents ----------
@@ -359,6 +366,8 @@ export interface SessionSnapshot {
 	gateway?: GatewayChoice;
 	/** Custom agent profile id; absent for PI and the built-in agents. */
 	agent?: string;
+	/** The goal the agent is working toward on its own (/goal); absent when there is none. */
+	goal?: GoalState;
 }
 
 /** Estimated tokens (chars/4) per context component; the sum approximates, not equals, `contextTokens`. */
@@ -385,7 +394,7 @@ export interface SessionStats {
 	cacheWriteTokens: number;
 }
 
-export interface CommandInfo { name: string; description?: string; source: "extension" | "prompt" | "skill" }
+export interface CommandInfo { name: string; description?: string; source: "extension" | "prompt" | "skill" | "builtin" }
 export interface ToolInfo { name: string; description: string; active: boolean }
 
 export type GatewayAuth =
@@ -957,7 +966,10 @@ export interface RpcMethods {
 	"agent.syncSessions": { params: { id: string }; result: { found: number; added: number; workspaces: number } };
 	"agent.install": { params: { kind: RuntimeKind }; result: { command: string } };
 	"agent.uninstall": { params: { kind: RuntimeKind }; result: null };
-	/** `tail`: send only the latest N turns (user messages and what followed); earlier ones come from `session.messages`. */
+	/**
+	 * Sends only the latest turns; earlier ones come from `session.messages`. How many is the server's limit (a few turns,
+	 * fewer when they are large); `tail` can ask for fewer, not more.
+	 */
 	"session.open": { params: { sessionId: string; tail?: number }; result: SessionSnapshot };
 	/** The `turns` turns that precede message index `before`, for scrolling back through a long conversation. */
 	/** The untruncated content of one tool result of a conversation (see `ToolResultMessage.truncatedChars`). */
@@ -970,7 +982,8 @@ export interface RpcMethods {
 	"file.read": { params: { sessionId: string; path: string; offset: number; length: number }; result: { data: string; size: number; eof: boolean } };
 	/** A one-time address (valid for a minute) at `/api/download/<id>` that streams the file; for shells that cannot save a blob. */
 	"file.link": { params: { sessionId: string; path: string }; result: { id: string; name: string } };
-	"session.messages": { params: { sessionId: string; before: number; turns: number }; result: { messages: ChatMessage[]; offset: number } };
+	/** Turns before index `before`, as many as the server's page limit allows; `turns` can ask for fewer. */
+	"session.messages": { params: { sessionId: string; before: number; turns?: number }; result: { messages: ChatMessage[]; offset: number } };
 	"session.rename": { params: { sessionId: string; name: string }; result: null };
 	"session.close": { params: { sessionId: string }; result: null };
 	"session.archive": { params: { sessionId: string; archived: boolean }; result: null };
@@ -1005,6 +1018,10 @@ export interface RpcMethods {
 	"chat.prompt": { params: { sessionId: string; text: string; images?: ImageContent[]; /** Documents and other files; the server stores them in a temporary folder and tells the model their paths. */ files?: AttachedFile[]; delivery?: "steer" | "followUp" }; result: { disposition: PromptDisposition } };
 	"chat.abort": { params: { sessionId: string }; result: null };
 	"chat.compact": { params: { sessionId: string; instructions?: string }; result: null };
+	/** Give the conversation a goal and start working toward it (replaces any previous goal). */
+	"goal.set": { params: { sessionId: string; objective: string; maxTurns?: number }; result: GoalState };
+	/** Pause, resume or drop the conversation's goal; the result is the goal afterwards (null once cleared). */
+	"goal.control": { params: { sessionId: string; action: "pause" | "resume" | "clear" }; result: GoalState | null };
 
 	"model.list": { params: Record<string, never>; result: ModelInfo[] };
 	"model.set": { params: { sessionId: string; model: ModelRef }; result: null };
