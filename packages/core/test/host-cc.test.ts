@@ -17,6 +17,7 @@ let cwd: string;
 let host: PrometheusHost;
 let previous: string | undefined;
 let events: { sessionId: string; event: SessionEvent }[] = [];
+const uiRequests: { sessionId: string; request: any }[] = [];
 
 async function settled(id: string, timeoutMs = 60_000): Promise<void> {
 	const start = Date.now();
@@ -40,7 +41,7 @@ beforeAll(async () => {
 		builtinPlugins: [memory, todos, veil],
 		listener: {
 			event: (sessionId, event) => void events.push({ sessionId, event }),
-			uiRequest: () => {},
+			uiRequest: (sessionId, request) => void uiRequests.push({ sessionId, request }),
 			uiResolved: () => {},
 			sessionsChanged: () => {},
 			gatewaysChanged: () => {},
@@ -110,6 +111,25 @@ describe("Claude Code through the host", { timeout: 120_000 }, () => {
 		await host.call("session.delete", { sessionId: snap.id });
 		list = await host.call("session.list", {});
 		expect(list.find((s) => s.id === snap.id)).toBeUndefined();
+	});
+
+	it("default mode asks the user before a command runs, and offers Claude Code's commands", async () => {
+		const gateway = { mode: "prometheus" as const, gatewayId: "fake", model: { provider: "fake", id: "fake-model" } };
+		const snap = await host.call("session.create", { cwd, runtime: "claude-code", gateway });
+		const commands = await host.call("commands.list", { sessionId: snap.id });
+		expect(commands.some((c) => c.name === "compact")).toBe(true);
+
+		events = [];
+		uiRequests.length = 0;
+		llm.enqueue({ blocks: [{ type: "tool_use", name: "Bash", input: { command: "touch asked-first.txt" } }] }, { blocks: [{ type: "text", text: "done" }] });
+		const sent = host.call("chat.prompt", { sessionId: snap.id, text: "run it" });
+		const start = Date.now();
+		while (!uiRequests.length && Date.now() - start < 60_000) await new Promise((r) => setTimeout(r, 50));
+		expect(uiRequests[0]?.request).toMatchObject({ method: "permission", kind: "tool", toolName: "bash" });
+		await host.call("ui.respond", { sessionId: snap.id, requestId: uiRequests[0]!.request.id, response: { value: "allow" } });
+		await sent;
+		await settled(snap.id);
+		await host.call("session.delete", { sessionId: snap.id });
 	});
 
 	it("real plugins: a saved memory reaches the next turn, and todo_write feeds the todo panel", async () => {

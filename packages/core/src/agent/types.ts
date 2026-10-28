@@ -169,7 +169,7 @@ export interface RuntimeSession {
 	/** Normalized transcript of the current context. */
 	messages(): ChatMessage[];
 	snapshotState(): RuntimeSnapshot;
-	commands(): CommandInfo[];
+	commands(): CommandInfo[] | Promise<CommandInfo[]>;
 	/** Tools available to the model, with whether each is currently active. */
 	tools(): ToolInfo[];
 	usage(): SessionStats;

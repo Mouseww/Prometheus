@@ -469,8 +469,25 @@ export class ClaudeCodeSession implements RuntimeSession {
 			queue: { steering: [], followUp: [] },
 		} as RuntimeSnapshot;
 	}
-	commands(): CommandInfo[] {
-		return [];
+	/** Claude Code's own list: built-in commands plus user / project commands and skills (needs the process, so it starts it). */
+	async commands(): Promise<CommandInfo[]> {
+		if (this.closed) return [];
+		try {
+			const q = await this.start();
+			const list = await Promise.race([q.supportedCommands(), new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), 15_000).unref?.())]);
+			const seen = new Set<string>();
+			const out: CommandInfo[] = [];
+			for (const c of list) {
+				if (!c.name || seen.has(c.name)) continue;
+				seen.add(c.name);
+				const hint = c.argumentHint ? ` ${c.argumentHint}` : "";
+				out.push({ name: c.name, description: `${c.description ?? ""}${hint}`.trim(), source: c.builtin ? "extension" : "skill" });
+			}
+			return out;
+		} catch (err) {
+			this.services.log.warn(`[claude-code ${this.id}] commands: ${err instanceof Error ? err.message : String(err)}`);
+			return [];
+		}
 	}
 	tools(): ToolInfo[] {
 		const native = NATIVE_TOOLS.map((n) => ({ name: canonicalTool(n, {}).name, description: `Claude Code ${n}`, active: true }));

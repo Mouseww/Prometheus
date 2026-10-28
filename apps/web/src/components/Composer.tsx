@@ -1,9 +1,10 @@
 import clsx from "clsx";
-import { ArrowUp, Brain, Check, ChevronDown, CornerDownRight, Cpu, File as FileIcon, Folder as FolderIcon, ListEnd, Paperclip, Pencil, Search, Square, X } from "lucide-react";
+import { ArrowUp, Brain, Check, ChevronDown, CornerDownRight, Cpu, File as FileIcon, FileText, Folder as FolderIcon, ListEnd, Paperclip, Pencil, Search, Square, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ImageContent, ThinkingLevel } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { fileToImage, IMAGE_ACCEPT, ImageError, imageSrc, MAX_IMAGES } from "../lib/images.ts";
+import { type Attachment, AttachmentError, fileToAttachment, formatSize, isPicture, MAX_FILE_MB, MAX_FILES } from "../lib/attachments.ts";
+import { fileToImage, ImageError, imageSrc, MAX_IMAGES } from "../lib/images.ts";
 import { type SendMode, setPrefs, usePrefs } from "../lib/prefs.ts";
 import { abortRun, openSettings, pluginCall, sendPrompt, setModel, setPermissionMode, setThinking, toast, unqueue, useStore } from "../lib/store.ts";
 import { ContextMeter } from "./ContextMeter.tsx";
@@ -50,14 +51,19 @@ const M = defineMessages({
 		high: "高",
 		xhigh: "超高",
 		max: "极限",
-		attach: "添加图片",
+		attach: "添加文件或图片",
 		removeImage: "移除图片",
+		removeFile: "移除文件",
+		filesTooMany: "一条消息最多 {n} 个文件",
+		fileTooBig: "「{name}」超过 {n} MB，无法上传",
+		filesTotal: "文件总大小不能超过 {n} MB",
+		fileRead: "无法读取「{name}」",
 		tooMany: "一条消息最多 {n} 张图片",
 		badType: "只支持 PNG、JPEG、GIF、WebP 图片",
 		tooBig: "图片超过 25 MB，请压缩后再试",
 		badImage: "无法读取这张图片",
 		noVision: "当前模型不支持图片，图片可能被忽略或报错，请换用带“视觉”标记的模型",
-		dropHere: "松开即可添加图片",
+		dropHere: "松开即可添加文件或图片",
 	},
 	en: {
 		placeholder: "Give the agent a task, type / for commands",
@@ -92,8 +98,13 @@ const M = defineMessages({
 		high: "High",
 		xhigh: "X-High",
 		max: "Max",
-		attach: "Add images",
+		attach: "Add files or images",
 		removeImage: "Remove image",
+		removeFile: "Remove file",
+		filesTooMany: "At most {n} files per message",
+		fileTooBig: "\"{name}\" is over {n} MB and cannot be uploaded",
+		filesTotal: "The files may not exceed {n} MB in total",
+		fileRead: "Could not read \"{name}\"",
 		tooMany: "At most {n} images per message",
 		badType: "Only PNG, JPEG, GIF and WebP images are supported",
 		tooBig: "That image is over 25 MB; shrink it and try again",
@@ -332,6 +343,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 	const textRef = useRef(text);
 	textRef.current = text;
 	const [images, setImages] = useState<ImageContent[]>([]);
+	const [docs, setDocs] = useState<Attachment[]>([]);
 	const [reading, setReading] = useState(0);
 	const [dragging, setDragging] = useState(false);
 	const files = useRef<HTMLInputElement>(null);
@@ -420,37 +432,65 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 
 	const submit = async () => {
 		const value = text.trim();
-		if ((!value && !images.length) || reading > 0) return;
+		if ((!value && !images.length && !docs.length) || reading > 0) return;
 		if (!session) {
 			toast(t("needWorkspace"), "warning");
 			return;
 		}
 		const attached = images;
+		const attachedDocs = docs;
 		setText("");
 		setImages([]);
+		setDocs([]);
 		const mode = session?.capabilities && !session.capabilities.steering ? "followUp" : sendMode;
-		const ok = await sendPrompt(value, streaming ? mode : undefined, attached);
+		const ok = await sendPrompt(value, streaming ? mode : undefined, attached, attachedDocs);
 		if (!ok) {
 			setText(value);
 			setImages(attached);
+			setDocs(attachedDocs);
 		}
 	};
 
-	/** Add picked, pasted or dropped files; anything that is not a usable image is reported, the rest still go in. */
+	/**
+	 * Add picked, pasted or dropped files. Pictures go to the model as pictures (when the agent takes them); everything else
+	 * (Word, Excel, PowerPoint, PDF, text, HTML, ...) is uploaded to a temporary folder and the model gets its path.
+	 * What cannot be added is reported; the rest still go in.
+	 */
 	const addFiles = async (list: File[]) => {
 		if (!list.length) return;
-		const room = MAX_IMAGES - images.length - reading;
-		if (list.length > room) toast(t("tooMany", { n: MAX_IMAGES }), "warning");
-		const take = list.slice(0, Math.max(room, 0));
-		if (!take.length) return;
-		setReading((n) => n + take.length);
-		for (const file of take) {
+		const takesImages = session?.capabilities ? session.capabilities.images : true;
+		const pictures = list.filter((f) => takesImages && isPicture(f));
+		const documents = list.filter((f) => !pictures.includes(f));
+
+		const room = MAX_IMAGES - images.length;
+		if (pictures.length > Math.max(room, 0)) toast(t("tooMany", { n: MAX_IMAGES }), "warning");
+		const docRoom = MAX_FILES - docs.length;
+		if (documents.length > Math.max(docRoom, 0)) toast(t("filesTooMany", { n: MAX_FILES }), "warning");
+		const takePictures = pictures.slice(0, Math.max(room, 0));
+		const takeDocs = documents.slice(0, Math.max(docRoom, 0));
+		if (!takePictures.length && !takeDocs.length) return;
+
+		setReading((n) => n + takePictures.length + takeDocs.length);
+		for (const file of takePictures) {
 			try {
 				const image = await fileToImage(file);
 				setImages((cur) => (cur.length < MAX_IMAGES ? [...cur, image] : cur));
 			} catch (err) {
 				const reason = err instanceof ImageError ? err.reason : "decode";
 				toast(t(reason === "type" ? "badType" : reason === "size" ? "tooBig" : "badImage"), "error");
+			} finally {
+				setReading((n) => n - 1);
+			}
+		}
+		let bytes = docs.reduce((sum, d) => sum + d.size, 0);
+		for (const file of takeDocs) {
+			try {
+				const doc = await fileToAttachment(file, bytes);
+				bytes += doc.size;
+				setDocs((cur) => (cur.length < MAX_FILES ? [...cur, doc] : cur));
+			} catch (err) {
+				const reason = err instanceof AttachmentError ? err.reason : "read";
+				toast(reason === "size" ? t("fileTooBig", { name: file.name, n: MAX_FILE_MB }) : reason === "total" ? t("filesTotal", { n: MAX_FILE_MB }) : t("fileRead", { name: file.name }), "error");
 			} finally {
 				setReading((n) => n - 1);
 			}
@@ -650,8 +690,26 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 				)}
 			>
 				{dragging && <div className="px-4 pt-3 text-xs text-ember-300">{t("dropHere")}</div>}
-				{(images.length > 0 || reading > 0) && (
+				{(images.length > 0 || docs.length > 0 || reading > 0) && (
 					<div className="flex flex-wrap gap-2 px-3 pt-3">
+						{docs.map((d, i) => (
+							<div key={`d${i}`} className="flex h-16 max-w-56 items-center gap-2 rounded-lg border border-ink-700 bg-ink-950 py-1 pr-1.5 pl-2.5" title={d.name}>
+								<FileText className="size-5 shrink-0 text-ember-300" />
+								<span className="min-w-0">
+									<span className="block truncate text-xs text-ink-200">{d.name}</span>
+									<span className="block font-mono text-[10.5px] text-ink-500">{formatSize(d.size)}</span>
+								</span>
+								<button
+									type="button"
+									onClick={() => setDocs((cur) => cur.filter((_, j) => j !== i))}
+									className="grid size-5 shrink-0 place-items-center rounded-full text-ink-400 hover:bg-rose-500 hover:text-white"
+									title={t("removeFile")}
+									aria-label={t("removeFile")}
+								>
+									<X className="size-3" />
+								</button>
+							</div>
+						))}
 						{images.map((img, i) => (
 							<div key={i} className="group/thumb relative size-16 overflow-hidden rounded-lg border border-ink-700 bg-ink-950">
 								<img src={imageSrc(img)} alt="" className="size-full object-cover" />
@@ -691,7 +749,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 					<label
 						className={clsx(
 							"relative grid size-8 shrink-0 place-items-center overflow-hidden rounded-lg text-ink-400 transition-colors",
-							images.length + reading >= MAX_IMAGES ? "pointer-events-none opacity-40" : "hover:bg-ink-800 hover:text-ink-100",
+							images.length + reading >= MAX_IMAGES && docs.length + reading >= MAX_FILES ? "pointer-events-none opacity-40" : "hover:bg-ink-800 hover:text-ink-100",
 						)}
 						title={t("attach")}
 						aria-label={t("attach")}
@@ -699,9 +757,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 						<input
 							ref={files}
 							type="file"
-							accept={IMAGE_ACCEPT}
 							multiple
-							disabled={session?.capabilities ? !session.capabilities.images : false}
 							className="absolute -inset-8 cursor-pointer opacity-0"
 							style={{ fontSize: 64 }}
 							onChange={(e) => {
@@ -728,7 +784,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 							<button
 								type="button"
 								onClick={() => void submit()}
-								disabled={(!text.trim() && images.length === 0) || reading > 0 || !session}
+								disabled={(!text.trim() && images.length === 0 && docs.length === 0) || reading > 0 || !session}
 								title={session ? (streaming ? t("sendAs", { mode: t(sendMode) }) : undefined) : t("needWorkspace")}
 								className={clsx(
 									"grid h-8 place-items-center bg-ember-500 text-white transition hover:bg-ember-400 disabled:bg-ink-800 disabled:text-ink-600",

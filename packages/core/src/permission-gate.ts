@@ -1,5 +1,6 @@
 import { Type } from "@earendil-works/pi-ai";
 import type { InlineExtension } from "@earendil-works/pi-coding-agent";
+import type { PluginTool } from "@prometheus/plugin-sdk";
 import type { PermissionMode, PermissionPrompt, RunAccess } from "@prometheus/protocol";
 import { decide, EXIT_PLAN_MODE, INSTALL_PLUGIN_TOOL, ruleKey, toolKind } from "./permissions.ts";
 
@@ -121,6 +122,28 @@ export class PermissionGate {
 			return;
 		}
 		return { block: true, reason: "The user denied this tool call. Do not retry it unchanged; ask what they would prefer." };
+	}
+
+	/**
+	 * `exit_plan_mode` for runtimes without a plan mode of their own (Codex, opencode), served over the tool bus.
+	 * Always listed, because those runtimes cache the tool list; outside plan mode it only says so.
+	 */
+	planExitTool(): PluginTool {
+		return {
+			name: EXIT_PLAN_MODE,
+			label: "提交计划",
+			description: "Plan mode only: present the finished plan to the user for approval. Call it once the plan is complete; do not start changing anything before the user approves.",
+			parameters: { type: "object", properties: { plan: { type: "string", description: "The complete plan, in Markdown" } }, required: ["plan"] } as never,
+			execute: async (_id, params, signal) => {
+				if (this.mode !== "plan") return text("Plan mode is not active; carry on with the task.");
+				const answer = await this.ask?.({ kind: "plan", plan: String(params?.plan ?? "") }, signal);
+				if (answer === "acceptEdits" || answer === "default") {
+					this.setMode(answer);
+					return text("The user approved the plan. Plan mode is over; implement it now.");
+				}
+				return text("The user did not approve the plan yet. Stay in plan mode: ask what they want changed, or revise the plan and submit it again.");
+			},
+		};
 	}
 
 	extension(): InlineExtension {

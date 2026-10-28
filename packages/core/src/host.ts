@@ -8,6 +8,7 @@ import type { AgentRunOptions, AgentRunResult, PrometheusPlugin } from "@prometh
 import {
 	type AgentProfile,
 	AppError,
+	withAttachmentNote,
 	type ChatMessage,
 	encodeError,
 	type ModelPricing,
@@ -46,8 +47,12 @@ import { firstUserText } from "./agent/pi/tokens.ts";
 import type { AgentRuntime, ResumeInit, RuntimeServices, RuntimeSession, SessionHooks } from "./agent/types.ts";
 import { toModelRef } from "./events.ts";
 import { listExternalApps, openInExternalApp, openUrlNative, pickFolderNative } from "./native-dialog.ts";
-import { checkImages, imageOnlyTitle } from "./images.ts";
+import { checkImages, imageOnlyTitle, titleWithoutNote } from "./images.ts";
+import { extraRoots, readChunk, resolveDownload } from "./downloads.ts";
+import { UPLOAD_ROOT, pruneUploads, removeSessionUploads, saveAttachments } from "./uploads.ts";
+import { fullResultContent, slimMessage, slimMessages } from "./slim.ts";
 import { PermissionGate } from "./permission-gate.ts";
+import { agentStatuses, installAgentCli, npmAvailable, uninstallAgentCli, withAgentBin } from "./agent/install.ts";
 import { bootstrap, type Runtime } from "./runtime.ts";
 import { AgentStore, runClaude, runCodex, SubagentRuntime } from "@prometheus/subagents";
 import { UIBridge } from "./ui-bridge.ts";
@@ -85,6 +90,20 @@ export interface PrometheusHostOptions {
 
 /** How many trailing messages of a conversation are carried over for display when it continues in another runtime. */
 const SEED_MESSAGES = 200;
+const MAX_WARMED = 3;
+
+/**
+ * Index where the last `turns` turns of `messages[0..end)` begin. A turn starts at a user message, so a reply and its
+ * tool calls are never split from the question; 0 when the whole range is shorter than that.
+ */
+export function turnStart(messages: readonly { role: string }[], end: number, turns: number): number {
+	let seen = 0;
+	for (let i = end - 1; i >= 0; i--) {
+		if (messages[i]?.role !== "user") continue;
+		if (++seen === turns) return i;
+	}
+	return 0;
+}
 /** Agents every host offers; the user can configure them but not delete them. */
 const BUILTIN_AGENTS = ["claude-code", "codex", "opencode"] as const;
 const AGENT_LABEL = { "claude-code": "Claude Code", codex: "Codex", opencode: "OpenCode" } as const;
@@ -140,6 +159,7 @@ export class PrometheusHost {
 		const host = new PrometheusHost(runtime, pi, options);
 		await host.index.load();
 		pi.syncGateways();
+		void pruneUploads().catch(() => {});
 		return host;
 	}
 
@@ -198,7 +218,9 @@ export class PrometheusHost {
 		let rt = this.externalRuntimes.get(key);
 		if (rt) return rt;
 		const executable = () => this.profileOf(key)?.executable || undefined;
-		const env = () => this.profileOf(key)?.env ?? {};
+		// CLIs installed from the settings page come first, so a runtime turns available without a restart; an explicit
+		// executable from the profile still wins.
+		const env = () => withAgentBin(this.runtime.dataDir, { ...process.env, ...(this.profileOf(key)?.env ?? {}) }) as Record<string, string>;
 		rt = kind === "claude-code" ? new ClaudeCodeRuntime(() => this.servicesFor(), executable, env) : kind === "opencode" ? new OpenCodeRuntime(() => this.servicesFor(), executable, env) : new CodexRuntime(() => this.servicesFor(), executable, env);
 		this.externalRuntimes.set(key, rt);
 		return rt;
@@ -225,7 +247,7 @@ export class PrometheusHost {
 		const ref = live.session.ref();
 		if (ref.runtime === "pi") return;
 		const state = live.session.snapshotState();
-		this.index.patch(id, { name: state.name, modified: new Date().toISOString(), messageCount: state.messages.length, firstMessage: firstUserText(state.messages).slice(0, 200) });
+		this.index.patch(id, { name: state.name, modified: new Date().toISOString(), messageCount: state.messages.length, firstMessage: titleWithoutNote(firstUserText(state.messages)).slice(0, 200) });
 	}
 
 	private async createExternal(kind: RuntimeKind, agent: string | undefined, dir: string, gateway: GatewayChoice | undefined, seed?: ChatMessage[]): Promise<LiveSession> {
@@ -290,7 +312,7 @@ export class PrometheusHost {
 				session = s;
 				id = s.id;
 			},
-			event: (e) => this.listener.event(id, e),
+			event: (e) => this.listener.event(id, e.type === "message_start" || e.type === "message_end" ? { ...e, message: slimMessage(e.message) } : e),
 			sessionsChanged: () => {
 				const current = this.live.get(id);
 				if (current) this.syncIndex(id, current);
@@ -308,6 +330,15 @@ export class PrometheusHost {
 			},
 		};
 		const started = await start({ permission: gate, ui: bridge, subagents, hooks, ...(gateway ? { gateway } : {}) });
+		// PI wires these itself while it builds the session; the other runtimes ask through the same bridge.
+		gate.ask ??= (prompt, signal) => bridge.askPermission(prompt, signal);
+		gate.onModeChange ??= (mode) => {
+			bridge.auto = mode === "auto";
+			if (bridge.auto) bridge.autoResolvePending();
+			// PI announces this itself; the others change the gate (also when a plan is approved) and the picker must follow.
+			this.listener.event(started.id, { type: "permission_mode_changed", mode });
+		};
+		bridge.auto = gate.mode === "auto";
 		const live = { session: started, bridge, gate, subagents };
 		this.live.set(started.id, live);
 		const file = started.ref().path;
@@ -351,6 +382,16 @@ export class PrometheusHost {
 		return live;
 	}
 
+	/** The file behind a path the user wants to download, if the conversation's folder or an upload/temp folder holds it. */
+	private async downloadable(sessionId: string, path: string) {
+		const cwd = this.live.get(sessionId)?.session.cwd ?? this.index.get(sessionId)?.cwd;
+		if (!cwd) return undefined;
+		return resolveDownload(path, cwd, extraRoots(UPLOAD_ROOT));
+	}
+
+	/** Sessions opened by `session.warm` that no one has opened for real yet, oldest first. */
+	private warmed: string[] = [];
+
 	private async closeSession(sessionId: string): Promise<void> {
 		const live = this.live.get(sessionId);
 		if (!live) return;
@@ -380,7 +421,7 @@ export class PrometheusHost {
 				created: now,
 				modified: now,
 				messageCount: state.messages.length,
-				firstMessage: firstUserText(state.messages).slice(0, 200),
+				firstMessage: titleWithoutNote(firstUserText(state.messages)).slice(0, 200),
 				live: true,
 				running: true,
 				archived: false,
@@ -416,7 +457,7 @@ export class PrometheusHost {
 				created: info.created,
 				modified: info.modified,
 				messageCount: info.messageCount,
-				firstMessage: imageOnlyTitle(info.firstMessage, info.messageCount).slice(0, 200),
+				firstMessage: titleWithoutNote(imageOnlyTitle(info.firstMessage, info.messageCount)).slice(0, 200),
 				live: this.live.has(info.ref.id),
 				running: this.live.get(info.ref.id)?.session.isStreaming ?? false,
 				archived: archived.has(info.ref.id),
@@ -429,14 +470,16 @@ export class PrometheusHost {
 		return ref.runtime === "pi" ? undefined : this.index.get(ref.id)?.gateway;
 	}
 
-	private snapshot(live: LiveSession): SessionSnapshot {
+	private snapshot(live: LiveSession, tail?: number): SessionSnapshot {
 		const s = live.session.snapshotState();
+		const from = tail && tail > 0 ? turnStart(s.messages, s.messages.length, tail) : 0;
 		return {
 			id: s.id,
 			name: s.name,
 			cwd: s.cwd,
 			workspaceId: workspaceId(s.cwd),
-			messages: s.messages,
+			messages: slimMessages(from > 0 ? s.messages.slice(from) : s.messages),
+			...(from > 0 ? { messageOffset: from } : {}),
 			model: s.model,
 			thinkingLevel: s.thinkingLevel,
 			availableThinkingLevels: s.availableThinkingLevels,
@@ -504,7 +547,7 @@ export class PrometheusHost {
 	// ---------- message operations ----------
 
 	private resetMessages(id: string, live: LiveSession): void {
-		this.listener.event(id, { type: "messages_reset", messages: live.session.messages() });
+		this.listener.event(id, { type: "messages_reset", messages: slimMessages(live.session.messages()) });
 		this.listener.sessionsChanged();
 	}
 
@@ -631,7 +674,45 @@ export class PrometheusHost {
 			this.listener.sessionsChanged();
 			return this.snapshot(live);
 		},
-		"session.open": async ({ sessionId }) => this.snapshot(await this.open(sessionId)),
+		"session.open": async ({ sessionId, tail }) => {
+			const live = await this.open(sessionId);
+			this.warmed = this.warmed.filter((id) => id !== sessionId);
+			return this.snapshot(live, tail);
+		},
+		"session.warm": async ({ sessionId }) => {
+			// Only PI sessions are cheap to hold; the others would start a child process for a hover.
+			const entry = this.index.get(sessionId);
+			if (this.live.has(sessionId) || (entry && entry.runtime !== "pi")) return null;
+			await this.open(sessionId);
+			this.warmed = [...this.warmed.filter((id) => id !== sessionId), sessionId];
+			// Hovering many conversations must not leave them all open: release the oldest unclaimed ones.
+			while (this.warmed.length > MAX_WARMED) {
+				const old = this.warmed.shift()!;
+				const live = this.live.get(old);
+				if (live && !live.session.isStreaming) await this.closeSession(old);
+			}
+			return null;
+		},
+		"session.toolResult": async ({ sessionId, toolCallId }) => {
+			const content = fullResultContent((await this.open(sessionId)).session.snapshotState().messages, toolCallId);
+			if (!content) throw new AppError("messageNotFound");
+			return { content };
+		},
+		"file.stat": async ({ sessionId, path }) => {
+			const file = await this.downloadable(sessionId, path);
+			return file ? { exists: true, name: file.name, size: file.size } : { exists: false };
+		},
+		"file.read": async ({ sessionId, path, offset, length }) => {
+			const file = await this.downloadable(sessionId, path);
+			if (!file) throw new AppError("fileNotFound", { path });
+			return readChunk(file, offset, length);
+		},
+		"session.messages": async ({ sessionId, before, turns }) => {
+			const messages = (await this.open(sessionId)).session.snapshotState().messages;
+			const end = Math.max(0, Math.min(before, messages.length));
+			const offset = turnStart(messages, end, turns);
+			return { messages: slimMessages(messages.slice(offset, end)), offset };
+		},
 		"session.rename": async ({ sessionId, name }) => {
 			(await this.open(sessionId)).session.setName(name.trim());
 			this.listener.sessionsChanged();
@@ -649,6 +730,7 @@ export class PrometheusHost {
 			return null;
 		},
 		"session.delete": async ({ sessionId }) => {
+			void removeSessionUploads(sessionId).catch(() => {});
 			const entry = this.index.get(sessionId);
 			if (entry && entry.runtime !== "pi") {
 				await this.closeSession(sessionId);
@@ -748,10 +830,13 @@ export class PrometheusHost {
 
 		"usage.stats": ({ days }) => this.pi.collectUsage(days ?? 0),
 
-		"chat.prompt": async ({ sessionId, text, images, delivery }) => {
-			if (!text.trim() && !images?.length) throw new AppError("messageEmpty");
+		"chat.prompt": async ({ sessionId, text, images, files, delivery }) => {
+			if (!text.trim() && !images?.length && !files?.length) throw new AppError("messageEmpty");
 			checkImages(images);
-			const disposition = await this.prompt(sessionId, text, images, delivery);
+			// Documents the model cannot read itself: stored in a temporary folder, and the message says where.
+			const saved = files?.length ? await saveAttachments(sessionId, files) : [];
+			const body = withAttachmentNote(text, saved);
+			const disposition = await this.prompt(sessionId, body, images, delivery);
 			return { disposition };
 		},
 		"chat.abort": async ({ sessionId }) => {
@@ -771,11 +856,12 @@ export class PrometheusHost {
 			const out: RuntimeInfo[] = [{ id: "pi", name: "PI", kind: "pi", health: await this.pi.probe(), capabilities: PI_CAPABILITIES }];
 			for (const agent of this.agentList().filter((a) => a.enabled !== false)) {
 				const rt = await this.runtimeFor(agent.kind, agent.id).catch(() => undefined);
+				const health = (await rt?.probe()) ?? { available: false, reason: "unavailable" };
 				out.push({
 					id: agent.id,
 					name: agent.name,
 					kind: agent.kind,
-					health: (await rt?.probe()) ?? { available: false, reason: "unavailable" },
+					health: health.available ? health : { ...health, ...(await agentStatuses(this.runtime.dataDir, agent.kind)) },
 					capabilities: agent.kind === "codex" ? CODEX_CAPABILITIES : agent.kind === "opencode" ? OPENCODE_CAPABILITIES : CC_CAPABILITIES,
 				});
 			}
@@ -801,6 +887,19 @@ export class PrometheusHost {
 				await this.runtime.config.deleteAgent(id);
 			}
 			this.externalRuntimes.delete(id);
+			return null;
+		},
+		/** Installs (or upgrades) a third-party CLI into Prometheus' own folder; the runtime is available right after. */
+		"agent.install": async ({ kind }) => {
+			if (kind === "pi") throw new AppError("unknownRuntime", { runtime: kind });
+			const { command } = await installAgentCli(this.runtime.dataDir, kind);
+			this.externalRuntimes.clear();
+			return { command };
+		},
+		"agent.uninstall": async ({ kind }) => {
+			if (kind === "pi") throw new AppError("unknownRuntime", { runtime: kind });
+			await uninstallAgentCli(this.runtime.dataDir, kind);
+			this.externalRuntimes.clear();
 			return null;
 		},
 		"model.set": async ({ sessionId, model }) => {

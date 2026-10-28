@@ -128,7 +128,7 @@ export class OpenCodeSession implements RuntimeSession {
 	// ---------- start ----------
 
 	private async externalTools(): Promise<PluginTool[]> {
-		return (await this.services.plugins.externalView()).tools.map((t) => t.tool);
+		return [...(await this.services.plugins.externalView()).tools.map((t) => t.tool), this.gate.planExitTool()];
 	}
 
 	private async staticContext(): Promise<string> {
@@ -402,10 +402,18 @@ export class OpenCodeSession implements RuntimeSession {
 		this.mapper.user(input.images?.length ? [...(input.text ? [{ type: "text", text: input.text }] : []), ...input.images] : input.text);
 		this.pendingError = undefined;
 		const model = this.modelArg();
+		// `/name args` runs one of opencode's own commands or skills; it answers when the run ends, so it is not awaited.
+		const slash = !wasRunning && !input.images?.length ? /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(input.text.trim()) : null;
+		if (slash && (await this.knownCommand(server, slash[1]!))) {
+			void server
+				.request("POST", `/session/${this.sessionId}/command`, { command: slash[1], arguments: slash[2] ?? "", agent: "build", ...(model ? { model: `${model.providerID}/${model.modelID}` } : {}) })
+				.catch((err) => this.mapper.finish(false, err instanceof Error ? err.message : String(err)));
+			return "started";
+		}
 		try {
 			await server.request("POST", `/session/${this.sessionId}/prompt_async`, {
 				parts,
-				agent: this.gate.mode === "plan" ? "plan" : "build",
+				agent: "build",
 				...(model ? { model } : {}),
 				...(system ? { system } : {}),
 			});
@@ -527,11 +535,35 @@ export class OpenCodeSession implements RuntimeSession {
 			queue: { steering: [], followUp: [] },
 		} as RuntimeSnapshot;
 	}
-	commands(): CommandInfo[] {
-		return [];
+	private async listCommands(server: OpenCodeServer): Promise<CommandInfo[]> {
+		const list = await server.request<any[]>("GET", "/command");
+		const out: CommandInfo[] = [];
+		for (const c of Array.isArray(list) ? list : []) {
+			if (!c?.name) continue;
+			out.push({ name: String(c.name), description: c.description ? String(c.description) : undefined, source: c.source === "skill" ? "skill" : c.source === "mcp" ? "extension" : "prompt" });
+		}
+		return out;
+	}
+
+	private async knownCommand(server: OpenCodeServer, name: string): Promise<boolean> {
+		try {
+			return (await this.listCommands(server)).some((c) => c.name === name);
+		} catch {
+			return false;
+		}
+	}
+
+	async commands(): Promise<CommandInfo[]> {
+		if (this.closed) return [];
+		try {
+			return await this.listCommands(await this.ensureServer());
+		} catch (err) {
+			this.services.log.warn(`[opencode ${this.id}] commands: ${err instanceof Error ? err.message : String(err)}`);
+			return [];
+		}
 	}
 	tools(): ToolInfo[] {
-		return this.busTools.map((t) => ({ name: t.name, description: t.description, active: true }));
+		return this.busTools.filter((t) => t.name !== "exit_plan_mode").map((t) => ({ name: t.name, description: t.description, active: true }));
 	}
 	usage(): SessionStats {
 		const t = this.mapper.total;

@@ -35,7 +35,7 @@ const TINT: Record<RuntimeKind, string> = {
 	codex: "bg-sky-500/15 text-sky-300",
 	opencode: "bg-emerald-500/15 text-emerald-300",
 };
-const GLYPH: Record<RuntimeKind, string> = { pi: "π", "claude-code": "CC", codex: "Cx", opencode: "OC" };
+const GLYPH: Record<RuntimeKind, string> = { pi: "PI", "claude-code": "CC", codex: "Cx", opencode: "OC" };
 
 function Mark({ kind, dim, small }: { kind: RuntimeKind; dim?: boolean; small?: boolean }) {
 	return (
@@ -70,7 +70,7 @@ export function RuntimeMenu({ mode }: { mode: "draft" | "session" }) {
 	const choose = (info: RuntimeInfo) => {
 		if (busy || !info.health.available || info.id === selected?.id) return;
 		setOpen(false);
-		if (mode === "draft") setDraftAgent(info);
+		if (mode === "draft") void setDraftAgent(info);
 		else void switchRuntime(info);
 	};
 

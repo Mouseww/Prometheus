@@ -1,5 +1,6 @@
 // PI adapter: converts PI session events into the slim wire events (re-exported from ../../events.ts).
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import { slimMessage } from "../../slim.ts";
 import type { AssistantDelta, ChatMessage, SessionEvent, ToolCallContent } from "@prometheus/protocol";
 
 const MAX_TOOL_PAYLOAD = 64 * 1024;
@@ -56,7 +57,7 @@ export function slimEvent(e: AgentSessionEvent): SessionEvent | undefined {
 			return { type: "agent_settled", aborted: e.aborted };
 		case "message_start":
 		case "message_end":
-			return { type: e.type, message: e.message as unknown as ChatMessage };
+			return { type: e.type, message: slimMessage(e.message as unknown as ChatMessage) };
 		case "message_update": {
 			const d = delta(e.assistantMessageEvent);
 			return d && { type: "message_update", delta: d };

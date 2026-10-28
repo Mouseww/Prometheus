@@ -47,3 +47,20 @@ describe("checkImages", () => {
 		expect(() => checkImages([null as never])).toThrow("imagesInvalid");
 	});
 });
+
+import { formatAttachmentNote } from "@prometheus/protocol";
+import { titleWithoutNote } from "../src/images.ts";
+
+describe("titleWithoutNote", () => {
+	const note = formatAttachmentNote([{ name: "季度报告.xlsx", size: 10, path: "/tmp/p/a-季度报告.xlsx" }]);
+	it("uses the typed words when there are some", () => {
+		expect(titleWithoutNote(`汇总一下\n\n${note}`)).toBe("汇总一下");
+	});
+	it("falls back to the first file's name when only files were sent", () => {
+		expect(titleWithoutNote(note)).toBe("季度报告.xlsx");
+	});
+	it("copes with a title cut in the middle of the note, and leaves ordinary titles alone", () => {
+		expect(titleWithoutNote(note.slice(0, 80))).toBe("file");
+		expect(titleWithoutNote("hello")).toBe("hello");
+	});
+});

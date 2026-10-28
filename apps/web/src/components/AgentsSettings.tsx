@@ -1,4 +1,4 @@
-import { Bot, CircleAlert, Pencil, Plus, RotateCcw, Trash2 } from "lucide-react";
+import { Bot, CircleAlert, Download, Pencil, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { AgentProfile, RuntimeInfo } from "@prometheus/protocol";
 import { confirmDialog } from "../lib/dialogs.ts";
@@ -15,6 +15,14 @@ const M = defineMessages({
 		custom: "自定义",
 		available: "可用",
 		unavailable: "不可用",
+		install: "一键安装",
+		installing: "安装中…",
+		installDone: "{name} 已安装",
+		installHint: "会把 {pkg} 安装到 Prometheus 自己的目录，并加入这个运行时的 PATH；本机需要能用 npm。",
+		installNoNpm: "没有安装，也无法在这里一键安装：找不到 npm。请先安装 Node.js，或给这个 Agent 指定已有的可执行文件。",
+		uninstall: "卸载",
+		confirmUninstall: "删除 Prometheus 为 {name} 安装的命令行工具？机器上其他位置安装的不受影响。",
+		installedAt: "由 Prometheus 安装",
 		oldServer: "已连接的服务器版本较旧，不支持多 Agent 运行时。请把服务器升级到 0.12.0 或更高版本。",
 		piNote: "PI 内置，无需配置；它使用「AI 网关」里配置的模型。",
 		executable: "可执行文件",
@@ -57,6 +65,14 @@ const M = defineMessages({
 		custom: "Custom",
 		available: "Available",
 		unavailable: "Unavailable",
+		install: "Install",
+		installing: "Installing…",
+		installDone: "{name} installed",
+		installHint: "Installs {pkg} into Prometheus' own folder and puts it on this runtime's PATH. npm must be available on this machine.",
+		installNoNpm: "It is not installed and cannot be installed here: npm was not found. Install Node.js, or point this agent at an existing executable.",
+		uninstall: "Uninstall",
+		confirmUninstall: "Remove the CLI that Prometheus installed for {name}? An installation elsewhere on this machine is left alone.",
+		installedAt: "Installed by Prometheus",
 		oldServer: "The connected server is older and has no agent runtimes. Upgrade it to 0.12.0 or later.",
 		piNote: "PI is built in and needs no setup; it uses the models set up under AI Gateways.",
 		executable: "Executable",
@@ -95,6 +111,9 @@ const M = defineMessages({
 
 const KIND_LABEL = { "claude-code": "claudeCode", codex: "codex", opencode: "opencode" } as const;
 
+/** The npm package that provides each CLI, shown in the install hint. */
+const NPM_PACKAGE: Record<AgentProfile["kind"], string> = { "claude-code": "@anthropic-ai/claude-code", codex: "@openai/codex", opencode: "opencode-ai" };
+
 function blank(): AgentProfile {
 	return { id: "", name: "", kind: "claude-code", enabled: true };
 }
@@ -105,6 +124,7 @@ export function AgentsSettings() {
 	const [agents, setAgents] = useState<AgentProfile[]>([]);
 	const [editing, setEditing] = useState<{ agent: AgentProfile; isNew: boolean } | null>(null);
 	const [supported, setSupported] = useState(true);
+	const [busyId, setBusyId] = useState<string | null>(null);
 
 	const load = useCallback(async () => {
 		const list = await callNewer("agent.list", (c) => c.rpc("agent.list", {}));
@@ -117,6 +137,30 @@ export function AgentsSettings() {
 	}, [load]);
 
 	const health = (id: string): RuntimeInfo | undefined => runtimes.find((r) => r.id === id);
+
+	const install = async (a: AgentProfile) => {
+		setBusyId(a.id);
+		try {
+			await call((c) => c.rpc("agent.install", { kind: a.kind }));
+			toast(t("installDone", { name: a.name }), "info");
+		} catch (e) {
+			toast(e instanceof Error ? e.message : String(e), "error");
+		} finally {
+			setBusyId(null);
+			await load();
+		}
+	};
+
+	const uninstall = async (a: AgentProfile) => {
+		if (!(await confirmDialog(t("confirmUninstall", { name: a.name }), { danger: true }))) return;
+		setBusyId(a.id);
+		try {
+			await call((c) => c.rpc("agent.uninstall", { kind: a.kind }));
+		} finally {
+			setBusyId(null);
+			await load();
+		}
+	};
 
 	const remove = async (a: AgentProfile) => {
 		const ok = await confirmDialog(t(a.builtin ? "confirmReset" : "confirmRemove", { name: a.name }), { danger: true });
@@ -160,9 +204,18 @@ export function AgentsSettings() {
 										<span className="min-w-0 break-words">{info.health.reason}</span>
 									</p>
 								)}
+								{info && !info.health.available && (
+									<p className="mt-1.5 text-xs text-ink-500">{info.health.installable === false ? t("installNoNpm") : t("installHint", { pkg: NPM_PACKAGE[a.kind] })}</p>
+								)}
 								<dl className="mt-2 grid gap-x-4 gap-y-1 text-xs text-ink-400 @xl:grid-cols-[auto_1fr]">
 									<dt>{t("executable")}</dt>
 									<dd className="min-w-0 truncate font-mono text-ink-300">{a.executable || t("fromPath")}</dd>
+									{info?.health.installed && (
+										<>
+											<dt>{t("installedAt")}</dt>
+											<dd className="min-w-0 truncate font-mono text-ink-300">{info.health.installed}</dd>
+										</>
+									)}
 									{Object.keys(a.env ?? {}).length > 0 && (
 										<>
 											<dt>{t("envTitle")}</dt>
@@ -171,6 +224,16 @@ export function AgentsSettings() {
 									)}
 								</dl>
 								<div className="mt-3 flex flex-wrap items-center gap-1.5">
+									{info && !info.health.available && info.health.installable !== false && (
+										<Button variant="primary" className="px-2.5 py-1 text-xs" disabled={busyId === a.id} onClick={() => void install(a)}>
+											<Download className="size-3.5" /> {t(busyId === a.id ? "installing" : "install")}
+										</Button>
+									)}
+									{info?.health.installed && (
+										<Button variant="ghost" className="px-2.5 py-1 text-xs" disabled={busyId === a.id} onClick={() => void uninstall(a)}>
+											<Trash2 className="size-3.5" /> {t("uninstall")}
+										</Button>
+									)}
 									<Button variant="outline" className="px-2.5 py-1 text-xs" onClick={() => setEditing({ agent: structuredClone(a), isNew: false })}>
 										<Pencil className="size-3.5" /> {t("edit")}
 									</Button>

@@ -50,6 +50,8 @@ export interface ToolResultMessage {
 	content: (TextContent | ImageContent)[];
 	isError: boolean;
 	timestamp: number;
+	/** The text was cut to its start; this is the length of the full result. `session.toolResult` returns all of it. */
+	truncatedChars?: number;
 }
 export interface OtherMessage { role: "bashExecution" | "custom" | "branchSummary" | "compactionSummary"; timestamp: number; [key: string]: unknown }
 export type ChatMessage = UserMessage | AssistantMessage | ToolResultMessage | OtherMessage;
@@ -169,6 +171,12 @@ export interface RuntimeCapabilities {
 export interface RuntimeHealth {
 	available: boolean;
 	version?: string;
+	/** The CLI is not installed at all (as opposed to installed but failing to start). */
+	missing?: boolean;
+	/** Prometheus can install it here in one click (npm is available). */
+	installable?: boolean;
+	/** The CLI Prometheus itself installed, if any. */
+	installed?: string;
 	/** Only meaningful for native-gateway mode. */
 	loggedIn?: boolean;
 	reason?: string;
@@ -333,6 +341,8 @@ export interface SessionSnapshot {
 	cwd: string;
 	workspaceId: string;
 	messages: ChatMessage[];
+	/** Index of `messages[0]` in the whole conversation; messages before it were left out (see `session.open` `tail`). Absent means 0. */
+	messageOffset?: number;
 	model: ModelRef | null;
 	thinkingLevel: ThinkingLevel;
 	availableThinkingLevels: ThinkingLevel[];
@@ -942,7 +952,21 @@ export interface RpcMethods {
 	"agent.list": { params: Record<string, never>; result: AgentProfile[] };
 	"agent.save": { params: { agent: AgentProfile }; result: AgentProfile };
 	"agent.delete": { params: { id: string }; result: null };
-	"session.open": { params: { sessionId: string }; result: SessionSnapshot };
+	/** Installs or upgrades the CLI of a third-party runtime into the server's own folder. */
+	"agent.install": { params: { kind: RuntimeKind }; result: { command: string } };
+	"agent.uninstall": { params: { kind: RuntimeKind }; result: null };
+	/** `tail`: send only the latest N turns (user messages and what followed); earlier ones come from `session.messages`. */
+	"session.open": { params: { sessionId: string; tail?: number }; result: SessionSnapshot };
+	/** The `turns` turns that precede message index `before`, for scrolling back through a long conversation. */
+	/** The untruncated content of one tool result of a conversation (see `ToolResultMessage.truncatedChars`). */
+	"session.toolResult": { params: { sessionId: string; toolCallId: string }; result: { content: ToolResultMessage["content"] } };
+	/** Open a PI conversation on the server ahead of time (the user is about to click it). No subscription; a few such are kept. */
+	"session.warm": { params: { sessionId: string }; result: null };
+	/** Whether `path` (absolute, or relative to the session's folder) is a file the user may download, and how big it is. */
+	"file.stat": { params: { sessionId: string; path: string }; result: { exists: boolean; name?: string; size?: number } };
+	/** Up to 4 MB of the file from `offset`, base64; call again from `offset + length` until `eof`. */
+	"file.read": { params: { sessionId: string; path: string; offset: number; length: number }; result: { data: string; size: number; eof: boolean } };
+	"session.messages": { params: { sessionId: string; before: number; turns: number }; result: { messages: ChatMessage[]; offset: number } };
 	"session.rename": { params: { sessionId: string; name: string }; result: null };
 	"session.close": { params: { sessionId: string }; result: null };
 	"session.archive": { params: { sessionId: string; archived: boolean }; result: null };
@@ -974,7 +998,7 @@ export interface RpcMethods {
 	"settings.get": { params: Record<string, never>; result: HostSettings };
 	"settings.set": { params: Partial<HostSettings>; result: HostSettings };
 
-	"chat.prompt": { params: { sessionId: string; text: string; images?: ImageContent[]; delivery?: "steer" | "followUp" }; result: { disposition: PromptDisposition } };
+	"chat.prompt": { params: { sessionId: string; text: string; images?: ImageContent[]; /** Documents and other files; the server stores them in a temporary folder and tells the model their paths. */ files?: AttachedFile[]; delivery?: "steer" | "followUp" }; result: { disposition: PromptDisposition } };
 	"chat.abort": { params: { sessionId: string }; result: null };
 	"chat.compact": { params: { sessionId: string; instructions?: string }; result: null };
 
@@ -1193,3 +1217,53 @@ export const GATEWAY_PRESETS: readonly GatewayPreset[] = [
 		],
 	},
 ];
+
+// ---------- attached files ----------
+
+/** A file the user attached that the model cannot read directly (Word, Excel, PDF, ...); `data` is base64. */
+export interface AttachedFile {
+	name: string;
+	mimeType?: string;
+	data: string;
+}
+
+/** An attached file after the server stored it. */
+export interface SavedAttachment {
+	name: string;
+	size: number;
+	path: string;
+}
+
+/** Opens the note that tells the model where attached files are; the UI recognises it to show them as chips. */
+export const ATTACHMENT_HEADER = "Attached files (uploaded to a temporary folder; open them by path with your tools):";
+
+/** The text appended to a prompt so the model can find the files. */
+export function formatAttachmentNote(files: readonly SavedAttachment[]): string {
+	return [ATTACHMENT_HEADER, ...files.map((f) => `- ${f.name} (${f.size} bytes): ${f.path}`)].join("\n");
+}
+
+/** Splits a sent message back into what the user typed and the files it carried. */
+export function splitAttachmentNote(text: string): { text: string; files: SavedAttachment[] } {
+	let start = -1;
+	if (text.startsWith(ATTACHMENT_HEADER)) start = 0;
+	else {
+		const at = text.lastIndexOf(`\n\n${ATTACHMENT_HEADER}`);
+		if (at >= 0) start = at + 2;
+	}
+	if (start < 0) return { text, files: [] };
+	const lines = text.slice(start + ATTACHMENT_HEADER.length).split("\n").slice(1);
+	const files: SavedAttachment[] = [];
+	for (const line of lines) {
+		const m = /^- (.*) \((\d+) bytes\): (.+)$/.exec(line);
+		if (!m) return { text, files: [] };
+		files.push({ name: m[1]!, size: Number(m[2]), path: m[3]! });
+	}
+	if (!files.length) return { text, files: [] };
+	return { text: start === 0 ? "" : text.slice(0, start - 2), files };
+}
+
+/** The prompt the model receives: what the user typed, then the note listing where their files are. */
+export function withAttachmentNote(text: string, files: readonly SavedAttachment[]): string {
+	if (!files.length) return text;
+	return text.trim() ? `${text}\n\n${formatAttachmentNote(files)}` : formatAttachmentNote(files);
+}

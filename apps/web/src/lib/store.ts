@@ -1,9 +1,11 @@
+import { type Attachment, toWire } from "./attachments.ts";
 import { uuid } from "./uuid.ts";
 import { notifyTurnDone } from "./notify.ts";
 import { OPEN_FILE_TOOL } from "@prometheus/protocol";
 import type {
 	AssistantMessage,
 	ChatMessage,
+	ToolResultMessage,
 	CommandInfo,
 	HostSettings,
 	HostInfo,
@@ -100,6 +102,8 @@ export interface ActiveSession {
 	cwd: string;
 	workspaceId: string;
 	messages: ChatMessage[];
+	/** Messages of the conversation before `messages[0]` that are not loaded yet; they come from the server as the user scrolls up. */
+	messageOffset: number;
 	tools: Record<string, ToolRun>;
 	model: ModelRef | null;
 	thinkingLevel: ThinkingLevel;
@@ -117,7 +121,7 @@ export interface ActiveSession {
 	banner: Banner | null;
 	stats: SessionStats | null;
 	/** Prompt just sent and not yet echoed by the server; shown at once so the UI reacts before the upstream does. */
-	pending: { text: string; timestamp: number; images?: ImageContent[] } | null;
+	pending: { text: string; timestamp: number; images?: ImageContent[]; files?: { name: string; size: number }[] } | null;
 }
 
 export type SubagentSort = SubagentSortKey;
@@ -372,7 +376,8 @@ function reduce(session: ActiveSession, e: SessionEvent): ActiveSession {
 			if (!e.success && e.finalError) toast(tr(M, "retryFailed", { e: e.finalError }), "error");
 			return { ...session, banner: null };
 		case "messages_reset":
-			return { ...session, messages: e.messages };
+			// A reset carries the whole conversation.
+			return { ...session, messages: e.messages, messageOffset: 0 };
 		case "session_info_changed":
 			return { ...session, name: e.name };
 		case "thinking_level_changed":
@@ -493,6 +498,7 @@ function fromSnapshot(s: SessionSnapshot): ActiveSession {
 		cwd: s.cwd,
 		workspaceId: s.workspaceId,
 		messages: s.messages,
+		messageOffset: s.messageOffset ?? 0,
 		tools: {},
 		model: s.model,
 		thinkingLevel: s.thinkingLevel,
@@ -670,10 +676,25 @@ export async function switchRuntime(info: RuntimeInfo): Promise<void> {
 	if (snap) activate(snap);
 }
 
-/** New-chat agent; its model list replaces the current one. */
-export function setDraftAgent(info: RuntimeInfo): void {
+/**
+ * New-chat agent; its model list replaces the current one. The new-chat page may already hold an empty session (choosing a
+ * workspace creates it), and that session belongs to the previous agent: replace it with one of the chosen agent in the same
+ * folder, or the first message would still go to the old agent.
+ */
+export async function setDraftAgent(info: RuntimeInfo): Promise<void> {
+	const empty = get().session;
+	const replace = empty && empty.messages.length === 0 && !empty.pending && !empty.isStreaming ? empty : null;
 	set({ draftRuntime: info.kind, draftAgentId: info.id, draftModel: null });
-	void refreshDraftModels();
+	if (!replace) {
+		void refreshDraftModels();
+		return;
+	}
+	const permission = replace.permissionMode;
+	await createSession(replace.cwd);
+	const created = get().session;
+	if (!created || created.id === replace.id) return;
+	set({ draftModel: null });
+	if (permission !== created.permissionMode) await setPermissionMode(permission);
 }
 
 export async function createSession(cwd?: string): Promise<void> {
@@ -685,9 +706,60 @@ export async function createSession(cwd?: string): Promise<void> {
 	if (snap) activate(snap);
 }
 
+/** Turns sent when a conversation opens and per scroll-back step; the rest of a long conversation stays on the server until asked for. */
+export const OPEN_TURNS = 12;
+const EARLIER_TURNS = 10;
+
 export async function openSession(sessionId: string): Promise<void> {
-	const snap = await call((c) => c.rpc("session.open", { sessionId }));
+	const snap = await call((c) => c.rpc("session.open", { sessionId, tail: OPEN_TURNS }));
 	if (snap) activate(snap);
+}
+
+const warmedAt = new Map<string, number>();
+let warmTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * The pointer is over a conversation in the list: have the server open it now, so the click that probably follows finds
+ * it ready. Waits a moment so sweeping across the list does not warm every row, and asks again for a row only after a while.
+ */
+export function prefetchSession(sessionId: string): void {
+	const current = get().session;
+	if (current?.id === sessionId) return;
+	const at = warmedAt.get(sessionId);
+	if (at !== undefined && Date.now() - at < 60_000) return;
+	clearTimeout(warmTimer);
+	warmTimer = setTimeout(() => {
+		warmedAt.set(sessionId, Date.now());
+		void get().client?.rpc("session.warm", { sessionId }).catch(() => {
+			// An older server has no such method, or the conversation is gone: nothing to warm.
+			warmedAt.delete(sessionId);
+		});
+	}, 150);
+}
+
+/** The whole text of a tool result that the conversation carried only the start of. */
+export async function fetchToolResult(toolCallId: string): Promise<ToolResultMessage["content"] | undefined> {
+	const session = get().session;
+	if (!session) return undefined;
+	return (await call((c) => c.rpc("session.toolResult", { sessionId: session.id, toolCallId })))?.content;
+}
+
+let loadingEarlier = false;
+
+/** Fetch the turns before the first loaded message and put them in front. */
+export async function loadEarlier(): Promise<void> {
+	const session = get().session;
+	if (!session || session.messageOffset <= 0 || loadingEarlier) return;
+	loadingEarlier = true;
+	try {
+		const chunk = await call((c) => c.rpc("session.messages", { sessionId: session.id, before: session.messageOffset, turns: EARLIER_TURNS }));
+		const now = get().session;
+		// The conversation changed underneath (another one opened, or it was reset): the chunk no longer fits.
+		if (!chunk || !now || now.id !== session.id || now.messageOffset !== session.messageOffset) return;
+		set({ session: { ...now, messages: [...chunk.messages, ...now.messages], messageOffset: chunk.offset } });
+	} finally {
+		loadingEarlier = false;
+	}
 }
 
 /** Show the new-chat page: leave the current conversation (it keeps running) until a workspace is chosen. */
@@ -758,8 +830,10 @@ export async function renameSession(sessionId: string, name: string): Promise<vo
 }
 
 function refOf(index: number): MessageRef | null {
-	const m = get().session?.messages[index];
-	return m ? { index, role: m.role, timestamp: m.timestamp } : null;
+	const session = get().session;
+	const m = session?.messages[index];
+	// The list shows a window of the conversation; the server counts from its start.
+	return m && session ? { index: index + session.messageOffset, role: m.role, timestamp: m.timestamp } : null;
 }
 
 export async function deleteMessage(index: number): Promise<void> {
@@ -807,15 +881,15 @@ export async function addWorkspace(path: string): Promise<WorkspaceInfo | undefi
 	return w;
 }
 
-export async function sendPrompt(text: string, delivery?: "steer" | "followUp", images?: ImageContent[]): Promise<boolean> {
+export async function sendPrompt(text: string, delivery?: "steer" | "followUp", images?: ImageContent[], files?: Attachment[]): Promise<boolean> {
 	const session = get().session;
 	if (!session || session.pending) return false;
 
 	// Queued/steered messages ride on a run that is already visible; only a fresh run needs the instant echo.
-	const mark = session.isStreaming ? null : { text, timestamp: Date.now(), ...(images?.length ? { images } : {}) };
+	const mark = session.isStreaming ? null : { text, timestamp: Date.now(), ...(images?.length ? { images } : {}), ...(files?.length ? { files: files.map((f) => ({ name: f.name, size: f.size })) } : {}) };
 	if (mark) set({ session: { ...session, pending: mark } });
 
-	const result = await call((c) => c.rpc("chat.prompt", { sessionId: session.id, text, delivery, ...(images?.length ? { images } : {}) }));
+	const result = await call((c) => c.rpc("chat.prompt", { sessionId: session.id, text, delivery, ...(images?.length ? { images } : {}), ...(files?.length ? { files: toWire(files) } : {}) }));
 
 	// Only a started run echoes the user message later; anything else must drop the placeholder now.
 	if (mark && result?.disposition !== "started") {
@@ -936,7 +1010,7 @@ export async function setModel(model: ModelRef): Promise<void> {
 		return;
 	}
 	await call((c) => c.rpc("model.set", { sessionId: session.id, model }));
-	const snap = await call((c) => c.rpc("session.open", { sessionId: session.id }));
+	const snap = await call((c) => c.rpc("session.open", { sessionId: session.id, tail: 1 }));
 	const current = get().session;
 	if (snap && current) set({ session: { ...current, model: snap.model, thinkingLevel: snap.thinkingLevel, availableThinkingLevels: snap.availableThinkingLevels, gateway: snap.gateway } });
 	void refreshStats();

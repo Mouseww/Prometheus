@@ -113,6 +113,12 @@ beforeEach(async (ctx) => {
 const find = <T extends SessionEvent["type"]>(type: T) => events.filter((e): e is Extract<SessionEvent, { type: T }> => e.type === type);
 
 describe("conformance harness on opencode", { timeout: 120_000 }, () => {
+	it("lists opencode's commands for the slash menu", async () => {
+		const list = await session!.commands();
+		expect(Array.isArray(list)).toBe(true);
+		expect(list.length).toBeGreaterThan(0);
+	});
+
 	it("plain text turn: wire events, relay-only credentials, plugin context in the request", async () => {
 		llm.enqueue({ blocks: [{ type: "text", text: "hello from the fake model" }] });
 		await session!.prompt({ text: "say hi" }, "send");
@@ -149,6 +155,23 @@ describe("conformance harness on opencode", { timeout: 120_000 }, () => {
 		expect(JSON.stringify(end[0]!.result)).toContain("echo:ping");
 		expect(JSON.stringify(end[0]!.result)).toContain("echoed");
 		expect(start[0]!.toolCallId).toBe(end[0]!.toolCallId);
+	});
+
+	it("plan mode: exit_plan_mode asks the user, and approval leaves plan mode", async () => {
+		gate.setMode("plan");
+		llm.enqueue({ blocks: [{ type: "tool", name: "prometheus_exit_plan_mode", input: { plan: "1. do it" } }] }, { blocks: [{ type: "text", text: "starting" }] });
+		const prev = gate.ask;
+		gate.ask = async (p) => {
+			asked.push(p);
+			return p.kind === "plan" ? "default" : "allow";
+		};
+		await session!.prompt({ text: "plan it" }, "send");
+		await settle();
+		gate.ask = prev;
+		expect(asked.some((p: any) => p.kind === "plan")).toBe(true);
+		expect(gate.mode).toBe("default");
+		expect(find("tool_execution_end").at(-1)!.isError).toBe(false);
+		gate.setMode("bypassPermissions");
 	});
 
 	it("a shell command is normalized to bash and reports its output", async () => {

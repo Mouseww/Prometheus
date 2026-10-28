@@ -255,3 +255,9 @@ body { margin: 0; overflow: hidden; overscroll-behavior: none; }
 @media (prefers-reduced-motion: reduce) {
 	.thinking-shimmer { animation: none; color: var(--color-ink-400); background: none; }
 }
+
+/* Messages far above the end of a long chat: the browser skips laying out and painting them until they scroll near. */
+.msg-far {
+	content-visibility: auto;
+	contain-intrinsic-size: auto 140px;
+}

@@ -25,6 +25,7 @@ export const ERROR_PARAMS = {
 	aborted: [],
 	modelNotFound: ["provider", "id"],
 	unknownPermissionMode: ["mode"],
+	unknownRuntime: ["runtime"],
 	reloadFailed: ["error"],
 	extensionError: ["error"],
 	extensionTerminalOnly: [],
@@ -37,6 +38,11 @@ export const ERROR_PARAMS = {
 	imageTooLarge: [],
 	imageBadBase64: [],
 	imagesTotalTooLarge: [],
+	filesTooMany: ["max"],
+	fileTooLarge: ["name", "max"],
+	filesTotalTooLarge: ["max"],
+	fileBadBase64: ["name"],
+	fileNotFound: ["path"],
 	imageOnlyTitle: [],
 
 	// 网关

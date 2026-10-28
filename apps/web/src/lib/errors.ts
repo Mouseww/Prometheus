@@ -37,6 +37,11 @@ const M = defineMessages({
 		imageTooLarge: "图片过大",
 		imageBadBase64: "图片数据不是有效的 base64",
 		imagesTotalTooLarge: "图片总体积过大",
+		filesTooMany: "一条消息最多 {max} 个文件",
+		fileTooLarge: "文件「{name}」超过 {max} MB",
+		filesTotalTooLarge: "文件总体积超过 {max} MB",
+		fileBadBase64: "文件「{name}」的数据无效",
+		fileNotFound: "找不到文件：{path}",
 		imageOnlyTitle: "[图片]",
 
 		gatewayNotFound: "网关不存在：{id}",
@@ -188,6 +193,11 @@ const M = defineMessages({
 		imageTooLarge: "The image is too large",
 		imageBadBase64: "The image data is not valid base64",
 		imagesTotalTooLarge: "The images are too large in total",
+		filesTooMany: "At most {max} files per message",
+		fileTooLarge: "\"{name}\" is over {max} MB",
+		filesTotalTooLarge: "The files are over {max} MB in total",
+		fileBadBase64: "The data of \"{name}\" is not valid",
+		fileNotFound: "File not found: {path}",
 		imageOnlyTitle: "[Image]",
 
 		gatewayNotFound: "Gateway not found: {id}",

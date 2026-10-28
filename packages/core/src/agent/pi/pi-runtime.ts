@@ -25,6 +25,7 @@ import type { Runtime } from "../../runtime.ts";
 import { collectUsage } from "../../usage.ts";
 import type { AgentRuntime, GatewayChoice, NativeSessionInfo, ResumeInit, RuntimeHealth, RuntimeSession, SessionInit, SessionRef } from "../types.ts";
 import { PendingForks } from "./forks.ts";
+import { raiseRetryBudget } from "./retry.ts";
 import { PiRuntimeSession } from "./pi-session.ts";
 
 // Mirrors PI's CLI built-ins (main() adds them for the TUI); names keep `builtin:<name>` settings working.
@@ -234,6 +235,7 @@ export class PiRuntime implements AgentRuntime {
 		// PI auto-resize needs Photon WASM. A failed load drops every picture with
 		// "Image omitted: could not be resized". The web UI already shrinks attachments.
 		skipPiImageAutoResize(settingsManager);
+		raiseRetryBudget(settingsManager);
 		const { session } = await createAgentSession({
 			cwd,
 			agentDir: this.agentDir,

@@ -1,3 +1,4 @@
+import { ATTACHMENT_HEADER } from "@prometheus/protocol";
 import { AppError, encodeError, type ImageContent } from "@prometheus/protocol";
 
 export const MAX_IMAGES = 10;
@@ -31,4 +32,20 @@ export function checkImages(images: readonly ImageContent[] | undefined): void {
 		total += img.data.length;
 	}
 	if (total > MAX_TOTAL_IMAGE_CHARS) throw new AppError("imagesTotalTooLarge");
+}
+
+/** A conversation's title when its first message carried files: the words typed, else the first file's name, never the note about paths. */
+export function titleWithoutNote(firstMessage: string): string {
+	let at = firstMessage.indexOf(ATTACHMENT_HEADER);
+	if (at < 0) {
+		// A first message cut short inside the header itself.
+		const cut = firstMessage.lastIndexOf("\n\n") + 2;
+		const tail = firstMessage.slice(cut > 1 ? cut : 0);
+		if (tail.length < 8 || !ATTACHMENT_HEADER.startsWith(tail)) return firstMessage;
+		at = cut > 1 ? cut : 0;
+	}
+	const typed = firstMessage.slice(0, at).trim();
+	if (typed) return typed;
+	const first = /^- (.*?) \(\d+ bytes\)/m.exec(firstMessage.slice(at));
+	return first?.[1] ?? "file";
 }

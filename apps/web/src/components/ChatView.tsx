@@ -1,7 +1,7 @@
 import { LoaderCircle, RotateCcw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { useStore } from "../lib/store.ts";
+import { loadEarlier, useStore } from "../lib/store.ts";
 import { ChatWidthControls } from "./ChatWidthControls.tsx";
 import { Composer } from "./Composer.tsx";
 import { MessageList } from "./MessageList.tsx";
@@ -93,7 +93,7 @@ function ChatBody() {
 				}}
 				className="min-h-0 flex-1 overflow-y-auto"
 			>
-				<MessageList messages={session.messages} tools={session.tools} streaming={session.isStreaming} pending={session.pending} />
+				<MessageList key={session.id} messages={session.messages} offset={session.messageOffset} onLoadEarlier={loadEarlier} tools={session.tools} streaming={session.isStreaming} pending={session.pending} />
 			</div>
 			<Widgets placement="aboveEditor" />
 			<TaskPanel />

@@ -120,6 +120,12 @@ describe("conformance harness on Claude Code", { timeout: 90_000 }, () => {
 		expect((await runtime.probe()).available).toBe(true);
 	});
 
+	it("lists Claude Code's own commands and skills for the slash menu", async () => {
+		const list = await session.commands();
+		expect(list.length).toBeGreaterThan(0);
+		expect(list.some((c) => c.name === "compact")).toBe(true);
+	});
+
 	it("plain text turn: wire events, relay-only credentials, plugin context in the request", async () => {
 		llm.enqueue({ blocks: [{ type: "text", text: "hello from the fake model" }] });
 		await session.prompt({ text: "say hi" }, "send");

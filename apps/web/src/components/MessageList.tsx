@@ -3,14 +3,23 @@ import clsx from "clsx";
 import { Collapse } from "./ui.tsx";
 import { confirmDialog } from "../lib/dialogs.ts";
 import { Brain, Check, Eye, ChevronDown, ChevronRight, CircleAlert, Copy, GitBranch, LoaderCircle, Pencil, RotateCcw, Trash2 } from "lucide-react";
-import { useState } from "react";
-import type { AssistantMessage, ChatMessage, ImageContent, ToolCallContent, ToolResultMessage, UserMessage } from "@prometheus/protocol";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type AssistantMessage, type ChatMessage, type ImageContent, type SavedAttachment, splitAttachmentNote, type ToolCallContent, type ToolResultMessage, type UserMessage, withAttachmentNote } from "@prometheus/protocol";
+import { FileText } from "lucide-react";
+import { DownloadButton } from "./FileDownloadButton.tsx";
+import { formatSize } from "../lib/attachments.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { imagesOf } from "../lib/images.ts";
-import { deleteMessage, editMessage, forkMessage, openFile, pluginActive, retryMessage, type ToolRun, toast, useStore } from "../lib/store.ts";
+import { deleteMessage, editMessage, fetchToolResult, forkMessage, openFile, pluginActive, retryMessage, type ToolRun, toast, useStore } from "../lib/store.ts";
 import { ImageStrip } from "./ImageStrip.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { SubagentCard } from "./SubagentCard.tsx";
+
+/** Turns rendered when a conversation opens, and how many more each step adds. Earlier ones load as the user scrolls up. */
+const INITIAL_TURNS = 8;
+/** Browsers without scroll anchoring (Safari) skip `content-visibility`, whose size estimates they cannot absorb. */
+const ANCHORING = typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports("overflow-anchor", "auto");
+const MORE_TURNS = 10;
 
 const M = defineMessages({
 	zh: {
@@ -29,6 +38,11 @@ const M = defineMessages({
 		cancel: "取消",
 		resend: "重新发送",
 		confirmDelete: "从上下文中删除这条消息？",
+		cut: "输出已截断，共 {n} 字",
+		loadFull: "加载完整输出",
+		loadingFull: "加载中…",
+		earlier: "加载更早的 {n} 轮对话",
+		earlierMore: "加载更早的对话",
 	},
 	en: {
 		thinkingLive: "Thinking…",
@@ -46,11 +60,38 @@ const M = defineMessages({
 		cancel: "Cancel",
 		resend: "Resend",
 		confirmDelete: "Remove this message from the context?",
+		cut: "Output cut, {n} chars in all",
+		loadFull: "Load full output",
+		loadingFull: "Loading…",
+		earlier: "Load {n} earlier turns",
+		earlierMore: "Load earlier turns",
 	},
 });
 
-function userText(m: UserMessage): string {
+function rawUserText(m: UserMessage): string {
 	return typeof m.content === "string" ? m.content : m.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+}
+
+/** What the user typed and the files they attached; the note that tells the model where the files are is not shown as text. */
+function userParts(m: UserMessage): { text: string; files: SavedAttachment[] } {
+	return splitAttachmentNote(rawUserText(m));
+}
+
+/** Attached documents as small cards. */
+function FileChips({ files }: { files: { name: string; size: number; path?: string }[] }) {
+	if (!files.length) return null;
+	return (
+		<div className="flex flex-wrap justify-end gap-1.5">
+			{files.map((f, i) => (
+				<div key={i} className="flex max-w-60 items-center gap-2 rounded-lg border border-ink-700 bg-ink-900 px-2.5 py-1.5" title={f.name}>
+					<FileText className="size-4 shrink-0 text-ember-300" />
+					<span className="min-w-0 truncate text-xs text-ink-200">{f.name}</span>
+					<span className="shrink-0 font-mono text-[10.5px] text-ink-500">{formatSize(f.size)}</span>
+					{f.path && <DownloadButton path={f.path} name={f.name} />}
+				</div>
+			))}
+		</div>
+	);
 }
 
 function userImages(m: UserMessage): ImageContent[] {
@@ -58,24 +99,26 @@ function userImages(m: UserMessage): ImageContent[] {
 }
 
 /** The bubble of a sent message: pictures above the words, either part optional. */
-function UserBubble({ text, images }: { text: string; images: ImageContent[] }) {
+function UserBubble({ text, images, files = [] }: { text: string; images: ImageContent[]; files?: { name: string; size: number; path?: string }[] }) {
 	return (
 		<div className="flex max-w-[85%] flex-col items-end gap-2">
 			<ImageStrip images={images} align="end" />
+			<FileChips files={files} />
 			{text && <div className="rounded-2xl rounded-br-md border border-ember-500/20 bg-gradient-to-b from-ink-800 to-ink-850 px-4 py-2.5 text-[15px] whitespace-pre-wrap text-ink-100">{text}</div>}
 		</div>
 	);
 }
 
 /** Inline editor for a sent message; resending branches the chat from before it. */
-function UserEditor({ index, initial, onClose }: { index: number; initial: string; onClose: () => void }) {
+function UserEditor({ index, initial, files, onClose }: { index: number; initial: string; files: SavedAttachment[]; onClose: () => void }) {
 	const t = useT(M);
 	const [value, setValue] = useState(initial);
 	const [busy, setBusy] = useState(false);
 	const send = async () => {
-		if (busy || !value.trim()) return;
+		if (busy || (!value.trim() && !files.length)) return;
 		setBusy(true);
-		const ok = await editMessage(index, value);
+		// The files stay attached: the note that points the model at them goes back after the edited words.
+		const ok = await editMessage(index, withAttachmentNote(value, files));
 		setBusy(false);
 		if (ok) onClose();
 	};
@@ -99,7 +142,7 @@ function UserEditor({ index, initial, onClose }: { index: number; initial: strin
 				<button type="button" onClick={onClose} className="rounded-md px-3 py-1.5 text-ink-400 hover:bg-ink-800 hover:text-ink-100">
 					{t("cancel")}
 				</button>
-				<button type="button" disabled={busy || !value.trim()} onClick={() => void send()} className="rounded-md bg-ember-500 px-3 py-1.5 font-medium text-ink-950 hover:bg-ember-400 disabled:opacity-40">
+				<button type="button" disabled={busy || (!value.trim() && !files.length)} onClick={() => void send()} className="rounded-md bg-ember-500 px-3 py-1.5 font-medium text-ink-950 hover:bg-ember-400 disabled:opacity-40">
 					{t("resend")}
 				</button>
 			</div>
@@ -163,7 +206,11 @@ function Avatar() {
 function ToolCard({ call, run, result }: { call: ToolCallContent; run?: ToolRun; result?: ToolResultMessage }) {
 	const [open, setOpen] = useState(false);
 	const status = run?.status ?? (result ? (result.isError ? "error" : "done") : "running");
-	const output = result ? resultText(result) : resultText(run?.result ?? run?.partial);
+	const t = useT(M);
+	const [full, setFull] = useState<string | null>(null);
+	const [loadingFull, setLoadingFull] = useState(false);
+	const cut = result?.truncatedChars && full === null ? result.truncatedChars : 0;
+	const output = full ?? (result ? resultText(result) : resultText(run?.result ?? run?.partial));
 	const pictures = result ? imagesOf(result) : imagesOf(run?.result ?? run?.partial);
 	const viewer = useStore((s) => pluginActive(s.plugins, "workbench"));
 	const cwd = useStore((s) => s.session?.cwd ?? "");
@@ -183,6 +230,7 @@ function ToolCard({ call, run, result }: { call: ToolCallContent; run?: ToolRun;
 				</span>
 				<span className="shrink-0 font-mono text-[13px] font-medium text-ink-100">{call.name || run?.toolName}</span>
 				<span className="min-w-0 flex-1 truncate font-mono text-xs text-ink-500">{argSummary(call.name, call.arguments)}</span>
+				{filePath && status === "done" && <DownloadButton path={filePath} />}
 				{viewer && filePath && (
 					<span
 						role="button"
@@ -205,6 +253,24 @@ function ToolCard({ call, run, result }: { call: ToolCallContent; run?: ToolRun;
 				<div className="space-y-2 border-t border-ink-800 px-3 py-3">
 					<pre className="max-h-[35dvh] overflow-auto rounded-lg bg-ink-950 p-2.5 font-mono text-[11.5px] text-ink-300 md:max-h-48">{JSON.stringify(call.arguments, null, 2)}</pre>
 					{output && <pre className="max-h-[45dvh] overflow-auto rounded-lg bg-ink-950 p-2.5 font-mono text-[11.5px] break-words whitespace-pre-wrap text-ink-300 md:max-h-80">{output}</pre>}
+					{cut > 0 && (
+						<div className="flex items-center gap-2 text-xs text-ink-500">
+							<span>{t("cut", { n: cut })}</span>
+							<button
+								type="button"
+								disabled={loadingFull}
+								onClick={async () => {
+									setLoadingFull(true);
+									const content = await fetchToolResult(call.id);
+									setLoadingFull(false);
+									if (content) setFull(content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join(String.fromCharCode(10)));
+								}}
+								className="rounded px-2 py-0.5 text-ember-300 hover:bg-ink-800 disabled:opacity-50"
+							>
+								{t(loadingFull ? "loadingFull" : "loadFull")}
+							</button>
+						</div>
+					)}
 					<ImageStrip images={pictures} />
 				</div>
 			</Collapse>
@@ -403,32 +469,125 @@ function TurnBody({
 
 export function MessageList({
 	messages,
+	offset,
+	onLoadEarlier,
 	tools,
 	streaming,
 	pending,
 }: {
 	messages: ChatMessage[];
+	/** Messages of the conversation before `messages[0]` that the server still holds. */
+	offset: number;
+	onLoadEarlier: () => Promise<void>;
 	tools: Record<string, ToolRun>;
 	streaming: boolean;
-	pending: { text: string; images?: ImageContent[] } | null;
+	pending: { text: string; images?: ImageContent[]; files?: { name: string; size: number }[] } | null;
 }) {
 	const t = useT(M);
 	const [editingAt, setEditingAt] = useState<number | null>(null);
+	// Absolute index (in the whole conversation) of the first message shown; null until the first render picks the latest turns.
+	const [shownFrom, setShownFrom] = useState<number | null>(null);
+	const root = useRef<HTMLDivElement>(null);
+	const userAt = useMemo(() => messages.flatMap((m, i) => (m.role === "user" ? [i] : [])), [messages]);
+	const start = shownFrom === null ? (userAt.length > INITIAL_TURNS ? (userAt[userAt.length - INITIAL_TURNS] ?? 0) : 0) : Math.max(0, shownFrom - offset);
+	const hiddenLocal = userAt.filter((i) => i < start).length;
 	const results = new Map<string, ToolResultMessage>();
-	for (const m of messages) if (m.role === "toolResult") results.set(m.toolCallId, m);
+	for (let i = start; i < messages.length; i++) {
+		const m = messages[i];
+		if (m?.role === "toolResult") results.set(m.toolCallId, m);
+	}
 	const lastIndex = messages.length - 1;
+	// One pass instead of re-slicing the history per message: the role before each message, ignoring tool results.
+	let lastNonResult = -1;
+	const roleBefore: (string | undefined)[] = [];
+	let seen: string | undefined;
+	for (let i = 0; i < messages.length; i++) {
+		roleBefore[i] = seen;
+		const role = messages[i]?.role;
+		if (role !== "toolResult") {
+			seen = role;
+			lastNonResult = i;
+		}
+	}
 	const waitingOnReply = Boolean(pending) || (streaming && messages[lastIndex]?.role === "user");
+	const more = start > 0 || offset > 0;
+	// Far from the end the browser may skip rendering a message until it scrolls near (the last ones stay live for streaming).
+	// Only where the browser keeps the reading position when skipped messages take their real height (scroll anchoring); elsewhere the estimate would make the page jump.
+	const far = (i: number) => ANCHORING && i < lastIndex - 12;
+
+	// Earlier turns appear above what the user is reading: keep that in place by adding the height they brought.
+	const first = start + offset;
+	// Native scroll anchoring stays on for everything else (it absorbs the size changes of skipped messages) and is switched off
+	// only while earlier turns are inserted, when the compensation below does the same job.
+	const last = useRef({ first, height: 0 });
+	const releaseTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+	const holdAnchoring = useCallback(() => {
+		const scroller = root.current?.parentElement;
+		if (!scroller) return;
+		scroller.style.overflowAnchor = "none";
+		clearTimeout(releaseTimer.current);
+		// If nothing ends up being inserted, give anchoring back anyway.
+		releaseTimer.current = setTimeout(() => (scroller.style.overflowAnchor = ""), 1500);
+	}, []);
+	useLayoutEffect(() => {
+		const scroller = root.current?.parentElement;
+		if (scroller && first < last.current.first && last.current.height > 0) {
+			scroller.scrollTop += scroller.scrollHeight - last.current.height;
+			clearTimeout(releaseTimer.current);
+			scroller.style.overflowAnchor = "";
+		}
+		last.current = { first, height: scroller?.scrollHeight ?? 0 };
+	});
+	useEffect(() => () => clearTimeout(releaseTimer.current), []);
+
+	const loading = useRef(false);
+	const showMore = useCallback(async () => {
+		if (loading.current) return;
+		holdAnchoring();
+		if (start > 0) {
+			// Step back over MORE_TURNS user messages already in memory.
+			let seenUsers = 0;
+			let i = start - 1;
+			for (; i > 0; i--) if (messages[i]?.role === "user" && ++seenUsers === MORE_TURNS) break;
+			setShownFrom(offset + Math.max(0, i));
+			return;
+		}
+		loading.current = true;
+		try {
+			await onLoadEarlier();
+			setShownFrom(0);
+		} finally {
+			loading.current = false;
+		}
+	}, [start, messages, offset, onLoadEarlier, holdAnchoring]);
+	const sentinel = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		const el = sentinel.current;
+		const scroller = root.current?.parentElement;
+		if (!el || !scroller || typeof IntersectionObserver === "undefined") return;
+		const io = new IntersectionObserver((entries) => entries.some((e) => e.isIntersecting) && void showMore(), { root: scroller, rootMargin: "400px 0px 0px 0px" });
+		io.observe(el);
+		return () => io.disconnect();
+	}, [more, showMore]);
 
 	return (
-		<div className="chat-col mx-auto w-full space-y-5 px-3 py-5 md:px-5 md:py-8">
+		<div ref={root} className="chat-col mx-auto w-full space-y-5 px-3 py-5 md:px-5 md:py-8">
+			{more && (
+				<div ref={sentinel} className="flex justify-center">
+					<button type="button" onClick={() => void showMore()} className="rounded-md px-3 py-1 text-xs text-ink-500 hover:bg-ink-800 hover:text-ink-200">
+						{offset > 0 ? t("earlierMore") : t("earlier", { n: hiddenLocal })}
+					</button>
+				</div>
+			)}
 			{messages.map((m, i) => {
+				if (i < start) return null;
 				if (m.role === "user") {
-					const text = userText(m);
+					const { text, files: attachedFiles } = userParts(m);
 					const editing = editingAt === i && !streaming;
 					return (
-						<div key={i} className="group/msg animate-rise">
+						<div key={i + offset} className={clsx("group/msg animate-rise", far(i) && "msg-far")}>
 							<div className="flex justify-end">
-								{editing ? <UserEditor index={i} initial={text} onClose={() => setEditingAt(null)} /> : <UserBubble text={text} images={userImages(m)} />}
+								{editing ? <UserEditor index={i} initial={text} files={attachedFiles} onClose={() => setEditingAt(null)} /> : <UserBubble text={text} images={userImages(m)} files={attachedFiles} />}
 							</div>
 							{!editing && <Actions index={i} text={text} canRetry={!streaming} align="end" onEdit={() => setEditingAt(i)} />}
 						</div>
@@ -436,8 +595,7 @@ export function MessageList({
 				}
 				if (m.role === "assistant") {
 					// Each tool round is its own assistant message; render a whole turn as one block.
-					const prev = messages.slice(0, i).findLast((p) => p.role !== "toolResult");
-					if (prev?.role === "assistant") return null;
+					if (roleBefore[i] === "assistant") return null;
 					const group: { message: AssistantMessage; index: number }[] = [];
 					for (let j = i; j < messages.length; j++) {
 						const g = messages[j];
@@ -446,10 +604,10 @@ export function MessageList({
 					}
 					const lastInGroup = group[group.length - 1]?.index ?? i;
 					// Tool results after the last assistant message mean the next model call is still pending.
-					const awaitingNext = lastInGroup < lastIndex && messages.slice(lastInGroup + 1).every((x) => x.role === "toolResult");
+					const awaitingNext = lastInGroup < lastIndex && lastNonResult === lastInGroup;
 					const live = streaming && (lastInGroup === lastIndex || awaitingNext);
 					return (
-						<div key={i} className="group/msg flex gap-3">
+						<div key={i + offset} className={clsx("group/msg flex gap-3", far(i) && "msg-far")}>
 							<Avatar />
 							<div className="min-w-0 flex-1">
 								<TurnBody group={group} live={live} awaitingNext={awaitingNext} streaming={streaming} lastIndex={lastIndex} tools={tools} results={results} />
@@ -468,7 +626,7 @@ export function MessageList({
 				}
 				if (m.role === "compactionSummary") {
 					return (
-						<div key={i} className="flex items-center gap-3 text-xs text-ink-500">
+						<div key={i + offset} className="flex items-center gap-3 text-xs text-ink-500">
 							<span className="h-px flex-1 bg-ink-800" /> {t("compacted")} <span className="h-px flex-1 bg-ink-800" />
 						</div>
 					);
@@ -477,9 +635,9 @@ export function MessageList({
 			})}
 			{pending && (
 				// Same key as the real message will get, so the bubble is reused instead of replayed when the server echoes it.
-				<div key={messages.length} className="group/msg animate-rise">
+				<div key={messages.length + offset} className="group/msg animate-rise">
 					<div className="flex justify-end">
-						<UserBubble text={pending.text} images={pending.images ?? []} />
+						<UserBubble text={pending.text} images={pending.images ?? []} files={pending.files ?? []} />
 					</div>
 				</div>
 			)}

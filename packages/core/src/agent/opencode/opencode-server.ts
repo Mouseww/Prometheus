@@ -2,7 +2,7 @@
 // One server process per session; it listens on loopback only and is protected by a random password.
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 export interface OpenCodeServerOptions {
@@ -18,30 +18,72 @@ export interface OpenCodeServerOptions {
 	onLog?(line: string): void;
 }
 
-/** How to start opencode: the npm shim on Windows is a .cmd, so prefer the native binary it wraps. */
-export function resolveOpenCodeCommand(executable?: string): { command: string; args: string[]; shell: boolean } {
+/**
+ * The native binary an npm install of opencode wraps. npm puts it in a platform package beside `opencode-ai`
+ * (`node_modules/opencode-windows-x64/bin/opencode.exe`), or inside it for some versions.
+ */
+function nativeBinary(shimDir: string, arch: string): string | undefined {
+	const modules = join(shimDir, "node_modules");
+	const roots = [join(modules, "opencode-ai", "node_modules"), modules];
+	const want = arch === "arm64" ? "arm64" : "x64";
+	const found: { file: string; score: number }[] = [];
+	for (const root of roots) {
+		let names: string[] = [];
+		try {
+			names = readdirSync(root).filter((n) => n.startsWith("opencode-windows-"));
+		} catch {
+			continue;
+		}
+		for (const name of names) {
+			const file = join(root, name, "bin", "opencode.exe");
+			// The build for this CPU first, then the generic one; "baseline" is the older-CPU variant of the same arch.
+			if (existsSync(file)) found.push({ file, score: (name.includes(want) ? 2 : 0) + (name.includes("baseline") ? 0 : 1) });
+		}
+	}
+	for (const direct of [join(modules, "opencode-ai", "bin", "opencode.exe"), join(shimDir, "opencode.exe")]) if (existsSync(direct)) return direct;
+	return found.sort((a, b) => b.score - a.score)[0]?.file;
+}
+
+/** Directories a bare command name is looked up in, the way `where` would (Windows compares names case-insensitively). */
+function searchPath(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string[] {
+	const raw = platform === "win32" ? (env.PATH ?? env.Path ?? "") : (env.PATH ?? "");
+	const sep = platform === "win32" ? ";" : ":";
+	return raw
+		.split(sep)
+		.map((d) => d.trim().replace(/^"|"$/g, ""))
+		.filter(Boolean);
+}
+
+/**
+ * How to start opencode. On Windows npm installs an extensionless sh script next to a `.cmd`; neither is a real
+ * executable, so the native binary the shim wraps is preferred and the `.cmd` is run through a shell.
+ */
+export function resolveOpenCodeCommand(executable?: string, opts: { platform?: NodeJS.Platform; arch?: string; env?: NodeJS.ProcessEnv } = {}): { command: string; args: string[]; shell: boolean } {
+	const platform = opts.platform ?? process.platform;
+	const arch = opts.arch ?? process.arch;
+	const env = opts.env ?? process.env;
 	if (executable) {
 		if (executable.endsWith(".js") || executable.endsWith(".mjs")) return { command: process.execPath, args: [executable], shell: false };
 		return { command: executable, args: [], shell: /\.(cmd|bat)$/i.test(executable) };
 	}
-	if (process.platform === "win32") {
-		try {
-			const found = execFileSync("where", ["opencode"], { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }).split(/\r?\n/).find((l) => l.trim());
-			if (found) {
-				const dir = dirname(found.trim());
-				for (const exe of [join(dir, "node_modules", "opencode-ai", "bin", "opencode.exe"), join(dir, "opencode.exe")]) {
-					if (existsSync(exe)) return { command: exe, args: [], shell: false };
-				}
-				return { command: found.trim(), args: [], shell: /\.(cmd|bat)$/i.test(found.trim()) };
-			}
-		} catch {
-			/* not installed or not on PATH */
-		}
-		return { command: "opencode", args: [], shell: true };
+	if (platform !== "win32") return { command: "opencode", args: [], shell: false };
+	for (const dir of searchPath(env, platform)) {
+		const native = nativeBinary(dir, arch);
+		if (native) return { command: native, args: [], shell: false };
 	}
-	return { command: "opencode", args: [], shell: false };
+	for (const dir of searchPath(env, platform)) {
+		const exe = join(dir, "opencode.exe");
+		if (existsSync(exe)) return { command: exe, args: [], shell: false };
+	}
+	// A `.cmd` only runs through cmd.exe, which is what `shell: true` arranges.
+	for (const dir of searchPath(env, platform)) {
+		for (const ext of [".cmd", ".bat"]) {
+			const shim = join(dir, `opencode${ext}`);
+			if (existsSync(shim)) return { command: shim, args: [], shell: true };
+		}
+	}
+	return { command: "opencode", args: [], shell: true };
 }
-
 /** Kills a process and, on Windows, everything it started (shells, MCP servers). */
 function killTree(child: ChildProcess): void {
 	if (process.platform === "win32" && child.pid) {

@@ -76,6 +76,18 @@ impl Backend {
 
     fn kill(&self) {
         if let Some(mut child) = self.child.lock().unwrap().take() {
+            // The server's own children (MCP servers, plugin scripts, tools run with the bundled node) would outlive a plain
+            // kill and keep node.exe and native modules locked, so an update could not overwrite them.
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                let _ = Command::new("taskkill")
+                    .args(["/PID", &child.id().to_string(), "/T", "/F"])
+                    .creation_flags(0x0800_0000)
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
             let _ = child.kill();
             let _ = child.wait();
         }

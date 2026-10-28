@@ -70,6 +70,8 @@ export class CodexSession implements RuntimeSession {
 	private busSession: BusSession | undefined;
 	private grant: RelayGrant | undefined;
 	private busTools: PluginTool[] = [];
+	/** Skill name -> SKILL.md path, filled by `commands()`. */
+	private readonly skills = new Map<string, string>();
 	private idleWaiters: (() => void)[] = [];
 	private abortRequested = false;
 	private pendingError: string | undefined;
@@ -128,7 +130,7 @@ export class CodexSession implements RuntimeSession {
 	// ---------- start ----------
 
 	private async externalTools(): Promise<PluginTool[]> {
-		return (await this.services.plugins.externalView()).tools.map((t) => t.tool);
+		return [...(await this.services.plugins.externalView()).tools.map((t) => t.tool), this.gate.planExitTool()];
 	}
 
 	private async staticContext(): Promise<string> {
@@ -251,7 +253,7 @@ export class CodexSession implements RuntimeSession {
 		if (!this.gate.unattended && (mode === "bypassPermissions" || mode === "auto")) return { approval: "never", sandbox: { type: "dangerFullAccess" } };
 		// On Windows Codex' sandbox needs elevated setup; the gate is the guard there.
 		if (process.platform === "win32") return { approval: "untrusted", sandbox: { type: "dangerFullAccess" } };
-		if (mode === "plan") return { approval: "untrusted", sandbox: { type: "readOnly", networkAccess: false } };
+		// Plan mode needs no read-only sandbox: the gate refuses changes, and the sandbox cannot be widened once the plan is approved mid-turn.
 		return { approval: "untrusted", sandbox: { type: "workspaceWrite", writableRoots: [this.cwd], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false } };
 	}
 
@@ -327,6 +329,11 @@ export class CodexSession implements RuntimeSession {
 		const context = wasRunning ? "" : await this.turnContext(input.text).catch(() => "");
 		if (input.context && !wasRunning) items.push({ type: "text", text: input.context, text_elements: [] });
 		if (context) items.push({ type: "text", text: `<${CONTEXT_TAG}>\n${context}\n</${CONTEXT_TAG}>`, text_elements: [] });
+		// `/skill-name args` selects a skill the way Codex's own UI does.
+		const slash = /^\/(\S+)/.exec(input.text.trimStart())?.[1];
+		if (slash && !this.skills.size) await this.commands();
+		const skillPath = slash ? this.skills.get(slash) : undefined;
+		if (slash && skillPath) items.push({ type: "skill", name: slash, path: skillPath });
 		if (input.text) items.push({ type: "text", text: input.text, text_elements: [] });
 		for (const img of input.images ?? []) items.push({ type: "image", url: `data:${img.mimeType};base64,${img.data}` });
 		this.mapper.user(input.images?.length ? [...(input.text ? [{ type: "text", text: input.text }] : []), ...input.images] : input.text);
@@ -446,11 +453,29 @@ export class CodexSession implements RuntimeSession {
 			queue: { steering: [], followUp: [] },
 		} as RuntimeSnapshot;
 	}
-	commands(): CommandInfo[] {
-		return [];
+	/** Codex has no slash commands over the app-server; its skills are what `/` offers. */
+	async commands(): Promise<CommandInfo[]> {
+		if (this.closed) return [];
+		try {
+			const server = await this.ensureServer();
+			const res = await server.request("skills/list", { cwds: [this.cwd] });
+			this.skills.clear();
+			const out: CommandInfo[] = [];
+			for (const entry of Array.isArray(res?.data) ? res.data : []) {
+				for (const s of Array.isArray(entry?.skills) ? entry.skills : []) {
+					if (!s?.name || s.enabled === false || this.skills.has(s.name)) continue;
+					this.skills.set(s.name, String(s.path));
+					out.push({ name: s.name, description: String(s.interface?.shortDescription ?? s.shortDescription ?? s.description ?? ""), source: "skill" });
+				}
+			}
+			return out;
+		} catch (err) {
+			this.services.log.warn(`[codex ${this.id}] skills: ${err instanceof Error ? err.message : String(err)}`);
+			return [];
+		}
 	}
 	tools(): ToolInfo[] {
-		return this.busTools.map((t) => ({ name: t.name, description: t.description, active: true }));
+		return this.busTools.filter((t) => t.name !== "exit_plan_mode").map((t) => ({ name: t.name, description: t.description, active: true }));
 	}
 	usage(): SessionStats {
 		const t = this.mapper.total;

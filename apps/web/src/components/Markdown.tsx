@@ -2,11 +2,27 @@ import { memo } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
+import { looksLikeFilePath } from "../lib/download.ts";
+import { PathCode } from "./FileDownloadButton.tsx";
 
+/** Inline code naming a file gets a download button once the server confirms the file is there; blocks and other code stay as they are. */
+const components = {
+	code({ className, children, node: _node, ...rest }: React.ComponentPropsWithoutRef<"code"> & { node?: unknown }) {
+		const text = typeof children === "string" ? children : "";
+		if (!className && text && !/[\r\n]/.test(text) && looksLikeFilePath(text)) return <PathCode path={text}>{children}</PathCode>;
+		return (
+			<code className={className} {...rest}>
+				{children}
+			</code>
+		);
+	},
+};
+
+// No language auto-detection: it runs every grammar over each unlabeled code block, which dominates the cost of opening a long chat.
 export const Markdown = memo(function Markdown({ text }: { text: string }) {
 	return (
 		<div className="prose-forge">
-			<ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}>
+			<ReactMarkdown components={components} remarkPlugins={[remarkGfm]} rehypePlugins={[[rehypeHighlight, { ignoreMissing: true }]]}>
 				{text}
 			</ReactMarkdown>
 		</div>

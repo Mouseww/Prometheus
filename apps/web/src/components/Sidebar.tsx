@@ -39,6 +39,7 @@ import {
 	deleteSession,
 	newChatIn,
 	openSession,
+	prefetchSession,
 	openSettings,
 	pluginActive,
 	renameSession,
@@ -250,6 +251,8 @@ function SessionRow({ s, active }: { s: SessionSummary; active: boolean }) {
 			tabIndex={0}
 			onClick={() => !active && void openSession(s.id)}
 			onKeyDown={(e) => e.key === "Enter" && void openSession(s.id)}
+			onPointerEnter={() => !active && prefetchSession(s.id)}
+			onFocus={() => !active && prefetchSession(s.id)}
 			onDoubleClick={startRename}
 			className={clsx(
 				"group relative flex cursor-pointer items-center gap-2 rounded-lg py-1.5 pr-1.5 pl-3 transition-colors",
