@@ -1,3 +1,5 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { definePlugin } from "@prometheus/plugin-sdk";
 import { OPEN_FILE_TOOL } from "@prometheus/protocol";
@@ -17,7 +19,7 @@ export default definePlugin({
 	setup(ctx) {
 		const roots = async (extra?: string): Promise<string[]> => {
 			const list = (await ctx.workspaces()).map((w) => w.path);
-			list.push(ctx.cwd);
+			list.push(ctx.cwd, join(tmpdir(), "prometheus-uploads"));
 			if (extra) list.push(extra);
 			return list;
 		};

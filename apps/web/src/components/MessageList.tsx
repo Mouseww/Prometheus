@@ -73,17 +73,23 @@ function rawUserText(m: UserMessage): string {
 }
 
 /** What the user typed and the files they attached; the note that tells the model where the files are is not shown as text. */
-function userParts(m: UserMessage): { text: string; files: SavedAttachment[] } {
-	return splitAttachmentNote(rawUserText(m));
+function userParts(m: UserMessage): { text: string; files: SavedAttachment[]; skill?: { name: string; raw: string } } {
+	const { text, files } = splitAttachmentNote(rawUserText(m));
+	// /skill:name expands to a <skill> block ahead of the user's words; show it as a chip instead of the whole SKILL.md.
+	const hit = /^<skill name="([^"]*)"[^>]*>[\s\S]*?<\/skill>(?:\r?\n){0,2}/.exec(text);
+	if (!hit) return { text, files };
+	return { text: text.slice(hit[0].length), files, skill: { name: hit[1] ?? "", raw: hit[0] } };
 }
 
 /** Attached documents as small cards. */
 function FileChips({ files }: { files: { name: string; size: number; path?: string }[] }) {
+	const viewer = useStore((s) => pluginActive(s.plugins, "workbench"));
+	const cwd = useStore((s) => s.session?.cwd ?? "");
 	if (!files.length) return null;
 	return (
 		<div className="flex flex-wrap justify-end gap-1.5">
 			{files.map((f, i) => (
-				<div key={i} className="flex max-w-60 items-center gap-2 rounded-lg border border-ink-700 bg-ink-900 px-2.5 py-1.5" title={f.name}>
+				<div key={i} className={`flex max-w-60 items-center gap-2 rounded-lg border border-ink-700 bg-ink-900 px-2.5 py-1.5 ${viewer && f.path ? "cursor-pointer hover:border-ink-600" : ""}`} title={f.name} onClick={viewer && f.path ? () => openFile(f.path!, cwd) : undefined}>
 					<FileText className="size-4 shrink-0 text-ember-300" />
 					<span className="min-w-0 truncate text-xs text-ink-200">{f.name}</span>
 					<span className="shrink-0 font-mono text-[10.5px] text-ink-500">{formatSize(f.size)}</span>
@@ -99,9 +105,10 @@ function userImages(m: UserMessage): ImageContent[] {
 }
 
 /** The bubble of a sent message: pictures above the words, either part optional. */
-function UserBubble({ text, images, files = [] }: { text: string; images: ImageContent[]; files?: { name: string; size: number; path?: string }[] }) {
+function UserBubble({ text, images, files = [], skill }: { text: string; images: ImageContent[]; files?: { name: string; size: number; path?: string }[]; skill?: string }) {
 	return (
 		<div className="flex max-w-[85%] flex-col items-end gap-2">
+			{skill && <div className="rounded-lg border border-ink-700 bg-ink-900 px-2.5 py-1 font-mono text-xs text-ember-300">/skill:{skill}</div>}
 			<ImageStrip images={images} align="end" />
 			<FileChips files={files} />
 			{text && <div className="rounded-2xl rounded-br-md border border-ember-500/20 bg-gradient-to-b from-ink-800 to-ink-850 px-4 py-2.5 text-[15px] whitespace-pre-wrap text-ink-100">{text}</div>}
@@ -110,7 +117,7 @@ function UserBubble({ text, images, files = [] }: { text: string; images: ImageC
 }
 
 /** Inline editor for a sent message; resending branches the chat from before it. */
-function UserEditor({ index, initial, files, onClose }: { index: number; initial: string; files: SavedAttachment[]; onClose: () => void }) {
+function UserEditor({ index, initial, files, skillRaw = "", onClose }: { index: number; initial: string; files: SavedAttachment[]; skillRaw?: string; onClose: () => void }) {
 	const t = useT(M);
 	const [value, setValue] = useState(initial);
 	const [busy, setBusy] = useState(false);
@@ -118,7 +125,7 @@ function UserEditor({ index, initial, files, onClose }: { index: number; initial
 		if (busy || (!value.trim() && !files.length)) return;
 		setBusy(true);
 		// The files stay attached: the note that points the model at them goes back after the edited words.
-		const ok = await editMessage(index, withAttachmentNote(value, files));
+		const ok = await editMessage(index, withAttachmentNote(skillRaw + value, files));
 		setBusy(false);
 		if (ok) onClose();
 	};
@@ -582,12 +589,12 @@ export function MessageList({
 			{messages.map((m, i) => {
 				if (i < start) return null;
 				if (m.role === "user") {
-					const { text, files: attachedFiles } = userParts(m);
+					const { text, files: attachedFiles, skill } = userParts(m);
 					const editing = editingAt === i && !streaming;
 					return (
 						<div key={i + offset} className={clsx("group/msg animate-rise", far(i) && "msg-far")}>
 							<div className="flex justify-end">
-								{editing ? <UserEditor index={i} initial={text} files={attachedFiles} onClose={() => setEditingAt(null)} /> : <UserBubble text={text} images={userImages(m)} files={attachedFiles} />}
+								{editing ? <UserEditor index={i} initial={text} files={attachedFiles} skillRaw={skill?.raw} onClose={() => setEditingAt(null)} /> : <UserBubble text={text} images={userImages(m)} files={attachedFiles} skill={skill?.name} />}
 							</div>
 							{!editing && <Actions index={i} text={text} canRetry={!streaming} align="end" onEdit={() => setEditingAt(i)} />}
 						</div>

@@ -1,12 +1,14 @@
 import clsx from "clsx";
 import { Eye, FileText, FolderTree, LoaderCircle, RefreshCw, SquareTerminal, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import type { WorkbenchFile } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { activateWorkbenchTab, closeWorkbenchTab, pluginCall, useStore, type WorkbenchTab } from "../lib/store.ts";
 import { Markdown } from "./Markdown.tsx";
 import { FolderView } from "./FolderView.tsx";
 import { TerminalView } from "./TerminalView.tsx";
+
+const DocumentPreview = lazy(() => import("./DocumentPreview.tsx"));
 
 const M = defineMessages({
 	zh: {
@@ -79,11 +81,13 @@ function FileView({ tab }: { tab: Extract<WorkbenchTab, { kind: "file" }> }) {
 	const [error, setError] = useState<string | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [rendered, setRendered] = useState(true);
+	const [reloads, setReloads] = useState(0);
 	const streaming = useStore((s) => s.session?.isStreaming ?? false);
 	const lineRef = useRef<HTMLTableRowElement>(null);
 
 	const load = useCallback(async () => {
 		setLoading(true);
+		setReloads((n) => n + 1);
 		const res = await pluginCall<WorkbenchFile>("workbench", "readFile", { path: tab.path, cwd: tab.cwd }).catch(() => undefined);
 		// pluginCall reports failures as a toast and yields undefined; keep a visible reason in the pane too.
 		if (res) {
@@ -127,8 +131,11 @@ function FileView({ tab }: { tab: Extract<WorkbenchTab, { kind: "file" }> }) {
 					</div>
 				)}
 				{!file && error && <p className="p-4 text-sm text-ink-500">{error}</p>}
-				{file?.kind === "binary" && <p className="p-4 text-sm text-ink-500">{t("binary")}</p>}
-				{file?.kind === "tooLarge" && <p className="p-4 text-sm text-ink-500">{t("tooLarge")}</p>}
+				{(file?.kind === "binary" || file?.kind === "tooLarge") && (
+					<Suspense fallback={<LoaderCircle className="m-4 size-5 animate-spin text-ink-500" />}>
+						<DocumentPreview path={tab.path} name={file.name} refreshKey={reloads} />
+					</Suspense>
+				)}
 				{file?.kind === "image" && file.dataUrl && (
 					<div className="grid min-h-full place-items-center bg-ink-950 p-3">
 						<img src={file.dataUrl} alt={file.name} className="max-h-full max-w-full object-contain" />

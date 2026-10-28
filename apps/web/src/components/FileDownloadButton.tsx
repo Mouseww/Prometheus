@@ -2,7 +2,7 @@ import { Download, LoaderCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { downloadFile, fileExists } from "../lib/download.ts";
-import { useStore } from "../lib/store.ts";
+import { openFile, pluginActive, useStore } from "../lib/store.ts";
 
 const M = defineMessages({
 	zh: { download: "下载" },
@@ -43,6 +43,8 @@ export function DownloadButton({ path, name, className = "" }: { path: string; n
 /** Inline code that names a file the open conversation really has: the code, then a download button. Any other inline code is left plain. */
 export function PathCode({ path, children }: { path: string; children: React.ReactNode }) {
 	const sessionId = useStore((s) => s.session?.id);
+	const cwd = useStore((s) => s.session?.cwd ?? "");
+	const viewer = useStore((s) => pluginActive(s.plugins, "workbench"));
 	const [exists, setExists] = useState(false);
 	useEffect(() => {
 		let live = true;
@@ -54,7 +56,13 @@ export function PathCode({ path, children }: { path: string; children: React.Rea
 	}, [sessionId, path]);
 	return (
 		<>
-			<code>{children}</code>
+			{exists && viewer ? (
+				<code className="cursor-pointer underline decoration-dotted underline-offset-2 hover:text-ember-300" title={path} onClick={() => openFile(path, cwd)}>
+					{children}
+				</code>
+			) : (
+				<code>{children}</code>
+			)}
 			{exists && <DownloadButton path={path} className="ml-0.5 align-middle" />}
 		</>
 	);
