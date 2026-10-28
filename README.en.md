@@ -4,8 +4,8 @@
 
 # Prometheus
 
-**Command the AI agent on your computer from your phone, with secrets that never leave the machine.**
-An open-source, self-hostable AI agent workbench: any model gateway, asks before it writes files, masks secrets before they reach the model; computer, phone, browser and terminal share one session.
+**One AI agent session across your computer, phone, browser and terminal.**
+An open-source, self-hostable AI agent workbench. Pick up a task from your phone, switch agents mid-conversation without starting over, and keep control: it asks before writing files and masks secrets before they reach the model.
 
 [![Stars](https://img.shields.io/github/stars/Mouseww/Prometheus?style=for-the-badge&logo=github&color=ff5a1f)](https://github.com/Mouseww/Prometheus/stargazers)
 [![Release](https://img.shields.io/github/v/release/Mouseww/Prometheus?style=for-the-badge&color=ffc061)](https://github.com/Mouseww/Prometheus/releases)
@@ -76,7 +76,7 @@ Pick which agent does the work when you start a chat; the model picker then list
 
 - **One experience**: Prometheus tools (memory, knowledge, SSH, connectors, subagents, ...), permission prompts, plan mode and the privacy shield behave the same in every runtime; the built-in tools of Claude Code, Codex and OpenCode reuse the same diff, command-output and todo views.
 - **The model decides the route**: a model of the agent's own login uses its account, a gateway model goes through a local relay to that gateway, and you can change it inside a chat. Gateway keys stay in Prometheus and are never handed to the command-line process.
-- **Switch agents mid-conversation**: continue an existing chat with another agent; the original chat is kept and the transcript is handed over as background.
+- **Switch agents mid-conversation**: continue an existing chat with another agent; the chat continues in place, with the transcript handed over as background, and no extra chat is left behind.
 - **Custom agents**: under Settings → Agents, add your own agent on top of Claude Code, Codex or OpenCode with its own executable and environment.
 
 Claude Code, Codex and OpenCode must be installed and signed in on the machine; they are not available in Android local mode (connect to a server instead). See [docs/agent-runtime.md](docs/agent-runtime.md).
