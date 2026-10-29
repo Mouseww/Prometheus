@@ -9,14 +9,8 @@
 /* Touch screens have no hover, so controls that only appear on hover must stay visible there. */
 @custom-variant nohover (@media (hover: none));
 
-/* Reduced motion: decorative loops stop; spinners keep turning (essential feedback). */
-@media (prefers-reduced-motion: reduce) {
-	:root {
-		--animate-flicker: none;
-		--animate-breathe: none;
-		--animate-pulse: none;
-	}
-}
+/* Motion is governed by the in-app switch (Settings > Appearance), not prefers-reduced-motion: Windows with
+   "animation effects" off reports reduce on many machines and would freeze the whole UI. See the end of this file. */
 
 /* Expand/collapse motion is a short state cue, so it stays even when the OS asks for reduced motion. */
 .collapse-grid { transition: grid-template-rows 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.22s ease-out; }
@@ -282,9 +276,7 @@ body { margin: 0; overflow: hidden; overscroll-behavior: none; }
 	to { background-position: -100% 0; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-	.thinking-shimmer { animation: none; color: var(--color-ink-400); background: none; }
-}
+:root[data-motion="off"] .thinking-shimmer { animation: none; color: var(--color-ink-400); background: none; }
 
 /* Messages far above the end of a long chat: the browser skips laying out and painting them until they scroll near. */
 .msg-far {
@@ -440,9 +432,4 @@ html[data-entering] #root { animation: app-in 0.7s cubic-bezier(0.2, 0.8, 0.2, 1
 	transition-duration: 0.001ms !important;
 }
 
-@media (prefers-reduced-motion: reduce) {
-	.caret > :last-child > :last-child::after, .caret > :last-child:not(:has(> *))::after { animation: none; }
-	.hero-flame::before, .brand-flame::before, .tool-running::before { animation: none; }
-	.toast-spark::before, .toast-spark::after { display: none; }
-	html[data-entering] #root { animation: none; }
-}
+:root[data-motion="off"] .toast-spark::before, :root[data-motion="off"] .toast-spark::after { display: none; }

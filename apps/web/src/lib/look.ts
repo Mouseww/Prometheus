@@ -9,11 +9,11 @@ type ViewTransitionDoc = Document & { startViewTransition?: (update: () => void)
 
 /**
  * Changes theme or skin with a circular reveal spreading from the click point (View Transitions API).
- * Engines without the API, reduced motion or the motion switch turned off just switch instantly.
+ * Engines without the API, or the motion switch turned off, just switch instantly.
  */
 export function switchLook(patch: { theme?: ThemeMode; skin?: Skin }, from?: { clientX: number; clientY: number }): void {
 	const doc = document as ViewTransitionDoc;
-	const still = !usePrefs.getState().motion || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+	const still = !usePrefs.getState().motion;
 	if (!doc.startViewTransition || still) return setPrefs(patch);
 	const at = from ?? lastPress;
 	const x = at?.clientX ?? window.innerWidth / 2;

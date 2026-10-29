@@ -61,6 +61,11 @@
         animation: sp-fadein 0.4s 1.5s forwards; }
       #splash .sp-bar::after { content: ""; display: block; width: 40%; height: 100%; border-radius: 2px;
         background: linear-gradient(90deg, transparent, var(--sp-c), transparent); animation: sp-scan 1.3s ease-in-out infinite; }
+      /* Colours live here, not in style="" attributes: the desktop CSP (hashed inline styles) blocks those. */
+      #splash .sp-s0 { stop-color: var(--sp-b); }
+      #splash .sp-s1 { stop-color: var(--sp-d); }
+      #splash .sp-spark { fill: var(--sp-d); }
+      #splash .sp-base { fill: var(--sp-b); }
       #splash .sp-hint { position: absolute; top: calc(100% + 18px); left: 50%; transform: translateX(-50%); white-space: nowrap;
         font: 12px/1.4 "IBM Plex Sans", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; color: var(--sp-fg); opacity: 0;
         animation: sp-hint 0.6s 3.5s forwards; }
@@ -94,12 +99,12 @@
           <div class="sp-halo"></div>
           <svg viewBox="0 0 32 32">
             <defs>
-              <linearGradient id="sp-g" x1="0" y1="1" x2="0" y2="0"><stop offset="0" style="stop-color: var(--sp-b)" /><stop offset="1" style="stop-color: var(--sp-d)" /></linearGradient>
+              <linearGradient id="sp-g" x1="0" y1="1" x2="0" y2="0"><stop class="sp-s0" offset="0" /><stop class="sp-s1" offset="1" /></linearGradient>
             </defs>
             <path class="sp-outline" pathLength="1" d="M16 3c1.9 5 7.7 7.8 7.7 14.4A7.7 7.7 0 0 1 16 25.1a7.7 7.7 0 0 1-7.7-7.7c0-3.5 1.9-5.4 3.5-7.1.4 2.4 1.4 3.8 3 4.3C13.8 11 14.3 6.6 16 3Z" />
             <path class="sp-fill" fill="url(#sp-g)" d="M16 3c1.9 5 7.7 7.8 7.7 14.4A7.7 7.7 0 0 1 16 25.1a7.7 7.7 0 0 1-7.7-7.7c0-3.5 1.9-5.4 3.5-7.1.4 2.4 1.4 3.8 3 4.3C13.8 11 14.3 6.6 16 3Z" />
-            <circle class="sp-spark" cx="16" cy="22" r="1.4" style="fill: var(--sp-d)" />
-            <rect class="sp-base" x="8" y="27" width="16" height="2.2" rx="1.1" style="fill: var(--sp-b)" opacity=".6" />
+            <circle class="sp-spark" cx="16" cy="22" r="1.4" />
+            <rect class="sp-base" x="8" y="27" width="16" height="2.2" rx="1.1" opacity=".6" />
           </svg>
         </div>
         <div class="sp-word">PROMETHEUS</div>
@@ -129,7 +134,8 @@
         var light = p.theme === "light" || (p.theme === "system" && matchMedia("(prefers-color-scheme: light)").matches);
         if (light) { st.setProperty("--sp-bg", "#faf8f5"); st.setProperty("--sp-fg", "#1a1613"); document.documentElement.style.background = "#faf8f5"; }
         reveal();
-        if (p.motion === false || p.splash === false || matchMedia("(prefers-reduced-motion: reduce)").matches) return el.classList.add("sp-still");
+        // Only the in-app switches stop it: Windows with "animation effects" off reports reduced motion on many machines.
+        if (p.motion === false || p.splash === false) return el.classList.add("sp-still");
         for (var i = 0; i < 14; i++) {
           var e = document.createElement("span");
           e.className = "sp-ember";
