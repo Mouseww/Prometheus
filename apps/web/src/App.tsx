@@ -24,6 +24,7 @@ import { bindClient, openSession, pluginActive, setView, useStore } from "./lib/
 import { CONNECT_EVENT } from "./lib/platforms.ts";
 import { usePrefs } from "./lib/prefs.ts";
 import { checkForUpdate } from "./lib/updater.ts";
+import { dismissSplash } from "./lib/splash.ts";
 import { useIsMobile } from "./lib/viewport.ts";
 
 const closeView = () => setView("chat");
@@ -39,6 +40,18 @@ export function App() {
 	const title = useStore((s) => s.title);
 	const plugins = useStore((s) => s.plugins);
 	const sessionId = useStore((s) => s.session?.id);
+	const booted = useStore((s) => s.booted);
+
+	// The splash covers the whole start-up (the local server can take a while to boot) and leaves only when there is a
+	// real screen behind it: the chat, the connect chooser, a login, or the reconnecting state of an unreachable server.
+	useEffect(() => {
+		if (target === null || conn === "unauthorized" || conn === "closed" || booted) dismissSplash();
+	}, [target, conn, booted]);
+	// Last resort only: start_local_backend itself gives up after 90 s and then lands on the connect chooser.
+	useEffect(() => {
+		const timer = window.setTimeout(dismissSplash, 120_000);
+		return () => window.clearTimeout(timer);
+	}, []);
 
 	// On a phone the sidebar is a drawer: picking a chat or a page should reveal it, not leave the menu on top.
 	useEffect(() => {
@@ -142,9 +155,9 @@ export function App() {
 		<div className="forge-bg flex h-full flex-col">
 			<TitleBar onToggleSidebar={() => setSidebar((v) => !v)} />
 			<div className="relative flex min-h-0 flex-1">
-				{sidebar && isMobile && <div className="absolute inset-0 z-30 bg-ink-950/60 backdrop-blur-[2px]" onClick={() => setSidebar(false)} aria-hidden />}
+				{sidebar && isMobile && <div className="absolute inset-0 z-30 animate-fade bg-ink-950/60 backdrop-blur-[2px]" onClick={() => setSidebar(false)} aria-hidden />}
 				{sidebar && (
-					<div className={isMobile ? "absolute inset-y-0 left-0 z-40 flex w-[min(20rem,88%)] shadow-2xl shadow-black/60" : "flex"}>
+					<div className={isMobile ? "absolute inset-y-0 left-0 z-40 flex w-[min(20rem,88%)] animate-slide-in shadow-2xl shadow-black/60" : "flex animate-slide-in"}>
 						<Sidebar target={target} onDisconnect={() => setTarget(null)} />
 					</div>
 				)}

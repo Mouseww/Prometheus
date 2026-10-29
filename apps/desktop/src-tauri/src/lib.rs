@@ -487,6 +487,13 @@ pub fn run() {
         .on_window_event(tray::on_window_event)
         .setup(|app| {
             tray::init(app.handle())?;
+            // The page normally reveals the window within a few hundred ms; this only covers a page that never loads.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_secs(5));
+                let h = handle.clone();
+                let _ = handle.run_on_main_thread(move || tray::reveal_main(&h));
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -510,6 +517,7 @@ pub fn run() {
             runtimes::pm_uninstall,
             tray::set_close_to_tray,
             tray::show_main_window,
+            tray::reveal_main_window,
             tray::open_session_in_main,
         ]);
     #[cfg(mobile)]

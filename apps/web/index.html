@@ -31,8 +31,113 @@
         setTimeout(function () { var r = document.getElementById("root"); if (r && !r.childNodes.length) show("The interface did not render within 8 seconds."); }, 8000);
       })();
     </script>
+    <style>
+      /* Dark from the very first frame, before any stylesheet arrives. */
+      html, body { background: #1c1814; }
+      /* Ignition splash: plain HTML/CSS so it paints before the bundle loads; lib/splash.ts plays it out. */
+      #splash { --sp-a: #e0420f; --sp-b: #ff5a1f; --sp-c: #ffa055; --sp-d: #ffc061; --sp-bg: #1c1814; --sp-fg: #e9e0d5; --sp-glow: 255 90 31;
+        position: fixed; inset: 0; z-index: 9998; display: grid; place-items: center; overflow: hidden;
+        background: radial-gradient(600px 380px at 50% 58%, rgb(var(--sp-glow) / 0.16), transparent 70%), var(--sp-bg);
+        transition: opacity 0.52s ease, visibility 0.52s; }
+      #splash.sp-out { opacity: 0; visibility: hidden; pointer-events: none; }
+      #splash .sp-stage { position: relative; display: flex; flex-direction: column; align-items: center; gap: 22px;
+        transition: transform 0.52s cubic-bezier(0.4, 0, 0.2, 1), filter 0.52s; }
+      #splash.sp-out .sp-stage { transform: scale(1.12) translateY(-6px); filter: blur(6px); }
+      #splash .sp-mark { position: relative; width: 104px; height: 104px; }
+      #splash .sp-halo { position: absolute; inset: -60%; border-radius: 50%;
+        background: radial-gradient(circle, rgb(var(--sp-glow) / 0.42), rgb(var(--sp-glow) / 0.08) 45%, transparent 68%);
+        opacity: 0; transform: scale(0.4); animation: sp-halo 1.1s 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) forwards, sp-breathe 3s 1.7s ease-in-out infinite; }
+      #splash svg { position: relative; width: 100%; height: 100%; overflow: visible; }
+      #splash .sp-outline { fill: none; stroke: url(#sp-g); stroke-width: 0.7; stroke-linecap: round; stroke-linejoin: round;
+        stroke-dasharray: 1; stroke-dashoffset: 1; animation: sp-draw 0.75s 0.25s cubic-bezier(0.6, 0, 0.3, 1) forwards, sp-fadeout 0.4s 1s forwards; }
+      #splash .sp-fill { transform-box: fill-box; transform-origin: 50% 100%; opacity: 0; transform: scaleY(0.2) scaleX(0.6);
+        animation: sp-ignite 0.6s 0.7s cubic-bezier(0.2, 1.4, 0.4, 1) forwards, sp-flicker 2.6s 1.4s ease-in-out infinite; }
+      #splash .sp-spark { transform-box: fill-box; transform-origin: center; opacity: 0;
+        animation: sp-spark 0.75s 0.05s cubic-bezier(0.3, 0, 0.2, 1) forwards; }
+      #splash .sp-base { transform-box: fill-box; transform-origin: center; transform: scaleX(0); animation: sp-base 0.55s 0.95s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
+      #splash .sp-word { font: 600 20px/1 "Bricolage Grotesque Variable", "Segoe UI", system-ui, sans-serif; color: var(--sp-fg);
+        letter-spacing: 0.7em; margin-right: -0.7em; opacity: 0; animation: sp-word 0.8s 1s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
+      #splash .sp-bar { width: 120px; height: 2px; border-radius: 2px; overflow: hidden; background: rgb(var(--sp-glow) / 0.12); opacity: 0;
+        animation: sp-fadein 0.4s 1.5s forwards; }
+      #splash .sp-bar::after { content: ""; display: block; width: 40%; height: 100%; border-radius: 2px;
+        background: linear-gradient(90deg, transparent, var(--sp-c), transparent); animation: sp-scan 1.3s ease-in-out infinite; }
+      #splash .sp-hint { position: absolute; top: calc(100% + 18px); left: 50%; transform: translateX(-50%); white-space: nowrap;
+        font: 12px/1.4 "IBM Plex Sans", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; color: var(--sp-fg); opacity: 0;
+        animation: sp-hint 0.6s 3.5s forwards; }
+      @keyframes sp-hint { to { opacity: 0.45; } }
+      #splash .sp-ember { position: absolute; bottom: -10px; width: 3px; height: 3px; border-radius: 50%; background: var(--sp-d);
+        box-shadow: 0 0 6px 1px rgb(var(--sp-glow) / 0.8); opacity: 0; animation: sp-float linear infinite; }
+      #splash.sp-still *, #splash.sp-still *::after { animation: none !important; }
+      #splash.sp-still .sp-outline, #splash.sp-still .sp-spark, #splash.sp-still .sp-ember { display: none; }
+      #splash.sp-still .sp-fill, #splash.sp-still .sp-word, #splash.sp-still .sp-bar, #splash.sp-still .sp-halo { opacity: 1; transform: none; }
+      #splash.sp-still .sp-word { letter-spacing: 0.32em; margin-right: -0.32em; }
+      #splash.sp-still .sp-base { transform: none; }
+      @keyframes sp-spark { 0% { opacity: 0; transform: translateY(6px) scale(0.2); } 35% { opacity: 1; transform: translateY(0) scale(1.4); }
+        100% { opacity: 0; transform: translateY(-9px) scale(0.4); } }
+      @keyframes sp-draw { to { stroke-dashoffset: 0; } }
+      @keyframes sp-fadeout { to { opacity: 0; } }
+      @keyframes sp-fadein { to { opacity: 1; } }
+      @keyframes sp-ignite { to { opacity: 1; transform: none; } }
+      @keyframes sp-flicker { 0%, 100% { transform: scaleY(1) skewX(0); } 30% { transform: scaleY(0.96) skewX(-1.5deg); } 60% { transform: scaleY(1.03) skewX(1deg); } }
+      @keyframes sp-base { to { transform: scaleX(1); } }
+      @keyframes sp-halo { to { opacity: 1; transform: scale(1); } }
+      @keyframes sp-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.65; } }
+      @keyframes sp-word { to { opacity: 1; letter-spacing: 0.32em; margin-right: -0.32em; } }
+      @keyframes sp-scan { from { transform: translateX(-110%); } to { transform: translateX(260%); } }
+      @keyframes sp-float { 0% { opacity: 0; transform: translate(0, 0); } 15% { opacity: 0.9; } 100% { opacity: 0; transform: translate(var(--dx), -70vh); } }
+    </style>
   </head>
   <body>
+    <div id="splash" aria-hidden="true">
+      <div class="sp-stage">
+        <div class="sp-mark">
+          <div class="sp-halo"></div>
+          <svg viewBox="0 0 32 32">
+            <defs>
+              <linearGradient id="sp-g" x1="0" y1="1" x2="0" y2="0"><stop offset="0" style="stop-color: var(--sp-b)" /><stop offset="1" style="stop-color: var(--sp-d)" /></linearGradient>
+            </defs>
+            <path class="sp-outline" pathLength="1" d="M16 3c1.9 5 7.7 7.8 7.7 14.4A7.7 7.7 0 0 1 16 25.1a7.7 7.7 0 0 1-7.7-7.7c0-3.5 1.9-5.4 3.5-7.1.4 2.4 1.4 3.8 3 4.3C13.8 11 14.3 6.6 16 3Z" />
+            <path class="sp-fill" fill="url(#sp-g)" d="M16 3c1.9 5 7.7 7.8 7.7 14.4A7.7 7.7 0 0 1 16 25.1a7.7 7.7 0 0 1-7.7-7.7c0-3.5 1.9-5.4 3.5-7.1.4 2.4 1.4 3.8 3 4.3C13.8 11 14.3 6.6 16 3Z" />
+            <circle class="sp-spark" cx="16" cy="22" r="1.4" style="fill: var(--sp-d)" />
+            <rect class="sp-base" x="8" y="27" width="16" height="2.2" rx="1.1" style="fill: var(--sp-b)" opacity=".6" />
+          </svg>
+        </div>
+        <div class="sp-word">PROMETHEUS</div>
+        <div class="sp-bar"></div>
+        <div class="sp-hint"></div>
+      </div>
+    </div>
+    <script>
+      (function () {
+        var el = document.getElementById("splash");
+        if (window.__PROMETHEUS_PANEL__) return el.remove();
+        // Desktop: the window starts hidden (WebView2 paints white while it boots); show it now that there is something to see.
+        function reveal() {
+          var t = window.__TAURI_INTERNALS__;
+          if (t && t.invoke) try { t.invoke("reveal_main_window").catch(function () {}); } catch (e) {}
+        }
+        var p = {};
+        try { p = JSON.parse(localStorage.getItem("prometheus.prefs") || "{}") || {}; } catch (e) {}
+        var zh = (p.lang || navigator.language || "").toLowerCase().indexOf("zh") === 0;
+        el.querySelector(".sp-hint").textContent = zh ? "正在启动本地服务，首次启动可能稍慢…" : "Starting the local server, the first launch can take a moment…";
+        window.__splashT0 = performance.now();
+        // Follow the saved skin and theme so the splash hands over to the app without a colour jump.
+        var skins = { ocean: ["#1f6fe0", "#2f8cff", "#7cb8ff", "#a9d0ff", "47 140 255"], forest: ["#1f9457", "#2fb36b", "#72d69c", "#a3e6be", "47 179 107"],
+          violet: ["#7444e0", "#8b5cf6", "#b89afa", "#d4c2fc", "139 92 246"], rose: ["#d92a58", "#f43f6e", "#f88aa7", "#fbb6c8", "244 63 110"] };
+        var s = skins[p.skin], st = el.style;
+        if (s) { st.setProperty("--sp-a", s[0]); st.setProperty("--sp-b", s[1]); st.setProperty("--sp-c", s[2]); st.setProperty("--sp-d", s[3]); st.setProperty("--sp-glow", s[4]); }
+        var light = p.theme === "light" || (p.theme === "system" && matchMedia("(prefers-color-scheme: light)").matches);
+        if (light) { st.setProperty("--sp-bg", "#faf8f5"); st.setProperty("--sp-fg", "#1a1613"); document.documentElement.style.background = "#faf8f5"; }
+        reveal();
+        if (p.motion === false || p.splash === false || matchMedia("(prefers-reduced-motion: reduce)").matches) return el.classList.add("sp-still");
+        for (var i = 0; i < 14; i++) {
+          var e = document.createElement("span");
+          e.className = "sp-ember";
+          e.style.cssText = "left:" + (30 + Math.random() * 40) + "%;--dx:" + (Math.random() * 80 - 40) + "px;animation-duration:" + (2.4 + Math.random() * 2.2) + "s;animation-delay:" + (0.6 + Math.random() * 2) + "s";
+          el.appendChild(e);
+        }
+      })();
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

@@ -49,6 +49,8 @@ export async function sendNotification(title: string, body: string): Promise<voi
 	}
 }
 
+export const TURN_DONE_EVENT = "prometheus:turn-done";
+
 const TEXT = {
 	zh: (name: string) => `「${name}」已完成本轮任务`,
 	en: (name: string) => `"${name}" finished its turn`,
@@ -56,6 +58,8 @@ const TEXT = {
 
 /** Called when an agent turn settles. Honours the user's switch and, by default, stays quiet while the window is in front. */
 export function notifyTurnDone(sessionName: string): void {
+	// In-app cue (the title-bar flame flares), independent of the system notification switch.
+	window.dispatchEvent(new Event(TURN_DONE_EVENT));
 	const p = usePrefs.getState();
 	if (!p.notifyOnDone) return;
 	if (p.notifyBackgroundOnly && !document.hidden && document.hasFocus()) return;

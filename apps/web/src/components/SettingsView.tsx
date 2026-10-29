@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { isAndroid, isDesktopShell, isTauri, loadMode } from "../lib/backend.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { requestNotifyPermission } from "../lib/notify.ts";
+import { switchLook } from "../lib/look.ts";
 import { initRuntimes } from "../lib/runtimes.ts";
 import { type Lang, SKINS, type SendMode, type Skin, setPrefs, type ThemeMode, usePrefs } from "../lib/prefs.ts";
 import { openSettings, pluginActive, type SettingsTab, toast, updateHostSettings, useStore } from "../lib/store.ts";
@@ -83,6 +84,10 @@ const M = defineMessages({
 		autoCompactHint: "上下文接近模型窗口上限时自动生成摘要并压缩。与 PI TUI 共享此设置。",
 		chatWidth: "对话宽度",
 		chatWidthHint: "也可以在对话页面里拖动内容两侧的边缘调整，双击边缘恢复自适应。",
+		motion: "界面动效",
+		motionHint: "窗口过渡、火苗光标、切换主题时的扩散动画等。关闭后界面立即切换，系统开启“减少动画”时也会自动精简。",
+		splash: "启动动画",
+		splashHint: "打开软件时播放“点火”开屏动画；关闭后启动期间只显示静态 Logo。",
 		chatWidthAuto: "自适应",
 		sendMode: "回复中发送时",
 		sendModeHint: "Agent 还在回复时发送新消息：排队是等本轮结束后再发，插队是在当前工具调用结束后立即插入。也可以在发送按钮旁的箭头上切换。",
@@ -158,6 +163,10 @@ const M = defineMessages({
 		autoCompactHint: "Summarise and compact automatically when the context nears the model's window. Shared with the PI TUI.",
 		chatWidth: "Chat width",
 		chatWidthHint: "You can also drag the edges beside the chat column; double-click an edge to go back to automatic.",
+		motion: "Interface motion",
+		motionHint: "Window transitions, the flame cursor, the ripple when switching themes. Off switches instantly; the system's reduce-motion setting also tones it down.",
+		splash: "Startup animation",
+		splashHint: "Play the ignition splash when the app opens; when off, a still logo covers start-up instead.",
 		chatWidthAuto: "Auto",
 		sendMode: "When sending during a reply",
 		sendModeHint: "What a message does when the agent is still replying: Queue waits for the turn to end, Steer cuts in after the current tool call. You can also switch from the arrow beside the send button.",
@@ -367,7 +376,7 @@ function GeneralSettings() {
 						<Row label={t("theme")}>
 							<Segmented<ThemeMode>
 								value={prefs.theme}
-								onChange={(theme) => setPrefs({ theme })}
+								onChange={(theme) => switchLook({ theme })}
 								options={[
 									{ value: "dark", label: t("dark"), icon: <Moon className="size-3.5" /> },
 									{ value: "light", label: t("light"), icon: <Sun className="size-3.5" /> },
@@ -381,7 +390,7 @@ function GeneralSettings() {
 									<button
 										key={s.id}
 										type="button"
-										onClick={() => setPrefs({ skin: s.id as Skin })}
+										onClick={(e) => switchLook({ skin: s.id as Skin }, e)}
 										className={clsx(
 											"flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs transition-colors",
 											prefs.skin === s.id ? "border-ink-400 bg-ink-800 text-ink-100" : "border-ink-700 text-ink-400 hover:border-ink-500",
@@ -394,6 +403,12 @@ function GeneralSettings() {
 									</button>
 								))}
 							</div>
+						</Row>
+						<Row label={t("motion")} hint={t("motionHint")}>
+							<Toggle checked={prefs.motion} onChange={(motion) => setPrefs({ motion })} />
+						</Row>
+						<Row label={t("splash")} hint={t("splashHint")}>
+							<Toggle checked={prefs.splash} onChange={(splash) => setPrefs({ splash })} />
 						</Row>
 						<Row label={t("chatWidth")} hint={t("chatWidthHint")}>
 							<div className="flex items-center gap-3">

@@ -1,4 +1,4 @@
-import { LoaderCircle, RotateCcw } from "lucide-react";
+import { Bug, FileCode2, FolderTree, LoaderCircle, RotateCcw, ScanSearch } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { defineMessages, useT } from "../lib/i18n.ts";
@@ -17,6 +17,19 @@ const M = defineMessages({
 		headline1: "想做什么，",
 		headline2: "直接告诉我",
 		tagline: "我是 Prometheus，你的 AI 助手。可以帮你读写文件、执行命令、查资料、写代码，先想清楚再动手。",
+		night: "夜深了",
+		morning: "早上好",
+		noon: "中午好",
+		afternoon: "下午好",
+		evening: "晚上好",
+		s1t: "梳理项目",
+		s1: "帮我快速梳理这个项目的结构、技术栈和关键模块",
+		s2t: "排查问题",
+		s2: "帮我排查一个问题：",
+		s3t: "代码审查",
+		s3: "审查最近的改动，指出潜在的 bug 和可以改进的地方",
+		s4t: "写个脚本",
+		s4: "帮我写一个脚本，用来",
 	},
 	en: {
 		reconnecting: "Connection lost, reconnecting…",
@@ -25,6 +38,19 @@ const M = defineMessages({
 		headline1: "What do you want to do? ",
 		headline2: "Just tell me",
 		tagline: "I'm Prometheus, your AI assistant. I can read and write files, run commands, look things up and write code, thinking first before acting.",
+		night: "Burning the midnight oil",
+		morning: "Good morning",
+		noon: "Good afternoon",
+		afternoon: "Good afternoon",
+		evening: "Good evening",
+		s1t: "Map the project",
+		s1: "Give me a quick tour of this project: structure, tech stack and key modules",
+		s2t: "Debug an issue",
+		s2: "Help me track down a problem: ",
+		s3t: "Review changes",
+		s3: "Review the recent changes and point out likely bugs and improvements",
+		s4t: "Write a script",
+		s4: "Write me a script that ",
 	},
 });
 
@@ -155,9 +181,22 @@ function Opening({ title }: { title?: string }) {
 	);
 }
 
+function greetingKey(): "night" | "morning" | "noon" | "afternoon" | "evening" {
+	const h = new Date().getHours();
+	return h < 5 ? "night" : h < 11 ? "morning" : h < 13 ? "noon" : h < 18 ? "afternoon" : h < 23 ? "evening" : "night";
+}
+
+const SUGGESTIONS = [
+	{ title: "s1t", text: "s1", icon: FolderTree },
+	{ title: "s2t", text: "s2", icon: Bug },
+	{ title: "s3t", text: "s3", icon: ScanSearch },
+	{ title: "s4t", text: "s4", icon: FileCode2 },
+] as const;
+
 /** Landing page for a chat that has no messages yet: branding plus the shared composer with a workspace chooser. */
 function NewChat({ reconnecting }: { reconnecting: boolean }) {
 	const t = useT(M);
+	const [greeting] = useState(greetingKey);
 	return (
 		<>
 			{reconnecting && (
@@ -165,13 +204,31 @@ function NewChat({ reconnecting }: { reconnecting: boolean }) {
 					<LoaderCircle className="size-3 animate-spin" /> {t("reconnecting")}
 				</div>
 			)}
-			<div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 overflow-y-auto px-4 text-center md:px-6">
-				<Flame className="size-16 drop-shadow-[0_0_30px_rgb(var(--glow)/0.45)]" />
-				<h2 className="font-display text-4xl font-semibold tracking-tight">
+			<div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 overflow-y-auto px-4 py-6 text-center md:px-6">
+				<div className="hero-flame relative animate-pop">
+					<Flame className="relative size-16 drop-shadow-[0_0_30px_rgb(var(--glow)/0.45)]" />
+				</div>
+				<p className="animate-rise text-xs font-medium tracking-[0.25em] text-ember-300/80 uppercase [animation-delay:60ms]">{t(greeting)}</p>
+				<h2 className="-mt-2 animate-rise font-display text-3xl font-semibold tracking-tight [animation-delay:120ms] md:text-4xl">
 					{t("headline1")}
 					<span className="ember-text">{t("headline2")}</span>
 				</h2>
-				<p className="max-w-md text-sm text-ink-400">{t("tagline")}</p>
+				<p className="max-w-md animate-rise text-sm text-ink-400 [animation-delay:180ms]">{t("tagline")}</p>
+				<div className="mt-3 grid w-full max-w-2xl grid-cols-2 gap-2.5 md:grid-cols-4">
+					{SUGGESTIONS.map((s, i) => (
+						<button
+							key={s.title}
+							type="button"
+							onClick={() => useStore.setState({ editorText: { text: t(s.text), nonce: Date.now() } })}
+							style={{ animationDelay: `${240 + i * 60}ms` }}
+							className="suggest-card group flex animate-rise flex-col items-start gap-2 rounded-xl border border-ink-800 bg-ink-900/50 p-3 text-left backdrop-blur-sm"
+						>
+							<s.icon className="size-4 text-ember-400 transition-transform duration-300 group-hover:-translate-y-0.5 group-hover:scale-110" />
+							<span className="text-[13px] font-medium text-ink-200">{t(s.title)}</span>
+							<span className="line-clamp-2 text-xs text-ink-500">{t(s.text)}</span>
+						</button>
+					))}
+				</div>
 			</div>
 			<Composer newChat />
 		</>

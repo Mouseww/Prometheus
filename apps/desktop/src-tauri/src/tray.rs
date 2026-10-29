@@ -28,7 +28,29 @@ impl TrayState {
     }
 }
 
+/// The main window starts hidden so WebView2's blank start-up never shows; it appears once the page has the
+/// splash ready (`reveal_main_window`), or after a short fallback so a broken page cannot leave it invisible.
+static REVEALED: AtomicBool = AtomicBool::new(false);
+
+pub fn reveal_main(app: &AppHandle) {
+    if REVEALED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    if let Some(w) = app.get_webview_window(MAIN) {
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
+/// Called by index.html as soon as the splash is in the DOM. Only the first call shows the window, so a page
+/// reload while the app sits in the tray does not pop it back up.
+#[tauri::command]
+pub fn reveal_main_window(app: AppHandle) {
+    reveal_main(&app);
+}
+
 pub fn show_main(app: &AppHandle) {
+    REVEALED.store(true, Ordering::SeqCst);
     hide_panel(app);
     if let Some(w) = app.get_webview_window(MAIN) {
         let _ = w.unminimize();

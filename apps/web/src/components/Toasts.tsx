@@ -10,16 +10,18 @@ export function Toasts() {
 				<div
 					key={t.id}
 					className={clsx(
-						"pointer-events-auto flex animate-rise items-start gap-2.5 rounded-xl border bg-ink-900/95 px-3.5 py-3 text-sm shadow-2xl shadow-black/40 backdrop-blur",
+						"sheen pointer-events-auto flex animate-pop items-start gap-2.5 rounded-xl border bg-ink-900/95 px-3.5 py-3 text-sm shadow-2xl shadow-black/40 backdrop-blur",
 						t.level === "error" ? "border-rose-400/30" : t.level === "warning" ? "border-ember-300/30" : "border-ink-700",
 					)}
 				>
 					{t.level === "error" ? (
-						<AlertTriangle className="mt-0.5 size-4 shrink-0 text-rose-400" />
+						<AlertTriangle className="icon-shake mt-0.5 size-4 shrink-0 text-rose-400" />
 					) : t.level === "warning" ? (
 						<Info className="mt-0.5 size-4 shrink-0 text-ember-300" />
 					) : (
-						<CheckCircle2 className="mt-0.5 size-4 shrink-0 text-moss-400" />
+						<span className="toast-spark relative mt-0.5 shrink-0 text-moss-400">
+							<CheckCircle2 className="icon-pop size-4" />
+						</span>
 					)}
 					<span className="break-words text-ink-200">{t.message}</span>
 				</div>

@@ -5,7 +5,23 @@ import { isDesktopShell, isLoopbackHost } from "../lib/backend.ts";
 import { localizeError } from "../lib/errors.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { call, closeWorkbenchTab, NO_SUBAGENTS, openFolderTab, openTerminalTab, pluginActive, toggleSubagentPanel, useStore } from "../lib/store.ts";
+import { TURN_DONE_EVENT } from "../lib/notify.ts";
 import { Flame } from "./ui.tsx";
+
+/** The brand flame burns brighter while the agent works and flares once when a turn finishes. */
+function BrandFlame({ live }: { live: boolean }) {
+	const [flare, setFlare] = useState(0);
+	useEffect(() => {
+		const on = () => setFlare((n) => n + 1);
+		window.addEventListener(TURN_DONE_EVENT, on);
+		return () => window.removeEventListener(TURN_DONE_EVENT, on);
+	}, []);
+	return (
+		<span key={flare} className={clsx("brand-flame pointer-events-none relative grid place-items-center", live && "is-live", flare > 0 && "is-flare")}>
+			<Flame className="size-5" />
+		</span>
+	);
+}
 
 const M = defineMessages({
 	zh: {
@@ -242,7 +258,7 @@ export function TitleBar({ onToggleSidebar, bare }: { onToggleSidebar?: () => vo
 				</button>
 			)}
 			<span className="flex items-center gap-1.5 pr-2 pl-1" data-tauri-drag-region>
-				<Flame className="pointer-events-none size-5" />
+				<BrandFlame live={Boolean(session?.isStreaming)} />
 				<span className="pointer-events-none font-display text-sm font-semibold tracking-tight max-sm:hidden">Prometheus</span>
 			</span>
 			{!bare && <span className="h-4 w-px bg-ink-700" />}

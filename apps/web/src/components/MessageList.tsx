@@ -232,7 +232,7 @@ function Pondering() {
 
 function Avatar() {
 	return (
-		<div className="mt-1 grid size-6 shrink-0 place-items-center rounded-md bg-ember-500/12">
+		<div className="avatar-core mt-1 grid size-6 shrink-0 place-items-center rounded-md bg-ember-500/12">
 			<span className="size-2 rounded-full bg-ember-400 shadow-[0_0_10px_2px_rgb(var(--glow)/0.6)]" />
 		</div>
 	);
@@ -251,7 +251,7 @@ function ToolCard({ call, run, result }: { call: ToolCallContent; run?: ToolRun;
 	const cwd = useStore((s) => s.session?.cwd ?? "");
 	const filePath = ["read", "write", "edit"].includes(call.name) && typeof call.arguments?.path === "string" ? call.arguments.path : undefined;
 	return (
-		<div className={clsx("overflow-hidden rounded-xl border bg-ink-900/70", status === "error" ? "border-rose-400/25" : "border-ink-800")}>
+		<div className={clsx("overflow-hidden rounded-xl border bg-ink-900/70 transition-colors duration-500", status === "error" ? "border-rose-400/25" : status === "running" ? "tool-running border-ember-500/30" : "border-ink-800")}>
 			<button type="button" onClick={() => setOpen(!open)} className="flex w-full items-center gap-2.5 px-3 py-2 text-left">
 				<span
 					className={clsx(
@@ -261,7 +261,7 @@ function ToolCard({ call, run, result }: { call: ToolCallContent; run?: ToolRun;
 						status === "error" && "bg-rose-400/12 text-rose-400",
 					)}
 				>
-					{status === "running" ? <LoaderCircle className="size-3.5 animate-spin" /> : status === "error" ? <CircleAlert className="size-3.5" /> : <Check className="size-3.5" />}
+					{status === "running" ? <LoaderCircle className="size-3.5 animate-spin" /> : status === "error" ? <CircleAlert className="icon-pop size-3.5" /> : <Check className="icon-pop size-3.5" />}
 				</span>
 				<span className="shrink-0 font-mono text-[13px] font-medium text-ink-100">{call.name || run?.toolName}</span>
 				<span className="min-w-0 flex-1 truncate font-mono text-xs text-ink-500">{argSummary(call.name, call.arguments)}</span>
@@ -660,7 +660,7 @@ export function MessageList({
 					const awaitingNext = lastInGroup < lastIndex && lastNonResult === lastInGroup;
 					const live = streaming && (lastInGroup === lastIndex || awaitingNext);
 					return (
-						<div key={i + offset} className={clsx("group/msg flex gap-3", far(i) && "msg-far")}>
+						<div key={i + offset} className={clsx("group/msg flex animate-rise gap-3", far(i) && "msg-far")}>
 							<Avatar />
 							<div className="min-w-0 flex-1">
 								<TurnBody group={group} live={live} awaitingNext={awaitingNext} streaming={streaming} lastIndex={lastIndex} tools={tools} results={results} />

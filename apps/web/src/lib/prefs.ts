@@ -27,12 +27,16 @@ interface Prefs {
 	notifyBackgroundOnly: boolean;
 	/** Chat column width in px; null follows the window size. */
 	chatWidth: number | null;
+	/** Decorative motion (transitions, flame caret, theme ripple). Off also skips the splash animation. */
+	motion: boolean;
+	/** The "ignition" splash shown while the app starts. */
+	splash: boolean;
 }
 
 const KEY = "prometheus.prefs";
 
 function load(): Prefs {
-	const fallback: Prefs = { theme: "dark", skin: "ember", lang: navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en", closeToTray: true, sendMode: "followUp", chatWidth: null, notifyOnDone: false, notifyBackgroundOnly: true };
+	const fallback: Prefs = { theme: "dark", skin: "ember", lang: navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en", closeToTray: true, sendMode: "followUp", chatWidth: null, notifyOnDone: false, notifyBackgroundOnly: true, motion: true, splash: true };
 	try {
 		return { ...fallback, ...(JSON.parse(localStorage.getItem(KEY) ?? "{}") as Partial<Prefs>) };
 	} catch {
@@ -50,6 +54,7 @@ function apply(p: Prefs): void {
 	const light = p.theme === "light" || (p.theme === "system" && media.matches);
 	root.dataset.theme = light ? "light" : "dark";
 	root.dataset.skin = p.skin;
+	root.dataset.motion = p.motion ? "on" : "off";
 	root.lang = p.lang === "zh" ? ["zh", "CN"].join("-") : "en";
 	root.style.colorScheme = light ? "light" : "dark";
 }

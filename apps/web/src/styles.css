@@ -56,6 +56,9 @@ html[data-chat-resizing] { cursor: col-resize; user-select: none; }
 
 	--animate-rise: rise 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 	--animate-fade: fade 0.18s ease-out both;
+	--animate-pop: pop 0.32s cubic-bezier(0.2, 0.9, 0.25, 1.05) both;
+	--animate-slide-in: slide-in 0.28s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+	--animate-backdrop: backdrop 0.25s ease-out both;
 	/* Slow, subtle life signs: the flame and the connection dot should never nag for attention. */
 	--animate-flicker: flicker 7s ease-in-out infinite;
 	--animate-breathe: breathe 3.2s ease-in-out infinite;
@@ -69,6 +72,18 @@ html[data-chat-resizing] { cursor: col-resize; user-select: none; }
 	@keyframes rise {
 		from { opacity: 0; transform: translateY(8px); }
 		to { opacity: 1; transform: none; }
+	}
+	@keyframes pop {
+		from { opacity: 0; transform: translateY(10px) scale(0.975); filter: blur(3px); }
+		to { opacity: 1; transform: none; filter: none; }
+	}
+	@keyframes slide-in {
+		from { opacity: 0; transform: translateX(-14px); }
+		to { opacity: 1; transform: none; }
+	}
+	@keyframes backdrop {
+		from { opacity: 0; backdrop-filter: blur(0); }
+		to { opacity: 1; }
 	}
 	@keyframes flicker {
 		0%, 100% { opacity: 1; transform: scaleY(1); }
@@ -228,22 +243,29 @@ body { margin: 0; overflow: hidden; overscroll-behavior: none; }
 .prose-forge th { background: var(--color-ink-850); font-weight: 600; }
 .prose-forge hr { border-color: var(--color-ink-700); }
 
-.caret::after {
+/* Streaming cursor: a small flame at the end of the text that the reply keeps feeding. */
+.caret > :last-child > :last-child::after,
+.caret > :last-child:not(:has(> *))::after {
 	content: "";
 	display: inline-block;
-	width: 0.5em;
+	width: 0.62em;
 	height: 1.05em;
-	margin-left: 2px;
+	margin-left: 3px;
 	vertical-align: -0.15em;
-	background: var(--color-ember-400);
-	border-radius: 1px;
-	animation: caret-blink 1.4s steps(2) infinite;
+	background: linear-gradient(0deg, var(--color-ember-500), var(--color-ember-200));
+	-webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='7 2 18 24'%3E%3Cpath d='M16 3c1.9 5 7.7 7.8 7.7 14.4A7.7 7.7 0 0 1 16 25.1a7.7 7.7 0 0 1-7.7-7.7c0-3.5 1.9-5.4 3.5-7.1.4 2.4 1.4 3.8 3 4.3C13.8 11 14.3 6.6 16 3Z'/%3E%3C/svg%3E") center / contain no-repeat;
+	mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='7 2 18 24'%3E%3Cpath d='M16 3c1.9 5 7.7 7.8 7.7 14.4A7.7 7.7 0 0 1 16 25.1a7.7 7.7 0 0 1-7.7-7.7c0-3.5 1.9-5.4 3.5-7.1.4 2.4 1.4 3.8 3 4.3C13.8 11 14.3 6.6 16 3Z'/%3E%3C/svg%3E") center / contain no-repeat;
+	filter: drop-shadow(0 0 4px rgb(var(--glow) / 0.7));
+	transform-origin: 50% 100%;
+	animation: caret-flame 0.9s ease-in-out infinite alternate;
 }
 
-@keyframes caret-blink {
-	0%, 100% { opacity: 1; }
-	50% { opacity: 0; }
+@keyframes caret-flame {
+	0% { transform: scale(0.92, 0.88) skewX(-4deg); opacity: 0.85; }
+	50% { transform: scale(1, 1.05) skewX(2deg); opacity: 1; }
+	100% { transform: scale(0.96, 0.96) skewX(-1deg); opacity: 0.9; }
 }
+
 
 /* "Thinking…" label: a soft highlight sweeps across the text. */
 .thinking-shimmer {
@@ -268,4 +290,159 @@ body { margin: 0; overflow: hidden; overscroll-behavior: none; }
 .msg-far {
 	content-visibility: auto;
 	contain-intrinsic-size: auto 140px;
+}
+
+/* ───────── Polish: motion & surfaces ───────── */
+
+/* The app rises in underneath the splash as it hands over (lib/splash.ts). */
+html[data-entering] #root { animation: app-in 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+@keyframes app-in {
+	from { opacity: 0; transform: scale(0.985); }
+	to { opacity: 1; transform: none; }
+}
+
+/* Soft top highlight that gives floating panels an edge of light. */
+.sheen { box-shadow: inset 0 1px 0 rgb(var(--hair) / 0.07), 0 25px 50px -12px rgb(0 0 0 / 0.55); }
+:root[data-theme="light"] .sheen { box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.9), 0 25px 50px -12px rgb(0 0 0 / 0.18); }
+
+/* Primary buttons glow in the accent colour. */
+.btn-glow { box-shadow: 0 1px 0 rgb(255 255 255 / 0.18) inset, 0 4px 14px -4px rgb(var(--glow) / 0.45); transition: background-color 0.15s, box-shadow 0.25s, transform 0.15s; }
+.btn-glow:hover:not(:disabled) { box-shadow: 0 1px 0 rgb(255 255 255 / 0.22) inset, 0 6px 22px -4px rgb(var(--glow) / 0.65); }
+.btn-glow:active:not(:disabled) { transform: translateY(1px) scale(0.985); }
+
+/* Status icons land with a small spring; errors give a short shake. */
+.icon-pop { animation: icon-pop 0.42s cubic-bezier(0.3, 1.6, 0.5, 1) both; }
+@keyframes icon-pop {
+	from { transform: scale(0.3); opacity: 0; }
+	to { transform: none; opacity: 1; }
+}
+.icon-shake { animation: icon-shake 0.45s ease-in-out both; }
+@keyframes icon-shake {
+	0%, 100% { transform: none; }
+	25% { transform: translateX(-2px) rotate(-6deg); }
+	60% { transform: translateX(2px) rotate(5deg); }
+}
+
+/* Success toast: a ring of sparks bursts once from the check mark. */
+.toast-spark::before, .toast-spark::after {
+	content: "";
+	position: absolute;
+	inset: -3px;
+	border-radius: 50%;
+	pointer-events: none;
+}
+.toast-spark::before { border: 1.5px solid currentColor; animation: spark-ring 0.6s 0.1s ease-out both; }
+.toast-spark::after {
+	inset: -7px;
+	background:
+		radial-gradient(circle, currentColor 1.2px, transparent 1.6px) 50% 0 / 4px 4px no-repeat,
+		radial-gradient(circle, currentColor 1.2px, transparent 1.6px) 100% 50% / 4px 4px no-repeat,
+		radial-gradient(circle, currentColor 1.2px, transparent 1.6px) 50% 100% / 4px 4px no-repeat,
+		radial-gradient(circle, currentColor 1.2px, transparent 1.6px) 0 50% / 4px 4px no-repeat,
+		radial-gradient(circle, currentColor 1.2px, transparent 1.6px) 85% 15% / 4px 4px no-repeat,
+		radial-gradient(circle, currentColor 1.2px, transparent 1.6px) 15% 85% / 4px 4px no-repeat;
+	animation: spark-burst 0.65s 0.12s ease-out both;
+}
+@keyframes spark-ring {
+	from { transform: scale(0.4); opacity: 0.9; }
+	to { transform: scale(1.7); opacity: 0; }
+}
+@keyframes spark-burst {
+	from { transform: scale(0.5) rotate(0); opacity: 1; }
+	to { transform: scale(1.6) rotate(25deg); opacity: 0; }
+}
+
+/* A running tool call: a slow ember sweep along the card's top edge. */
+.tool-running { position: relative; }
+.tool-running::before {
+	content: "";
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 1px;
+	background: linear-gradient(90deg, transparent, var(--color-ember-400), transparent);
+	background-size: 40% 100%;
+	background-repeat: no-repeat;
+	animation: tool-scan 1.6s ease-in-out infinite;
+}
+@keyframes tool-scan {
+	from { background-position: -40% 0; }
+	to { background-position: 140% 0; }
+}
+
+.avatar-core { background: radial-gradient(circle at 50% 60%, rgb(var(--glow) / 0.2), rgb(var(--glow) / 0.06)); }
+
+/* New-chat hero: a breathing halo behind the flame. */
+.hero-flame::before {
+	content: "";
+	position: absolute;
+	inset: -70%;
+	border-radius: 50%;
+	background: radial-gradient(circle, rgb(var(--glow) / 0.28), rgb(var(--glow) / 0.06) 45%, transparent 70%);
+	animation: halo 4.5s ease-in-out infinite;
+	pointer-events: none;
+}
+@keyframes halo {
+	0%, 100% { transform: scale(0.92); opacity: 0.75; }
+	50% { transform: scale(1.06); opacity: 1; }
+}
+
+.suggest-card { transition: border-color 0.2s, background-color 0.2s, transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.25s; }
+.suggest-card:hover {
+	border-color: rgb(var(--glow) / 0.35);
+	background-color: rgb(var(--glow) / 0.06);
+	transform: translateY(-2px);
+	box-shadow: 0 10px 24px -12px rgb(var(--glow) / 0.45);
+}
+
+/* Title-bar flame: brighter while the agent works, one flare when a turn ends. */
+.brand-flame::before {
+	content: "";
+	position: absolute;
+	inset: -6px;
+	border-radius: 50%;
+	background: radial-gradient(circle, rgb(var(--glow) / 0.5), transparent 65%);
+	opacity: 0;
+	transition: opacity 0.4s;
+}
+.brand-flame.is-live::before { opacity: 0.7; animation: halo 1.6s ease-in-out infinite; }
+.brand-flame.is-live svg path { animation-duration: 1.1s; }
+.brand-flame.is-flare svg { animation: flare 0.9s cubic-bezier(0.3, 1.5, 0.5, 1); }
+.brand-flame.is-flare::before { animation: flare-glow 1.1s ease-out; }
+@keyframes flare {
+	0% { transform: none; }
+	30% { transform: scale(1.35) translateY(-1px); filter: brightness(1.3) drop-shadow(0 0 6px rgb(var(--glow) / 0.9)); }
+	100% { transform: none; }
+}
+@keyframes flare-glow {
+	0% { opacity: 0; transform: scale(0.6); }
+	30% { opacity: 1; transform: scale(1.6); }
+	100% { opacity: 0; transform: scale(2); }
+}
+
+/* Theme / skin switch: the new look spreads as a circle (lib/look.ts drives the clip-path). */
+::view-transition-old(root), ::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
+::view-transition-new(root) { z-index: 1; }
+
+/* Motion switch off (Settings › Appearance): decorative animation stops; spinners keep turning. */
+:root[data-motion="off"] {
+	--animate-flicker: none;
+	--animate-breathe: none;
+	--animate-pulse: none;
+}
+:root[data-motion="off"] *:not(.animate-spin),
+:root[data-motion="off"] *::before,
+:root[data-motion="off"] *::after {
+	animation-duration: 0.001ms !important;
+	animation-delay: 0s !important;
+	animation-iteration-count: 1 !important;
+	transition-duration: 0.001ms !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.caret > :last-child > :last-child::after, .caret > :last-child:not(:has(> *))::after { animation: none; }
+	.hero-flame::before, .brand-flame::before, .tool-running::before { animation: none; }
+	.toast-spark::before, .toast-spark::after { display: none; }
+	html[data-entering] #root { animation: none; }
 }

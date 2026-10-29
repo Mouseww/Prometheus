@@ -15,8 +15,8 @@ export function Modal({ onClose, children, floatingClose }: { onClose: () => voi
 	}, [onClose, dialogOpen]);
 
 	return (
-		<div className="absolute inset-0 z-20 grid place-items-center bg-ink-950/60 backdrop-blur-sm md:p-6" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-			<div role="dialog" aria-modal className="@container relative flex h-full w-full max-w-6xl animate-rise flex-col overflow-hidden border-ink-700 bg-ink-900 shadow-2xl shadow-black/60 md:max-h-[52rem] md:rounded-2xl md:border">
+		<div className="absolute inset-0 z-20 grid animate-backdrop place-items-center bg-ink-950/60 backdrop-blur-sm md:p-6" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+			<div role="dialog" aria-modal className="@container relative flex h-full w-full max-w-6xl animate-pop flex-col sheen overflow-hidden border-ink-700 bg-ink-900 shadow-2xl shadow-black/60 md:max-h-[52rem] md:rounded-2xl md:border">
 				{floatingClose && <CloseButton onClose={onClose} className="absolute top-2.5 right-2.5 z-10" />}
 				<ModalClose.Provider value={onClose}>{children}</ModalClose.Provider>
 			</div>
@@ -37,8 +37,8 @@ export function Dialog({ title, onClose, children }: { title: string; onClose: (
 	}, [onClose]);
 
 	return (
-		<div className="absolute inset-0 z-30 m-0 flex items-end justify-center bg-ink-950/60 backdrop-blur-[2px] md:items-center md:p-4" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-			<div role="dialog" aria-modal aria-label={title} className="max-h-full w-full max-w-lg animate-rise space-y-4 overflow-y-auto rounded-2xl border border-ink-700 bg-ink-900 p-5 shadow-2xl shadow-black/60 max-md:rounded-b-none max-md:border-x-0 max-md:border-b-0 max-md:pb-[max(1.25rem,env(safe-area-inset-bottom))]">
+		<div className="absolute inset-0 z-30 m-0 flex animate-backdrop items-end justify-center bg-ink-950/60 backdrop-blur-[2px] md:items-center md:p-4" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+			<div role="dialog" aria-modal aria-label={title} className="max-h-full w-full max-w-lg animate-pop sheen space-y-4 overflow-y-auto rounded-2xl border border-ink-700 bg-ink-900 p-5 shadow-2xl shadow-black/60 max-md:rounded-b-none max-md:border-x-0 max-md:border-b-0 max-md:pb-[max(1.25rem,env(safe-area-inset-bottom))]">
 				<div className="flex items-center justify-between gap-3">
 					<h2 className="font-display text-lg font-semibold">{title}</h2>
 					<CloseButton onClose={onClose} className="-mr-1.5" />
@@ -65,7 +65,7 @@ export function Button({ variant = "ghost", className, ...props }: ComponentProp
 			className={clsx(
 				"inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40",
 				"focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ember-400",
-				variant === "primary" && "bg-ember-500 text-ink-950 hover:bg-ember-400",
+				variant === "primary" && "btn-glow bg-ember-500 text-ink-950 hover:bg-ember-400",
 				variant === "ghost" && "text-ink-300 hover:bg-ink-800 hover:text-ink-100",
 				variant === "outline" && "border border-ink-700 text-ink-200 hover:border-ink-500 hover:bg-ink-850",
 				variant === "danger" && "text-rose-400 hover:bg-rose-400/10",
@@ -147,8 +147,8 @@ export function Flame({ className }: { className?: string }) {
 		<svg viewBox="0 0 32 32" className={className} aria-hidden>
 			<defs>
 				<linearGradient id="flame-g" x1="0" y1="1" x2="0" y2="0">
-					<stop offset="0" stopColor="#ff5a1f" />
-					<stop offset="1" stopColor="#ffc061" />
+					<stop offset="0" style={{ stopColor: "var(--color-ember-500)" }} />
+					<stop offset="1" style={{ stopColor: "var(--flame-tip, var(--color-ember-200))" }} />
 				</linearGradient>
 			</defs>
 			<path
@@ -156,7 +156,7 @@ export function Flame({ className }: { className?: string }) {
 				d="M16 3c1.9 5 7.7 7.8 7.7 14.4A7.7 7.7 0 0 1 16 25.1a7.7 7.7 0 0 1-7.7-7.7c0-3.5 1.9-5.4 3.5-7.1.4 2.4 1.4 3.8 3 4.3C13.8 11 14.3 6.6 16 3Z"
 				fill="url(#flame-g)"
 			/>
-			<rect x="8" y="27" width="16" height="2.2" rx="1.1" fill="#ff7a2f" opacity=".55" />
+			<rect x="8" y="27" width="16" height="2.2" rx="1.1" style={{ fill: "var(--color-ember-400)" }} opacity=".55" />
 		</svg>
 	);
 }
