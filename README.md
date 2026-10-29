@@ -21,11 +21,12 @@
 ## 特性
 
 - **跨客户端访问**：TUI、桌面（Tauri）、Web、安卓共用同一套服务端与协议，同一个会话在任意设备上续接。局域网访问带密码和限速，也可一键开启公网地址。
-- **会话内无缝切换 Agent**：PI、Claude Code、Codex、OpenCode 共用同一套界面、工具和权限，对话中途可换 Agent，在当前会话里继续，已有记录会带过去。
+- **会话内无缝切换 Agent**：PI、Claude Code、Codex、OpenCode、Gemini CLI、Qwen Code 以及任何支持 ACP（Agent Client Protocol）的 Agent（Goose、Kimi CLI……）共用同一套界面、工具和权限，对话中途可换 Agent，在当前会话里继续，已有记录会带过去。
 - **接入任何模型**：OpenAI Chat / Responses、Anthropic、Gemini 四种协议，自定义地址、鉴权头和密钥。
 - **先问再做**：写文件、执行命令前展示完整内容并等你确认，可按命令“始终允许”。
 - **隐私面罩**：连接串、手机号、密钥在出网前换成化名，回答回来再换回；脱敏失败直接拦截。
-- **万物皆插件**：网关、知识库、工具、命令、HTTP 路由、UI 面板都通过 `definePlugin` 贡献。
+- **万物皆插件**：网关、知识库、工具、命令、HTTP 路由、UI 面板都通过 `definePlugin` 贡献。内置的知识库、记忆、技能、MCP、连接器、SSH、Computer Use、子代理、自动化、Git、语音也都是插件，可单独停用。
+- **交给它自己推进**：`/goal <目标>` 让 Agent 一轮接一轮干到完成、受阻或用完轮数，可随时暂停；自动化可按计划在后台跑任务。
 
 ## 预览
 
@@ -72,8 +73,12 @@ docker run -p 7420:7420 -e PROMETHEUS_TOKEN=<至少16位随机串> \
 
 会话不绑定某个 Agent。输入框下方随时可以换：会话在原位置继续，已有记录作为背景交给新的 Agent，列表里只保留这一个会话。
 
+<img src="docs/images/agent-switch.png" alt="一个会话，随时换 Agent" width="760" />
+
 - 模型选择器列出当前 Agent 能用的全部模型：自带登录的模型，加上每个兼容网关的模型。
 - 选自带登录的模型走 Agent 自己的账号，选网关里的模型则经本机中继走该网关。网关密钥只留在 Prometheus。
+- 设置 → Agent 可以指定新会话的默认 Agent，也能基于 Claude Code、Codex、OpenCode 或任意 ACP Agent 添加自定义 Agent（自带 Goose、Kimi CLI 等预设）。未安装的可在设置里一键安装。
+- OpenCode 可以不再每个会话起一个进程，而是连接你已经在跑的 `opencode serve`（填地址和密码），或让 Prometheus 在固定端口起一个共享服务，你自己的 `opencode attach` 也能接入同一个服务。
 
 ## 架构
 
@@ -97,7 +102,8 @@ flowchart TB
     PI["PI"]
     CC["Claude Code"]
     CX["Codex"]
-    OC["OpenCode"]
+    OC["OpenCode（进程或常驻服务）"]
+    ACP["ACP Agent：Gemini CLI、Qwen Code、Goose…"]
   end
   Desktop & Android & Browser --> WS --> Core
   TUI --> Core

@@ -1,0 +1,47 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --ink: #15120f; --cream: #f7f4ef; --orange: #ff5a1f; --amber: #ffc061;
+  --grad: linear-gradient(90deg, #ff5a1f, #ffc061);
+}
+html, body { width: var(--w); height: var(--h); overflow: hidden; }
+body {
+  font-family: "HarmonyOS Sans SC", "MiSans", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  color: #f4ede4; background: var(--ink); position: relative;
+}
+.bg {
+  position: absolute; inset: 0; z-index: 0;
+  background:
+    radial-gradient(60% 60% at 80% 20%, rgba(255,122,47,.28), transparent 70%),
+    radial-gradient(50% 50% at 10% 90%, rgba(255,192,97,.12), transparent 70%),
+    var(--ink);
+}
+.grid {
+  position: absolute; inset: 0; z-index: 0; opacity: .07;
+  background-image: linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(70% 70% at 50% 40%, #000, transparent);
+}
+.wrap { position: relative; z-index: 1; width: 100%; height: 100%; }
+.brand { display: flex; align-items: center; gap: 14px; font-weight: 700; letter-spacing: .5px; }
+.brand img { border-radius: 10px; }
+.grad { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.chip {
+  display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 999px;
+  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12); color: #f0e6da; font-size: 20px;
+}
+.chip i { width: 8px; height: 8px; border-radius: 50%; background: var(--orange); display: inline-block; }
+.window {
+  border-radius: 18px; overflow: hidden; background: var(--cream);
+  box-shadow: 0 40px 120px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.08), 0 0 80px rgba(255,90,31,.18);
+}
+.window .bar { height: 34px; background: #ebe5dc; display: flex; align-items: center; gap: 8px; padding: 0 14px; }
+.window .bar span { width: 12px; height: 12px; border-radius: 50%; background: #d8cfc3; }
+.window .bar span:nth-child(1) { background: #ff6b57; } .window .bar span:nth-child(2) { background: #ffbd2e; } .window .bar span:nth-child(3) { background: #28c840; }
+.window img { display: block; width: 100%; }
+.phone {
+  border-radius: 46px; padding: 12px; background: #0b0908;
+  box-shadow: 0 30px 90px rgba(0,0,0,.6), 0 0 0 2px #2c2622, 0 0 60px rgba(255,90,31,.2);
+}
+.phone .screen { border-radius: 36px; overflow: hidden; background: var(--cream); height: 100%; }
+.phone img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.url { font-family: "JetBrains Mono", Consolas, monospace; color: #b8a99a; }

@@ -37,13 +37,13 @@ An open-source, self-hostable AI agent workbench. Pick up a task from your phone
 
 ## Why Prometheus
 
-Built on the [PI Agent](https://github.com/earendil-works/pi) runtime by default, and a chat can also be driven by Claude Code, Codex or OpenCode behind the same interface. We do not rewrite the agent loop — we spend the effort on being pleasant to use and easy to extend.
+Built on the [PI Agent](https://github.com/earendil-works/pi) runtime by default, and a chat can also be driven by Claude Code, Codex, OpenCode, Gemini CLI, Qwen Code or any other ACP agent behind the same interface. We do not rewrite the agent loop — we spend the effort on being pleasant to use and easy to extend.
 
 | | |
 | --- | --- |
 | **One kernel, four entry points** | TUI, desktop GUI (Tauri), web and Android share the same server and the same wire protocol, so a session continues anywhere. |
 | **Any model you like** | Custom AI gateways: OpenAI Chat / Responses, Anthropic and Gemini protocols, with your own base URL, auth header and key. One gateway can declare several protocols; each agent uses the one it speaks. |
-| **Several agent runtimes** | PI, Claude Code, Codex and OpenCode share the same interface, tools, permissions and privacy shield. Add your own agents (another executable, config directory or environment) and switch mid-conversation. |
+| **Several agent runtimes** | PI, Claude Code, Codex, OpenCode and every agent that speaks ACP (Gemini CLI, Qwen Code, Goose, Kimi CLI, ...) share the same interface, tools, permissions and privacy shield. Add your own agents (another executable, arguments, config directory, environment or server) and switch mid-conversation. |
 | **Everything is a plugin** | Gateways, knowledge bases, tools, commands, HTTP routes and UI panels are all contributed through `definePlugin` — even the built-in features are plugins. |
 | **Permissions you control** | Writing files and running commands ask for confirmation first, with “always allow” per command; third-party credentials are encrypted at rest and never enter the model context. |
 | **Anywhere** | One-command deployment to a server, reachable from a browser or phone; LAN / domain access is protected by a password and rate limiting. |
@@ -70,16 +70,18 @@ Add a gateway in settings to use your own proxy, a relay, or an official endpoin
 
 <img src="https://raw.githubusercontent.com/Mouseww/Prometheus/main/docs/images/gateways.png" alt="AI gateways" width="900" />
 
-### Agent runtimes: PI, Claude Code, Codex, OpenCode
+### Agent runtimes: PI, Claude Code, Codex, OpenCode, ACP agents
 
 Pick which agent does the work when you start a chat; the model picker then lists everything it can use: the models of its own login plus those of every compatible gateway.
 
 - **One experience**: Prometheus tools (memory, knowledge, SSH, connectors, subagents, ...), permission prompts, plan mode and the privacy shield behave the same in every runtime; the built-in tools of Claude Code, Codex and OpenCode reuse the same diff, command-output and todo views.
 - **The model decides the route**: a model of the agent's own login uses its account, a gateway model goes through a local relay to that gateway, and you can change it inside a chat. Gateway keys stay in Prometheus and are never handed to the command-line process.
 - **Switch agents mid-conversation**: continue an existing chat with another agent; the chat continues in place, with the transcript handed over as background, and no extra chat is left behind.
-- **Custom agents**: under Settings → Agents, add your own agent on top of Claude Code, Codex or OpenCode with its own executable and environment.
+- **Custom agents**: under Settings → Agents, add your own agent on top of Claude Code, Codex, OpenCode or any ACP agent (presets for Gemini CLI, Qwen Code, Goose, Kimi CLI, Auggie and the Claude Code / Codex ACP adapters) with its own executable, arguments and environment, and pick the default agent for new chats. Missing CLIs can be installed in one click.
+- **OpenCode as a server**: instead of a process per chat, connect to an `opencode serve` you already run (URL and password), or let Prometheus start one shared server on a fixed port that your own `opencode attach` can join.
+- **`/goal <objective>`**: the agent keeps working turn after turn until it reports done, gets blocked or runs out of turns (30 by default, `--max N`); pause, resume or clear it from the goal bar. Works with every runtime.
 
-Claude Code, Codex and OpenCode must be installed and signed in on the machine; they are not available in Android local mode (connect to a server instead). See [docs/agent-runtime.md](docs/agent-runtime.md).
+Claude Code, Codex, OpenCode and ACP agents must be installed and signed in on the machine; they are not available in Android local mode (connect to a server instead). See [docs/agent-runtime.md](docs/agent-runtime.md).
 
 ### Skills and plugins
 
@@ -139,7 +141,7 @@ Save several Prometheus servers (this machine, a company server, a home NAS...) 
 | Connectors | GitHub, Jira / Confluence, Bitbucket, Microsoft 365, databases; OAuth / token auth, with per-connection “read-only / confirm writes / allow writes”. See [connector design](docs/en/connectors.md) |
 | Automation | Run agent tasks on a schedule in the background; every run produces a viewable session |
 | Sub-agents | Delegate tasks to sub-agents and run them in parallel |
-| Agent runtimes | PI, Claude Code, Codex or OpenCode; custom agents; switch mid-conversation |
+| Agent runtimes | PI, Claude Code, Codex, OpenCode (per chat or as a server), ACP agents (Gemini CLI, Qwen Code, ...); custom agents; switch mid-conversation |
 | System notifications | Native notification when a task finishes; permission is requested on first enable and it can be turned off any time |
 | Themes | Light and dark plus five skins (Ember / Deep Sea / Forest / Nebula / Rose), with Chinese and English UI |
 | Usage stats | Token and cost accounting |

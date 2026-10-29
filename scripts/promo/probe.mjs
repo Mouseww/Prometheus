@@ -1,0 +1,10 @@
+import { createRequire } from "node:module";
+const require = createRequire(process.env.APPDATA + "/npm/node_modules/");
+const { chromium } = require("playwright");
+const browser = await chromium.launch({ channel: "chrome" });
+const page = await browser.newPage({ viewport: { width: 1080, height: 675 }, deviceScaleFactor: 2, locale: "zh-CN" });
+await page.goto("http://127.0.0.1:7430/");
+await page.waitForTimeout(3000);
+await page.screenshot({ path: process.argv[2] ?? "probe.png" });
+console.log((await page.locator("body").innerText()).slice(0, 1500));
+await browser.close();
