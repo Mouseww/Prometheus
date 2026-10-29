@@ -39,7 +39,7 @@ import {
 	type UIRequest,
 } from "@prometheus/protocol";
 import { ToolBus } from "./agent/bus/tool-bus.ts";
-import { bundledClaudeVersion, ClaudeCodeRuntime } from "./agent/claude-code/cc-runtime.ts";
+import { bundledClaudeBinary, bundledClaudeVersion, ClaudeCodeRuntime } from "./agent/claude-code/cc-runtime.ts";
 import { CodexRuntime } from "./agent/codex/codex-runtime.ts";
 import { CODEX_CAPABILITIES } from "./agent/codex/codex-session.ts";
 import { OpenCodeRuntime } from "./agent/opencode/opencode-runtime.ts";
@@ -344,6 +344,8 @@ export class PrometheusHost {
 			source = "prometheus";
 			current = installedVersion(dataDir, pkgAgent);
 		} else if (agent.kind === "claude-code") {
+			// The desktop installer ships without the SDK's binary; Claude Code is then simply not installed yet.
+			if (!bundledClaudeBinary()) return { ...base, source: "missing", reason: "missing" };
 			source = "bundled";
 			current = bundledClaudeVersion();
 		} else {
