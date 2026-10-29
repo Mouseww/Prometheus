@@ -97,6 +97,15 @@ execSync("npm install --omit=dev --no-audit --no-fund", {
 	stdio: "inherit",
 	env: { ...process.env, ONNXRUNTIME_NODE_INSTALL_CUDA: "skip" },
 });
+// LanceDB lists @huggingface/transformers as an optional dependency for its built-in embedding functions, which pulls in
+// onnxruntime-node/-web and sharp (~100 MB). Prometheus computes vectors through the gateway and hands them to LanceDB,
+// and LanceDB only loads transformers lazily when one of those functions is used, so none of it is needed here.
+// (Not `npm install --omit=optional`: that would also drop LanceDB's platform binding.)
+// The Claude Agent SDK's per-platform Claude Code binaries (~280 MB) are optional dependencies too. Claude Code is installed
+// into Prometheus' own folder on first use instead (see agent/install.ts), which also lets it update independently.
+const anthropic = join(out, "node_modules", "@anthropic-ai");
+if (existsSync(anthropic)) for (const name of readdirSync(anthropic)) if (name.startsWith("claude-agent-sdk-")) rmSync(join(anthropic, name), { recursive: true, force: true });
+for (const dir of ["@huggingface", "onnxruntime-node", "onnxruntime-web", "onnxruntime-common", "sharp", "@img"]) rmSync(join(out, "node_modules", dir), { recursive: true, force: true });
 if (nodeTarget !== "node22") {
 	// Node 20 has no fs.globSync, and a missing named import fails at link time, so point those imports at the polyfill.
 	const patch = (dir: string) => {

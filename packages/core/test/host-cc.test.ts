@@ -65,7 +65,8 @@ afterAll(async () => {
 describe("Claude Code through the host", { timeout: 120_000 }, () => {
 	it("lists runtimes with capabilities", async () => {
 		const list = await host.call("runtime.list", {});
-		expect(list.map((r) => r.kind)).toEqual(["pi", "claude-code", "codex", "opencode"]);
+		expect(list.map((r) => r.kind)).toEqual(["pi", "claude-code", "codex", "opencode", "acp", "acp"]);
+		expect(list.slice(4).map((r) => r.id)).toEqual(["gemini", "qwen"]);
 		expect(list[1]!.health.available).toBe(true);
 		expect(list[1]!.capabilities.followUpQueue).toBe(false);
 		const models = await host.call("runtime.models", { runtime: "claude-code" });

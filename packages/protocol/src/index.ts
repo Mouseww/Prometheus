@@ -150,8 +150,8 @@ export interface ModelInfo extends ModelRef {
 // ---------- Agent runtimes (docs/agent-runtime.md) ----------
 
 /** Which agent drives a session. */
-export type RuntimeKind = "pi" | "claude-code" | "codex" | "opencode";
-export const RUNTIME_KINDS: readonly RuntimeKind[] = ["pi", "claude-code", "codex", "opencode"];
+export type RuntimeKind = "pi" | "claude-code" | "codex" | "opencode" | "acp";
+export const RUNTIME_KINDS: readonly RuntimeKind[] = ["pi", "claude-code", "codex", "opencode", "acp"];
 
 /** Normalized kinds for runtime-native tools, so existing renderers (diff, bash, todo) apply to every runtime. */
 export type CanonicalToolKind = "exec" | "read" | "edit" | "write" | "search" | "fetch" | "todo" | "task" | "plan_exit" | "mcp" | "other";
@@ -191,8 +191,23 @@ export interface RuntimeHealth {
 export type GatewayChoice = { mode: "native" } | { mode: "prometheus"; gatewayId: string; model: ModelRef };
 
 /**
- * An agent the user can start chats with: one of the built-ins (id equals its kind) or a custom profile built on
- * Claude Code or Codex (own executable, environment, config directory).
+ * A long-lived agent server to use instead of one process per chat (OpenCode's `opencode serve`).
+ * `url` attaches to a server that is already running; without it, `port` makes Prometheus start one server on that
+ * port and share it between all chats of the agent (so other clients, e.g. `opencode attach`, can join it).
+ */
+export interface AgentServer {
+	/** e.g. `http://127.0.0.1:4096`. */
+	url?: string;
+	/** Port of the server Prometheus starts when there is no `url`. */
+	port?: number;
+	/** HTTP Basic credentials (`OPENCODE_SERVER_USERNAME` / `OPENCODE_SERVER_PASSWORD` of the server). */
+	username?: string;
+	password?: string;
+}
+
+/**
+ * An agent the user can start chats with: one of the built-ins (`BUILTIN_AGENTS`) or a custom profile built on
+ * Claude Code, Codex, OpenCode or any ACP agent (own executable, arguments, environment, server).
  */
 export interface AgentProfile {
 	id: string;
@@ -200,12 +215,78 @@ export interface AgentProfile {
 	kind: Exclude<RuntimeKind, "pi">;
 	/** Path of the CLI to run; empty means the one found on PATH. */
 	executable?: string;
+	/** Command-line arguments (ACP agents: the switch that starts ACP mode, e.g. `--acp`). */
+	args?: string[];
+	/** OpenCode: use a running server, or one shared server on a fixed port (see `AgentServer`). */
+	server?: AgentServer;
 	/** Extra environment for the CLI process (e.g. CLAUDE_CONFIG_DIR, proxy, a different API key). */
 	env?: Record<string, string>;
 	/** Hidden from the chat menu when false. */
 	enabled?: boolean;
 	/** Built-in entries can be configured but not deleted. */
 	builtin?: boolean;
+}
+
+/** A ready-made agent: what to run and, when it comes from npm, which package provides it. */
+export interface AgentPreset {
+	id: string;
+	name: string;
+	kind: Exclude<RuntimeKind, "pi">;
+	/** Command on PATH (ACP agents). */
+	command?: string;
+	args?: string[];
+	/** npm package and the command it installs, for one-click installs. */
+	npm?: { pkg: string; bin: string };
+	homepage?: string;
+}
+
+/** Agents every host offers; the user can configure them but not delete them. */
+export const BUILTIN_AGENTS: readonly AgentPreset[] = [
+	{ id: "claude-code", name: "Claude Code", kind: "claude-code", npm: { pkg: "@anthropic-ai/claude-code", bin: "claude" } },
+	{ id: "codex", name: "Codex", kind: "codex", npm: { pkg: "@openai/codex", bin: "codex" } },
+	{ id: "opencode", name: "OpenCode", kind: "opencode", npm: { pkg: "opencode-ai", bin: "opencode" } },
+	{ id: "gemini", name: "Gemini CLI", kind: "acp", command: "gemini", args: ["--acp"], npm: { pkg: "@google/gemini-cli", bin: "gemini" }, homepage: "https://github.com/google-gemini/gemini-cli" },
+	{ id: "qwen", name: "Qwen Code", kind: "acp", command: "qwen", args: ["--acp"], npm: { pkg: "@qwen-code/qwen-code", bin: "qwen" }, homepage: "https://github.com/QwenLM/qwen-code" },
+];
+
+/**
+ * Starting points for custom agents that speak the Agent Client Protocol (https://agentclientprotocol.com) over stdio.
+ * Any other ACP agent works too: pick "ACP" and enter its command and arguments.
+ */
+export const ACP_PRESETS: readonly AgentPreset[] = [
+	...BUILTIN_AGENTS.filter((a) => a.kind === "acp"),
+	{ id: "goose", name: "Goose", kind: "acp", command: "goose", args: ["acp"], homepage: "https://block.github.io/goose" },
+	{ id: "kimi", name: "Kimi CLI", kind: "acp", command: "kimi", args: ["--acp"], homepage: "https://github.com/MoonshotAI/kimi-cli" },
+	{ id: "auggie", name: "Auggie (Augment)", kind: "acp", command: "auggie", args: ["--acp"], npm: { pkg: "@augmentcode/auggie", bin: "auggie" } },
+	{ id: "claude-code-acp", name: "Claude Code (ACP adapter)", kind: "acp", command: "claude-code-acp", args: [], npm: { pkg: "@zed-industries/claude-code-acp", bin: "claude-code-acp" } },
+	{ id: "codex-acp", name: "Codex (ACP adapter)", kind: "acp", command: "codex-acp", args: [], npm: { pkg: "@zed-industries/codex-acp", bin: "codex-acp" } },
+];
+
+/** The preset an agent id stands for: a built-in, or an ACP preset of the same id. */
+export function agentPreset(id: string): AgentPreset | undefined {
+	return BUILTIN_AGENTS.find((a) => a.id === id) ?? ACP_PRESETS.find((a) => a.id === id);
+}
+
+/** Whether a newer version of an agent's CLI is published, and whether Prometheus can install it. */
+export interface AgentUpdateInfo {
+	/** Agent id. */
+	id: string;
+	/** Version that runs now, when known. */
+	current?: string;
+	/** Newest published version, when it could be looked up. */
+	latest?: string;
+	/** A newer version is published and the update button installs it. */
+	updateAvailable: boolean;
+	/**
+	 * Where the CLI that runs now comes from: a copy Prometheus installed, one found on PATH, the one bundled with
+	 * Prometheus (Claude Code's SDK), an executable the profile names, a server the agent connects to, or none.
+	 * Updating a `path` or `bundled` CLI installs a copy into Prometheus' folder, which is used from then on.
+	 */
+	source: "prometheus" | "path" | "bundled" | "custom" | "server" | "missing";
+	/** Why there is nothing Prometheus can update: `noPackage` (not on npm), `custom`, `server`, `missing`. */
+	reason?: "noPackage" | "custom" | "server" | "missing";
+	/** The lookup of the latest version failed. */
+	error?: string;
 }
 
 export interface RuntimeInfo {
@@ -964,8 +1045,11 @@ export interface RpcMethods {
 	/** Installs or upgrades the CLI of a third-party runtime into the server's own folder. */
 	/** Brings the workspaces and conversations kept in an agent's own store (Claude Code, Codex, OpenCode) into Prometheus. */
 	"agent.syncSessions": { params: { id: string }; result: { found: number; added: number; workspaces: number } };
-	"agent.install": { params: { kind: RuntimeKind }; result: { command: string } };
-	"agent.uninstall": { params: { kind: RuntimeKind }; result: null };
+	/** `agent` names the agent (built-in or preset id) whose npm package to install; `kind` is the older form (built-in id). */
+	"agent.install": { params: { kind?: RuntimeKind; agent?: string }; result: { command: string } };
+	"agent.uninstall": { params: { kind?: RuntimeKind; agent?: string }; result: null };
+	/** Compares each agent's CLI with the newest published version (cached for an hour; `refresh` asks npm again). `id` limits it to one agent. */
+	"agent.checkUpdates": { params: { id?: string; refresh?: boolean }; result: AgentUpdateInfo[] };
 	/**
 	 * Sends only the latest turns; earlier ones come from `session.messages`. How many is the server's limit (a few turns,
 	 * fewer when they are large); `tail` can ask for fewer, not more.

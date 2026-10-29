@@ -9,8 +9,8 @@ import { applyPermissionPrompt } from "../../permission-gate.ts";
 import type { BusSession } from "../bus/tool-bus.ts";
 import type { RelayGrant } from "../relay/gateway-relay.ts";
 import type { GatewayChoice, PromptDelivery, RuntimeCapabilities, RuntimeServices, RuntimeSession, RuntimeSnapshot, SessionHooks, SessionInit, SessionRef, UserInput } from "../types.ts";
-import { OpenCodeMapper, PROMETHEUS_MCP_SERVER, replaySession } from "./opencode-mapper.ts";
-import { OpenCodeServer } from "./opencode-server.ts";
+import { mcpPrefix, OpenCodeMapper, PROMETHEUS_MCP_SERVER, replaySession } from "./opencode-mapper.ts";
+import { type OpenCodeEndpoint, OpenCodeServer } from "./opencode-server.ts";
 
 export const OPENCODE_CAPABILITIES: RuntimeCapabilities = {
 	steering: true,
@@ -49,6 +49,24 @@ export interface OpenCodeSessionOptions {
 	executable?: string;
 	/** Extra environment from the agent profile. */
 	env?: Record<string, string>;
+	/**
+	 * Server mode: the address of a long-lived `opencode serve` (the user's own, or one Prometheus shares between
+	 * chats) to use instead of a process of this session. It is read on every (re)connect.
+	 */
+	endpoint?: () => Promise<OpenCodeEndpoint>;
+}
+
+/**
+ * What a session on a shared server may do. The session's own rules come last, so they win over the server's
+ * configuration: everything that changes something is asked (the gate decides), and the tools of the Prometheus tool
+ * buses other chats registered on the server are switched off. opencode turns a tool off only for a rule naming its
+ * exact id (`<server>_<tool>`) with pattern `*`, so `foreign` lists those ids.
+ */
+export function sessionPermissions(foreign: string[] = []): { permission: string; pattern: string; action: "ask" | "allow" | "deny" }[] {
+	return [
+		...["edit", "bash", "webfetch", "external_directory", "doom_loop"].map((permission) => ({ permission, pattern: "*", action: "ask" as const })),
+		...foreign.map((permission) => ({ permission, pattern: "*", action: "deny" as const })),
+	];
 }
 
 const asObject = (v: unknown): Record<string, unknown> => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
@@ -79,6 +97,8 @@ export class OpenCodeSession implements RuntimeSession {
 	private gatewayChoice: GatewayChoice | undefined;
 	private contextWindow = 0;
 	private readonly opts: OpenCodeSessionOptions;
+	/** Name of this session's tool bus inside opencode: unique per chat on a shared server. */
+	private readonly mcpName: string;
 
 	constructor(opts: OpenCodeSessionOptions) {
 		this.opts = opts;
@@ -92,7 +112,8 @@ export class OpenCodeSession implements RuntimeSession {
 		this.model = opts.model;
 		this.name = opts.name;
 		this.sessionId = opts.sessionId ?? "";
-		this.mapper = new OpenCodeMapper({ provider: opts.model.provider, model: () => this.model.id, emit: (e) => this.emit(e) });
+		this.mcpName = opts.endpoint ? `${PROMETHEUS_MCP_SERVER}-${opts.id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 12)}` : PROMETHEUS_MCP_SERVER;
+		this.mapper = new OpenCodeMapper({ provider: opts.model.provider, model: () => this.model.id, emit: (e) => this.emit(e), mcpServer: this.mcpName });
 		this.mapper.setMessages(opts.history ?? []);
 	}
 
@@ -149,6 +170,8 @@ export class OpenCodeSession implements RuntimeSession {
 	/** The gateway behind the current route and the protocol opencode talks to it. */
 	private gatewayFor(choice: GatewayChoice | undefined): { gateway: GatewayConfig; format: (typeof OPENCODE_FORMATS)[number] } | undefined {
 		if (choice?.mode !== "prometheus") return undefined;
+		// A shared server's providers are its own configuration; a gateway cannot be added to it per chat.
+		if (this.opts.endpoint) throw new Error("This OpenCode agent uses a server: pick one of the server's own models");
 		const gateway = this.services.gateway(choice.gatewayId);
 		if (!gateway) throw new AppError("gatewayNotFound", { id: choice.gatewayId } as never);
 		const format = pickGatewayFormat(gateway, OPENCODE_FORMATS) as (typeof OPENCODE_FORMATS)[number] | undefined;
@@ -220,6 +243,11 @@ export class OpenCodeSession implements RuntimeSession {
 			});
 		}
 
+		if (this.opts.endpoint) {
+			await this.attachServer(await this.opts.endpoint());
+			return;
+		}
+
 		this.server = new OpenCodeServer({
 			env: withLoopbackNoProxy({
 				...process.env,
@@ -237,16 +265,54 @@ export class OpenCodeSession implements RuntimeSession {
 			onLog: (line) => services.log.warn(`[opencode ${this.id}] ${line}`),
 		});
 		await this.server.start();
+		await this.openSession();
+	}
 
+	/** Server mode: connect to the shared server, add this chat's tool bus to it, and lock the session's permissions. */
+	private async attachServer(endpoint: OpenCodeEndpoint): Promise<void> {
+		const server = new OpenCodeServer({
+			env: {},
+			cwd: this.cwd,
+			attach: endpoint,
+			onEvent: (e) => this.onEvent(e),
+			onReconnect: () => void this.syncStatus(),
+			onExit: (code, output) => this.onExit(code, output),
+			onLog: (line) => this.services.log.warn(`[opencode ${this.id}] ${line}`),
+		});
+		await server.start();
+		this.server = server;
+		const bus = this.busSession!;
+		if (!/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])[:/]/i.test(endpoint.url)) {
+			this.services.log.warn(`[opencode ${this.id}] ${endpoint.url} is not on this machine: Prometheus tools are only reachable from a server on the same machine`);
+		}
+		try {
+			await server.request("POST", "/mcp", { name: this.mcpName, config: { type: "remote", url: bus.url, headers: { Authorization: `Bearer ${bus.token}` }, enabled: true, oauth: false } });
+		} catch (err) {
+			this.services.log.warn(`[opencode ${this.id}] could not add the Prometheus tools to the server: ${err instanceof Error ? err.message : String(err)}`);
+		}
+		await this.openSession();
+		await this.lockTools(server);
+	}
+
+	/** Server mode: (re)writes the session's rules, so that it asks before acting and sees only this chat's tool bus. */
+	private async lockTools(server: OpenCodeServer): Promise<void> {
+		const permission = sessionPermissions(await this.foreignTools(server));
+		await server.request("PATCH", `/session/${this.sessionId}`, { permission }).catch((err) => this.services.log.warn(`[opencode ${this.id}] session permissions: ${err instanceof Error ? err.message : String(err)}`));
+	}
+
+	/** Finds the stored session (and its transcript) or creates one. */
+	private async openSession(): Promise<void> {
+		const server = this.server!;
 		if (this.sessionId) {
-			const found = await this.server.request("GET", `/session/${this.sessionId}`).catch(() => undefined);
+			const found = await server.request("GET", `/session/${this.sessionId}`).catch(() => undefined);
 			if (!found?.id) throw new AppError("sessionNotFound", { id: this.id });
 			if (!this.mapper.messages.length) {
-				const list = await this.server.request("GET", `/session/${this.sessionId}/message`).catch(() => undefined);
-				if (Array.isArray(list)) this.mapper.setMessages(replaySession(list, this.model.provider, this.model.id));
+				const list = await server.request("GET", `/session/${this.sessionId}/message`).catch(() => undefined);
+				if (Array.isArray(list)) this.mapper.setMessages(replaySession(list, this.model.provider, this.model.id, this.mcpName));
 			}
 		} else {
-			const created = await this.server.request("POST", "/session", this.name ? { title: this.name } : {});
+			const body: Record<string, unknown> = this.name ? { title: this.name } : {};
+			const created = await server.request("POST", "/session", body);
 			this.sessionId = String(created?.id ?? "");
 			if (!this.sessionId) throw new Error("opencode did not return a session id");
 		}
@@ -410,6 +476,8 @@ export class OpenCodeSession implements RuntimeSession {
 				.catch((err) => this.mapper.finish(false, err instanceof Error ? err.message : String(err)));
 			return "started";
 		}
+		// Chats that joined the server since the last turn added tool buses of their own.
+		if (server.attached && !wasRunning) await this.lockTools(server);
 		try {
 			await server.request("POST", `/session/${this.sessionId}/prompt_async`, {
 				parts,
@@ -423,6 +491,22 @@ export class OpenCodeSession implements RuntimeSession {
 			throw err;
 		}
 		return wasRunning ? "queued" : "started";
+	}
+
+	/**
+	 * On a shared server every chat's tool bus is registered, and opencode offers all MCP tools to every session. The
+	 * other chats' buses are listed by name; their tools (the same plugin tools as ours) by exact id.
+	 */
+	private async foreignTools(server: OpenCodeServer): Promise<string[]> {
+		const status = await server.request<Record<string, unknown>>("GET", "/mcp").catch(() => undefined);
+		const names = [...new Set([...this.busTools.map((t) => t.name), "exit_plan_mode"])];
+		const ids: string[] = [];
+		for (const other of Object.keys(status ?? {})) {
+			if (other === this.mcpName || !other.startsWith(`${PROMETHEUS_MCP_SERVER}-`)) continue;
+			const prefix = mcpPrefix(other);
+			for (const name of names) ids.push(`${prefix}${name.replace(/[^a-zA-Z0-9_-]/g, "_")}`);
+		}
+		return ids.sort();
 	}
 
 	async abort(): Promise<void> {
@@ -455,6 +539,7 @@ export class OpenCodeSession implements RuntimeSession {
 		if (changed && this.mapper.running) throw new AppError("waitForReply");
 		this.model = model;
 		this.gatewayChoice = next;
+		if (changed && this.opts.endpoint) throw new Error("This OpenCode agent uses a server: pick one of the server's own models");
 		if (changed) {
 			// Another route means another provider config: replace the process, resuming the same session.
 			this.rerouting = true;
@@ -489,8 +574,8 @@ export class OpenCodeSession implements RuntimeSession {
 		this.busTools = await this.externalTools();
 		// opencode caches an MCP server's tool list: reconnecting makes it ask again.
 		if (!this.server?.running || this.mapper.running) return;
-		await this.server.request("POST", `/mcp/${PROMETHEUS_MCP_SERVER}/disconnect`).catch(() => undefined);
-		await this.server.request("POST", `/mcp/${PROMETHEUS_MCP_SERVER}/connect`).catch(() => undefined);
+		await this.server.request("POST", `/mcp/${this.mcpName}/disconnect`).catch(() => undefined);
+		await this.server.request("POST", `/mcp/${this.mcpName}/connect`).catch(() => undefined);
 	}
 
 	/** The model a summary is made with: the chat's own, or the one opencode would pick by default. */
@@ -590,6 +675,8 @@ export class OpenCodeSession implements RuntimeSession {
 	async dispose(): Promise<void> {
 		if (this.closed) return;
 		this.closed = true;
+		// On a shared server the tool bus entry would linger (as a failing server) until the server restarts.
+		if (this.server?.attached && this.server.running) await this.server.request("POST", `/mcp/${this.mcpName}/disconnect`).catch(() => undefined);
 		this.busSession?.close();
 		this.grant?.revoke();
 		await this.server?.close();

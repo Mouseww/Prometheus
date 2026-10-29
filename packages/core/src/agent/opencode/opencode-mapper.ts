@@ -11,7 +11,14 @@ const zeroUsage = (): Usage => ({ input: 0, output: 0, cacheRead: 0, cacheWrite:
 export const PROMETHEUS_MCP_SERVER = "prometheus";
 const MCP_PREFIX = `${PROMETHEUS_MCP_SERVER}_`;
 
+/** Tool-name prefix opencode gives the tools of an MCP server (it replaces characters other than [A-Za-z0-9_-]). */
+export function mcpPrefix(server: string): string {
+	return `${server.replace(/[^a-zA-Z0-9_-]/g, "_")}_`;
+}
+
 export interface OpenCodeMapperOptions {
+	/** Name the tool bus is registered under in opencode; `prometheus` by default. */
+	mcpServer?: string;
 	provider: string;
 	model: () => string;
 	emit(event: SessionEvent): void;
@@ -41,9 +48,9 @@ export interface CanonicalCall {
 }
 
 /** opencode's tool names and argument shapes -> the ones Prometheus already renders. */
-export function canonicalTool(native: string, rawInput: unknown): CanonicalCall {
+export function canonicalTool(native: string, rawInput: unknown, prefix = MCP_PREFIX): CanonicalCall {
 	const input = obj(rawInput);
-	if (native.startsWith(MCP_PREFIX)) return { name: native.slice(MCP_PREFIX.length), args: input, prometheus: true };
+	if (native.startsWith(prefix)) return { name: native.slice(prefix.length), args: input, prometheus: true };
 	switch (native) {
 		case "bash":
 			return { name: "bash", args: drop({ command: str(input.command), timeout: input.timeout, description: str(input.description) }), prometheus: false };
@@ -303,7 +310,7 @@ export class OpenCodeMapper {
 	}
 
 	private toolStart(part: any, id: string, input: Record<string, unknown>): Live {
-		const call = canonicalTool(String(part.tool), input);
+		const call = canonicalTool(String(part.tool), input, this.opts.mcpServer ? mcpPrefix(this.opts.mcpServer) : MCP_PREFIX);
 		const live = this.begin(part.id, "tool", { toolName: call.name, args: call.args, started: this.now(), native: String(part.tool) });
 		live.message.content[0] = { type: "toolCall", id, name: call.name, arguments: call.args };
 		this.emit({ type: "message_update", delta: { type: "toolcall_start", contentIndex: 0, id, name: call.name } });
@@ -469,8 +476,8 @@ export function errorMessage(e: any): string {
 const CONTEXT_RE = /<prometheus-context>[\s\S]*?<\/prometheus-context>\s*/g;
 
 /** Rebuilds the transcript of a stored session (`GET /session/:id/message`) as ChatMessages, using the live mapper with a silent sink. */
-export function replaySession(list: any[], provider: string, model: string): ChatMessage[] {
-	const mapper = new OpenCodeMapper({ provider, model: () => model, emit: () => {} });
+export function replaySession(list: any[], provider: string, model: string, mcpServer?: string): ChatMessage[] {
+	const mapper = new OpenCodeMapper({ provider, model: () => model, emit: () => {}, ...(mcpServer ? { mcpServer } : {}) });
 	for (const entry of list) {
 		const info = entry?.info;
 		const parts: any[] = Array.isArray(entry?.parts) ? entry.parts : [];

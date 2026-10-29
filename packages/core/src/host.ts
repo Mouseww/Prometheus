@@ -7,6 +7,7 @@ import { DEFAULT_CATALOG_URL, listModels, matchModelDefaults, mergeGatewayUpdate
 import type { AgentRunOptions, AgentRunResult, PrometheusPlugin } from "@prometheus/plugin-sdk";
 import {
 	type AgentProfile,
+	type AgentUpdateInfo,
 	AppError,
 	withAttachmentNote,
 	type ChatMessage,
@@ -26,19 +27,24 @@ import {
 	type RpcParams,
 	type GatewayChoice,
 	type RpcResult,
+	type RuntimeCapabilities,
 	type RuntimeInfo,
 	type RuntimeKind,
 	type ServerRpcMethod,
+	agentPreset,
+	BUILTIN_AGENTS,
 	type SessionEvent,
 	type SessionSnapshot,
 	type SessionSummary,
 	type UIRequest,
 } from "@prometheus/protocol";
 import { ToolBus } from "./agent/bus/tool-bus.ts";
-import { ClaudeCodeRuntime } from "./agent/claude-code/cc-runtime.ts";
+import { bundledClaudeVersion, ClaudeCodeRuntime } from "./agent/claude-code/cc-runtime.ts";
 import { CodexRuntime } from "./agent/codex/codex-runtime.ts";
 import { CODEX_CAPABILITIES } from "./agent/codex/codex-session.ts";
 import { OpenCodeRuntime } from "./agent/opencode/opencode-runtime.ts";
+import { AcpRuntime } from "./agent/acp/acp-runtime.ts";
+import { ACP_CAPABILITIES } from "./agent/acp/acp-session.ts";
 import { OPENCODE_CAPABILITIES } from "./agent/opencode/opencode-session.ts";
 import { CC_CAPABILITIES } from "./agent/claude-code/cc-session.ts";
 import { PiRuntime } from "./agent/pi/pi-runtime.ts";
@@ -56,7 +62,7 @@ import { extraRoots, issueTicket, readChunk, resolveDownload, takeTicket } from 
 import { UPLOAD_ROOT, pruneUploads, removeSessionUploads, saveAttachments } from "./uploads.ts";
 import { fullResultContent, slimMessage, slimMessages } from "./slim.ts";
 import { PermissionGate } from "./permission-gate.ts";
-import { agentStatuses, installAgentCli, npmAvailable, uninstallAgentCli, withAgentBin } from "./agent/install.ts";
+import { AGENT_PACKAGES, agentStatuses, compareVersions, installAgentCli, installedCli, installedEntry, installedVersion, latestVersion, npmAvailable, parseVersion, uninstallAgentCli, withAgentBin } from "./agent/install.ts";
 import { bootstrap, type Runtime } from "./runtime.ts";
 import { AgentStore, runClaude, runCodex, SubagentRuntime } from "@prometheus/subagents";
 import { UIBridge } from "./ui-bridge.ts";
@@ -145,9 +151,9 @@ export function turnStart(messages: readonly { role: string }[], end: number, tu
 /** Offered in every chat's slash menu, whatever the agent. */
 const GOAL_COMMAND: CommandInfo = { name: "goal", description: "Set an objective; the agent keeps working on its own until it is done (/goal pause | resume | clear)", source: "builtin" };
 
-/** Agents every host offers; the user can configure them but not delete them. */
-const BUILTIN_AGENTS = ["claude-code", "codex", "opencode"] as const;
-const AGENT_LABEL = { "claude-code": "Claude Code", codex: "Codex", opencode: "OpenCode" } as const;
+const BUILTIN_IDS: readonly string[] = BUILTIN_AGENTS.map((a) => a.id);
+const CAPABILITIES: Record<Exclude<RuntimeKind, "pi">, RuntimeCapabilities> = { "claude-code": CC_CAPABILITIES, codex: CODEX_CAPABILITIES, opencode: OPENCODE_CAPABILITIES, acp: ACP_CAPABILITIES };
+const KIND_LABEL: Record<RuntimeKind, string> = { pi: "PI", "claude-code": "Claude Code", codex: "Codex", opencode: "OpenCode", acp: "ACP agent" };
 
 interface LiveSession {
 	session: RuntimeSession;
@@ -173,6 +179,8 @@ export class PrometheusHost {
 	private readonly workspaces: WorkspaceStore;
 	private readonly index: SessionIndex;
 	private readonly externalRuntimes = new Map<string, AgentRuntime>();
+	/** Runtimes replaced after a profile edit; what they keep across chats (a shared server) stops with the host. */
+	private readonly retiredRuntimes: AgentRuntime[] = [];
 	private externalServices: Promise<RuntimeServices> | undefined;
 	/** /goal: keeps a conversation going on its own until the agent reports its objective done. */
 	private readonly goals = new GoalTracker({
@@ -224,6 +232,8 @@ export class PrometheusHost {
 	async dispose(): Promise<void> {
 		this.goals.dispose();
 		for (const [id] of this.live) await this.closeSession(id);
+		for (const rt of [...this.externalRuntimes.values(), ...this.retiredRuntimes.splice(0)]) await rt.dispose?.().catch(() => undefined);
+		this.externalRuntimes.clear();
 		if (this.externalServices) {
 			const services = await this.externalServices.catch(() => undefined);
 			await services?.bus.stop();
@@ -270,13 +280,93 @@ export class PrometheusHost {
 		const key = agent ?? kind;
 		let rt = this.externalRuntimes.get(key);
 		if (rt) return rt;
-		const executable = () => this.profileOf(key)?.executable || undefined;
+		// A copy installed (or updated) from the settings page is what runs, unless the profile names an executable.
+		// Claude Code would otherwise use the SDK's bundled CLI, and Codex looks itself up on the server's own PATH.
+		const executable = () => this.profileOf(key)?.executable || (kind === "claude-code" || kind === "codex" ? installedEntry(this.runtime.dataDir, kind) : undefined) || undefined;
 		// CLIs installed from the settings page come first, so a runtime turns available without a restart; an explicit
 		// executable from the profile still wins.
 		const env = () => withAgentBin(this.runtime.dataDir, { ...process.env, ...(this.profileOf(key)?.env ?? {}) }) as Record<string, string>;
-		rt = kind === "claude-code" ? new ClaudeCodeRuntime(() => this.servicesFor(), executable, env) : kind === "opencode" ? new OpenCodeRuntime(() => this.servicesFor(), executable, env) : new CodexRuntime(() => this.servicesFor(), executable, env);
+		switch (kind) {
+			case "claude-code":
+				rt = new ClaudeCodeRuntime(() => this.servicesFor(), executable, env, () => (this.profileOf(key)?.executable ? undefined : installedVersion(this.runtime.dataDir, "claude-code")));
+				break;
+			case "opencode":
+				rt = new OpenCodeRuntime(() => this.servicesFor(), executable, env, () => this.profileOf(key)?.server);
+				break;
+			case "acp":
+				rt = new AcpRuntime(() => this.servicesFor(), () => {
+					const profile = this.profileOf(key);
+					const preset = agentPreset(key);
+					return { id: key, name: profile?.name || preset?.name || key, command: profile?.executable || preset?.command || "", args: profile?.args ?? preset?.args ?? [], env: env() };
+				});
+				break;
+			default:
+				rt = new CodexRuntime(() => this.servicesFor(), executable, env);
+		}
 		this.externalRuntimes.set(key, rt);
 		return rt;
+	}
+
+	/** Display name of the agent behind a session, for handoffs. */
+	private agentName(kind: RuntimeKind, agent?: string): string {
+		if (kind === "pi") return "PI";
+		const id = agent ?? kind;
+		return this.profileOf(id)?.name || agentPreset(id)?.name || KIND_LABEL[kind];
+	}
+
+	/**
+	 * Which npm package (by AGENT_PACKAGES key) provides an agent's CLI: its own id for built-ins and ACP presets, the
+	 * kind for custom agents built on Claude Code, Codex or OpenCode. Accepts an agent id or, as older clients send, a kind.
+	 */
+	private packageAgent(idOrKind: string | undefined): string {
+		if (!idOrKind || idOrKind === "pi") throw new AppError("unknownRuntime", { runtime: String(idOrKind) });
+		if (AGENT_PACKAGES[idOrKind]) return idOrKind;
+		const kind = this.profileOf(idOrKind)?.kind;
+		if (kind && kind !== "acp" && AGENT_PACKAGES[kind]) return kind;
+		throw new AppError("unknownRuntime", { runtime: idOrKind });
+	}
+
+	/** The running CLI of an agent against the newest published version. */
+	private async updateInfo(agent: AgentProfile, refresh: boolean): Promise<AgentUpdateInfo> {
+		const base = { id: agent.id, updateAvailable: false } as const;
+		if (agent.kind === "opencode" && agent.server?.url) return { ...base, source: "server", reason: "server" };
+		if (agent.executable) return { ...base, source: "custom", reason: "custom" };
+		let pkgAgent: string;
+		try {
+			pkgAgent = this.packageAgent(agent.id);
+		} catch {
+			return { ...base, source: "path", reason: "noPackage" };
+		}
+		const dataDir = this.runtime.dataDir;
+		let source: AgentUpdateInfo["source"];
+		let current: string | undefined;
+		if (installedCli(dataDir, pkgAgent)) {
+			source = "prometheus";
+			current = installedVersion(dataDir, pkgAgent);
+		} else if (agent.kind === "claude-code") {
+			source = "bundled";
+			current = bundledClaudeVersion();
+		} else {
+			const rt = await this.runtimeFor(agent.kind, agent.id).catch(() => undefined);
+			const health = await rt?.probe().catch(() => undefined);
+			if (!health?.available) return { ...base, source: "missing", reason: "missing" };
+			source = "path";
+			current = parseVersion(health.version);
+		}
+		try {
+			const latest = await latestVersion(pkgAgent, refresh);
+			return { ...base, source, ...(current ? { current } : {}), latest, updateAvailable: !current || compareVersions(latest, current) > 0 };
+		} catch (err) {
+			return { ...base, source, ...(current ? { current } : {}), error: err instanceof Error ? err.message.split("\n")[0] : String(err) };
+		}
+	}
+
+	/** Drops the cached runtime of an agent; it is disposed with the host (live chats may still use it). */
+	private retireRuntime(id: string): void {
+		const rt = this.externalRuntimes.get(id);
+		if (!rt) return;
+		this.externalRuntimes.delete(id);
+		if (rt.dispose) this.retiredRuntimes.push(rt);
 	}
 
 	/** Where a chosen model's traffic goes: a Prometheus gateway when the model's provider is one, else the agent's own login. */
@@ -292,8 +382,8 @@ export class PrometheusHost {
 	/** Built-in agents (with the user's overrides) followed by custom ones. */
 	private agentList(): AgentProfile[] {
 		const stored = this.runtime.config.agents();
-		const builtin = BUILTIN_AGENTS.map((kind): AgentProfile => stored.find((a) => a.id === kind) ?? { id: kind, name: AGENT_LABEL[kind], kind, enabled: true, builtin: true });
-		return [...builtin, ...stored.filter((a) => !(BUILTIN_AGENTS as readonly string[]).includes(a.id))];
+		const builtin = BUILTIN_AGENTS.map((b): AgentProfile => stored.find((a) => a.id === b.id) ?? { id: b.id, name: b.name, kind: b.kind, ...(b.args ? { args: [...b.args] } : {}), enabled: true, builtin: true });
+		return [...builtin, ...stored.filter((a) => !BUILTIN_IDS.includes(a.id))];
 	}
 
 	private syncIndex(id: string, live: LiveSession): void {
@@ -809,7 +899,7 @@ export class PrometheusHost {
 			const live = kind !== "pi" ? await this.createExternal(kind, agent, dir, this.gatewayFromModel(model, gateway), seed) : await this.attach((init) => this.pi.create({ ...init, cwd: normalizeDir(dir), history: seed }));
 			if (state.name) live.session.setName(state.name);
 			live.gate.setMode(source.gate.mode);
-			const handoff = buildHandoff(state.messages, from === "pi" ? "PI" : from === "codex" ? "Codex" : from === "opencode" ? "OpenCode" : "Claude Code");
+			const handoff = buildHandoff(state.messages, this.agentName(from, this.index.get(sessionId)?.agent));
 			// PI carries the history itself; the others get the transcript as hidden first-turn context.
 			if (handoff && kind !== "pi") live.handoff = handoff;
 			// A goal in progress carries on with the new agent.
@@ -1003,18 +1093,23 @@ export class PrometheusHost {
 		"model.list": () => this.pi.listModels({ mode: "native" }),
 		"runtime.list": async (): Promise<RuntimeInfo[]> => {
 			const out: RuntimeInfo[] = [{ id: "pi", name: "PI", kind: "pi", health: await this.pi.probe(), capabilities: PI_CAPABILITIES }];
-			for (const agent of this.agentList().filter((a) => a.enabled !== false)) {
-				const rt = await this.runtimeFor(agent.kind, agent.id).catch(() => undefined);
-				const health = (await rt?.probe()) ?? { available: false, reason: "unavailable" };
-				out.push({
-					id: agent.id,
-					name: agent.name,
-					kind: agent.kind,
-					health: health.available ? health : { ...health, ...(await agentStatuses(this.runtime.dataDir, agent.kind)) },
-					capabilities: agent.kind === "codex" ? CODEX_CAPABILITIES : agent.kind === "opencode" ? OPENCODE_CAPABILITIES : CC_CAPABILITIES,
-				});
-			}
-			return out;
+			// Probes start processes (an ACP handshake takes seconds): run them side by side.
+			const agents = await Promise.all(
+				this.agentList()
+					.filter((a) => a.enabled !== false)
+					.map(async (agent): Promise<RuntimeInfo> => {
+						const rt = await this.runtimeFor(agent.kind, agent.id).catch(() => undefined);
+						const health = (await rt?.probe().catch((err: unknown) => ({ available: false, reason: err instanceof Error ? err.message : String(err) }))) ?? { available: false, reason: "unavailable" };
+						return {
+							id: agent.id,
+							name: agent.name,
+							kind: agent.kind,
+							health: health.available ? health : { ...health, ...(await agentStatuses(this.runtime.dataDir, agent.id)) },
+							capabilities: CAPABILITIES[agent.kind],
+						};
+					}),
+			);
+			return [...out, ...agents];
 		},
 		"runtime.models": async ({ runtime: kind, agent }) => {
 			if (kind === "pi") return this.pi.listModels({ mode: "native" });
@@ -1055,32 +1150,39 @@ export class PrometheusHost {
 		},
 		"agent.save": async ({ agent }) => {
 			const saved = await this.runtime.config.saveAgent(agent);
-			// A new executable or environment applies to chats started from now on.
-			this.externalRuntimes.delete(saved.id);
+			// A new executable, environment or server applies to chats started from now on.
+			this.retireRuntime(saved.id);
 			return saved;
 		},
 		"agent.delete": async ({ id }) => {
-			if ((BUILTIN_AGENTS as readonly string[]).includes(id)) {
-				// Built-ins cannot be removed; dropping the override resets them.
-				await this.runtime.config.deleteAgent(id);
-			} else {
-				await this.runtime.config.deleteAgent(id);
+			// Built-ins cannot be removed: dropping the override resets them.
+			await this.runtime.config.deleteAgent(id);
+			this.retireRuntime(id);
+			return null;
+		},
+		/** Installs (or upgrades to the latest) a third-party CLI into Prometheus' own folder; it is used from the next chat on. */
+		"agent.install": async ({ kind, agent }) => {
+			const id = this.packageAgent(agent ?? kind);
+			try {
+				const { command } = await installAgentCli(this.runtime.dataDir, id);
+				for (const key of [...this.externalRuntimes.keys()]) this.retireRuntime(key);
+				return { command };
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				// Windows keeps a running executable locked, so npm cannot replace it while a chat uses it.
+				if (/EBUSY|EPERM|resource busy|operation not permitted/i.test(message)) throw new Error(`${message}\n\nThe CLI is in use: close the chats that use this agent (or stop its server) and try again.`);
+				throw err;
 			}
-			this.externalRuntimes.delete(id);
+		},
+		"agent.uninstall": async ({ kind, agent }) => {
+			const id = this.packageAgent(agent ?? kind);
+			await uninstallAgentCli(this.runtime.dataDir, id);
+			for (const key of [...this.externalRuntimes.keys()]) this.retireRuntime(key);
 			return null;
 		},
-		/** Installs (or upgrades) a third-party CLI into Prometheus' own folder; the runtime is available right after. */
-		"agent.install": async ({ kind }) => {
-			if (kind === "pi") throw new AppError("unknownRuntime", { runtime: kind });
-			const { command } = await installAgentCli(this.runtime.dataDir, kind);
-			this.externalRuntimes.clear();
-			return { command };
-		},
-		"agent.uninstall": async ({ kind }) => {
-			if (kind === "pi") throw new AppError("unknownRuntime", { runtime: kind });
-			await uninstallAgentCli(this.runtime.dataDir, kind);
-			this.externalRuntimes.clear();
-			return null;
+		"agent.checkUpdates": async ({ id, refresh }) => {
+			const agents = this.agentList().filter((a) => (id ? a.id === id : a.enabled !== false));
+			return Promise.all(agents.map((a) => this.updateInfo(a, refresh === true)));
 		},
 		"model.set": async ({ sessionId, model }) => {
 			const { session } = this.require(sessionId);

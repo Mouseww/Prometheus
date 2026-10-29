@@ -34,10 +34,17 @@ const TINT: Record<RuntimeKind, string> = {
 	"claude-code": "bg-amber-500/15 text-amber-300",
 	codex: "bg-sky-500/15 text-sky-300",
 	opencode: "bg-emerald-500/15 text-emerald-300",
+	acp: "bg-violet-500/15 text-violet-300",
 };
-const GLYPH: Record<RuntimeKind, string> = { pi: "PI", "claude-code": "CC", codex: "Cx", opencode: "OC" };
+const GLYPH: Record<RuntimeKind, string> = { pi: "PI", "claude-code": "CC", codex: "Cx", opencode: "OC", acp: "AC" };
+/** ACP agents are many: their mark comes from the agent's name (Gemini CLI -> Gm, Qwen Code -> Qw). */
+function glyphOf(kind: RuntimeKind, name?: string): string {
+	if (kind !== "acp" || !name) return GLYPH[kind];
+	const letters = name.replace(/[^A-Za-z0-9]/g, "");
+	return letters ? `${letters[0]!.toUpperCase()}${(letters[1] ?? "").toLowerCase()}` : GLYPH.acp;
+}
 
-function Mark({ kind, dim, small }: { kind: RuntimeKind; dim?: boolean; small?: boolean }) {
+function Mark({ kind, name, dim, small }: { kind: RuntimeKind; name?: string; dim?: boolean; small?: boolean }) {
 	return (
 		<span
 			className={clsx(
@@ -46,7 +53,7 @@ function Mark({ kind, dim, small }: { kind: RuntimeKind; dim?: boolean; small?: 
 				dim ? "bg-ink-800 text-ink-500" : TINT[kind],
 			)}
 		>
-			{GLYPH[kind]}
+			{glyphOf(kind, name)}
 		</span>
 	);
 }
@@ -82,7 +89,7 @@ export function RuntimeMenu({ mode }: { mode: "draft" | "session" }) {
 				className="flex max-w-28 items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-ink-300 sm:max-w-48 transition-colors hover:bg-ink-800 hover:text-ink-100"
 				title={`${t("title")} · ${mode === "draft" ? t("hintDraft") : t("hintSession")}`}
 			>
-				<Mark kind={selected?.kind ?? "pi"} small />
+				<Mark kind={selected?.kind ?? "pi"} name={selected?.name} small />
 				<span className="hidden min-w-0 truncate sm:inline">{selected?.name ?? "PI"}</span>
 				<ChevronDown className="size-3 shrink-0 opacity-60" />
 			</button>
@@ -109,7 +116,7 @@ export function RuntimeMenu({ mode }: { mode: "draft" | "session" }) {
 										(!ok || busy) && !on && "opacity-60",
 									)}
 								>
-									<Mark kind={a.kind} dim={!ok} />
+									<Mark kind={a.kind} name={a.name} dim={!ok} />
 									<span className="min-w-0 flex-1">
 										<span className="flex items-baseline gap-1.5">
 											<span className={clsx("truncate text-sm font-medium", on ? "text-ember-200" : ok ? "text-ink-100" : "text-ink-500")}>{a.name}</span>

@@ -1,6 +1,6 @@
-import { Bot, CircleAlert, Download, Pencil, Plus, RefreshCw, RotateCcw, Star, Trash2 } from "lucide-react";
+import { ArrowUpCircle, Bot, CircleAlert, Download, Pencil, Plus, RefreshCw, RotateCcw, Star, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import type { AgentProfile, RuntimeInfo } from "@prometheus/protocol";
+import { ACP_PRESETS, type AgentProfile, type AgentServer, type AgentUpdateInfo, agentPreset, type RuntimeInfo } from "@prometheus/protocol";
 import { confirmDialog } from "../lib/dialogs.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { call, callNewer, refreshHostSettings, refreshRuntimes, setDefaultAgent, toast, useStore } from "../lib/store.ts";
@@ -9,7 +9,7 @@ import { Badge, Button, Dialog, Empty, Field, Input, PageHeader, Select } from "
 const M = defineMessages({
 	zh: {
 		title: "Agent 运行时",
-		subtitle: "对话由哪个 Agent 驱动。内置 PI、Claude Code、Codex，也可以基于 Claude Code 或 Codex 添加自己的 Agent，例如换一个可执行文件、配置目录或环境变量。",
+		subtitle: "对话由哪个 Agent 驱动。内置 PI、Claude Code、Codex、OpenCode、Gemini CLI、Qwen Code；任何支持 ACP（Agent Client Protocol）的 Agent 都能添加，例如 Goose、Kimi CLI。OpenCode 还可以连接一个常驻的 opencode 服务。",
 		add: "添加 Agent",
 		builtin: "内置",
 		custom: "自定义",
@@ -20,6 +20,23 @@ const M = defineMessages({
 		installDone: "{name} 已安装",
 		installHint: "会把 {pkg} 安装到 Prometheus 自己的目录，并加入这个运行时的 PATH；本机需要能用 npm。",
 		installNoNpm: "没有安装，也无法在这里一键安装：找不到 npm。请先安装 Node.js，或给这个 Agent 指定已有的可执行文件。",
+		installManual: "没有找到它的命令。请按它自己的说明安装，或在编辑里填写可执行文件的完整路径。",
+		checkUpdates: "检查更新",
+		checking: "检查中…",
+		upToDate: "均为最新版本",
+		updatesFound: "{n} 个 Agent 有新版本",
+		updateBadge: "可更新 {from} → {to}",
+		updateTo: "更新到 {v}",
+		updating: "更新中…",
+		updateDone: "{name} 已更新到 {v}，新会话起生效",
+		updateHintPrometheus: "用 npm 把 Prometheus 目录里的这份升级到最新版",
+		updateHintPath: "当前使用的是 PATH 中的版本。更新会在 Prometheus 自己的目录安装最新版，之后优先使用它；原来的安装不受影响",
+		updateHintBundled: "当前使用的是 Prometheus 内置的版本。更新会在 Prometheus 自己的目录安装最新版，之后优先使用它",
+		updateCustom: "使用自定义可执行文件，请自行更新",
+		updateServer: "连接的是外部服务，请在服务所在机器上更新",
+		updateNoPackage: "不是通过 npm 发布的，请按它自己的方式更新",
+		updateCheckFailed: "无法获取最新版本：{error}",
+		version: "版本",
 		sync: "同步会话",
 		syncing: "同步中…",
 		syncTitle: "把这个 Agent 自己保存的工作区和会话同步到 Prometheus",
@@ -49,7 +66,24 @@ const M = defineMessages({
 		idHint: "小写字母、数字、-、_；创建后不可修改",
 		name: "显示名称",
 		base: "基于",
-		executableHint: "留空则使用 PATH 中的 claude、codex 或 opencode。可填完整路径，例如另一个版本",
+		executableHint: "留空则使用 PATH 中的默认命令（claude、codex、opencode，或预设的 ACP 命令）。可填完整路径，例如另一个版本",
+		args: "启动参数",
+		argsHint: "以空格分隔，含空格的参数用引号括起来。ACP Agent 需要让它进入 ACP 模式的参数，例如 --acp",
+		preset: "预设",
+		presetCustom: "其他 ACP Agent",
+		presetHint: "选择一个常见的 ACP Agent 自动填写命令和参数；未列出的选「其他」自己填写",
+		serverTitle: "运行方式",
+		serverPerChat: "每个会话一个进程（默认）",
+		serverAttach: "连接已运行的 opencode 服务",
+		serverShared: "启动一个固定端口的共享服务",
+		serverHint: "连接服务时使用该服务自己配置的模型与登录，不能选 Prometheus 网关；Prometheus 工具只对同一台机器上的服务可用。共享服务供所有会话使用，你也可以用 opencode attach 接入同一个服务。",
+		serverUrl: "服务地址",
+		serverPort: "端口",
+		serverUser: "用户名",
+		serverPassword: "密码",
+		serverPasswordHint: "对应服务的 OPENCODE_SERVER_PASSWORD；共享服务留空则使用随机密码（外部客户端无法接入）",
+		server: "服务",
+		argsLabel: "参数",
 		envTitle: "环境变量",
 		envHint: "只作用于这个 Agent 的进程，例如 CLAUDE_CONFIG_DIR、HTTPS_PROXY、CODEX_HOME 之外的自定义变量",
 		envKey: "变量名",
@@ -65,10 +99,11 @@ const M = defineMessages({
 		claudeCode: "Claude Code",
 		codex: "Codex",
 		opencode: "OpenCode",
+		acp: "ACP Agent",
 	},
 	en: {
 		title: "Agent runtimes",
-		subtitle: "Which agent drives a chat. PI, Claude Code and Codex are built in; you can add your own agents on top of Claude Code or Codex, for example with another executable, config directory or environment.",
+		subtitle: "Which agent drives a chat. PI, Claude Code, Codex, OpenCode, Gemini CLI and Qwen Code are built in; any agent that speaks ACP (Agent Client Protocol), such as Goose or Kimi CLI, can be added. OpenCode can also use a long-running opencode server.",
 		add: "Add agent",
 		builtin: "Built in",
 		custom: "Custom",
@@ -79,6 +114,23 @@ const M = defineMessages({
 		installDone: "{name} installed",
 		installHint: "Installs {pkg} into Prometheus' own folder and puts it on this runtime's PATH. npm must be available on this machine.",
 		installNoNpm: "It is not installed and cannot be installed here: npm was not found. Install Node.js, or point this agent at an existing executable.",
+		installManual: "Its command was not found. Install it as its own documentation describes, or enter the full path of the executable under Edit.",
+		checkUpdates: "Check for updates",
+		checking: "Checking…",
+		upToDate: "Every agent is up to date",
+		updatesFound: "Updates available for {n} agents",
+		updateBadge: "Update {from} → {to}",
+		updateTo: "Update to {v}",
+		updating: "Updating…",
+		updateDone: "{name} updated to {v}; new chats use it",
+		updateHintPrometheus: "Upgrades the copy in Prometheus' folder to the latest version with npm",
+		updateHintPath: "The version on PATH is in use. Updating installs the latest version into Prometheus' own folder and uses it from then on; the existing installation is left alone",
+		updateHintBundled: "The version bundled with Prometheus is in use. Updating installs the latest version into Prometheus' own folder and uses it from then on",
+		updateCustom: "Uses a custom executable; update it yourself",
+		updateServer: "Connects to an external server; update it where the server runs",
+		updateNoPackage: "Not published on npm; update it the way it was installed",
+		updateCheckFailed: "Could not look up the latest version: {error}",
+		version: "Version",
 		sync: "Sync chats",
 		syncing: "Syncing…",
 		syncTitle: "Bring the workspaces and chats this agent keeps in its own store into Prometheus",
@@ -108,7 +160,24 @@ const M = defineMessages({
 		idHint: "Lowercase letters, digits, - and _; cannot be changed later",
 		name: "Display name",
 		base: "Based on",
-		executableHint: "Empty uses claude, codex or opencode from PATH. A full path picks another build",
+		executableHint: "Empty uses the default command from PATH (claude, codex, opencode, or the preset's ACP command). A full path picks another build",
+		args: "Arguments",
+		argsHint: "Separated by spaces; quote arguments that contain spaces. ACP agents need the switch that starts ACP mode, e.g. --acp",
+		preset: "Preset",
+		presetCustom: "Other ACP agent",
+		presetHint: "Pick a common ACP agent to fill in its command and arguments, or \"Other\" to enter your own",
+		serverTitle: "How it runs",
+		serverPerChat: "One process per chat (default)",
+		serverAttach: "Connect to a running opencode server",
+		serverShared: "Start one shared server on a fixed port",
+		serverHint: "On a server, chats use the server's own models and login (no Prometheus gateways), and Prometheus tools only work when the server runs on this machine. A shared server serves every chat; you can join it with opencode attach too.",
+		serverUrl: "Server URL",
+		serverPort: "Port",
+		serverUser: "Username",
+		serverPassword: "Password",
+		serverPasswordHint: "The server's OPENCODE_SERVER_PASSWORD. Empty for a shared server means a random one (other clients cannot join)",
+		server: "Server",
+		argsLabel: "Arguments",
 		envTitle: "Environment variables",
 		envHint: "Applied to this agent's process only, e.g. CLAUDE_CONFIG_DIR or HTTPS_PROXY",
 		envKey: "Name",
@@ -124,13 +193,26 @@ const M = defineMessages({
 		claudeCode: "Claude Code",
 		codex: "Codex",
 		opencode: "OpenCode",
+		acp: "ACP Agent",
 	},
 });
 
-const KIND_LABEL = { "claude-code": "claudeCode", codex: "codex", opencode: "opencode" } as const;
+const KIND_LABEL = { "claude-code": "claudeCode", codex: "codex", opencode: "opencode", acp: "acp" } as const;
 
-/** The npm package that provides each CLI, shown in the install hint. */
-const NPM_PACKAGE: Record<AgentProfile["kind"], string> = { "claude-code": "@anthropic-ai/claude-code", codex: "@openai/codex", opencode: "opencode-ai" };
+/** The npm package that provides an agent's CLI, when Prometheus can install it. */
+const npmPackage = (a: AgentProfile): string | undefined => agentPreset(a.id)?.npm?.pkg;
+
+/** Splits an argument line on spaces, keeping quoted parts together. */
+function splitArgs(line: string): string[] {
+	const out: string[] = [];
+	for (const m of line.matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)) out.push(m[1] ?? m[2] ?? m[3] ?? "");
+	return out;
+}
+const joinArgs = (args: string[] | undefined): string => (args ?? []).map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(" ");
+
+function serverMode(server: AgentServer | undefined): "process" | "attach" | "shared" {
+	return server?.url ? "attach" : server?.port ? "shared" : "process";
+}
 
 function blank(): AgentProfile {
 	return { id: "", name: "", kind: "claude-code", enabled: true };
@@ -146,6 +228,8 @@ export function AgentsSettings() {
 	const [editing, setEditing] = useState<{ agent: AgentProfile; isNew: boolean } | null>(null);
 	const [supported, setSupported] = useState(true);
 	const [busyId, setBusyId] = useState<string | null>(null);
+	const [updates, setUpdates] = useState<Record<string, AgentUpdateInfo>>({});
+	const [checking, setChecking] = useState(false);
 
 	const load = useCallback(async () => {
 		const list = await callNewer("agent.list", (c) => c.rpc("agent.list", {}));
@@ -157,12 +241,50 @@ export function AgentsSettings() {
 		void load();
 	}, [load]);
 
+	/** Compares installed CLIs with npm (cached on the server for an hour unless `refresh`). Older servers lack it: nothing shows. */
+	const checkUpdates = useCallback(async (refresh: boolean, id?: string) => {
+		if (!id) setChecking(true);
+		try {
+			const list = await callNewer("agent.checkUpdates", (c) => c.rpc("agent.checkUpdates", { ...(id ? { id } : {}), refresh }));
+			if (!list) return undefined;
+			setUpdates((prev) => ({ ...(id ? prev : {}), ...Object.fromEntries(list.map((u) => [u.id, u])) }));
+			return list;
+		} finally {
+			if (!id) setChecking(false);
+		}
+	}, []);
+	useEffect(() => {
+		void checkUpdates(false);
+	}, [checkUpdates]);
+
+	const checkNow = async () => {
+		const list = await checkUpdates(true);
+		if (!list) return;
+		const n = list.filter((u) => u.updateAvailable).length;
+		toast(n ? t("updatesFound", { n }) : t("upToDate"), "info");
+	};
+
+	const update = async (a: AgentProfile, latest: string) => {
+		setBusyId(a.id);
+		try {
+			await call((c) => c.rpc("agent.install", { kind: a.kind, agent: a.id }));
+			toast(t("updateDone", { name: a.name, v: latest }), "info");
+		} catch (e) {
+			toast(e instanceof Error ? e.message : String(e), "error");
+		} finally {
+			setBusyId(null);
+			await load();
+			// Every agent built on the same CLI changed with it.
+			await checkUpdates(false);
+		}
+	};
+
 	const health = (id: string): RuntimeInfo | undefined => runtimes.find((r) => r.id === id);
 
 	const install = async (a: AgentProfile) => {
 		setBusyId(a.id);
 		try {
-			await call((c) => c.rpc("agent.install", { kind: a.kind }));
+			await call((c) => c.rpc("agent.install", { kind: a.kind, agent: a.id }));
 			toast(t("installDone", { name: a.name }), "info");
 		} catch (e) {
 			toast(e instanceof Error ? e.message : String(e), "error");
@@ -186,7 +308,7 @@ export function AgentsSettings() {
 		if (!(await confirmDialog(t("confirmUninstall", { name: a.name }), { danger: true }))) return;
 		setBusyId(a.id);
 		try {
-			await call((c) => c.rpc("agent.uninstall", { kind: a.kind }));
+			await call((c) => c.rpc("agent.uninstall", { kind: a.kind, agent: a.id }));
 		} finally {
 			setBusyId(null);
 			await load();
@@ -214,6 +336,13 @@ export function AgentsSettings() {
 		);
 	};
 
+	/** One quiet line under an agent when Prometheus cannot update it, or the version lookup failed. */
+	const updateNote = (u: AgentUpdateInfo | undefined) => {
+		if (!u) return null;
+		const text = u.error ? t("updateCheckFailed", { error: u.error }) : u.reason === "custom" ? t("updateCustom") : u.reason === "server" ? t("updateServer") : u.reason === "noPackage" ? t("updateNoPackage") : null;
+		return text ? <p className="mt-1.5 text-xs text-ink-500">{text}</p> : null;
+	};
+
 	const pi = health("pi");
 
 	const remove = async (a: AgentProfile) => {
@@ -229,9 +358,14 @@ export function AgentsSettings() {
 				title={t("title")}
 				subtitle={t("subtitle")}
 				actions={
-					<Button variant="primary" disabled={!supported} onClick={() => setEditing({ agent: blank(), isNew: true })}>
-						<Plus className="size-4" /> {t("add")}
-					</Button>
+					<>
+						<Button variant="outline" disabled={!supported || checking} onClick={() => void checkNow()}>
+							<RefreshCw className={`size-4 ${checking ? "animate-spin" : ""}`} /> {t(checking ? "checking" : "checkUpdates")}
+						</Button>
+						<Button variant="primary" disabled={!supported} onClick={() => setEditing({ agent: blank(), isNew: true })}>
+							<Plus className="size-4" /> {t("add")}
+						</Button>
+					</>
 				}
 			/>
 			<div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 @3xl:px-8">
@@ -262,8 +396,15 @@ export function AgentsSettings() {
 									{a.enabled === false && <Badge>{t("disabled")}</Badge>}
 									{canDefault && defaultId === a.id && <Badge tone="moss">{t("default")}</Badge>}
 									<span className="flex-1" />
+									{updates[a.id]?.updateAvailable && updates[a.id]?.current && updates[a.id]?.latest && (
+										<Badge tone="sky">
+											<ArrowUpCircle className="mr-1 inline size-3" />
+											{t("updateBadge", { from: updates[a.id]!.current!, to: updates[a.id]!.latest! })}
+										</Badge>
+									)}
 									{info && <Badge tone={info.health.available ? "moss" : "rose"}>{info.health.available ? `${t("available")}${info.health.version ? ` ${info.health.version}` : ""}` : t("unavailable")}</Badge>}
 								</div>
+								{updateNote(updates[a.id])}
 								{info && !info.health.available && info.health.reason && (
 									<p className="mt-2 flex items-start gap-1.5 text-xs text-rose-400">
 										<CircleAlert className="mt-0.5 size-3.5 shrink-0" />
@@ -271,11 +412,23 @@ export function AgentsSettings() {
 									</p>
 								)}
 								{info && !info.health.available && (
-									<p className="mt-1.5 text-xs text-ink-500">{info.health.installable === false ? t("installNoNpm") : t("installHint", { pkg: NPM_PACKAGE[a.kind] })}</p>
+									<p className="mt-1.5 text-xs text-ink-500">{!npmPackage(a) ? (info.health.missing ? t("installManual") : null) : info.health.installable === false ? t("installNoNpm") : t("installHint", { pkg: npmPackage(a) ?? "" })}</p>
 								)}
 								<dl className="mt-2 grid gap-x-4 gap-y-1 text-xs text-ink-400 @xl:grid-cols-[auto_1fr]">
 									<dt>{t("executable")}</dt>
-									<dd className="min-w-0 truncate font-mono text-ink-300">{a.executable || t("fromPath")}</dd>
+									<dd className="min-w-0 truncate font-mono text-ink-300">{a.executable || (a.kind === "acp" ? agentPreset(a.id)?.command : undefined) || t("fromPath")}</dd>
+									{a.kind === "acp" && (
+										<>
+											<dt>{t("argsLabel")}</dt>
+											<dd className="min-w-0 truncate font-mono text-ink-300">{joinArgs(a.args ?? agentPreset(a.id)?.args) || "—"}</dd>
+										</>
+									)}
+									{a.kind === "opencode" && serverMode(a.server) !== "process" && (
+										<>
+											<dt>{t("server")}</dt>
+											<dd className="min-w-0 truncate font-mono text-ink-300">{a.server?.url ?? `127.0.0.1:${a.server?.port} (${t("serverShared")})`}</dd>
+										</>
+									)}
 									{info?.health.installed && (
 										<>
 											<dt>{t("installedAt")}</dt>
@@ -291,7 +444,18 @@ export function AgentsSettings() {
 								</dl>
 								<div className="mt-3 flex flex-wrap items-center gap-1.5">
 									{defaultControl(a.id, a.name, info?.health.available ?? false, a.enabled === false)}
-									{info && !info.health.available && info.health.installable !== false && (
+									{updates[a.id]?.updateAvailable && updates[a.id]?.latest && info?.health.available && (
+										<Button
+											variant="primary"
+											className="px-2.5 py-1 text-xs"
+											disabled={busyId !== null}
+											title={t(updates[a.id]!.source === "prometheus" ? "updateHintPrometheus" : updates[a.id]!.source === "bundled" ? "updateHintBundled" : "updateHintPath")}
+											onClick={() => void update(a, updates[a.id]!.latest!)}
+										>
+											<ArrowUpCircle className="size-3.5" /> {busyId === a.id ? t("updating") : t("updateTo", { v: updates[a.id]!.latest! })}
+										</Button>
+									)}
+									{info && !info.health.available && info.health.installable !== false && npmPackage(a) && (
 										<Button variant="primary" className="px-2.5 py-1 text-xs" disabled={busyId === a.id} onClick={() => void install(a)}>
 											<Download className="size-3.5" /> {t(busyId === a.id ? "installing" : "install")}
 										</Button>
@@ -346,15 +510,31 @@ function AgentEditor({ initial, isNew, taken, onClose, onSaved }: { initial: Age
 	const t = useT(M);
 	const [a, setA] = useState<AgentProfile>(initial);
 	const [env, setEnv] = useState<[string, string][]>(Object.entries(initial.env ?? {}));
+	const [args, setArgs] = useState(joinArgs(initial.args ?? agentPreset(initial.id)?.args));
+	const [mode, setMode] = useState(serverMode(initial.server));
+	const [server, setServer] = useState<AgentServer>(initial.server ?? {});
 	const [busy, setBusy] = useState(false);
 	const patch = (p: Partial<AgentProfile>) => setA((x) => ({ ...x, ...p }));
 	const idOk = /^[a-z0-9][a-z0-9-_]{0,47}$/.test(a.id);
+	const applyPreset = (id: string) => {
+		const preset = ACP_PRESETS.find((p) => p.id === id);
+		if (!preset) return;
+		patch({ id: taken.includes(preset.id) ? a.id : preset.id, name: a.name || preset.name, executable: preset.command ?? "" });
+		setArgs(joinArgs(preset.args));
+	};
+	const serverOk = a.kind !== "opencode" || mode === "process" || (mode === "attach" ? Boolean(server.url?.trim()) : Number.isInteger(Number(server.port)) && Number(server.port) > 0 && Number(server.port) < 65536);
 	const dup = isNew && taken.includes(a.id);
 
 	const save = async () => {
 		setBusy(true);
 		try {
 			const draft: AgentProfile = { ...a, env: Object.fromEntries(env.filter(([k]) => k.trim()).map(([k, v]) => [k.trim(), v])) };
+			if (a.kind === "acp") draft.args = splitArgs(args);
+			else delete draft.args;
+			if (a.kind === "opencode" && mode !== "process") {
+				const { url, port, username, ...rest } = server;
+				draft.server = mode === "attach" ? { ...rest, url: url?.trim(), ...(username ? { username } : {}) } : { ...rest, port: Number(port), ...(username ? { username } : {}) };
+			} else delete draft.server;
 			const saved = await call((c) => c.rpc("agent.save", { agent: draft }));
 			if (saved) await onSaved(saved);
 		} finally {
@@ -379,11 +559,51 @@ function AgentEditor({ initial, isNew, taken, onClose, onSaved }: { initial: Age
 						<option value="claude-code">{t("claudeCode")}</option>
 						<option value="codex">{t("codex")}</option>
 						<option value="opencode">{t("opencode")}</option>
+						<option value="acp">{t("acp")}</option>
 					</Select>
 				</Field>
+				{a.kind === "acp" && isNew && (
+					<Field label={t("preset")} hint={t("presetHint")}>
+						<Select value={ACP_PRESETS.some((p) => p.id === a.id) ? a.id : ""} onChange={(e) => applyPreset(e.target.value)}>
+							<option value="">{t("presetCustom")}</option>
+							{ACP_PRESETS.map((p) => (
+								<option key={p.id} value={p.id} disabled={taken.includes(p.id)}>
+									{p.name}
+								</option>
+							))}
+						</Select>
+					</Field>
+				)}
 				<Field label={t("executable")} hint={t("executableHint")}>
-					<Input value={a.executable ?? ""} onChange={(e) => patch({ executable: e.target.value })} className="font-mono" placeholder={a.kind === "codex" ? "codex" : a.kind === "opencode" ? "opencode" : "claude"} />
+					<Input value={a.executable ?? ""} onChange={(e) => patch({ executable: e.target.value })} className="font-mono" placeholder={a.kind === "codex" ? "codex" : a.kind === "opencode" ? "opencode" : a.kind === "acp" ? (agentPreset(a.id)?.command ?? "gemini") : "claude"} />
 				</Field>
+				{a.kind === "acp" && (
+					<Field label={t("args")} hint={t("argsHint")}>
+						<Input value={args} onChange={(e) => setArgs(e.target.value)} className="font-mono" placeholder="--acp" />
+					</Field>
+				)}
+				{a.kind === "opencode" && (
+					<Field label={t("serverTitle")} hint={t("serverHint")}>
+						<div className="space-y-2">
+							<Select value={mode} onChange={(e) => setMode(e.target.value as typeof mode)}>
+								<option value="process">{t("serverPerChat")}</option>
+								<option value="attach">{t("serverAttach")}</option>
+								<option value="shared">{t("serverShared")}</option>
+							</Select>
+							{mode !== "process" && (
+								<div className="grid gap-2 @xl:grid-cols-2">
+									{mode === "attach" ? (
+										<Input value={server.url ?? ""} onChange={(e) => setServer((x) => ({ ...x, url: e.target.value }))} className="font-mono @xl:col-span-2" placeholder="http://127.0.0.1:4096" aria-label={t("serverUrl")} title={t("serverUrl")} />
+									) : (
+										<Input value={server.port ?? ""} onChange={(e) => setServer((x) => ({ ...x, port: e.target.value === "" ? undefined : Number(e.target.value.replace(/\D/g, "")) }))} inputMode="numeric" className="font-mono @xl:col-span-2" placeholder="4096" aria-label={t("serverPort")} title={t("serverPort")} />
+									)}
+									<Input value={server.username ?? ""} onChange={(e) => setServer((x) => ({ ...x, username: e.target.value }))} className="font-mono" placeholder={`${t("serverUser")} (opencode)`} aria-label={t("serverUser")} />
+									<Input type="password" value={server.password ?? ""} onChange={(e) => setServer((x) => ({ ...x, password: e.target.value }))} className="font-mono" placeholder={t("serverPassword")} aria-label={t("serverPassword")} title={t("serverPasswordHint")} autoComplete="new-password" />
+								</div>
+							)}
+						</div>
+					</Field>
+				)}
 				<Field label={t("envTitle")} hint={t("envHint")}>
 					<div className="space-y-2">
 						{env.map(([k, v], i) => (
@@ -405,7 +625,7 @@ function AgentEditor({ initial, isNew, taken, onClose, onSaved }: { initial: Age
 					{t("show")}
 				</label>
 				<div className="flex justify-end">
-					<Button variant="primary" disabled={busy || !a.name.trim() || (isNew && (!idOk || dup))} onClick={() => void save()}>
+					<Button variant="primary" disabled={busy || !a.name.trim() || !serverOk || (isNew && (!idOk || dup))} onClick={() => void save()}>
 						{t("save")}
 					</Button>
 				</div>

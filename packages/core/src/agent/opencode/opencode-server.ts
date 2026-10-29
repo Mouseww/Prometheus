@@ -5,11 +5,32 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+/** Where a running server is and how to authenticate to it. */
+export interface OpenCodeEndpoint {
+	url: string;
+	/** Value of the Authorization header; none when the server has no password. */
+	authorization?: string;
+}
+
+/** `Authorization` header for a server protected by OPENCODE_SERVER_PASSWORD (username defaults to `opencode`). */
+export function basicAuth(secret: string | undefined, username?: string): string | undefined {
+	return secret ? `Basic ${Buffer.from(`${username || "opencode"}:${secret}`).toString("base64")}` : undefined;
+}
+
 export interface OpenCodeServerOptions {
 	env: Record<string, string | undefined>;
 	cwd: string;
 	/** Path of the opencode executable or its JS entry, when the user chose one. */
 	executable?: string;
+	/** Use this running server instead of starting a process (`env` and `executable` are then unused). */
+	attach?: OpenCodeEndpoint;
+	/** Port of a started server; 0 (default) picks a free one. */
+	port?: number;
+	/** Credentials of a started server; a random password by default. */
+	username?: string;
+	secret?: string;
+	/** Read the /event stream (default). A shared process whose sessions each read it themselves turns this off. */
+	events?: boolean;
 	/** Every event of the server's /event stream, parsed. */
 	onEvent(event: { type: string; properties: any }): void;
 	/** The event stream was re-established after a drop; events in between may have been missed. */
@@ -100,7 +121,8 @@ function killTree(child: ChildProcess): void {
 export class OpenCodeServer {
 	private child: ChildProcess | undefined;
 	private url = "";
-	private readonly secret = randomBytes(24).toString("base64url");
+	private readonly secret: string;
+	private readonly username: string;
 	private output = "";
 	private closed = false;
 	private stream: AbortController | undefined;
@@ -110,20 +132,39 @@ export class OpenCodeServer {
 
 	constructor(options: OpenCodeServerOptions) {
 		this.options = options;
+		this.secret = options.secret || randomBytes(24).toString("base64url");
+		this.username = options.username || "opencode";
 	}
 
 	get running(): boolean {
-		return Boolean(this.child) && !this.closed;
+		return (Boolean(this.child) || Boolean(this.options.attach)) && !this.closed;
 	}
 
-	private get authorization(): string {
-		return `Basic ${Buffer.from(`opencode:${this.secret}`).toString("base64")}`;
+	/** True when this client only talks to a server someone else runs. */
+	get attached(): boolean {
+		return Boolean(this.options.attach);
+	}
+
+	/** Address and credentials, for other clients of the same server. */
+	get endpoint(): OpenCodeEndpoint {
+		return { url: this.url, ...(this.authorization ? { authorization: this.authorization } : {}) };
+	}
+
+	private get authorization(): string | undefined {
+		if (this.options.attach) return this.options.attach.authorization;
+		return basicAuth(this.secret, this.username);
+	}
+
+	private headers(extra: Record<string, string> = {}): Record<string, string> {
+		const auth = this.authorization;
+		return { ...(auth ? { authorization: auth } : {}), ...extra };
 	}
 
 	async start(timeoutMs = 60_000): Promise<void> {
-		const { command, args, shell } = resolveOpenCodeCommand(this.options.executable);
-		const env = { ...this.options.env, OPENCODE_SERVER_PASSWORD: this.secret, OPENCODE_SERVER_USERNAME: "opencode" };
-		const child = spawn(command, [...args, "serve", "--hostname=127.0.0.1", "--port=0"], { cwd: this.options.cwd, env: env as NodeJS.ProcessEnv, shell, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+		if (this.options.attach) return this.connect(timeoutMs);
+		const { command, args, shell } = resolveOpenCodeCommand(this.options.executable, { env: this.options.env as NodeJS.ProcessEnv });
+		const env = { ...this.options.env, OPENCODE_SERVER_PASSWORD: this.secret, OPENCODE_SERVER_USERNAME: this.username };
+		const child = spawn(command, [...args, "serve", "--hostname=127.0.0.1", `--port=${this.options.port ?? 0}`], { cwd: this.options.cwd, env: env as NodeJS.ProcessEnv, shell, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
 		this.child = child;
 		const listening = new Promise<string>((resolve, reject) => {
 			const timer = setTimeout(() => reject(new Error(`opencode did not start within ${timeoutMs / 1000}s${this.output ? `: ${this.output.trim().split("\n").at(-1)}` : ""}`)), timeoutMs);
@@ -160,9 +201,30 @@ export class OpenCodeServer {
 			await this.close();
 			throw err;
 		}
+		if (this.options.events === false) return;
 		void this.pump();
 		// The first event is `server.connected`: wait for it so nothing that follows can be missed.
 		await this.connected;
+	}
+
+	/** Attaches to a server that is already running: checks it answers and accepts the credentials, then listens. */
+	private async connect(timeoutMs: number): Promise<void> {
+		this.url = this.options.attach!.url.replace(/\/+$/, "");
+		await checkServer(this.endpoint, Math.min(timeoutMs, 15_000));
+		if (this.options.events === false) return;
+		void this.pump();
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const timeout = new Promise<never>((_, reject) => {
+			timer = setTimeout(() => reject(new Error(`opencode server at ${this.url} did not open its event stream`)), Math.min(timeoutMs, 15_000));
+		});
+		try {
+			await Promise.race([this.connected, timeout]);
+		} catch (err) {
+			await this.close();
+			throw err;
+		} finally {
+			clearTimeout(timer);
+		}
 	}
 
 	/** Reads /event until the server goes away; reconnects when only the stream dropped. */
@@ -172,7 +234,7 @@ export class OpenCodeServer {
 			const abort = new AbortController();
 			this.stream = abort;
 			try {
-				const res = await fetch(`${this.url}/event?directory=${encodeURIComponent(this.options.cwd)}`, { headers: { authorization: this.authorization, accept: "text/event-stream" }, signal: abort.signal });
+				const res = await fetch(`${this.url}/event?directory=${encodeURIComponent(this.options.cwd)}`, { headers: this.headers({ accept: "text/event-stream" }), signal: abort.signal });
 				if (!res.ok || !res.body) throw new Error(`event stream ${res.status}`);
 				if (!first) this.options.onReconnect?.();
 				first = false;
@@ -220,7 +282,7 @@ export class OpenCodeServer {
 		const qs = new URLSearchParams({ directory: this.options.cwd, ...query });
 		const res = await fetch(`${this.url}${path}?${qs}`, {
 			method,
-			headers: { authorization: this.authorization, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+			headers: this.headers(body === undefined ? {} : { "content-type": "application/json" }),
 			...(body === undefined ? {} : { body: JSON.stringify(body) }),
 		});
 		const text = await res.text();
@@ -242,6 +304,7 @@ export class OpenCodeServer {
 		this.closed = true;
 		this.stream?.abort();
 		this.connectedResolve?.();
+		// An attached server belongs to someone else: only the connection goes away.
 		if (!child || child.exitCode !== null || child.signalCode !== null) return;
 		await new Promise<void>((resolve) => {
 			const timer = setTimeout(resolve, 3000);
@@ -252,4 +315,20 @@ export class OpenCodeServer {
 			killTree(child);
 		});
 	}
+}
+
+/** Asks a server for its health; resolves with its version, rejects with a readable reason. */
+export async function checkServer(endpoint: OpenCodeEndpoint, timeoutMs = 10_000): Promise<string> {
+	const url = endpoint.url.replace(/\/+$/, "");
+	let res: Response;
+	try {
+		res = await fetch(`${url}/global/health`, { headers: endpoint.authorization ? { authorization: endpoint.authorization } : {}, signal: AbortSignal.timeout(timeoutMs) });
+	} catch (err) {
+		throw new Error(`cannot reach the opencode server at ${url}: ${err instanceof Error ? (err.cause instanceof Error ? err.cause.message : err.message) : String(err)}`);
+	}
+	if (res.status === 401) throw new Error(`the opencode server at ${url} refused the credentials (check the password)`);
+	if (!res.ok) throw new Error(`the opencode server at ${url} answered ${res.status}`);
+	const body = (await res.json().catch(() => undefined)) as { healthy?: boolean; version?: string } | undefined;
+	if (body?.healthy === false) throw new Error(`the opencode server at ${url} reports it is unhealthy`);
+	return String(body?.version ?? "");
 }

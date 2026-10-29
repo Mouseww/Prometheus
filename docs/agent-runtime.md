@@ -1,4 +1,4 @@
-# 多 Agent Runtime 设计（PI / Claude Code / Codex / OpenCode）
+# 多 Agent Runtime 设计（PI / Claude Code / Codex / OpenCode / ACP）
 
 状态：设计稿，未实现。目标：同一个 Prometheus 会话界面、同一套插件和工具，可以选择由 PI、Claude Code 或 Codex 驱动，并且网关可以用 runtime 自带的，也可以用 Prometheus 的。
 
@@ -494,6 +494,33 @@ modes 的 replace/strict 会返回完整的 `systemPrompt`。
 - **会话：** 会话列表由 Prometheus 自己的索引维护（和 Codex 一样）；恢复时 `GET /session/:id/message` 重建聊天记录；删除调用 `opencode session delete`。
 - **未做：** 思考档位（opencode 的 variant）、回退到某条消息、分叉、斜杠命令列表、作为子智能体的执行器。
 
+#### 服务模式（`AgentProfile.server`）
+
+opencode 本来就是“起一个服务、多个客户端连上来用”的形态，所以 OpenCode Agent 可以不再每个会话起一个进程：
+
+- **连接已有服务**（`server.url`，可带 `username`/`password`，即对方的 `OPENCODE_SERVER_USERNAME`/`OPENCODE_SERVER_PASSWORD`）：probe 调 `GET /global/health` 判断可用与版本；模型列表取该服务的 `GET /config/providers`。
+- **固定端口的共享服务**（只填 `server.port`）：Prometheus 第一次用到时在 `127.0.0.1:<port>` 起一个 `opencode serve`，这个 Agent 的所有会话共用，宿主退出时停掉；端口上已经有一个凭据相同的 opencode 服务时直接用它。密码留空则用随机密码（外部客户端接不进来），填了就能用 `opencode attach http://127.0.0.1:<port>` 接入同一个服务，和 Prometheus 里的会话互相可见。
+- **每个会话的隔离**：服务是共享的，所以不能再用 `OPENCODE_CONFIG_CONTENT`。工具总线用 `POST /mcp` 动态注册，名字是 `prometheus-<会话 id 前 12 位>`（工具名前缀随之变为 `prometheus-xxxx_`，映射器按会话的名字还原）；会话关闭时 `POST /mcp/<name>/disconnect`。opencode 会把所有 MCP 工具给所有会话，而它只认“精确工具 id + pattern `*` + deny”的会话规则来隐藏工具（通配符不行；`prompt_async` 的 `tools` 字段会整个替换会话规则，也不能用），所以每次发消息前 `PATCH /session/:id` 写入：`edit/bash/webfetch/external_directory/doom_loop` 为 `ask`，再逐个 deny 其它会话总线上的工具 id（从 `GET /mcp` 取服务名，工具名按本会话的工具列表推出）。
+- **限制**：服务模式只用服务自己配置的模型和登录，不能选 Prometheus 网关（网关是按会话注入的 provider）；Prometheus 工具总线只监听 127.0.0.1，所以连接其它机器上的服务时没有 Prometheus 工具（会记录警告）。删除会话走 `DELETE /session/:id`。
+- 测试：`packages/core/test/opencode-server-mode.test.ts`（真实 opencode + 假模型，覆盖两种模式、工具隔离和权限门）。
+
+### 12.6 ACP Agent（Agent Client Protocol，`packages/core/src/agent/acp`）
+
+第五种运行时 `acp`，一份适配器支持所有实现了 [ACP](https://agentclientprotocol.com) 的 Agent：内置 Gemini CLI（`gemini --acp`）和 Qwen Code（`qwen --acp`），设置里另有 Goose（`goose acp`）、Kimi CLI、Auggie、Claude Code / Codex 的 ACP 适配器等预设，其它 Agent 选“ACP”填命令和参数即可。内置与预设定义在 `packages/protocol` 的 `BUILTIN_AGENTS` / `ACP_PRESETS`（含一键安装用的 npm 包）。
+
+- **传输：** stdio 上的 JSON-RPC 2.0，一行一条，双向请求（`acp-connection.ts`）。Windows 上 npm 的 `.cmd` 垫片解析成真实脚本或二进制，避免 shell 改写参数。每个会话一个进程，崩溃后下一条消息重启并 `session/load`。
+- **握手：** `initialize` 声明 `fs`、`terminal` 都不提供，Agent 用自己的工具读写和执行；probe 也是一次握手（拿 `agentInfo.version`），结果缓存 5 分钟，`runtime.list` 并行探测。
+- **工具总线：** `session/new|load` 的 `mcpServers` 里放 `prometheus`：Agent 声明 `mcpCapabilities.http` 时用 HTTP（`Authorization` 头带令牌），否则用 stdio 桥（`mcp-bridge.ts` 写到 `<data>/runtimes/acp/mcp-bridge.cjs`，由本机 Node 运行，地址和令牌走环境变量）。ACP 不给 MCP 调用 id，按工具名关联：标题第一个词（`echo_tool (prometheus MCP Server)`）、`mcp__x__name` 形式、代理工具输入里的 `name`（Qwen Code 把 MCP 工具藏在 `tool_search`/`tool_call` 后面）或 `_meta.toolName`。
+- **权限：** Agent 被切到它自己的 `default` 模式（凡改动都发 `session/request_permission`），由权限门按 Prometheus 的模式决定，回复 `allow_once` / `reject_once`；我们自己的工具直接放行（总线会再判定，不问两次）；中止时未决的请求回 `cancelled`。计划模式与其它运行时一样：导出 `exit_plan_mode`，写操作由权限门拒绝。
+- **上下文：** ACP 没有 system prompt 字段：静态上下文随进程的第一条消息、每轮上下文和交接内容每条消息，都放在一个 `<prometheus-context>` 文本块里，聊天记录里不显示（回放时也会剥掉）。
+- **事件映射（`acp-mapper.ts`）：** `agent_message_chunk` / `agent_thought_chunk` 流式成文字和思考；`tool_call` / `tool_call_update` 按 `kind` 规范化（execute→bash，read，edit 的 diff→edit 或 write，search→grep，fetch→web_fetch/web_search……），参数到齐（`rawInput` 非空、或有 diff/路径、或已开始执行）才画卡片；`plan` 喂 todo 面板；`available_commands_update` 进 `/` 菜单；`usage_update` 进上下文用量。
+- **回合与队列：** 一次 `session/prompt` 就是一回合，返回的 `stopReason` 结束它（`cancelled` 为中止，`refusal` / `max_tokens` / `max_turn_requests` 报错）。ACP 不能往进行中的回合插话，所以回复中发送的消息排队，回合结束后自动发出（`followUpQueue`，可撤回）；中止会清空队列。
+- **模型：** “Agent 配置的默认模型”加上 Agent 在 `session/new` 里报告的 `models.availableModels`；切换用 `session/set_model`，不支持时退到 `session/set_config_option`。
+- **网关：** ACP 本身不能指定端点，所以按 Agent 适配（`acp-gateway.ts`）。目前 Qwen Code 支持 Prometheus 网关（openai-completions，经中继：`OPENAI_BASE_URL`/`OPENAI_API_KEY`/`--auth-type openai --model`），其它 ACP Agent 只用自己的登录。
+- **会话：** 会话列表由 Prometheus 索引维护；界面上的记录另存一份在 `<data>/sessions/acp/<id>.json`。恢复时优先 `session/load`（Agent 回放的内容静默重建，界面用存下的记录）；Agent 不支持或加载失败时开新会话，并把旧记录作为交接内容随第一条消息交给它。
+- **未做：** 压缩、分叉、回退、思考档位、`fs`/`terminal` 客户端能力（让 Agent 通过 Prometheus 读写文件和跑命令）、作为子智能体的执行器。
+- 测试：`acp-runtime.test.ts`（脚本化的假 ACP Agent，含 HTTP 与 stdio 桥两种总线接法、权限、队列、中止、崩溃重启、恢复）、`conformance-acp-qwen.test.ts`（真实 Qwen Code 经中继连假模型）。
+
 ## 13. 实施阶段与验收
 
 | 阶段 | 内容 | 验收 |
@@ -542,3 +569,12 @@ P0 到 P5 已完成。P6 已完成：新建会话时选运行时（`RuntimePicke
 - **模型决定路由**：`session.create` / `session.switchRuntime` 的 `model` 的 `provider` 若是某个网关 id，就走 Prometheus 网关，否则走 Agent 自带登录。会话内用 `model.set` 换到另一个网关的模型时，Claude Code 会停掉进程，下一条消息用新端点 resume 同一会话；Codex 会替换 app-server 进程并 resume 同一线程。回复进行中不能换网关。新路由会写回会话索引，重开后保持。
 - **自定义 Agent**（设置 → Agent）：基于 Claude Code 或 Codex，可设可执行文件路径和环境变量；`config.json` 的 `agents` 保存，内置两个也可以加覆盖。`agent.list/save/delete` 管理，改动对之后新建的会话生效。
 - **Codex 自带登录**：每个会话用独立的 `CODEX_HOME`，复制账号的 `auth.json` 和 `config.toml`，再追加 Prometheus 工具总线的配置；模型为账号默认（`codex/default`）。账号自己的 `config.toml` 无法解析时，Codex 会报配置错误。
+
+### 14.3 安装与更新 Agent CLI
+
+- **安装位置：** 一键安装用 `npm install --global --prefix <data>/agents`，不碰用户全局的 npm；外部运行时把 `<data>/agents`（Windows）或 `<data>/agents/bin` 放在 PATH 最前。可安装的包来自 `BUILTIN_AGENTS` / `ACP_PRESETS` 的 `npm` 字段，基于 Claude Code / Codex / OpenCode 的自定义 Agent 用同一个包。
+- **装的就是跑的：** 没有在 Agent 里指定可执行文件时，Prometheus 装的那份优先：Claude Code 不再用 SDK 自带的 CLI，Codex 直接跑装好的 `codex.js`，OpenCode 和 ACP Agent 按该 Agent 的 PATH（不是服务进程自己的 PATH）查找。所以更新后新会话立刻用新版本。
+- **检查更新：** `agent.checkUpdates`（设置 → Agent 打开时自动查，“检查更新”按钮强制刷新）。当前版本：Prometheus 装的取其 `package.json`，Claude Code 未安装时取 SDK 的 `claudeCodeVersion`（来源 `bundled`），其余取 probe 的版本（来源 `path`）。最新版本用 `npm view <包> version`，所以 `.npmrc` 里的镜像生效，缓存 1 小时。指定了可执行文件（`custom`）、连接外部 OpenCode 服务（`server`）、不在 npm 上的 Agent（`noPackage`）不提供更新，界面上说明原因。
+- **更新：** 就是 `agent.install`（安装 `@latest`）。`path` / `bundled` 来源的更新是在 Prometheus 目录装一份新版并从此优先使用，原来的安装不动；卸载这份即回到原来的版本。Windows 上正在运行的可执行文件被锁定时 npm 会失败，错误里提示先关闭使用它的会话。
+- 测试：`agent-install.test.ts`（版本解析与比较、已装版本与入口），`agent-update.e2e.test.ts`（`PROMETHEUS_TEST_UPDATES=1`：真实 npm，旧版 OpenCode → 检查 → 更新 → 运行的是新版）。
+- **安装包不带 Claude Code：** 桌面端打包（`bundle-server.ts`）会删掉 Agent SDK 的各平台二进制（`@anthropic-ai/claude-agent-sdk-<平台>`，约 280 MB），以及 LanceDB 可选依赖带来的 `@huggingface/transformers`、`onnxruntime-*`、`sharp`（约 100 MB，向量由网关计算，用不到）。没有二进制又没指定可执行文件时，Claude Code 的 `probe` 返回不可用，设置页显示“安装”，装好后走上面“装的就是跑的”的路径。开发环境（pnpm 安装）仍带二进制，行为不变。

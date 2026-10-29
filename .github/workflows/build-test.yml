@@ -1,0 +1,64 @@
+name: Build test
+
+# Builds the Windows installer without publishing a release, to check installer size and that the bundle starts.
+# Runs on pushes to the ci/size-test branch or by hand.
+on:
+  workflow_dispatch:
+  push:
+    branches: ["ci/size-test"]
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build the installer
+        working-directory: apps/desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          NO_STRIP: "true"
+        run: pnpm tauri build --config src-tauri/tauri.bundle.json
+
+      - name: Sizes and contents
+        shell: bash
+        run: |
+          echo "## Installer" >> "$GITHUB_STEP_SUMMARY"
+          find apps/desktop/src-tauri/target/release/bundle -type f \( -name '*.exe' -o -name '*.msi' \) -exec ls -l {} \; | awk '{printf "- %s: %.1f MB\n", $NF, $5/1048576}' | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "## server-bundle/node_modules (largest, MB)" >> "$GITHUB_STEP_SUMMARY"
+          (cd dist/server-bundle/node_modules && du -sm * @*/* 2>/dev/null | sort -rn | head -12) | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "removed packages present: $(ls dist/server-bundle/node_modules dist/server-bundle/node_modules/@anthropic-ai | grep -ciE 'onnx|sharp|huggingface|claude-agent-sdk-')" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Server starts without Claude Code and the embedding packages
+        shell: bash
+        run: |
+          export PROMETHEUS_HOST=127.0.0.1 PROMETHEUS_PORT=0 PROMETHEUS_HOME="$RUNNER_TEMP/prom-home"
+          node dist/server-bundle/main.js > server.log 2>&1 &
+          pid=$!
+          for i in $(seq 1 60); do grep -q PROMETHEUS_READY server.log && break; kill -0 $pid 2>/dev/null || break; sleep 1; done
+          cat server.log
+          kill $pid 2>/dev/null || true
+          grep -q PROMETHEUS_READY server.log
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prometheus-windows-installer
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
+          retention-days: 3

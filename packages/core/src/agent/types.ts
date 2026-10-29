@@ -116,7 +116,7 @@ export type PromptDelivery = "send" | "steer" | "followUp";
 /** The part of `SessionSnapshot` a runtime owns; the host adds permission mode, pending UI, statuses, widgets and subagents. */
 export type RuntimeSnapshot = Pick<SessionSnapshot, "id" | "name" | "cwd" | "messages" | "model" | "thinkingLevel" | "availableThinkingLevels" | "isStreaming" | "queue">;
 
-/** One agent runtime (PI in-process, Claude Code via its SDK, Codex via app-server). */
+/** One agent runtime (PI in-process, Claude Code via its SDK, Codex via app-server, OpenCode via its server, ACP agents over stdio). */
 export interface AgentRuntime {
 	readonly kind: RuntimeKind;
 	/** Installed? Which version? Logged in? */
@@ -132,6 +132,8 @@ export interface AgentRuntime {
 	deleteNative(ref: SessionRef): Promise<void>;
 	/** Token and cost totals across native sessions; `days` of 0 means all time. */
 	collectUsage(days: number): Promise<UsageStats>;
+	/** Stops what the runtime keeps across sessions (a shared server). */
+	dispose?(): Promise<void>;
 }
 
 /** A live session of some runtime, speaking the wire protocol's events and message shapes. */

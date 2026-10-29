@@ -2,7 +2,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { mergeGatewayUpdate, validateGateway } from "@prometheus/gateway";
-import { type AgentProfile, AppError, type GatewayConfig } from "@prometheus/protocol";
+import { type AgentProfile, type AgentServer, AppError, BUILTIN_AGENTS, type GatewayConfig } from "@prometheus/protocol";
 
 export interface NetworkConfig {
 	/** Also listen on all network interfaces. */
@@ -132,15 +132,20 @@ export class ConfigStore {
 	async saveAgent(incoming: AgentProfile): Promise<AgentProfile> {
 		const id = incoming.id.trim();
 		if (!/^[a-z0-9][a-z0-9-_]{0,47}$/.test(id)) throw new AppError("generic");
-		if (incoming.kind !== "claude-code" && incoming.kind !== "codex" && incoming.kind !== "opencode") throw new AppError("generic");
-		const builtin = id === "claude-code" || id === "codex" || id === "opencode";
-		if (builtin && incoming.kind !== id) throw new AppError("generic");
+		if (incoming.kind !== "claude-code" && incoming.kind !== "codex" && incoming.kind !== "opencode" && incoming.kind !== "acp") throw new AppError("generic");
+		const preset = BUILTIN_AGENTS.find((a) => a.id === id);
+		const builtin = preset !== undefined;
+		if (preset && incoming.kind !== preset.kind) throw new AppError("generic");
 		const env = Object.fromEntries(Object.entries(incoming.env ?? {}).filter(([k]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k)));
+		const args = Array.isArray(incoming.args) ? incoming.args.filter((a): a is string => typeof a === "string" && a.length > 0).slice(0, 64) : undefined;
+		const server = incoming.kind === "opencode" ? normalizeServer(incoming.server) : undefined;
 		const saved: AgentProfile = {
 			id,
 			name: incoming.name?.trim() || id,
 			kind: incoming.kind,
 			...(incoming.executable?.trim() ? { executable: incoming.executable.trim() } : {}),
+			...(args && (args.length || incoming.kind === "acp") ? { args } : {}),
+			...(server ? { server } : {}),
 			...(Object.keys(env).length ? { env } : {}),
 			enabled: incoming.enabled !== false,
 			...(builtin ? { builtin: true } : {}),
@@ -177,4 +182,29 @@ export class ConfigStore {
 		this.writing = this.writing.then(run, run);
 		return this.writing;
 	}
+}
+
+/** Keeps a usable server setting: an http(s) URL, or a TCP port Prometheus can listen on. Empty means none. */
+export function normalizeServer(raw: AgentServer | undefined): AgentServer | undefined {
+	if (!raw || typeof raw !== "object") return undefined;
+	const out: AgentServer = {};
+	const url = typeof raw.url === "string" ? raw.url.trim().replace(/\/+$/, "") : "";
+	if (url) {
+		let parsed: URL;
+		try {
+			parsed = new URL(/^[a-z]+:\/\//i.test(url) ? url : `http://${url}`);
+		} catch {
+			throw new AppError("generic");
+		}
+		if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new AppError("generic");
+		out.url = parsed.toString().replace(/\/+$/, "");
+	}
+	const port = Number(raw.port);
+	if (!out.url && raw.port !== undefined && raw.port !== null && String(raw.port) !== "") {
+		if (!Number.isInteger(port) || port < 1 || port > 65535) throw new AppError("generic");
+		out.port = port;
+	}
+	if (typeof raw.username === "string" && raw.username.trim()) out.username = raw.username.trim();
+	if (typeof raw.password === "string" && raw.password) out.password = raw.password;
+	return out.url || out.port ? out : undefined;
 }

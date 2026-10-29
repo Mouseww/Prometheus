@@ -1,8 +1,9 @@
 // ClaudeCodeRuntime: Claude Code through the Claude Agent SDK (docs/agent-runtime.md §12.1).
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { AppError, gatewayAs, type GatewayConfig, type ModelInfo, type UsageStats } from "@prometheus/protocol";
 import type { AgentRuntime, GatewayChoice, NativeSessionInfo, ResumeInit, RuntimeHealth, RuntimeServices, RuntimeSession, SessionInit, SessionRef } from "../types.ts";
 import { ClaudeCodeSession } from "./cc-session.ts";
@@ -19,17 +20,67 @@ async function sdk() {
 	return import("@anthropic-ai/claude-agent-sdk");
 }
 
+let hasBundledBinary: boolean | undefined;
+/**
+ * Whether the Agent SDK ships a Claude Code binary for this platform. The desktop installer leaves them out (about
+ * 280 MB); Claude Code is then installed from the settings page the first time it is used.
+ */
+export function bundledClaudeBinary(): boolean {
+	if (hasBundledBinary !== undefined) return hasBundledBinary;
+	const require = createRequire(import.meta.url);
+	const names = process.platform === "linux" ? [`${process.arch}`, `${process.arch}-musl`] : [process.arch];
+	hasBundledBinary = names.some((n) => {
+		try {
+			require.resolve(`@anthropic-ai/claude-agent-sdk-${process.platform}-${n}/package.json`);
+			return true;
+		} catch {
+			return false;
+		}
+	});
+	return hasBundledBinary;
+}
+
+let bundled: string | null | undefined;
+/** Version of the Claude Code CLI bundled with the Agent SDK: what runs when no other executable is chosen. */
+export function bundledClaudeVersion(): string | undefined {
+	if (bundled !== undefined) return bundled ?? undefined;
+	bundled = null;
+	if (!bundledClaudeBinary()) return undefined;
+	try {
+		let dir = dirname(createRequire(import.meta.url).resolve("@anthropic-ai/claude-agent-sdk"));
+		for (let i = 0; i < 4; i++) {
+			const file = join(dir, "package.json");
+			if (existsSync(file)) {
+				const json = JSON.parse(readFileSync(file, "utf8"));
+				if (json.name === "@anthropic-ai/claude-agent-sdk") {
+					bundled = typeof json.claudeCodeVersion === "string" ? json.claudeCodeVersion : null;
+					break;
+				}
+			}
+			dir = dirname(dir);
+		}
+	} catch {
+		/* unknown */
+	}
+	return bundled ?? undefined;
+}
+
 export class ClaudeCodeRuntime implements AgentRuntime {
 	readonly kind = "claude-code" as const;
 	private readonly getServices: () => Promise<RuntimeServices>;
 	private readonly executable: () => string | undefined;
 	private readonly env: () => Record<string, string>;
+	private readonly version: () => string | undefined;
 
-	/** Services start lazily: listing runtimes must not open the tool bus and relay. */
-	constructor(getServices: () => Promise<RuntimeServices>, executable: () => string | undefined = () => undefined, env: () => Record<string, string> = () => ({})) {
+	/**
+	 * Services start lazily: listing runtimes must not open the tool bus and relay. `version` is the version of the
+	 * chosen executable when the host knows it (a copy Prometheus installed); without an executable it is the SDK's own.
+	 */
+	constructor(getServices: () => Promise<RuntimeServices>, executable: () => string | undefined = () => undefined, env: () => Record<string, string> = () => ({}), version: () => string | undefined = () => undefined) {
 		this.getServices = getServices;
 		this.executable = executable;
 		this.env = env;
+		this.version = version;
 	}
 
 	async probe(): Promise<RuntimeHealth> {
@@ -37,9 +88,11 @@ export class ClaudeCodeRuntime implements AgentRuntime {
 			const exe = this.executable();
 			if (exe && !existsSync(exe)) return { available: false, reason: `Claude Code not found at ${exe}` };
 			await sdk();
+			if (!exe && !bundledClaudeBinary()) return { available: false, reason: "Claude Code is not installed" };
 			// Login state is read from the credentials file only; probing never sends a request.
 			const loggedIn = existsSync(join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), ".credentials.json")) || existsSync(join(homedir(), ".claude.json"));
-			return { available: true, loggedIn };
+			const version = exe ? this.version() : bundledClaudeVersion();
+			return { available: true, loggedIn, ...(version ? { version } : {}) };
 		} catch (err) {
 			return { available: false, reason: err instanceof Error ? err.message : String(err) };
 		}
