@@ -89,22 +89,49 @@ function ChatBody() {
 	const pinned = useRef(true);
 	// The scroll container is unmounted whenever the view swaps to the placeholder / new-chat page (e.g. a messages reset)
 	// and comes back at scrollTop 0. A fresh container always starts at the end, otherwise the chat appears to jump to the top.
+	// Right after a conversation opens, its content keeps growing for a moment (images, highlighting, size estimates of
+	// skipped messages settling). Until the user touches the scroller, that growth keeps the view at the end instead of
+	// leaving it wherever the first layout put it, which is what made the chat jump two or three times.
+	const settleUntil = useRef(0);
+	const touched = useRef(false);
+	const settling = () => Date.now() < settleUntil.current && !touched.current;
+	const beginSettle = () => {
+		settleUntil.current = Date.now() + 2000;
+		touched.current = false;
+	};
 	const attach = useCallback((el: HTMLDivElement | null) => {
 		scroller.current = el;
 		if (el) {
+			beginSettle();
 			pinned.current = true;
 			el.scrollTop = el.scrollHeight;
 		}
 	}, []);
+	const observer = useRef<ResizeObserver | null>(null);
+	const content = useCallback((node: HTMLDivElement | null) => {
+		observer.current?.disconnect();
+		observer.current = null;
+		if (!node || typeof ResizeObserver === "undefined") return;
+		observer.current = new ResizeObserver(() => {
+			const el = scroller.current;
+			if (el && (pinned.current || settling())) {
+				pinned.current = true;
+				el.scrollTop = el.scrollHeight;
+			}
+		});
+		observer.current.observe(node);
+	}, []);
 
 	// Another conversation opens at its end, whatever was scrolled in the previous one, before it is painted.
 	useLayoutEffect(() => {
+		beginSettle();
 		pinned.current = true;
 		const el = scroller.current;
 		if (el) el.scrollTop = el.scrollHeight;
 	}, [session?.id, opening]);
 
-	useEffect(() => {
+	// Layout effect, not a passive one: content that arrives after the switch must not be painted at the top first.
+	useLayoutEffect(() => {
 		const el = scroller.current;
 		if (el && pinned.current) el.scrollTop = el.scrollHeight;
 	});
@@ -138,8 +165,17 @@ function ChatBody() {
 			)}
 			<div
 				ref={attach}
+				onWheel={() => (touched.current = true)}
+				onTouchStart={() => (touched.current = true)}
+				onPointerDown={() => (touched.current = true)}
+				onKeyDown={() => (touched.current = true)}
 				onScroll={(e) => {
 					const el = e.currentTarget;
+					// Not the user: the browser moved the view (scroll anchoring, size estimates of skipped messages). Put it back at the end.
+					if (settling()) {
+						if (el.scrollHeight - el.scrollTop - el.clientHeight > 1) el.scrollTop = el.scrollHeight;
+						return;
+					}
 					pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
 				}}
 				className="relative min-h-0 flex-1 overflow-y-auto"
@@ -151,7 +187,7 @@ function ChatBody() {
 						</span>
 					</div>
 				)}
-				<div key={session.id} className="animate-fade">
+				<div key={session.id} ref={content} className="animate-fade">
 					<MessageList key={session.id} messages={session.messages} offset={session.messageOffset} onLoadEarlier={loadEarlier} tools={session.tools} streaming={session.isStreaming} pending={session.pending} />
 				</div>
 			</div>
