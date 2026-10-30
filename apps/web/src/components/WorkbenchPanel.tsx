@@ -1,10 +1,11 @@
 import clsx from "clsx";
-import { Eye, FileText, FolderTree, LoaderCircle, RefreshCw, SquareTerminal, X } from "lucide-react";
+import { Check, Copy, Eye, FileText, FolderTree, LoaderCircle, RefreshCw, SquareTerminal, X } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { copyToClipboard } from "../lib/clipboard.ts";
 import { highlightLines, languageFor } from "../lib/highlight.ts";
 import type { WorkbenchFile } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { activateWorkbenchTab, closeWorkbenchTab, pluginCall, useStore, type WorkbenchTab } from "../lib/store.ts";
+import { activateWorkbenchTab, closeWorkbenchTab, pluginCall, toast, useStore, type WorkbenchTab } from "../lib/store.ts";
 import { Markdown } from "./Markdown.tsx";
 import { FolderView } from "./FolderView.tsx";
 import { TerminalView } from "./TerminalView.tsx";
@@ -18,6 +19,7 @@ const M = defineMessages({
 		terminal: "终端",
 		folder: "文件夹",
 		refresh: "刷新",
+		copy: "复制内容",
 		loading: "加载中…",
 		binary: "二进制文件，无法预览",
 		tooLarge: "文件太大，无法预览",
@@ -31,6 +33,7 @@ const M = defineMessages({
 		terminal: "Terminal",
 		folder: "Folder",
 		refresh: "Refresh",
+		copy: "Copy content",
 		loading: "Loading…",
 		binary: "Binary file, no preview",
 		tooLarge: "File too large to preview",
@@ -107,6 +110,7 @@ function FileView({ tab }: { tab: Extract<WorkbenchTab, { kind: "file" }> }) {
 		lineRef.current?.scrollIntoView({ block: "center" });
 	}, [file, tab.line]);
 
+	const [copied, setCopied] = useState(false);
 	const lines = useMemo(() => (file?.kind === "text" ? (file.text ?? "").split("\n") : []), [file]);
 	const isMd = file?.language === "markdown";
 	// Coloured lines, same count as `lines`; null shows the text plain (unknown language, or too big to colour quickly).
@@ -125,6 +129,24 @@ function FileView({ tab }: { tab: Extract<WorkbenchTab, { kind: "file" }> }) {
 					<button type="button" onClick={() => setRendered(!rendered)} className="flex items-center gap-1 rounded px-1.5 py-0.5 text-ink-400 hover:bg-ink-800 hover:text-ink-100">
 						<Eye className="size-3.5" />
 						{rendered ? t("source") : t("preview")}
+					</button>
+				)}
+				{file?.kind === "text" && (
+					<button
+						type="button"
+						onClick={() =>
+							void copyToClipboard(file.text ?? "").then(
+								() => {
+									setCopied(true);
+									setTimeout(() => setCopied(false), 1500);
+								},
+								(err) => toast(err instanceof Error ? err.message : String(err), "error"),
+							)
+						}
+						className="grid size-6 place-items-center rounded text-ink-400 hover:bg-ink-800 hover:text-ink-100"
+						title={t("copy")}
+					>
+						{copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
 					</button>
 				)}
 				<button type="button" onClick={() => void load()} className="grid size-6 place-items-center rounded text-ink-400 hover:bg-ink-800 hover:text-ink-100" title={t("refresh")}>
