@@ -190,12 +190,17 @@ export function NetworkSettings() {
 		try {
 			const s = await client.rpc("network.set", patch);
 			setStatus(s);
+			// Starting the tunnel settles later; re-read shortly in case it failed right away.
+			if (patch.tunnel) setTimeout(() => void load(), 800);
 			setPort(String(s.port));
 			setHosts(s.allowedHosts.join("\n"));
 			if (done) toast(done);
 			return true;
 		} catch (err) {
-			setError(localizeError(err instanceof Error ? err.message : String(err)));
+			const msg = localizeError(err instanceof Error ? err.message : String(err));
+			setError(msg);
+			// The inline box sits at the top of the page; the toast is seen wherever the user has scrolled to.
+			toast(msg, "error");
 			return false;
 		} finally {
 			setBusy(false);

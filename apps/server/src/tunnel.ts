@@ -111,12 +111,15 @@ export class QuickTunnel {
 	/** Returns at once; progress shows up through status(). Does nothing when already running. */
 	start(port: number): void {
 		if (this.state.state !== "off" && this.state.state !== "error") return;
+		// Switch state before returning, so the status the caller gets back is never a stale "off" (the UI only polls while busy).
+		this.set({ state: "starting" });
 		void this.run(port).catch((err: unknown) => this.set({ state: "error", error: err instanceof Error ? err.message : String(err), ...(err instanceof NetworkError ? { network: true } : {}) }));
 	}
 
 	private async run(port: number): Promise<void> {
 		let bin = this.findBinary();
 		if (!bin) {
+			if (this.state.state === "off") return;
 			this.set({ state: "downloading" });
 			bin = await this.download();
 		}
@@ -125,12 +128,16 @@ export class QuickTunnel {
 		const child = spawn(bin, ["tunnel", "--url", `http://127.0.0.1:${port}`, "--no-autoupdate"], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
 		this.child = child;
 		let tail = "";
+		let pendingUrl: string | undefined;
 		const onData = (chunk: Buffer): void => {
 			const text = chunk.toString("utf8");
 			tail = (tail + text).slice(-2000);
 			// cloudflared also logs api.trycloudflare.com; the assigned address is any other match.
 			const hit = [...text.matchAll(URL_RE)].find((m) => m[1]?.toLowerCase() !== "api.trycloudflare.com");
-			if (hit && this.child === child && this.state.state !== "on") this.set({ state: "on", url: `https://${hit[1]}` });
+			if (hit) pendingUrl = `https://${hit[1]}`;
+			// The address is printed several seconds before the tunnel is connected to Cloudflare's edge;
+			// opening it earlier fails. Report "on" only once a connection is registered.
+			if (pendingUrl && /Registered tunnel connection/i.test(tail) && this.child === child && this.state.state !== "on") this.set({ state: "on", url: pendingUrl });
 		};
 		child.stdout?.on("data", onData);
 		child.stderr?.on("data", onData);
@@ -150,7 +157,7 @@ export class QuickTunnel {
 				this.stop();
 				this.set({ state: "error", error: "等待 Cloudflare 分配地址超时", network: true });
 			}
-		}, 45_000).unref();
+		}, 90_000).unref();
 	}
 
 	stop(): void {
