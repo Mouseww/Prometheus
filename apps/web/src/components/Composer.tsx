@@ -1,6 +1,7 @@
 import clsx from "clsx";
-import { ArrowUp, Brain, Check, ChevronDown, CornerDownRight, Cpu, File as FileIcon, FileText, Folder as FolderIcon, ListEnd, Paperclip, Pencil, Search, Square, X } from "lucide-react";
+import { ArrowUp, Brain, Check, ChevronDown, CornerDownRight, Cpu, File as FileIcon, FileText, Folder as FolderIcon, ListEnd, Maximize2, Minimize2, Paperclip, Pencil, Search, Square, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { ImageContent, ThinkingLevel } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { type Attachment, AttachmentError, fileToAttachment, formatSize, isPicture, MAX_FILE_MB, MAX_FILES } from "../lib/attachments.ts";
@@ -65,6 +66,8 @@ const M = defineMessages({
 		badImage: "无法读取这张图片",
 		noVision: "当前模型不支持图片，图片可能被忽略或报错，请换用带“视觉”标记的模型",
 		dropHere: "松开即可添加文件或图片",
+		expand: "放大输入",
+		collapse: "收起",
 	},
 	en: {
 		placeholder: "Give the agent a task, type / for commands",
@@ -112,6 +115,8 @@ const M = defineMessages({
 		badImage: "Could not read that image",
 		noVision: "This model does not accept images, so they may be ignored or rejected. Pick a model marked \"vision\"",
 		dropHere: "Drop to add images",
+		expand: "Expand the composer",
+		collapse: "Collapse",
 	},
 });
 
@@ -354,6 +359,8 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 	const [cursor, setCursor] = useState(0);
 	const ref = useRef<HTMLTextAreaElement>(null);
 	const streaming = session?.isStreaming ?? false;
+	const enterToSend = usePrefs((p) => p.enterToSend);
+	const [expanded, setExpanded] = useState(false);
 
 	useEffect(() => {
 		if (editorText) {
@@ -431,14 +438,14 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 		});
 	};
 
-	const submit = async () => {
+	const submit = async (): Promise<boolean> => {
 		const value = text.trim();
-		if ((!value && !images.length && !docs.length) || reading > 0) return;
+		if ((!value && !images.length && !docs.length) || reading > 0) return false;
 		// The copy from the last visit is on screen and not followed yet; sending waits the moment until the real one is in.
-		if (session?.preview) return;
+		if (session?.preview) return false;
 		if (!session) {
 			toast(t("needWorkspace"), "warning");
-			return;
+			return false;
 		}
 		const attached = images;
 		const attachedDocs = docs;
@@ -452,6 +459,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 			setImages(attached);
 			setDocs(attachedDocs);
 		}
+		return ok;
 	};
 
 	/**
@@ -511,6 +519,11 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 	const lacksVision = images.length > 0 && Boolean(model) && models.find((m) => m.provider === model?.provider && m.id === model.id)?.vision === false;
 
 	const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+		if (e.key === "Escape" && expanded && !streaming) {
+			e.preventDefault();
+			setExpanded(false);
+			return;
+		}
 		if (e.key === "Tab" && e.shiftKey) {
 			e.preventDefault();
 			const { session: s, draftPermission } = useStore.getState();
@@ -552,9 +565,11 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 				}
 			}
 		}
-		if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+		// Enter only sends when the user asked for it (the default on desktop). On a phone Enter breaks the line and
+		// the send button sends, which is what touch keyboards expect.
+		if (e.key === "Enter" && !e.shiftKey && enterToSend && !e.nativeEvent.isComposing) {
 			e.preventDefault();
-			void submit();
+			void submit().then((sent) => sent && setExpanded(false));
 		}
 		if (e.key === "Escape" && streaming) {
 			e.preventDefault();
@@ -778,6 +793,15 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 						<EffortPicker />
 					</div>
 					<div className="flex shrink-0 items-center gap-1">
+						<button
+							type="button"
+							onClick={() => setExpanded(true)}
+							className="grid size-8 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-800 hover:text-ink-100"
+							title={t("expand")}
+							aria-label={t("expand")}
+						>
+							<Maximize2 className="size-4" />
+						</button>
 						<VoiceButton onText={insertDictation} />
 						{streaming && (
 							<button type="button" onClick={() => void abortRun()} className="grid size-8 place-items-center rounded-lg bg-ink-800 text-ink-200 hover:bg-ink-700" aria-label={t("abort")} title={t("abort")}>
@@ -810,6 +834,53 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 					<ContextMeter />
 				</div>
 			</div>
+
+			{expanded &&
+				createPortal(
+					<div
+						className="fixed inset-0 z-[55] flex flex-col bg-ink-950"
+						style={{ paddingTop: "env(safe-area-inset-top, 0px)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+					>
+						<div className="flex items-center gap-2 border-b border-ink-800 px-3 py-2">
+							<span className="min-w-0 flex-1 truncate text-sm font-medium text-ink-200">{t("expand")}</span>
+							<button
+								type="button"
+								onClick={() => setExpanded(false)}
+								className="grid size-8 place-items-center rounded-lg text-ink-400 hover:bg-ink-800 hover:text-ink-100"
+								title={t("collapse")}
+								aria-label={t("collapse")}
+							>
+								<Minimize2 className="size-4" />
+							</button>
+						</div>
+						<textarea
+							autoFocus
+							value={text}
+							onChange={(e) => {
+								setText(e.target.value);
+								setCaret(e.target.selectionStart);
+							}}
+							onKeyDown={onKeyDown}
+							placeholder={streaming ? t("placeholderStreaming", { mode: t(sendMode) }) : t("placeholder")}
+							className="min-h-0 w-full flex-1 resize-none bg-transparent px-4 py-3 text-[15px] leading-relaxed text-ink-100 placeholder:text-ink-500 focus:outline-none"
+						/>
+						<div className="flex items-center justify-end gap-2 border-t border-ink-800 px-3 py-2">
+							<button type="button" onClick={() => setExpanded(false)} className="rounded-lg px-3 py-1.5 text-sm text-ink-300 hover:bg-ink-800">
+								{t("collapse")}
+							</button>
+							<button
+								type="button"
+								onClick={() => void submit().then((sent) => sent && setExpanded(false))}
+								disabled={(!text.trim() && images.length === 0 && docs.length === 0) || reading > 0 || !session || !!session.preview}
+								className="inline-flex items-center gap-1.5 rounded-lg bg-ember-500 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-ember-400 disabled:bg-ink-800 disabled:text-ink-600"
+							>
+								<ArrowUp className="size-4" strokeWidth={2.5} />
+								{t("send")}
+							</button>
+						</div>
+					</div>,
+					document.body,
+				)}
 		</div>
 	);
 }

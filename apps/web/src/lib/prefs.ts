@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { syncNativeTheme } from "./native.ts";
 
 export type ThemeMode = "dark" | "light" | "system";
 export type Skin = "ember" | "ocean" | "forest" | "violet" | "rose";
@@ -31,12 +32,28 @@ interface Prefs {
 	motion: boolean;
 	/** The "ignition" splash shown while the app starts. */
 	splash: boolean;
+	/** Enter sends the message (Shift+Enter breaks the line); off means Enter only breaks the line. */
+	enterToSend: boolean;
 }
 
 const KEY = "prometheus.prefs";
+// Touch keyboards have no comfortable Enter-to-send: there, Enter breaks the line unless the user opts in.
+const touchFirst = window.matchMedia("(pointer: coarse)").matches;
 
 function load(): Prefs {
-	const fallback: Prefs = { theme: "dark", skin: "ember", lang: navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en", closeToTray: true, sendMode: "followUp", chatWidth: null, notifyOnDone: false, notifyBackgroundOnly: true, motion: true, splash: true };
+	const fallback: Prefs = {
+		theme: "dark",
+		skin: "ember",
+		lang: navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en",
+		closeToTray: true,
+		sendMode: "followUp",
+		chatWidth: null,
+		notifyOnDone: false,
+		notifyBackgroundOnly: true,
+		motion: true,
+		splash: true,
+		enterToSend: !touchFirst,
+	};
 	try {
 		return { ...fallback, ...(JSON.parse(localStorage.getItem(KEY) ?? "{}") as Partial<Prefs>) };
 	} catch {
@@ -57,6 +74,8 @@ function apply(p: Prefs): void {
 	root.dataset.motion = p.motion ? "on" : "off";
 	root.lang = p.lang === "zh" ? ["zh", "CN"].join("-") : "en";
 	root.style.colorScheme = light ? "light" : "dark";
+	// The phone's status bar follows the app theme, not the system's (the two can differ).
+	syncNativeTheme(!light);
 }
 
 apply(usePrefs.getState());

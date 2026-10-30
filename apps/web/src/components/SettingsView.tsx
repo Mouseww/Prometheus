@@ -93,6 +93,8 @@ const M = defineMessages({
 		sendModeHint: "Agent 还在回复时发送新消息：排队是等本轮结束后再发，插队是在当前工具调用结束后立即插入。也可以在发送按钮旁的箭头上切换。",
 		sendFollowUp: "排队",
 		sendSteer: "插队",
+		enterToSend: "回车键发送",
+		enterToSendHint: "开启后按回车直接发送消息，Shift+回车换行；关闭后回车只换行，点发送按钮发送。手机键盘默认关闭。",
 		updates: "更新",
 		checkUpdate: "检查更新",
 		checking: "检查中…",
@@ -172,6 +174,8 @@ const M = defineMessages({
 		sendModeHint: "What a message does when the agent is still replying: Queue waits for the turn to end, Steer cuts in after the current tool call. You can also switch from the arrow beside the send button.",
 		sendFollowUp: "Queue",
 		sendSteer: "Steer",
+		enterToSend: "Enter sends",
+		enterToSendHint: "When on, Enter sends the message and Shift+Enter breaks the line; when off, Enter only breaks the line and the send button sends. Off by default on touch keyboards.",
 		updates: "Updates",
 		checkUpdate: "Check for updates",
 		checking: "Checking…",
@@ -443,6 +447,9 @@ function GeneralSettings() {
 									{ value: "steer", label: t("sendSteer") },
 								]}
 							/>
+						</Row>
+						<Row label={t("enterToSend")} hint={t("enterToSendHint")}>
+							<Toggle checked={prefs.enterToSend} onChange={(enterToSend) => setPrefs({ enterToSend })} />
 						</Row>
 					</Section>
 

@@ -306,6 +306,10 @@ try {
 		"android.permission.POST_NOTIFICATIONS",
 		"android.permission.WAKE_LOCK",
 		"android.permission.MANAGE_EXTERNAL_STORAGE",
+		"android.permission.ACCESS_NETWORK_STATE",
+		"android.permission.ACCESS_WIFI_STATE",
+		"android.permission.CHANGE_WIFI_STATE",
+		"android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
 	];
 	for (const perm of perms) {
 		if (!manifest.includes(perm)) manifest = manifest.replace(/<manifest[^>]*>/, (m) => `${m}
@@ -356,43 +360,128 @@ function keepAliveService(pkg: string): string {
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 
 // Keeps the process (and the local Node server it spawned) alive while the app is in the background.
+// A foreground service alone is not enough on phones that freeze background apps (ColorOS, MIUI, ...), and the
+// Wi-Fi radio goes to sleep when the screen is off unless a WifiLock is held, which is why LAN access dropped.
 class KeepAliveService : Service() {
   private var lock: PowerManager.WakeLock? = null
+  private var wifi: WifiManager.WifiLock? = null
+  private var held = false
+  private var foreground = false
 
   override fun onBind(intent: Intent?): IBinder? = null
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-    val channel = "prometheus_local"
-    getSystemService(NotificationManager::class.java)
-      .createNotificationChannel(NotificationChannel(channel, "Local server", NotificationManager.IMPORTANCE_LOW))
-    val notification: Notification = Notification.Builder(this, channel)
-      .setContentTitle("Prometheus")
-      .setContentText("Local server is running")
-      .setSmallIcon(applicationInfo.icon)
-      .setOngoing(true)
-      .build()
-    if (Build.VERSION.SDK_INT >= 34) {
-      startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-    } else {
-      startForeground(1, notification)
+    when (intent?.action) {
+      ACTION_RELEASE -> releaseLocks()
+      ACTION_ACQUIRE -> acquireLocks()
+      ACTION_TOGGLE -> if (held) releaseLocks() else acquireLocks()
+      else -> acquireLocks()
     }
-    if (lock == null) {
-      lock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "prometheus:server").apply { acquire() }
-    }
+    showNotification()
     return START_STICKY
   }
 
+  // Swiping the app away from recents must not take the local server with it.
+  override fun onTaskRemoved(rootIntent: Intent?) {
+    super.onTaskRemoved(rootIntent)
+  }
+
+  @Suppress("DEPRECATION")
+  private fun acquireLocks() {
+    if (lock == null) {
+      lock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "prometheus:server")
+    }
+    lock?.let { if (!it.isHeld) it.acquire() }
+    if (wifi == null) {
+      wifi = getSystemService(WifiManager::class.java)
+        ?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "prometheus:wifi")
+        ?.apply { setReferenceCounted(false) }
+    }
+    wifi?.let { if (!it.isHeld) it.acquire() }
+    held = true
+  }
+
+  private fun releaseLocks() {
+    lock?.let { if (it.isHeld) it.release() }
+    wifi?.let { if (it.isHeld) it.release() }
+    held = false
+  }
+
+  private fun showNotification() {
+    if (Build.VERSION.SDK_INT >= 26) {
+      getSystemService(NotificationManager::class.java)
+        .createNotificationChannel(NotificationChannel(CHANNEL, "Local server", NotificationManager.IMPORTANCE_LOW))
+    }
+    val launch = packageManager.getLaunchIntentForPackage(packageName) ?: Intent(this, MainActivity::class.java)
+    val open = PendingIntent.getActivity(this, 10, launch, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    val toggle = Notification.Action.Builder(
+      null as android.graphics.drawable.Icon?,
+      if (held) "Release wakelock" else "Acquire wakelock",
+      serviceIntent(if (held) ACTION_RELEASE else ACTION_ACQUIRE),
+    ).build()
+    val battery = Notification.Action.Builder(
+      null as android.graphics.drawable.Icon?,
+      "Battery settings",
+      PendingIntent.getActivity(
+        this,
+        11,
+        Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+      ),
+    ).build()
+    val notification: Notification = Notification.Builder(this, CHANNEL)
+      .setContentTitle("Prometheus")
+      .setContentText(if (held) "Local server is running (wakelock held)" else "Local server is running")
+      .setSmallIcon(applicationInfo.icon)
+      .setOngoing(true)
+      .setShowWhen(false)
+      .setContentIntent(open)
+      .addAction(toggle)
+      .addAction(battery)
+      .build()
+    if (!foreground) {
+      foreground = true
+      if (Build.VERSION.SDK_INT >= 34) {
+        startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+      } else {
+        startForeground(NOTIFICATION_ID, notification)
+      }
+    } else {
+      getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification)
+    }
+  }
+
+  private fun serviceIntent(action: String): PendingIntent {
+    val intent = Intent(this, KeepAliveService::class.java).setAction(action)
+    val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    return if (Build.VERSION.SDK_INT >= 26) {
+      PendingIntent.getForegroundService(this, action.hashCode(), intent, flags)
+    } else {
+      PendingIntent.getService(this, action.hashCode(), intent, flags)
+    }
+  }
+
   override fun onDestroy() {
-    lock?.release()
+    releaseLocks()
     super.onDestroy()
+  }
+
+  companion object {
+    const val CHANNEL = "prometheus_local"
+    const val NOTIFICATION_ID = 1
+    const val ACTION_ACQUIRE = "dev.prometheus.ACQUIRE"
+    const val ACTION_RELEASE = "dev.prometheus.RELEASE"
+    const val ACTION_TOGGLE = "dev.prometheus.TOGGLE"
   }
 }
 `;
@@ -410,8 +499,8 @@ function activityHelpersSource(): string {
     ) {
       requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
     }
-    // All-files access cannot be requested in a dialog; send the user to the settings page once.
     val prefs = getSharedPreferences("prometheus", MODE_PRIVATE)
+    // All-files access cannot be requested in a dialog; send the user to the settings page once.
     if (android.os.Build.VERSION.SDK_INT >= 30 && !android.os.Environment.isExternalStorageManager() && !prefs.getBoolean("asked_storage", false)) {
       prefs.edit().putBoolean("asked_storage", true).apply()
       try {
@@ -424,6 +513,66 @@ function activityHelpersSource(): string {
       } catch (_: Exception) {
       }
     }
+    // ColorOS and similar skins freeze background apps; ask once for the battery-optimisation exemption.
+    if (android.os.Build.VERSION.SDK_INT >= 23 && !prefs.getBoolean("asked_battery", false)) {
+      val power = getSystemService(android.os.PowerManager::class.java)
+      if (power != null && !power.isIgnoringBatteryOptimizations(packageName)) {
+        prefs.edit().putBoolean("asked_battery", true).apply()
+        try {
+          startActivity(
+            android.content.Intent(
+              android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+              android.net.Uri.parse("package:" + packageName),
+            ),
+          )
+        } catch (_: Exception) {
+        }
+      }
+    }
+    applySystemBarTheme(true)
+  }
+
+  // The page reports its own theme (Settings > Appearance), which may differ from the phone's dark mode.
+  // Android otherwise picks the bar icon colour from the system theme, so a dark app on a light phone got
+  // invisible icons. The bridge lets the page fix that, and also keeps the bar background transparent.
+  override fun onWebViewCreate(webView: android.webkit.WebView) {
+    super.onWebViewCreate(webView)
+    try {
+      webView.addJavascriptInterface(SystemBarBridge(), "PrometheusHost")
+    } catch (_: Throwable) {
+    }
+  }
+
+  inner class SystemBarBridge {
+    @android.webkit.JavascriptInterface
+    fun theme(dark: Boolean) {
+      runOnUiThread { applySystemBarTheme(dark) }
+    }
+  }
+
+  @Suppress("DEPRECATION")
+  private fun applySystemBarTheme(dark: Boolean) {
+    val w = window
+    if (android.os.Build.VERSION.SDK_INT < 35) {
+      w.statusBarColor = android.graphics.Color.TRANSPARENT
+      w.navigationBarColor = android.graphics.Color.TRANSPARENT
+    }
+    if (android.os.Build.VERSION.SDK_INT >= 29) {
+      w.isStatusBarContrastEnforced = false
+      w.isNavigationBarContrastEnforced = false
+    }
+    if (android.os.Build.VERSION.SDK_INT >= 30) {
+      val controller = w.insetsController ?: return
+      val lightBars = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+      // A dark app theme keeps light icons: clear the LIGHT_* appearance bits.
+      controller.setSystemBarsAppearance(if (dark) 0 else lightBars, lightBars)
+    } else {
+      var flags = w.decorView.systemUiVisibility
+      flags = if (dark) flags and android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv() else flags or android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+      w.decorView.systemUiVisibility = flags
+    }
+    // Behind the transparent bars: the app's own background, so no white strip appears in dark mode.
+    w.setBackgroundDrawableResource(if (dark) android.R.color.black else android.R.color.white)
   }
 `;
 }
