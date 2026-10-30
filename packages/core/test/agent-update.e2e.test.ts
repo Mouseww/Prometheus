@@ -3,10 +3,11 @@
 // Downloads packages, so it only runs with PROMETHEUS_TEST_UPDATES=1.
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { delimiter } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { agentInstallPrefix } from "../src/agent/install.ts";
+import { agentInstallPrefix, npmPrefixOf } from "../src/agent/install.ts";
 import { PrometheusHost } from "../src/host.ts";
 
 const AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
@@ -55,6 +56,28 @@ describe.skipIf(!enabled)("agent CLI updates", { timeout: 600_000 }, () => {
 		expect(now.health.version).toContain(before!.latest!);
 	});
 
+	it("updates a CLI the user installed with npm where it is, without adding a copy of its own", async () => {
+		const userPrefix = join(root, "user-npm");
+		const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+		const versions: string[] = JSON.parse(execFileSync(npm, ["view", "@openai/codex", "versions", "--json"], { encoding: "utf8", shell: process.platform === "win32" }));
+		const older = versions.filter((v) => /^\d+\.\d+\.\d+$/.test(v)).at(-2)!;
+		execFileSync(npm, ["install", "--global", "--prefix", userPrefix, "--no-fund", "--no-audit", "--loglevel=error", `@openai/codex@${older}`], { stdio: "ignore", shell: process.platform === "win32" });
+		const bin = process.platform === "win32" ? userPrefix : join(userPrefix, "bin");
+		const saved = process.env.PATH;
+		process.env.PATH = `${bin}${delimiter}${saved ?? ""}`;
+		try {
+			const [before] = await host.call("agent.checkUpdates", { id: "codex", refresh: true });
+			expect(before).toMatchObject({ source: "path", canUpdate: true, updateAvailable: true, current: older });
+			await host.call("agent.install", { agent: "codex" });
+			const [after] = await host.call("agent.checkUpdates", { id: "codex" });
+			expect(after).toMatchObject({ source: "path", current: before!.latest, updateAvailable: false });
+			// Nothing was added to Prometheus' own folder.
+			expect(npmPrefixOf("codex", join(agentInstallPrefix(join(root, "data")), "node_modules", "@openai", "codex", "package.json"))).toBeUndefined();
+		} finally {
+			process.env.PATH = saved;
+		}
+	});
+
 	it("explains agents it cannot update, and knows Claude Code's bundled version", async () => {
 		await host.call("agent.save", { agent: { id: "oc-remote", name: "remote", kind: "opencode", server: { url: "http://127.0.0.1:1" } } });
 		await host.call("agent.save", { agent: { id: "goose", name: "Goose", kind: "acp", executable: "goose", args: ["acp"] } });
@@ -62,7 +85,8 @@ describe.skipIf(!enabled)("agent CLI updates", { timeout: 600_000 }, () => {
 		expect(list.find((u) => u.id === "oc-remote")).toMatchObject({ source: "server", reason: "server", updateAvailable: false });
 		expect(list.find((u) => u.id === "goose")).toMatchObject({ source: "custom", updateAvailable: false });
 		const cc = list.find((u) => u.id === "claude-code")!;
-		expect(cc.source).toBe("bundled");
+		// A `claude` on this machine's PATH is what runs; without one it is the SDK's own.
+		expect(["path", "bundled"]).toContain(cc.source);
 		expect(cc.current).toMatch(/^\d+\.\d+\.\d+/);
 	});
 });

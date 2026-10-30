@@ -4,9 +4,10 @@
 // version installed here cannot break other projects and uninstalling is simply deleting the folder. The binaries
 // land in `<dataDir>/agents/bin`, which every external runtime puts first on its PATH (see `agentBinDir`).
 import { execFile } from "node:child_process";
+import { realpathSync, statSync } from "node:fs";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join, sep as pathSep } from "node:path";
 import { ACP_PRESETS, BUILTIN_AGENTS } from "@prometheus/protocol";
 import { resolveExecutable } from "@prometheus/subagents";
 
@@ -37,7 +38,10 @@ export function agentBinDir(dataDir: string): string {
 	return agentBinDirs(dataDir)[0]!;
 }
 
-/** `PATH` with the Prometheus-installed CLIs first, so a one-click install is picked up without a restart. */
+/**
+ * `PATH` with the Prometheus-installed CLIs last: a CLI the user installed themselves always wins, and a one-click
+ * install is still found without a restart when there is none.
+ */
 export function withAgentBin(dataDir: string, env: Record<string, string | undefined>): Record<string, string | undefined> {
 	const dirs = agentBinDirs(dataDir);
 	const path = env.PATH ?? env.Path ?? "";
@@ -46,7 +50,7 @@ export function withAgentBin(dataDir: string, env: Record<string, string | undef
 	if (dirs.every((d) => parts.includes(d))) return env;
 	// Windows' PATH lookup compares names case-insensitively, but a process only ever reads one of the spellings.
 	const key = process.platform === "win32" && env.Path !== undefined && env.PATH === undefined ? "Path" : "PATH";
-	return { ...env, [key]: [...dirs, ...parts].filter(Boolean).join(sep) };
+	return { ...env, [key]: [...parts, ...dirs.filter((d) => !parts.includes(d))].filter(Boolean).join(sep) };
 }
 
 const NPM = process.platform === "win32" ? "npm.cmd" : "npm";
@@ -88,15 +92,18 @@ export function installedCli(dataDir: string, agent: string): string | undefined
 	return undefined;
 }
 
-/** Installs (or upgrades) one agent's CLI into `<dataDir>/agents`. */
-export async function installAgentCli(dataDir: string, agent: string): Promise<{ command: string; output: string }> {
+/**
+ * Installs (or upgrades) one agent's CLI into `<dataDir>/agents`, or into `prefix` when given: the npm prefix an
+ * existing installation lives in, so updating replaces that copy instead of adding another.
+ */
+export async function installAgentCli(dataDir: string, agent: string, prefix?: string): Promise<{ command: string; output: string }> {
 	const pkg = packageOf(agent);
 	const npm = await npmAvailable();
 	if (!npm.ok) throw new Error(`找不到 npm：${npm.reason}`);
-	const prefix = agentInstallPrefix(dataDir);
-	await mkdir(prefix, { recursive: true });
-	const output = await runNpm(["install", "--global", "--prefix", prefix, "--no-fund", "--no-audit", "--loglevel=error", `${pkg.pkg}@latest`], 15 * 60_000);
-	const command = installedCli(dataDir, agent);
+	const target = prefix ?? agentInstallPrefix(dataDir);
+	await mkdir(target, { recursive: true });
+	const output = await runNpm(["install", "--global", "--prefix", target, "--no-fund", "--no-audit", "--loglevel=error", `${pkg.pkg}@latest`], 15 * 60_000);
+	const command = prefix ? agentEntry(dataDir, agent) : installedCli(dataDir, agent);
 	if (!command) throw new Error(`安装完成，但没有找到 ${pkg.bin} 可执行文件。\n${output.trim().split(/\r?\n/).slice(-6).join("\n")}`);
 	return { command, output };
 }
@@ -110,7 +117,8 @@ export async function uninstallAgentCli(dataDir: string, agent: string): Promise
 		for (const name of [`${pkg.bin}`, `${pkg.bin}.cmd`, `${pkg.bin}.ps1`, `${pkg.bin}.exe`]) {
 			await rm(join(dir, name), { force: true });
 		}
-	}}
+	}
+}
 
 /**
  * Extra health detail shown next to an agent that is not available: is a CLI installed, and can this machine install
@@ -188,5 +196,65 @@ export function latestVersion(agent: string, refresh = false): Promise<string> {
 	value.catch(() => {
 		if (latestCache.get(pkg.pkg)?.value === value) latestCache.delete(pkg.pkg);
 	});
+	return value;
+}
+
+/**
+ * The CLI that runs for an agent: one lookup on `PATH`, where Prometheus' own folder is last (`withAgentBin`), so it makes
+ * no difference who installed it. Unwrapped like `installedEntry` (a `.js` entry is run with this Node).
+ */
+export function agentEntry(dataDir: string, agent: string, env: Record<string, string | undefined> = process.env): string | undefined {
+	const pkg = AGENT_PACKAGES[agent];
+	if (!pkg) return undefined;
+	const withBin = withAgentBin(dataDir, env);
+	const found = resolveExecutable(pkg.bin, { PATH: withBin.PATH ?? withBin.Path ?? "", PATHEXT: env.PATHEXT ?? process.env.PATHEXT });
+	if (!found) return undefined;
+	return found.prefix.length ? found.prefix[0] : found.command;
+}
+
+/**
+ * The npm global prefix an installed CLI belongs to (`<prefix>/node_modules/<pkg>` on Windows, `<prefix>/lib/node_modules/<pkg>`
+ * elsewhere), so an update can be installed over it. Undefined when the CLI did not come from npm (a standalone
+ * installer, Homebrew, ...), which Prometheus cannot update.
+ */
+export function npmPrefixOf(agent: string, entry: string): string | undefined {
+	const pkg = AGENT_PACKAGES[agent];
+	if (!pkg) return undefined;
+	let real: string;
+	try {
+		real = realpathSync(entry);
+	} catch {
+		return undefined;
+	}
+	const marker = `${pathSep}node_modules${pathSep}${pkg.pkg.split("/").join(pathSep)}`;
+	const at = real.toLowerCase().indexOf(marker.toLowerCase());
+	if (at < 0) return undefined;
+	const root = real.slice(0, at);
+	return process.platform !== "win32" && root.endsWith(`${pathSep}lib`) ? dirname(root) : root;
+}
+
+/** Whether a CLI file sits in the folder one-click installs go to. */
+export function isManaged(dataDir: string, entry: string): boolean {
+	const root = agentInstallPrefix(dataDir).toLowerCase().replace(/\\/g, "/");
+	return entry.toLowerCase().replace(/\\/g, "/").startsWith(`${root}/`);
+}
+
+const versionCache = new Map<string, { stamp: number; value: Promise<string | undefined> }>();
+
+/** Version a CLI file reports for `--version`, cached while the file does not change. */
+export function cliVersion(entry: string): Promise<string | undefined> {
+	let stamp = 0;
+	try {
+		stamp = statSync(entry).mtimeMs;
+	} catch {
+		return Promise.resolve(undefined);
+	}
+	const hit = versionCache.get(entry);
+	if (hit && hit.stamp === stamp) return hit.value;
+	const js = /\.(c|m)?js$/i.test(entry);
+	const value = new Promise<string | undefined>((done) => {
+		execFile(js ? process.execPath : entry, js ? [entry, "--version"] : ["--version"], { timeout: 15_000, windowsHide: true }, (err, stdout) => done(err ? undefined : parseVersion(String(stdout))));
+	});
+	versionCache.set(entry, { stamp, value });
 	return value;
 }

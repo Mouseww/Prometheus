@@ -275,8 +275,13 @@ export interface AgentUpdateInfo {
 	current?: string;
 	/** Newest published version, when it could be looked up. */
 	latest?: string;
-	/** A newer version is published and the update button installs it. */
+	/** A newer version is published. */
 	updateAvailable: boolean;
+	/**
+	 * Prometheus can install it: the CLI is in its own folder or was installed with npm (it is then updated in place).
+	 * False for a CLI from a standalone installer, Homebrew and the like; it has to be updated the way it was installed.
+	 */
+	canUpdate?: boolean;
 	/**
 	 * Where the CLI that runs now comes from: a copy Prometheus installed, one found on PATH, the one bundled with
 	 * Prometheus (Claude Code's SDK), an executable the profile names, a server the agent connects to, or none.

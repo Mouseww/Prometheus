@@ -573,8 +573,8 @@ P0 到 P5 已完成。P6 已完成：新建会话时选运行时（`RuntimePicke
 ### 14.3 安装与更新 Agent CLI
 
 - **安装位置：** 一键安装用 `npm install --global --prefix <data>/agents`，不碰用户全局的 npm；外部运行时把 `<data>/agents`（Windows）或 `<data>/agents/bin` 放在 PATH 最前。可安装的包来自 `BUILTIN_AGENTS` / `ACP_PRESETS` 的 `npm` 字段，基于 Claude Code / Codex / OpenCode 的自定义 Agent 用同一个包。
-- **装的就是跑的：** 没有在 Agent 里指定可执行文件时，Prometheus 装的那份优先：Claude Code 不再用 SDK 自带的 CLI，Codex 直接跑装好的 `codex.js`，OpenCode 和 ACP Agent 按该 Agent 的 PATH（不是服务进程自己的 PATH）查找。所以更新后新会话立刻用新版本。
-- **检查更新：** `agent.checkUpdates`（设置 → Agent 打开时自动查，“检查更新”按钮强制刷新）。当前版本：Prometheus 装的取其 `package.json`，Claude Code 未安装时取 SDK 的 `claudeCodeVersion`（来源 `bundled`），其余取 probe 的版本（来源 `path`）。最新版本用 `npm view <包> version`，所以 `.npmrc` 里的镜像生效，缓存 1 小时。指定了可执行文件（`custom`）、连接外部 OpenCode 服务（`server`）、不在 npm 上的 Agent（`noPackage`）不提供更新，界面上说明原因。
-- **更新：** 就是 `agent.install`（安装 `@latest`）。`path` / `bundled` 来源的更新是在 Prometheus 目录装一份新版并从此优先使用，原来的安装不动；卸载这份即回到原来的版本。Windows 上正在运行的可执行文件被锁定时 npm 会失败，错误里提示先关闭使用它的会话。
+- **用哪个：** 不看是谁装的，只做一次 PATH 查找：Agent 里指定的可执行文件优先，否则取 PATH 上第一个，Prometheus 一键安装的目录（`<data>/agents`）排在 PATH **最后**，所以用户自己装的永远优先，没有时才用一键安装的那份。Claude Code 和 Codex 在这里解析（否则 Claude Code 会用 SDK 自带的 CLI，Codex 只看服务进程自己的 PATH），OpenCode 和 ACP Agent 按该 Agent 的 PATH 查找；Claude Code 都找不到时才退回 SDK 自带的（开发环境）。
+- **检查更新：** `agent.checkUpdates`（设置 → Agent 打开时自动查，“检查更新”按钮强制刷新）。当前版本：对正在用的那个 CLI 执行 `--version`（按文件修改时间缓存），Claude Code 找不到 CLI 时取 SDK 的 `claudeCodeVersion`（来源 `bundled`）。最新版本用 `npm view <包> version`，所以 `.npmrc` 里的镜像生效，缓存 1 小时。指定了可执行文件（`custom`）、连接外部 OpenCode 服务（`server`）、不在 npm 上的 Agent（`noPackage`）不提供更新，界面上说明原因。
+- **更新：** 就是 `agent.install`（安装 `@latest`）。只有跑的那份在 Prometheus 目录里（`source: prometheus`）才显示“更新”按钮；跑的是 PATH 上别处的（`path`），只提示有新版本，请用原来的方式更新，因为 Prometheus 装一份也排在它后面，不会生效。Claude Code 只有 SDK 自带版本（`bundled`）时，更新是装一份到 Prometheus 目录并从此使用。Windows 上正在运行的可执行文件被锁定时 npm 会失败，错误里提示先关闭使用它的会话。
 - 测试：`agent-install.test.ts`（版本解析与比较、已装版本与入口），`agent-update.e2e.test.ts`（`PROMETHEUS_TEST_UPDATES=1`：真实 npm，旧版 OpenCode → 检查 → 更新 → 运行的是新版）。
 - **安装包不带 Claude Code：** 桌面端打包（`bundle-server.ts`）会删掉 Agent SDK 的各平台二进制（`@anthropic-ai/claude-agent-sdk-<平台>`，约 280 MB），以及 LanceDB 可选依赖带来的 `@huggingface/transformers`、`onnxruntime-*`、`sharp`（约 100 MB，向量由网关计算，用不到）。没有二进制又没指定可执行文件时，Claude Code 的 `probe` 返回不可用，设置页显示“安装”，装好后走上面“装的就是跑的”的路径。开发环境（pnpm 安装）仍带二进制，行为不变。

@@ -30,7 +30,8 @@ const M = defineMessages({
 		updating: "更新中…",
 		updateDone: "{name} 已更新到 {v}，新会话起生效",
 		updateHintPrometheus: "用 npm 把 Prometheus 目录里的这份升级到最新版",
-		updateHintPath: "当前使用的是 PATH 中的版本。更新会在 Prometheus 自己的目录安装最新版，之后优先使用它；原来的安装不受影响",
+		updateHintPath: "它不是用 npm 装的，Prometheus 无法替它更新，请用你安装它的方式更新",
+		updateHintNpm: "用 npm 在它所在的位置升级到最新版",
 		updateHintBundled: "当前使用的是 Prometheus 内置的版本。更新会在 Prometheus 自己的目录安装最新版，之后优先使用它",
 		updateCustom: "使用自定义可执行文件，请自行更新",
 		updateServer: "连接的是外部服务，请在服务所在机器上更新",
@@ -124,7 +125,8 @@ const M = defineMessages({
 		updating: "Updating…",
 		updateDone: "{name} updated to {v}; new chats use it",
 		updateHintPrometheus: "Upgrades the copy in Prometheus' folder to the latest version with npm",
-		updateHintPath: "The version on PATH is in use. Updating installs the latest version into Prometheus' own folder and uses it from then on; the existing installation is left alone",
+		updateHintPath: "It was not installed with npm, so Prometheus cannot update it; update it the way you installed it",
+		updateHintNpm: "Upgrades it with npm where it is installed",
 		updateHintBundled: "The version bundled with Prometheus is in use. Updating installs the latest version into Prometheus' own folder and uses it from then on",
 		updateCustom: "Uses a custom executable; update it yourself",
 		updateServer: "Connects to an external server; update it where the server runs",
@@ -339,7 +341,7 @@ export function AgentsSettings() {
 	/** One quiet line under an agent when Prometheus cannot update it, or the version lookup failed. */
 	const updateNote = (u: AgentUpdateInfo | undefined) => {
 		if (!u) return null;
-		const text = u.error ? t("updateCheckFailed", { error: u.error }) : u.reason === "custom" ? t("updateCustom") : u.reason === "server" ? t("updateServer") : u.reason === "noPackage" ? t("updateNoPackage") : null;
+		const text = u.error ? t("updateCheckFailed", { error: u.error }) : u.updateAvailable && u.canUpdate === false ? t("updateHintPath") : u.reason === "custom" ? t("updateCustom") : u.reason === "server" ? t("updateServer") : u.reason === "noPackage" ? t("updateNoPackage") : null;
 		return text ? <p className="mt-1.5 text-xs text-ink-500">{text}</p> : null;
 	};
 
@@ -444,12 +446,12 @@ export function AgentsSettings() {
 								</dl>
 								<div className="mt-3 flex flex-wrap items-center gap-1.5">
 									{defaultControl(a.id, a.name, info?.health.available ?? false, a.enabled === false)}
-									{updates[a.id]?.updateAvailable && updates[a.id]?.latest && info?.health.available && (
+									{updates[a.id]?.updateAvailable && updates[a.id]?.latest && updates[a.id]?.canUpdate !== false && info?.health.available && (
 										<Button
 											variant="primary"
 											className="px-2.5 py-1 text-xs"
 											disabled={busyId !== null}
-											title={t(updates[a.id]!.source === "prometheus" ? "updateHintPrometheus" : updates[a.id]!.source === "bundled" ? "updateHintBundled" : "updateHintPath")}
+											title={t(updates[a.id]!.source === "prometheus" ? "updateHintPrometheus" : updates[a.id]!.source === "bundled" ? "updateHintBundled" : "updateHintNpm")}
 											onClick={() => void update(a, updates[a.id]!.latest!)}
 										>
 											<ArrowUpCircle className="size-3.5" /> {busyId === a.id ? t("updating") : t("updateTo", { v: updates[a.id]!.latest! })}

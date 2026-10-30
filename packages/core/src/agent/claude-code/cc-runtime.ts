@@ -70,13 +70,13 @@ export class ClaudeCodeRuntime implements AgentRuntime {
 	private readonly getServices: () => Promise<RuntimeServices>;
 	private readonly executable: () => string | undefined;
 	private readonly env: () => Record<string, string>;
-	private readonly version: () => string | undefined;
+	private readonly version: (executable: string) => string | undefined | Promise<string | undefined>;
 
 	/**
 	 * Services start lazily: listing runtimes must not open the tool bus and relay. `version` is the version of the
 	 * chosen executable when the host knows it (a copy Prometheus installed); without an executable it is the SDK's own.
 	 */
-	constructor(getServices: () => Promise<RuntimeServices>, executable: () => string | undefined = () => undefined, env: () => Record<string, string> = () => ({}), version: () => string | undefined = () => undefined) {
+	constructor(getServices: () => Promise<RuntimeServices>, executable: () => string | undefined = () => undefined, env: () => Record<string, string> = () => ({}), version: (executable: string) => string | undefined | Promise<string | undefined> = () => undefined) {
 		this.getServices = getServices;
 		this.executable = executable;
 		this.env = env;
@@ -91,7 +91,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
 			if (!exe && !bundledClaudeBinary()) return { available: false, reason: "Claude Code is not installed" };
 			// Login state is read from the credentials file only; probing never sends a request.
 			const loggedIn = existsSync(join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), ".credentials.json")) || existsSync(join(homedir(), ".claude.json"));
-			const version = exe ? this.version() : bundledClaudeVersion();
+			const version = exe ? await this.version(exe) : bundledClaudeVersion();
 			return { available: true, loggedIn, ...(version ? { version } : {}) };
 		} catch (err) {
 			return { available: false, reason: err instanceof Error ? err.message : String(err) };

@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { AGENT_PACKAGES, agentBinDir, agentBinDirs, agentInstallPrefix, agentStatuses, compareVersions, installedCli, installedEntry, installedVersion, npmAvailable, parseVersion, withAgentBin } from "../src/agent/install.ts";
+import { AGENT_PACKAGES, agentEntry, isManaged, npmPrefixOf, agentBinDir, agentBinDirs, agentInstallPrefix, agentStatuses, compareVersions, installedCli, installedEntry, installedVersion, npmAvailable, parseVersion, withAgentBin } from "../src/agent/install.ts";
 
 const roots: string[] = [];
 function dataDir(): string {
@@ -43,13 +43,13 @@ describe("agent CLI installs", () => {
 		if (process.platform === "win32") expect(dirs[0]).toBe(agentInstallPrefix(data));
 	});
 
-	it("puts its folders first on PATH, and only once", () => {
+	it("puts its folders last on PATH, and only once", () => {
 		const data = dataDir();
 		const sep = process.platform === "win32" ? ";" : ":";
 		const env = withAgentBin(data, { PATH: ["/usr/bin", "/bin"].join(sep) } as Record<string, string>);
 		const parts = String(env.PATH).split(sep);
-		expect(parts.slice(0, 2)).toEqual(agentBinDirs(data));
-		expect(parts.slice(2)).toEqual(["/usr/bin", "/bin"]);
+		expect(parts.slice(0, 2)).toEqual(["/usr/bin", "/bin"]);
+		expect(parts.slice(2)).toEqual(agentBinDirs(data));
 		const again = withAgentBin(data, env as Record<string, string>);
 		expect(String(again.PATH)).toBe(String(env.PATH));
 	});
@@ -124,5 +124,29 @@ describe("agent CLI installs", () => {
 			expect(installedEntry(data, "codex")).toBe(join(agentBinDir(data), "codex"));
 		}
 		expect(installedVersion(data, "codex")).toBe("0.140.0");
+		// One lookup on PATH: the folder of one-click installs is last, so a CLI found earlier wins no matter who put it there.
+		expect(agentEntry(data, "codex", { PATH: "" })).toBe(installedEntry(data, "codex"));
+		expect(isManaged(data, installedEntry(data, "codex")!)).toBe(true);
+		const other = join(data, "elsewhere");
+		mkdirSync(other, { recursive: true });
+		const name = process.platform === "win32" ? "codex.exe" : "codex";
+		writeFileSync(join(other, name), "", { mode: 0o755 });
+		expect(agentEntry(data, "codex", { PATH: other, PATHEXT: ".EXE" })).toBe(join(other, name));
+		expect(isManaged(data, join(other, name))).toBe(false);
+	});
+
+	it("finds the npm prefix a CLI was installed into, and nothing for a CLI npm did not install", () => {
+		const data = dataDir();
+		const prefix = join(data, "user-npm");
+		const lib = process.platform === "win32" ? join(prefix, "node_modules") : join(prefix, "lib", "node_modules");
+		mkdirSync(join(lib, "@openai", "codex", "bin"), { recursive: true });
+		const entry = join(lib, "@openai", "codex", "bin", "codex.js");
+		writeFileSync(entry, "");
+		expect(npmPrefixOf("codex", entry)).toBe(prefix);
+		const standalone = join(data, "standalone", "codex");
+		mkdirSync(join(data, "standalone"));
+		writeFileSync(standalone, "");
+		expect(npmPrefixOf("codex", standalone)).toBeUndefined();
+		expect(npmPrefixOf("codex", join(data, "missing"))).toBeUndefined();
 	});
 });

@@ -62,7 +62,7 @@ import { extraRoots, issueTicket, readChunk, resolveDownload, takeTicket } from 
 import { UPLOAD_ROOT, pruneUploads, removeSessionUploads, saveAttachments } from "./uploads.ts";
 import { fullResultContent, slimMessage, slimMessages } from "./slim.ts";
 import { PermissionGate } from "./permission-gate.ts";
-import { AGENT_PACKAGES, agentStatuses, compareVersions, installAgentCli, installedCli, installedEntry, installedVersion, latestVersion, npmAvailable, parseVersion, uninstallAgentCli, withAgentBin } from "./agent/install.ts";
+import { AGENT_PACKAGES, agentEntry, agentStatuses, cliVersion, compareVersions, installAgentCli, isManaged, latestVersion, npmAvailable, npmPrefixOf, uninstallAgentCli, withAgentBin } from "./agent/install.ts";
 import { bootstrap, type Runtime } from "./runtime.ts";
 import { AgentStore, runClaude, runCodex, SubagentRuntime } from "@prometheus/subagents";
 import { UIBridge } from "./ui-bridge.ts";
@@ -280,15 +280,15 @@ export class PrometheusHost {
 		const key = agent ?? kind;
 		let rt = this.externalRuntimes.get(key);
 		if (rt) return rt;
-		// A copy installed (or updated) from the settings page is what runs, unless the profile names an executable.
-		// Claude Code would otherwise use the SDK's bundled CLI, and Codex looks itself up on the server's own PATH.
-		const executable = () => this.profileOf(key)?.executable || (kind === "claude-code" || kind === "codex" ? installedEntry(this.runtime.dataDir, kind) : undefined) || undefined;
-		// CLIs installed from the settings page come first, so a runtime turns available without a restart; an explicit
-		// executable from the profile still wins.
+		// Which CLI runs: the executable the profile names, else the first one on PATH (the folder of one-click installs
+		// is last on it, so who installed it does not matter), and for Claude Code the SDK's own when there is none.
+		// Claude Code and Codex are resolved here because their runtimes would otherwise use the SDK's bundled CLI or
+		// look at the server's own PATH.
+		const executable = () => this.profileOf(key)?.executable || (kind === "claude-code" || kind === "codex" ? agentEntry(this.runtime.dataDir, kind, { ...process.env, ...(this.profileOf(key)?.env ?? {}) }) : undefined) || undefined;
 		const env = () => withAgentBin(this.runtime.dataDir, { ...process.env, ...(this.profileOf(key)?.env ?? {}) }) as Record<string, string>;
 		switch (kind) {
 			case "claude-code":
-				rt = new ClaudeCodeRuntime(() => this.servicesFor(), executable, env, () => (this.profileOf(key)?.executable ? undefined : installedVersion(this.runtime.dataDir, "claude-code")));
+				rt = new ClaudeCodeRuntime(() => this.servicesFor(), executable, env, (exe) => cliVersion(exe));
 				break;
 			case "opencode":
 				rt = new OpenCodeRuntime(() => this.servicesFor(), executable, env, () => this.profileOf(key)?.server);
@@ -340,24 +340,24 @@ export class PrometheusHost {
 		const dataDir = this.runtime.dataDir;
 		let source: AgentUpdateInfo["source"];
 		let current: string | undefined;
-		if (installedCli(dataDir, pkgAgent)) {
-			source = "prometheus";
-			current = installedVersion(dataDir, pkgAgent);
+		let canUpdate = true;
+		const running = agentEntry(dataDir, pkgAgent, { ...process.env, ...(agent.env ?? {}) });
+		if (running) {
+			// Whatever is found first on PATH runs. Only a copy in Prometheus' own folder can be replaced from here.
+			source = isManaged(dataDir, running) ? "prometheus" : "path";
+			canUpdate = npmPrefixOf(pkgAgent, running) !== undefined;
+			current = await cliVersion(running);
 		} else if (agent.kind === "claude-code") {
 			// The desktop installer ships without the SDK's binary; Claude Code is then simply not installed yet.
 			if (!bundledClaudeBinary()) return { ...base, source: "missing", reason: "missing" };
 			source = "bundled";
 			current = bundledClaudeVersion();
 		} else {
-			const rt = await this.runtimeFor(agent.kind, agent.id).catch(() => undefined);
-			const health = await rt?.probe().catch(() => undefined);
-			if (!health?.available) return { ...base, source: "missing", reason: "missing" };
-			source = "path";
-			current = parseVersion(health.version);
+			return { ...base, source: "missing", reason: "missing" };
 		}
 		try {
 			const latest = await latestVersion(pkgAgent, refresh);
-			return { ...base, source, ...(current ? { current } : {}), latest, updateAvailable: !current || compareVersions(latest, current) > 0 };
+			return { ...base, source, canUpdate, ...(current ? { current } : {}), latest, updateAvailable: !current || compareVersions(latest, current) > 0 };
 		} catch (err) {
 			return { ...base, source, ...(current ? { current } : {}), error: err instanceof Error ? err.message.split("\n")[0] : String(err) };
 		}
@@ -1166,7 +1166,11 @@ export class PrometheusHost {
 		"agent.install": async ({ kind, agent }) => {
 			const id = this.packageAgent(agent ?? kind);
 			try {
-				const { command } = await installAgentCli(this.runtime.dataDir, id);
+				// A CLI that is already installed with npm is updated where it is, whoever installed it; otherwise it goes
+				// into Prometheus' own folder.
+				const profile = this.profileOf(agent ?? kind ?? id);
+				const running = agentEntry(this.runtime.dataDir, id, { ...process.env, ...(profile?.env ?? {}) });
+				const { command } = await installAgentCli(this.runtime.dataDir, id, running ? npmPrefixOf(id, running) : undefined);
 				for (const key of [...this.externalRuntimes.keys()]) this.retireRuntime(key);
 				return { command };
 			} catch (err) {
