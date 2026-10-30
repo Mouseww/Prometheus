@@ -79,6 +79,10 @@
 		"filename": "pool/main/liba/libandroid-selinux/libandroid-selinux_14.0.0.11-1_aarch64.deb",
 		"sha256": "00afd8c34087c2864737b51fd9d104dc5e955f6ec3c0f50c0c7ef5b4a56866b9"
 	},
+	"libandroid-shmem": {
+		"filename": "pool/main/liba/libandroid-shmem/libandroid-shmem_0.7_aarch64.deb",
+		"sha256": "0da3a24d558b93c92bcf8d611e0826a99ff96e396b148e6cdf33b47c47c57ff6"
+	},
 	"libandroid-support": {
 		"filename": "pool/main/liba/libandroid-support/libandroid-support_29-1_aarch64.deb",
 		"sha256": "f2f145d6135ad4843ac9670153be3e3944dc1e6f1736d46d2306c28f2b86f517"
@@ -151,6 +155,10 @@
 		"filename": "pool/main/libs/libssh2/libssh2_1.11.1-2_aarch64.deb",
 		"sha256": "1add4e0a926b848814e7e2f1817ea28b123c54cabd5bbc4e5cfd65291cbad84e"
 	},
+	"libtalloc": {
+		"filename": "pool/main/libt/libtalloc/libtalloc_2.5.0_aarch64.deb",
+		"sha256": "556591f43bb773ad8777e1a29522640866a55f95dab71914418b94a8c58ad5a7"
+	},
 	"ncurses": {
 		"filename": "pool/main/n/ncurses/ncurses_6.6.20260307+really6.5.20250830_aarch64.deb",
 		"sha256": "f44bbfdc3d42ec0217bffa978309390e59cea5a48a9a83226d4a496c42ad0b99"
@@ -164,8 +172,8 @@
 		"sha256": "c4aae57009e4398613807d77ff395026455fe03b6d9d8a29f929212b04f74719"
 	},
 	"npm": {
-		"filename": "pool/main/n/npm/npm_11.21.1_all.deb",
-		"sha256": "f2b5a5d88ec39bbaf2572b4febd032fbec1b78aa7b4382ffaf6b4afa7b1a4ddd"
+		"filename": "pool/main/n/npm/npm_12.2.1_all.deb",
+		"sha256": "2898344f7f54a44ead5926f0e03e958bee00e839c6fd84a47d54278ecb4a13e6"
 	},
 	"openssl": {
 		"filename": "pool/main/o/openssl/openssl_1:3.6.5_aarch64.deb",
@@ -178,6 +186,10 @@
 	"procps": {
 		"filename": "pool/main/p/procps/procps_4.0.7-2_aarch64.deb",
 		"sha256": "4dbc101282481bba10499c1f449bcf8d6ae2986872155dc09b643a70326fa1ad"
+	},
+	"proot": {
+		"filename": "pool/main/p/proot/proot_5.1.107.101_aarch64.deb",
+		"sha256": "a28355e9be257e1f87f4e9294b3118470d4fd7a5442fed8b278f4443c83407d7"
 	},
 	"psmisc": {
 		"filename": "pool/main/p/psmisc/psmisc_23.7-1_aarch64.deb",
