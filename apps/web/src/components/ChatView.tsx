@@ -1,6 +1,6 @@
 import { Bug, FileCode2, FolderTree, LoaderCircle, RotateCcw, ScanSearch } from "lucide-react";
 import clsx from "clsx";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { loadEarlier, useStore } from "../lib/store.ts";
 import { ChatWidthControls } from "./ChatWidthControls.tsx";
@@ -85,8 +85,17 @@ function ChatBody() {
 	const booted = useStore((s) => s.booted);
 	const conn = useStore((s) => s.conn);
 	const opening = useStore((s) => s.opening);
-	const scroller = useRef<HTMLDivElement>(null);
+	const scroller = useRef<HTMLDivElement | null>(null);
 	const pinned = useRef(true);
+	// The scroll container is unmounted whenever the view swaps to the placeholder / new-chat page (e.g. a messages reset)
+	// and comes back at scrollTop 0. A fresh container always starts at the end, otherwise the chat appears to jump to the top.
+	const attach = useCallback((el: HTMLDivElement | null) => {
+		scroller.current = el;
+		if (el) {
+			pinned.current = true;
+			el.scrollTop = el.scrollHeight;
+		}
+	}, []);
 
 	// Another conversation opens at its end, whatever was scrolled in the previous one, before it is painted.
 	useLayoutEffect(() => {
@@ -128,7 +137,7 @@ function ChatBody() {
 				</div>
 			)}
 			<div
-				ref={scroller}
+				ref={attach}
 				onScroll={(e) => {
 					const el = e.currentTarget;
 					pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
