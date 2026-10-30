@@ -37,7 +37,7 @@ const TINT: Record<RuntimeKind, string> = {
 	acp: "bg-violet-500/15 text-violet-300",
 };
 const GLYPH: Record<RuntimeKind, string> = { pi: "PI", "claude-code": "CC", codex: "Cx", opencode: "OC", acp: "AC" };
-/** ACP agents are many: their mark comes from the agent's name (Gemini CLI -> Gm, Qwen Code -> Qw). */
+/** ACP agents are many: their mark comes from the agent's name (Qwen Code -> Qw, Goose -> Go). */
 function glyphOf(kind: RuntimeKind, name?: string): string {
 	if (kind !== "acp" || !name) return GLYPH[kind];
 	const letters = name.replace(/[^A-Za-z0-9]/g, "");

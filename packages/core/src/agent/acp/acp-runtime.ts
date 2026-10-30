@@ -1,4 +1,4 @@
-// AcpRuntime: any agent that speaks the Agent Client Protocol over stdio (Gemini CLI, Qwen Code, Goose, Kimi CLI,
+// AcpRuntime: any agent that speaks the Agent Client Protocol over stdio (Qwen Code, Goose, Kimi CLI,
 // the Claude Code and Codex ACP adapters, ...). One runtime instance per agent profile; one process per chat.
 import { randomUUID } from "node:crypto";
 import { type GatewayConfig, type ModelInfo, pickGatewayFormat, type UsageStats } from "@prometheus/protocol";

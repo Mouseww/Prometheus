@@ -1,4 +1,4 @@
-// One-click install of the third-party agent CLIs (Claude Code, Codex, opencode, Gemini CLI, Qwen Code, ...) for
+// One-click install of the third-party agent CLIs (Claude Code, Codex, opencode, Qwen Code, ...) for
 // agents that are missing them.
 // Installs go into Prometheus' own directory with an npm prefix, never into the user's global npm root, so a
 // version installed here cannot break other projects and uninstalling is simply deleting the folder. The binaries

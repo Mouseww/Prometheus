@@ -506,7 +506,7 @@ opencode 本来就是“起一个服务、多个客户端连上来用”的形�
 
 ### 12.6 ACP Agent（Agent Client Protocol，`packages/core/src/agent/acp`）
 
-第五种运行时 `acp`，一份适配器支持所有实现了 [ACP](https://agentclientprotocol.com) 的 Agent：内置 Gemini CLI（`gemini --acp`）和 Qwen Code（`qwen --acp`），设置里另有 Goose（`goose acp`）、Kimi CLI、Auggie、Claude Code / Codex 的 ACP 适配器等预设，其它 Agent 选“ACP”填命令和参数即可。内置与预设定义在 `packages/protocol` 的 `BUILTIN_AGENTS` / `ACP_PRESETS`（含一键安装用的 npm 包）。
+第五种运行时 `acp`，一份适配器支持所有实现了 [ACP](https://agentclientprotocol.com) 的 Agent：内置 Qwen Code（`qwen --acp`），设置里另有 Goose（`goose acp`）、Kimi CLI、Auggie、Claude Code / Codex 的 ACP 适配器等预设，其它 Agent 选“ACP”填命令和参数即可。内置与预设定义在 `packages/protocol` 的 `BUILTIN_AGENTS` / `ACP_PRESETS`（含一键安装用的 npm 包）。
 
 - **传输：** stdio 上的 JSON-RPC 2.0，一行一条，双向请求（`acp-connection.ts`）。Windows 上 npm 的 `.cmd` 垫片解析成真实脚本或二进制，避免 shell 改写参数。每个会话一个进程，崩溃后下一条消息重启并 `session/load`。
 - **握手：** `initialize` 声明 `fs`、`terminal` 都不提供，Agent 用自己的工具读写和执行；probe 也是一次握手（拿 `agentInfo.version`），结果缓存 5 分钟，`runtime.list` 并行探测。

@@ -9,7 +9,7 @@ import { Badge, Button, Dialog, Empty, Field, Input, PageHeader, Select } from "
 const M = defineMessages({
 	zh: {
 		title: "Agent 运行时",
-		subtitle: "对话由哪个 Agent 驱动。内置 PI、Claude Code、Codex、OpenCode、Gemini CLI、Qwen Code；任何支持 ACP（Agent Client Protocol）的 Agent 都能添加，例如 Goose、Kimi CLI。OpenCode 还可以连接一个常驻的 opencode 服务。",
+		subtitle: "对话由哪个 Agent 驱动。内置 PI、Claude Code、Codex、OpenCode、Qwen Code；任何支持 ACP（Agent Client Protocol）的 Agent 都能添加，例如 Goose、Kimi CLI。OpenCode 还可以连接一个常驻的 opencode 服务。",
 		add: "添加 Agent",
 		builtin: "内置",
 		custom: "自定义",
@@ -104,7 +104,7 @@ const M = defineMessages({
 	},
 	en: {
 		title: "Agent runtimes",
-		subtitle: "Which agent drives a chat. PI, Claude Code, Codex, OpenCode, Gemini CLI and Qwen Code are built in; any agent that speaks ACP (Agent Client Protocol), such as Goose or Kimi CLI, can be added. OpenCode can also use a long-running opencode server.",
+		subtitle: "Which agent drives a chat. PI, Claude Code, Codex, OpenCode and Qwen Code are built in; any agent that speaks ACP (Agent Client Protocol), such as Goose or Kimi CLI, can be added. OpenCode can also use a long-running opencode server.",
 		add: "Add agent",
 		builtin: "Built in",
 		custom: "Custom",
@@ -577,7 +577,7 @@ function AgentEditor({ initial, isNew, taken, onClose, onSaved }: { initial: Age
 					</Field>
 				)}
 				<Field label={t("executable")} hint={t("executableHint")}>
-					<Input value={a.executable ?? ""} onChange={(e) => patch({ executable: e.target.value })} className="font-mono" placeholder={a.kind === "codex" ? "codex" : a.kind === "opencode" ? "opencode" : a.kind === "acp" ? (agentPreset(a.id)?.command ?? "gemini") : "claude"} />
+					<Input value={a.executable ?? ""} onChange={(e) => patch({ executable: e.target.value })} className="font-mono" placeholder={a.kind === "codex" ? "codex" : a.kind === "opencode" ? "opencode" : a.kind === "acp" ? (agentPreset(a.id)?.command ?? "qwen") : "claude"} />
 				</Field>
 				{a.kind === "acp" && (
 					<Field label={t("args")} hint={t("argsHint")}>

@@ -21,7 +21,7 @@
 ## 特性
 
 - **跨客户端访问**：TUI、桌面（Tauri）、Web、安卓共用同一套服务端与协议，同一个会话在任意设备上续接。局域网访问带密码和限速，也可一键开启公网地址。
-- **会话内无缝切换 Agent**：PI、Claude Code、Codex、OpenCode、Gemini CLI、Qwen Code 以及任何支持 ACP（Agent Client Protocol）的 Agent（Goose、Kimi CLI……）共用同一套界面、工具和权限，对话中途可换 Agent，在当前会话里继续，已有记录会带过去。
+- **会话内无缝切换 Agent**：PI、Claude Code、Codex、OpenCode、Qwen Code 以及任何支持 ACP（Agent Client Protocol）的 Agent（Goose、Kimi CLI……）共用同一套界面、工具和权限，对话中途可换 Agent，在当前会话里继续，已有记录会带过去。
 - **接入任何模型**：OpenAI Chat / Responses、Anthropic、Gemini 四种协议，自定义地址、鉴权头和密钥。
 - **先问再做**：写文件、执行命令前展示完整内容并等你确认，可按命令“始终允许”。
 - **隐私面罩**：连接串、手机号、密钥在出网前换成化名，回答回来再换回；脱敏失败直接拦截。
@@ -103,7 +103,7 @@ flowchart TB
     CC["Claude Code"]
     CX["Codex"]
     OC["OpenCode（进程或常驻服务）"]
-    ACP["ACP Agent：Gemini CLI、Qwen Code、Goose…"]
+    ACP["ACP Agent：Qwen Code、Goose…"]
   end
   Desktop & Android & Browser --> WS --> Core
   TUI --> Core

@@ -74,15 +74,14 @@ describe("agent CLI installs", () => {
 	});
 
 	it("knows the npm packages of the built-in and preset ACP agents, and nothing for agents without one", async () => {
-		expect(AGENT_PACKAGES.gemini?.pkg).toBe("@google/gemini-cli");
 		expect(AGENT_PACKAGES.qwen?.bin).toBe("qwen");
 		expect(AGENT_PACKAGES.goose).toBeUndefined();
 		const data = dataDir();
 		expect(installedCli(data, "goose")).toBeUndefined();
 		expect(await agentStatuses(data, "goose")).toEqual({ missing: true, installable: false });
 		mkdirSync(agentBinDir(data), { recursive: true });
-		writeFileSync(join(agentBinDir(data), cliName("gemini")), "x");
-		expect(installedCli(data, "gemini")).toBe(join(agentBinDir(data), cliName("gemini")));
+		writeFileSync(join(agentBinDir(data), cliName("qwen")), "x");
+		expect(installedCli(data, "qwen")).toBe(join(agentBinDir(data), cliName("qwen")));
 	});
 
 	it("marks an installed runtime with the path it will run", async () => {

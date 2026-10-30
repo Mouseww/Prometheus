@@ -245,7 +245,6 @@ export const BUILTIN_AGENTS: readonly AgentPreset[] = [
 	{ id: "claude-code", name: "Claude Code", kind: "claude-code", npm: { pkg: "@anthropic-ai/claude-code", bin: "claude" } },
 	{ id: "codex", name: "Codex", kind: "codex", npm: { pkg: "@openai/codex", bin: "codex" } },
 	{ id: "opencode", name: "OpenCode", kind: "opencode", npm: { pkg: "opencode-ai", bin: "opencode" } },
-	{ id: "gemini", name: "Gemini CLI", kind: "acp", command: "gemini", args: ["--acp"], npm: { pkg: "@google/gemini-cli", bin: "gemini" }, homepage: "https://github.com/google-gemini/gemini-cli" },
 	{ id: "qwen", name: "Qwen Code", kind: "acp", command: "qwen", args: ["--acp"], npm: { pkg: "@qwen-code/qwen-code", bin: "qwen" }, homepage: "https://github.com/QwenLM/qwen-code" },
 ];
 
