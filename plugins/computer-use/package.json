@@ -5,7 +5,9 @@
 	"private": true,
 	"type": "module",
 	"exports": {
-		".": "./src/index.ts"
+		".": "./src/index.ts",
+		"./engine/*": "./src/engine/*",
+		"./protocol.ts": "./src/protocol.ts"
 	},
 	"scripts": {
 		"typecheck": "tsc -p .",

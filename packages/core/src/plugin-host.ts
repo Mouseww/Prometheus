@@ -20,6 +20,7 @@ import type {
 	PrometheusPlugin,
 	RouteHandler,
 	RpcHandler,
+	StreamPublishOptions,
 	WorkspaceRef,
 } from "@prometheus/plugin-sdk";
 import { AppError, encodeError, type GatewayConfig, type PanelInfo, type PluginFile, type PluginInfo, type PluginInstallResult } from "@prometheus/protocol";
@@ -97,6 +98,7 @@ export function folderNameProblem(name: string): string | undefined {
 	return undefined;
 }
 const METHOD_PATTERN = /^[a-zA-Z][\w.]{0,63}$/;
+export const TOPIC_PATTERN = /^[a-zA-Z0-9_.:-]{1,64}$/;
 const MAX_FILES = 40;
 const MAX_FILE_BYTES = 400_000;
 const MAX_TOTAL_BYTES = 1_000_000;
@@ -111,6 +113,8 @@ interface Registration {
 	rpcKeys: string[];
 	routes: PluginRoute[];
 	disposers: (() => void | Promise<void>)[];
+	/** `stream.onWatch` listeners. */
+	watchers: ((topic: string, count: number) => void)[];
 	/** PiFacade result for `factories`; lives and dies with this registration, so teardown/reload/install drop it. */
 	captured?: Promise<Captured>;
 }
@@ -198,6 +202,10 @@ export class PluginHost {
 	onChanged: () => void = () => {};
 	/** Wired by the server: pushes a `plugin.notify` frame for one plugin. */
 	notifyPlugin: (plugin: string) => void = () => {};
+	/** Wired by the server: pushes a `plugin.event` frame to the clients watching the topic. */
+	publishPlugin: (plugin: string, topic: string, data: unknown, options?: StreamPublishOptions) => void = () => {};
+	/** Clients watching each `<plugin>\0<topic>`, kept up to date by the server through `setWatchers`. */
+	private readonly watchCounts = new Map<string, number>();
 
 	private entries: Entry[] = [];
 	private importSeq = 0;
@@ -477,7 +485,7 @@ export class PluginHost {
 		info.status = "loaded";
 		info.error = undefined;
 		info.panels = [];
-		const reg: Registration = { factories: [], tools: [], providers: [], traffic: [], storeIds: [], rpcKeys: [], routes: [], disposers: [] };
+		const reg: Registration = { factories: [], tools: [], providers: [], traffic: [], storeIds: [], rpcKeys: [], routes: [], disposers: [], watchers: [] };
 		entry.reg = reg;
 		try {
 			const plugin = await entry.fetch();
@@ -664,6 +672,22 @@ export class PluginHost {
 		return { plugin: entry.info, updated: Boolean(prior), hot: this.options.host === "server", restartReasons };
 	}
 
+	/** The server reports how many clients now watch one plugin topic; the plugin's `onWatch` listeners hear about it. */
+	setWatchers(plugin: string, topic: string, count: number): void {
+		const key = `${plugin}\0${topic}`;
+		if ((this.watchCounts.get(key) ?? 0) === count) return;
+		if (count > 0) this.watchCounts.set(key, count);
+		else this.watchCounts.delete(key);
+		const reg = this.entries.find((e) => e.reg && e.info.name === plugin)?.reg;
+		for (const fn of reg?.watchers ?? []) {
+			try {
+				fn(topic, count);
+			} catch (err) {
+				console.error(`[plugin:${plugin}] onWatch`, err);
+			}
+		}
+	}
+
 	async dispose(): Promise<void> {
 		for (const entry of [...this.entries].reverse()) await this.teardown(entry);
 	}
@@ -732,6 +756,18 @@ export class PluginHost {
 			},
 			reloadSessions: () => this.reloadSessions(),
 			notifyChanged: () => this.notifyPlugin(name),
+			stream: {
+				publish: (topic, data, options) => {
+					if (!TOPIC_PATTERN.test(topic)) throw new AppError("pluginMethodInvalid", { method: topic });
+					// A torn-down registration must not keep pushing (a timer the plugin forgot to clear).
+					if (entry.reg !== reg) return;
+					this.publishPlugin(name, topic, data, options);
+				},
+				watchers: (topic) => this.watchCounts.get(`${name}\0${topic}`) ?? 0,
+				onWatch: (fn) => {
+					reg.watchers.push(fn);
+				},
+			},
 			onDispose: (fn) => {
 				reg.disposers.push(fn);
 			},

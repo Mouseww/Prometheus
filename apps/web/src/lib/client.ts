@@ -1,4 +1,4 @@
-import type { ClientFrame, RpcMethod, RpcParams, RpcResult, ServerFrame } from "@prometheus/protocol";
+import { type ClientFrame, decodeBinaryFrame, type RpcMethod, type RpcParams, type RpcResult, type ServerFrame } from "@prometheus/protocol";
 import { defineMessages, tr } from "./i18n.ts";
 
 const M = defineMessages({
@@ -45,6 +45,8 @@ export class PrometheusClient {
 	private waiters: (() => void)[] = [];
 	private readonly pending = new Map<string, Pending>();
 	private readonly subscriptions = new Set<string>();
+	/** Plugin topics being watched, as `<plugin>\0<topic>` with a reference count. */
+	private readonly watches = new Map<string, number>();
 	private readonly frameListeners = new Set<(frame: ServerFrame) => void>();
 	private readonly stateListeners = new Set<(state: ConnState) => void>();
 
@@ -56,8 +58,14 @@ export class PrometheusClient {
 		this.stopped = false;
 		this.setState("connecting");
 		const ws = new WebSocket(this.target.wsUrl);
+		ws.binaryType = "arraybuffer";
 		this.ws = ws;
 		ws.onmessage = (ev) => {
+			if (ev.data instanceof ArrayBuffer) {
+				const decoded = decodeBinaryFrame(new Uint8Array(ev.data));
+				if (decoded?.header.type === "plugin.event") this.handle({ ...(decoded.header as Extract<ServerFrame, { type: "plugin.event" }>), binary: decoded.payload });
+				return;
+			}
 			let frame: ServerFrame;
 			try {
 				frame = JSON.parse(String(ev.data)) as ServerFrame;
@@ -108,6 +116,23 @@ export class PrometheusClient {
 		if (this.state === "open") this.send({ type: "unsubscribe", sessionId });
 	}
 
+	/** Receive `plugin.event` frames for a plugin topic (through onFrame) until the returned function is called. */
+	watch(plugin: string, topic: string): () => void {
+		const key = `${plugin}\0${topic}`;
+		const n = this.watches.get(key) ?? 0;
+		this.watches.set(key, n + 1);
+		if (n === 0 && this.state === "open") this.send({ type: "plugin.watch", plugin, topic });
+		let done = false;
+		return () => {
+			if (done) return;
+			done = true;
+			const left = (this.watches.get(key) ?? 1) - 1;
+			if (left > 0) return void this.watches.set(key, left);
+			this.watches.delete(key);
+			if (this.state === "open") this.send({ type: "plugin.unwatch", plugin, topic });
+		};
+	}
+
 	onFrame(listener: (frame: ServerFrame) => void): () => void {
 		this.frameListeners.add(listener);
 		return () => this.frameListeners.delete(listener);
@@ -152,6 +177,10 @@ export class PrometheusClient {
 	private opened(): void {
 		this.retry = 0;
 		for (const sessionId of this.subscriptions) this.send({ type: "subscribe", sessionId });
+		for (const key of this.watches.keys()) {
+			const [plugin = "", topic = ""] = key.split("\0");
+			this.send({ type: "plugin.watch", plugin, topic });
+		}
 		this.setState("open");
 		const waiters = this.waiters;
 		this.waiters = [];

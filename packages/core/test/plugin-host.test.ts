@@ -201,3 +201,38 @@ describe("validateFiles", () => {
 		expect(() => validateFiles([])).toThrow();
 	});
 });
+
+describe("PluginHost live streams", () => {
+	it("publishes to the server, reports watchers to the plugin, and goes quiet once the plugin is unloaded", async () => {
+		const { host } = await makeHost();
+		const sent: { plugin: string; topic: string; data: unknown; binary?: number }[] = [];
+		host.publishPlugin = (plugin, topic, data, opts) => void sent.push({ plugin, topic, data, ...(opts?.binary ? { binary: opts.binary.length } : {}) });
+		const heard: [string, number][] = [];
+		let ctxRef: import("@prometheus/plugin-sdk").PluginContext | undefined;
+		await host.load(
+			{
+				name: "streamer",
+				setup(ctx) {
+					ctxRef = ctx;
+					ctx.stream.onWatch((topic, count) => heard.push([topic, count]));
+				},
+			},
+			"builtin",
+		);
+		const ctx = ctxRef!;
+		expect(ctx.stream.watchers("view")).toBe(0);
+		host.setWatchers("streamer", "view", 2);
+		host.setWatchers("streamer", "view", 2); // unchanged: no second call
+		host.setWatchers("other", "view", 1); // another plugin's topic
+		expect(heard).toEqual([["view", 2]]);
+		expect(ctx.stream.watchers("view")).toBe(2);
+		ctx.stream.publish("view", { k: "frame" }, { binary: new Uint8Array(3), droppable: true });
+		expect(sent).toEqual([{ plugin: "streamer", topic: "view", data: { k: "frame" }, binary: 3 }]);
+		expect(() => ctx.stream.publish("bad topic!", {})).toThrow();
+		host.setWatchers("streamer", "view", 0);
+		expect(ctx.stream.watchers("view")).toBe(0);
+		await host.dispose();
+		ctx.stream.publish("view", { k: "late" });
+		expect(sent).toHaveLength(1);
+	});
+});

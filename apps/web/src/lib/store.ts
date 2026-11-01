@@ -135,10 +135,16 @@ export type SubagentSort = SubagentSortKey;
 export const NO_SUBAGENTS: SubagentRun[] = [];
 
 /** Side viewer tabs. Empty by default, so nothing is shown until a file or a terminal is actually opened. */
-export type WorkbenchTab = { id: string; kind: "terminal"; cwd: string } | { id: string; kind: "folder"; cwd: string } | { id: string; kind: "file"; path: string; cwd: string; line?: number };
+export type WorkbenchTab =
+	| { id: string; kind: "terminal"; cwd: string }
+	| { id: string; kind: "folder"; cwd: string }
+	| { id: string; kind: "file"; path: string; cwd: string; line?: number }
+	| { id: string; kind: "browser" };
 export interface WorkbenchUi {
 	tabs: WorkbenchTab[];
 	active: string | null;
+	/** The panel takes most of the width (the browser asks for it). */
+	wide?: boolean;
 }
 
 /** The right-hand subagent panel: a list on top and the selected agent's process below, each closable on its own. */
@@ -1054,6 +1060,15 @@ export function openFolderTab(cwd: string): void {
 	set((s) => ({ workbench: { tabs: s.workbench.tabs.some((t) => t.kind === "folder") ? s.workbench.tabs : [...s.workbench.tabs, { id: "folder", kind: "folder", cwd }], active: "folder" } }));
 }
 
+/** Open the built-in browser in the side panel, or focus it. */
+export function openBrowserTab(): void {
+	set((s) => ({ workbench: { ...s.workbench, tabs: s.workbench.tabs.some((t) => t.kind === "browser") ? s.workbench.tabs : [...s.workbench.tabs, { id: "browser", kind: "browser" }], active: "browser" } }));
+}
+
+export function setWorkbenchWide(wide: boolean): void {
+	set((s) => ({ workbench: { ...s.workbench, wide } }));
+}
+
 export function closeWorkbenchTab(id: string): void {
 	const shell = terminalIds.get(id);
 	if (shell) {
@@ -1064,7 +1079,7 @@ export function closeWorkbenchTab(id: string): void {
 		const idx = s.workbench.tabs.findIndex((t) => t.id === id);
 		const tabs = s.workbench.tabs.filter((t) => t.id !== id);
 		const active = s.workbench.active === id ? (tabs[Math.min(idx, tabs.length - 1)]?.id ?? null) : s.workbench.active;
-		return { workbench: { tabs, active } };
+		return { workbench: { tabs, active, wide: id === "browser" ? false : s.workbench.wide } };
 	});
 }
 
@@ -1072,9 +1087,17 @@ export function activateWorkbenchTab(id: string): void {
 	set((s) => ({ workbench: { ...s.workbench, active: id } }));
 }
 
+/** Browser tools that put something on screen bring the browser panel up, so the user can watch. */
+const BROWSER_VISIBLE_TOOLS = new Set(["browser_navigate", "browser_act", "browser_keys", "browser_tabs"]);
+
 /** A live tool call on the viewer's behalf opens its tab; history loaded on connect never does. */
 function noteWorkbenchTool(name: string, args: unknown, cwd: string): void {
 	if (!pluginActive(get().plugins, "workbench")) return;
+	if (BROWSER_VISIBLE_TOOLS.has(name) && pluginActive(get().plugins, "browser")) {
+		const wb = get().workbench;
+		if (!wb.tabs.some((t) => t.kind === "browser") || wb.active !== "browser") openBrowserTab();
+		return;
+	}
 	if (name === OPEN_FILE_TOOL) {
 		const a = (args ?? {}) as { path?: unknown; line?: unknown };
 		if (typeof a.path === "string") openFile(a.path, cwd, typeof a.line === "number" ? a.line : undefined);

@@ -232,6 +232,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/protocol
 
+  plugins/browser:
+    dependencies:
+      '@prometheus/plugin-computer-use':
+        specifier: workspace:*
+        version: link:../computer-use
+      '@prometheus/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      '@prometheus/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+
   plugins/builtin:
     dependencies:
       '@prometheus/knowledge-lancedb':
@@ -240,6 +252,9 @@ importers:
       '@prometheus/plugin-automations':
         specifier: workspace:*
         version: link:../automations
+      '@prometheus/plugin-browser':
+        specifier: workspace:*
+        version: link:../browser
       '@prometheus/plugin-computer-use':
         specifier: workspace:*
         version: link:../computer-use

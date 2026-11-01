@@ -228,6 +228,29 @@ export interface GatewayTrafficHooks {
 
 export type ContextProvider = (req: ContextRequest) => ContextContribution | undefined | Promise<ContextContribution | undefined>;
 
+export interface StreamPublishOptions {
+	/** Raw bytes sent next to `data` in one binary WebSocket frame (no base64, no compression), e.g. a video frame. */
+	binary?: Uint8Array;
+	/**
+	 * The message may be skipped for a client whose connection is backed up (only the latest matters, like a video
+	 * frame). Messages that are not droppable are always queued.
+	 */
+	droppable?: boolean;
+}
+
+/**
+ * Live push from a plugin to the clients that watch one of its topics (`plugin.watch`). Unlike `notifyChanged`, the
+ * message carries data and goes only to watchers, so it suits high-rate streams. Server host only; a no-op elsewhere.
+ */
+export interface PluginStream {
+	/** Topic names must match /^[a-zA-Z0-9_.:-]{1,64}$/. */
+	publish(topic: string, data: unknown, options?: StreamPublishOptions): void;
+	/** How many clients watch `topic` right now. */
+	watchers(topic: string): number;
+	/** Called whenever the number of watchers of one of this plugin's topics changes. */
+	onWatch(fn: (topic: string, count: number) => void): void;
+}
+
 export interface PluginContext {
 	readonly host: HostKind;
 	/** Directory owned by this plugin for persistent data. */
@@ -266,6 +289,8 @@ export interface PluginContext {
 	reloadSessions(): Promise<void>;
 	/** Tell connected clients this plugin's data changed, so open views refetch. Server host only. */
 	notifyChanged(): void;
+	/** Live data pushed to watching clients (see PluginStream). */
+	stream: PluginStream;
 	/** Run on host shutdown. */
 	onDispose(fn: () => void | Promise<void>): void;
 }

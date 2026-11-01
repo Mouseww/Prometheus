@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Check, Copy, Eye, FileText, FolderTree, LoaderCircle, RefreshCw, SquareTerminal, X } from "lucide-react";
+import { Check, Copy, Eye, FileText, FolderTree, Globe, LoaderCircle, RefreshCw, SquareTerminal, X } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { copyToClipboard } from "../lib/clipboard.ts";
 import { highlightLines, languageFor } from "../lib/highlight.ts";
@@ -11,6 +11,7 @@ import { FolderView } from "./FolderView.tsx";
 import { TerminalView } from "./TerminalView.tsx";
 
 const DocumentPreview = lazy(() => import("./DocumentPreview.tsx"));
+const BrowserView = lazy(() => import("./browser/BrowserView.tsx").then((m) => ({ default: m.BrowserView })));
 
 const M = defineMessages({
 	zh: {
@@ -18,6 +19,7 @@ const M = defineMessages({
 		close: "关闭",
 		terminal: "终端",
 		folder: "文件夹",
+		browser: "浏览器",
 		refresh: "刷新",
 		copy: "复制内容",
 		loading: "加载中…",
@@ -32,6 +34,7 @@ const M = defineMessages({
 		close: "Close",
 		terminal: "Terminal",
 		folder: "Folder",
+		browser: "Browser",
 		refresh: "Refresh",
 		copy: "Copy content",
 		loading: "Loading…",
@@ -51,19 +54,33 @@ export function WorkbenchPanel() {
 	const enabled = useStore((s) => s.plugins.some((p) => p.name === "workbench" && p.status === "loaded"));
 	// Settings and other pages open over the chat area; the panel steps aside (kept mounted) so they get the full width.
 	const pageOpen = useStore((s) => s.view !== "chat");
+	const wide = useStore((s) => s.workbench.wide ?? false);
 	if (!enabled || !tabs.length) return null;
 	const tab = tabs.find((x) => x.id === active) ?? tabs[0];
 	if (!tab) return null;
+	const browser = tab.kind === "browser";
 	return (
 		<aside
-			className={clsx(pageOpen ? "hidden" : "flex", "w-[28rem] shrink-0 flex-col border-l hairline bg-ink-900/80 backdrop-blur max-md:absolute max-md:inset-y-0 max-md:right-0 max-md:z-30 max-md:w-[min(30rem,100%)] max-md:bg-ink-900 max-md:shadow-2xl lg:w-[38rem]")}
+			className={clsx(
+				pageOpen ? "hidden" : "flex",
+				"shrink-0 flex-col border-l hairline bg-ink-900/80 backdrop-blur max-md:absolute max-md:inset-y-0 max-md:right-0 max-md:z-30 max-md:w-full max-md:bg-ink-900 max-md:shadow-2xl",
+				browser && wide ? "w-[min(80rem,calc(100%-24rem))]" : browser ? "w-[32rem] lg:w-[44rem] 2xl:w-[56rem]" : "w-[28rem] max-md:w-[min(30rem,100%)] lg:w-[38rem]",
+			)}
 			aria-label={t("title")}
 		>
 			<div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b hairline px-1.5 py-1">
 				{tabs.map((x) => (
 					<div key={x.id} className={clsx("group flex max-w-48 shrink-0 items-center gap-1.5 rounded-md py-1 pl-2 pr-1 text-xs", x.id === tab.id ? "bg-ink-800 text-ink-100" : "text-ink-400 hover:bg-ink-850")}>
 						<button type="button" onClick={() => activateWorkbenchTab(x.id)} className="flex min-w-0 items-center gap-1.5" title={x.kind === "file" ? x.path : t(x.kind)}>
-							{x.kind === "terminal" ? <SquareTerminal className="size-3.5 shrink-0" /> : x.kind === "folder" ? <FolderTree className="size-3.5 shrink-0" /> : <FileText className="size-3.5 shrink-0" />}
+							{x.kind === "terminal" ? (
+								<SquareTerminal className="size-3.5 shrink-0" />
+							) : x.kind === "folder" ? (
+								<FolderTree className="size-3.5 shrink-0" />
+							) : x.kind === "browser" ? (
+								<Globe className="size-3.5 shrink-0" />
+							) : (
+								<FileText className="size-3.5 shrink-0" />
+							)}
 							<span className="truncate">{x.kind === "file" ? baseName(x.path) : t(x.kind)}</span>
 						</button>
 						<button type="button" onClick={() => closeWorkbenchTab(x.id)} className="grid size-4 place-items-center rounded hover:bg-ink-700" aria-label={t("close")}>
@@ -72,7 +89,19 @@ export function WorkbenchPanel() {
 					</div>
 				))}
 			</div>
-			<div className="min-h-0 flex-1">{tab.kind === "terminal" ? <TerminalView key={tab.id} tab={tab} /> : tab.kind === "folder" ? <FolderView key={tab.id} cwd={tab.cwd} /> : <FileView key={tab.id} tab={tab} />}</div>
+			<div className="min-h-0 flex-1">
+				{tab.kind === "terminal" ? (
+					<TerminalView key={tab.id} tab={tab} />
+				) : tab.kind === "folder" ? (
+					<FolderView key={tab.id} cwd={tab.cwd} />
+				) : tab.kind === "browser" ? (
+					<Suspense fallback={<LoaderCircle className="m-4 size-5 animate-spin text-ink-500" />}>
+						<BrowserView />
+					</Suspense>
+				) : (
+					<FileView key={tab.id} tab={tab} />
+				)}
+			</div>
 		</aside>
 	);
 }

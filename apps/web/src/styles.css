@@ -417,6 +417,47 @@ html[data-entering] #root { animation: app-in 0.7s cubic-bezier(0.2, 0.8, 0.2, 1
 ::view-transition-old(root), ::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
 ::view-transition-new(root) { z-index: 1; }
 
+/* Built-in browser (components/browser): page loading bar, the glow while the agent drives, click ripples. */
+.browser-viewport { --browser-backdrop: var(--color-ink-950); }
+.browser-loading {
+	background: linear-gradient(90deg, transparent, var(--color-ember-400), transparent);
+	background-size: 40% 100%;
+	background-repeat: no-repeat;
+	animation: browser-loading 1.1s ease-in-out infinite;
+}
+@keyframes browser-loading {
+	0% { background-position: -40% 0; }
+	100% { background-position: 140% 0; }
+}
+.browser-agent::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	z-index: 15;
+	border: 2px solid var(--color-ember-400);
+	box-shadow: inset 0 0 24px -6px var(--color-ember-500);
+	animation: browser-agent 2.4s ease-in-out infinite;
+}
+@keyframes browser-agent {
+	0%, 100% { opacity: 0.55; }
+	50% { opacity: 1; }
+}
+.browser-ripple {
+	width: 28px;
+	height: 28px;
+	margin: -14px 0 0 -14px;
+	border-radius: 9999px;
+	border: 2px solid var(--color-ember-400);
+	background: color-mix(in srgb, var(--color-ember-400) 25%, transparent);
+	animation: browser-ripple 0.8s ease-out forwards;
+	z-index: 16;
+}
+@keyframes browser-ripple {
+	0% { transform: scale(0.4); opacity: 1; }
+	100% { transform: scale(1.8); opacity: 0; }
+}
+
 /* Motion switch off (Settings › Appearance): decorative animation stops; spinners keep turning. */
 :root[data-motion="off"] {
 	--animate-flicker: none;

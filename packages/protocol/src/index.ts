@@ -1,6 +1,7 @@
 // Wire protocol shared by the Prometheus host and every client (web, desktop, android).
 // Zero runtime dependencies: types mirror the subset of PI shapes that cross the wire.
 
+export * from "./binary.ts";
 export * from "./errors.ts";
 export * from "./goal.ts";
 import type { GoalState } from "./goal.ts";
@@ -1176,6 +1177,9 @@ export type ClientFrame =
 	| { type: "login"; password: string }
 	| { type: "subscribe"; sessionId: string }
 	| { type: "unsubscribe"; sessionId: string }
+	/** Start receiving `plugin.event` frames for one topic of one plugin (see PluginContext.stream). */
+	| { type: "plugin.watch"; plugin: string; topic: string }
+	| { type: "plugin.unwatch"; plugin: string; topic: string }
 	| { [M in RpcMethod]: { type: "rpc"; id: string; method: M; params: RpcParams<M> } }[RpcMethod];
 
 export type ServerFrame =
@@ -1191,6 +1195,11 @@ export type ServerFrame =
 	| { type: "plugins.changed" }
 	/** One plugin's data changed (see PluginContext.notifyChanged). */
 	| { type: "plugin.notify"; plugin: string }
+	/**
+	 * Live data from a plugin topic the client watches. When the plugin attached bytes, the frame arrives as a binary
+	 * WebSocket message instead of text (see encodeBinaryFrame) and `binary` holds them on the client.
+	 */
+	| { type: "plugin.event"; plugin: string; topic: string; data: unknown; binary?: Uint8Array }
 	| { type: "gateways.changed" }
 	| { type: "error"; message: string };
 

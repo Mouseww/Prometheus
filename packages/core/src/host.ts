@@ -4,7 +4,7 @@ import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { DEFAULT_CATALOG_URL, listModels, matchModelDefaults, mergeGatewayUpdate, type ModelCatalog, parseModelCatalog, redactGateway } from "@prometheus/gateway";
-import type { AgentRunOptions, AgentRunResult, PrometheusPlugin } from "@prometheus/plugin-sdk";
+import type { AgentRunOptions, AgentRunResult, PrometheusPlugin, StreamPublishOptions } from "@prometheus/plugin-sdk";
 import {
 	type AgentProfile,
 	type AgentUpdateInfo,
@@ -88,6 +88,8 @@ export interface HostListener {
 	gatewaysChanged(): void;
 	pluginsChanged(): void;
 	pluginNotify(plugin: string): void;
+	/** Live data for clients watching a plugin topic (PluginContext.stream); hosts without live clients leave it out. */
+	pluginEvent?(plugin: string, topic: string, data: unknown, options?: StreamPublishOptions): void;
 }
 
 export interface PrometheusHostOptions {
@@ -201,6 +203,7 @@ export class PrometheusHost {
 		runtime.plugins.runAgent = (opts) => this.runAgent(opts);
 		runtime.plugins.onChanged = () => this.listener.pluginsChanged();
 		runtime.plugins.notifyPlugin = (name) => this.listener.pluginNotify(name);
+		runtime.plugins.publishPlugin = (name, topic, data, opts) => this.listener.pluginEvent?.(name, topic, data, opts);
 	}
 
 	/** PI's model registry (shares auth.json/models.json with the TUI). */

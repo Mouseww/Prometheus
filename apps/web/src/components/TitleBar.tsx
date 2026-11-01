@@ -1,10 +1,10 @@
 import clsx from "clsx";
-import { Code, ExternalLink, FolderOpen, FolderTree, Minus, PanelLeft, PanelRight, Square, SquareTerminal, X } from "lucide-react";
+import { Code, ExternalLink, FolderOpen, FolderTree, Globe, Minus, PanelLeft, PanelRight, Square, SquareTerminal, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { isDesktopShell, isLoopbackHost } from "../lib/backend.ts";
 import { localizeError } from "../lib/errors.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { call, closeWorkbenchTab, NO_SUBAGENTS, openFolderTab, openTerminalTab, pluginActive, toggleSubagentPanel, useStore } from "../lib/store.ts";
+import { call, closeWorkbenchTab, NO_SUBAGENTS, openBrowserTab, openFolderTab, openTerminalTab, pluginActive, toggleSubagentPanel, useStore } from "../lib/store.ts";
 import { TURN_DONE_EVENT } from "../lib/notify.ts";
 import { Flame } from "./ui.tsx";
 
@@ -26,6 +26,7 @@ function BrandFlame({ live }: { live: boolean }) {
 const M = defineMessages({
 	zh: {
 		terminal: "终端",
+		browser: "内置浏览器",
 		folder: "文件夹",
 		subagents: "子代理",
 		toggleSidebar: "切换侧栏",
@@ -40,6 +41,7 @@ const M = defineMessages({
 	},
 	en: {
 		terminal: "Terminal",
+		browser: "Built-in browser",
 		folder: "Folder",
 		subagents: "Subagents",
 		toggleSidebar: "Toggle sidebar",
@@ -113,6 +115,25 @@ function TerminalToggle() {
 			aria-label={t("terminal")}
 		>
 			<SquareTerminal className="size-4" />
+		</button>
+	);
+}
+
+function BrowserToggle() {
+	const t = useT(M);
+	const enabled = useStore((s) => pluginActive(s.plugins, "browser") && pluginActive(s.plugins, "workbench"));
+	const open = useStore((s) => s.workbench.tabs.some((x) => x.kind === "browser"));
+	if (!enabled) return null;
+	return (
+		<button
+			type="button"
+			onClick={() => (open ? closeWorkbenchTab("browser") : openBrowserTab())}
+			aria-pressed={open}
+			className={clsx("rounded-md p-1.5 hover:bg-ink-800", open ? "bg-ink-800 text-ember-300" : "text-ink-400 hover:text-ink-100")}
+			title={t("browser")}
+			aria-label={t("browser")}
+		>
+			<Globe className="size-4" />
 		</button>
 	);
 }
@@ -192,6 +213,7 @@ function SessionTools() {
 			<OpenInMenu />
 			<FolderToggle />
 			<TerminalToggle />
+			<BrowserToggle />
 			<SubagentToggle />
 		</div>
 	);

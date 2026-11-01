@@ -377,6 +377,51 @@
       }
     },
     {
+      "id": "chromium",
+      "name": "Chromium（内置浏览器）",
+      "description": "手机上内置浏览器使用的 Chrome Headless Shell，运行在 Linux 环境里。",
+      "version": "156.0.8078.4",
+      "hidden": true,
+      "requires": [
+        "rootfs"
+      ],
+      "targets": {
+        "linux-aarch64": {
+          "urls": [
+            "https://storage.googleapis.com/chrome-for-testing-public/156.0.8078.4/linux-arm64/chrome-headless-shell-linux-arm64.zip",
+            "https://cdn.npmmirror.com/binaries/chrome-for-testing/156.0.8078.4/linux-arm64/chrome-headless-shell-linux-arm64.zip"
+          ],
+          "sha256": "81ab9d4d3c301dc5fdfb6c541b9e6632b16fc819a6a854460f40a76fe2b2c476",
+          "sizeMb": 125,
+          "format": "zip",
+          "check": "chrome-headless-shell-linux-arm64/chrome-headless-shell",
+          "guestApt": [
+            "libnss3",
+            "libnspr4",
+            "libatk1.0-0t64",
+            "libatk-bridge2.0-0t64",
+            "libatspi2.0-0t64",
+            "libglib2.0-0t64",
+            "libdbus-1-3",
+            "libx11-6",
+            "libxcb1",
+            "libxcomposite1",
+            "libxdamage1",
+            "libxext6",
+            "libxfixes3",
+            "libxrandr2",
+            "libxkbcommon0",
+            "libgbm1",
+            "libexpat1",
+            "libasound2t64",
+            "fontconfig",
+            "fonts-liberation",
+            "fonts-wqy-microhei"
+          ]
+        }
+      }
+    },
+    {
       "id": "git",
       "name": "Git",
       "description": "MinGit（Git for Windows 的精简版）。",

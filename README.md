@@ -25,7 +25,7 @@
 - **接入任何模型**：OpenAI Chat / Responses、Anthropic、Gemini 四种协议，自定义地址、鉴权头和密钥。
 - **先问再做**：写文件、执行命令前展示完整内容并等你确认，可按命令“始终允许”。
 - **隐私面罩**：连接串、手机号、密钥在出网前换成化名，回答回来再换回；脱敏失败直接拦截。
-- **万物皆插件**：网关、知识库、工具、命令、HTTP 路由、UI 面板都通过 `definePlugin` 贡献。内置的知识库、记忆、技能、MCP、连接器、SSH、Computer Use、子代理、自动化、Git、语音也都是插件，可单独停用。
+- **万物皆插件**：网关、知识库、工具、命令、HTTP 路由、UI 面板都通过 `definePlugin` 贡献。内置的知识库、记忆、技能、MCP、连接器、SSH、Computer Use、内置浏览器、子代理、自动化、Git、语音也都是插件，可单独停用。
 - **交给它自己推进**：`/goal <目标>` 让 Agent 一轮接一轮干到完成、受阻或用完轮数，可随时暂停；自动化可按计划在后台跑任务。
 
 ## 预览
@@ -118,7 +118,7 @@ flowchart TB
 | --- | --- |
 | `apps/` | `cli`、`desktop`、`server`、`web` |
 | `packages/` | `core`、`protocol`、`gateway`、`knowledge`、`plugin-sdk`、`subagents` |
-| `plugins/` | 内置插件：veil、ssh、mcp、git、computer-use 等 |
+| `plugins/` | 内置插件：veil、ssh、mcp、git、computer-use、browser 等 |
 
 ## 插件
 
@@ -143,3 +143,4 @@ export default definePlugin({
 - [Agent 运行时](docs/agent-runtime.md)
 - [连接器](docs/connectors.md)
 - [Computer Use](docs/computer-use.md)
+- [内置浏览器](docs/browser.md)

@@ -5,7 +5,7 @@ import { delimiter, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { builtinPlugins } from "@prometheus/builtin-plugins";
 import { DEFAULT_LAN_PORT, PrometheusHost } from "@prometheus/core";
-import { AppError, type ClientFrame, encodeError, type NetworkPatch, type NetworkStatus, PROTOCOL_VERSION, type RuntimeEnv, type ServerFrame } from "@prometheus/protocol";
+import { AppError, type ClientFrame, encodeBinaryFrame, encodeError, type NetworkPatch, type NetworkStatus, PROTOCOL_VERSION, type RuntimeEnv, type ServerFrame } from "@prometheus/protocol";
 import { WebSocket, WebSocketServer } from "ws";
 import {
 	type Access,
@@ -56,9 +56,40 @@ interface Client {
 	sessions: Set<string>;
 	access: Access;
 	kind: Kind;
+	/** Plugin topics this client watches, as `<plugin>\0<topic>`. */
+	watches: Set<string>;
 }
 
 const clients = new Set<Client>();
+/** A client further behind than this misses droppable stream messages (video frames) until it catches up. */
+const STREAM_BACKLOG = 2 * 1024 * 1024;
+const MAX_WATCHES = 64;
+const watchKey = (plugin: string, topic: string) => `${plugin}\0${topic}`;
+
+function publishPluginEvent(plugin: string, topic: string, data: unknown, options?: { binary?: Uint8Array; droppable?: boolean }): void {
+	const key = watchKey(plugin, topic);
+	let text: string | undefined;
+	let bytes: Uint8Array | undefined;
+	for (const c of clients) {
+		if (!c.authed || !c.watches.has(key) || c.ws.readyState !== WebSocket.OPEN) continue;
+		if (options?.droppable && c.ws.bufferedAmount > STREAM_BACKLOG) continue;
+		if (options?.binary) {
+			bytes ??= encodeBinaryFrame({ type: "plugin.event", plugin, topic, data }, options.binary);
+			c.ws.send(bytes, { binary: true, compress: false });
+		} else {
+			text ??= JSON.stringify({ type: "plugin.event", plugin, topic, data } satisfies ServerFrame);
+			c.ws.send(text);
+		}
+	}
+}
+
+/** Tells the plugin how many clients watch the topic now. */
+function reportWatchers(key: string): void {
+	let count = 0;
+	for (const c of clients) if (c.authed && c.watches.has(key)) count++;
+	const [plugin = "", topic = ""] = key.split("\0");
+	host.runtime.plugins.setWatchers(plugin, topic, count);
+}
 
 function send(client: Client, frame: ServerFrame): void {
 	if (client.ws.readyState === WebSocket.OPEN) client.ws.send(JSON.stringify(frame));
@@ -85,6 +116,7 @@ const host = await PrometheusHost.create({
 		gatewaysChanged: () => broadcast({ type: "gateways.changed" }),
 		pluginsChanged: () => broadcast({ type: "plugins.changed" }),
 		pluginNotify: (plugin) => broadcast({ type: "plugin.notify", plugin }),
+		pluginEvent: publishPluginEvent,
 	},
 });
 
@@ -386,7 +418,7 @@ async function updateNetwork(patch: NetworkPatch): Promise<NetworkStatus> {
 
 wss.on("connection", (ws: WebSocket, req: IncomingMessage, kind: Kind) => {
 	const access = accessOf(req, kind);
-	const client: Client = { id: randomUUID(), ws, authed: access.mode === "none", sessions: new Set(), access, kind };
+	const client: Client = { id: randomUUID(), ws, authed: access.mode === "none", sessions: new Set(), access, kind, watches: new Set() };
 	clients.add(client);
 	const login = access.mode === "password" ? "password" : access.mode === "token" ? "token" : undefined;
 	send(client, { type: "hello", protocol: PROTOCOL_VERSION, authRequired: access.mode !== "none", ...(login ? { login } : {}), local: access.local });
@@ -395,6 +427,7 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage, kind: Kind) => {
 	ws.on("close", () => {
 		clearTimeout(authTimer);
 		clients.delete(client);
+		for (const key of client.watches) reportWatchers(key);
 	});
 
 	ws.on("message", async (raw) => {
@@ -435,6 +468,17 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage, kind: Kind) => {
 			case "unsubscribe":
 				client.sessions.delete(frame.sessionId);
 				return;
+			case "plugin.watch":
+			case "plugin.unwatch": {
+				if (typeof frame.plugin !== "string" || typeof frame.topic !== "string" || frame.plugin.length > 64 || frame.topic.length > 64) return;
+				const key = watchKey(frame.plugin, frame.topic);
+				if (frame.type === "plugin.watch") {
+					if (client.watches.has(key) || client.watches.size >= MAX_WATCHES) return;
+					client.watches.add(key);
+				} else if (!client.watches.delete(key)) return;
+				reportWatchers(key);
+				return;
+			}
 			case "rpc": {
 				try {
 					let data: unknown;
