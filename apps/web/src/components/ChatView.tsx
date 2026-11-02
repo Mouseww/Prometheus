@@ -94,6 +94,7 @@ function ChatBody() {
 	// leaving it wherever the first layout put it, which is what made the chat jump two or three times.
 	const settleUntil = useRef(0);
 	const touched = useRef(false);
+	const dragging = useRef(false);
 	const settling = () => Date.now() < settleUntil.current && !touched.current;
 	const beginSettle = () => {
 		settleUntil.current = Date.now() + 2000;
@@ -165,8 +166,17 @@ function ChatBody() {
 			)}
 			<div
 				ref={attach}
-				onWheel={() => (touched.current = true)}
-				onTouchStart={() => (touched.current = true)}
+				onWheel={(e) => {
+					touched.current = true;
+					// Scrolling up is an explicit leave-the-bottom: drop the pin at once so no re-pin snaps the view back.
+					if (e.deltaY < 0) pinned.current = false;
+				}}
+				onTouchStart={() => {
+					touched.current = true;
+					dragging.current = true;
+				}}
+				onTouchEnd={() => (dragging.current = false)}
+				onTouchCancel={() => (dragging.current = false)}
 				onPointerDown={() => (touched.current = true)}
 				onKeyDown={() => (touched.current = true)}
 				onScroll={(e) => {
@@ -176,7 +186,11 @@ function ChatBody() {
 						if (el.scrollHeight - el.scrollTop - el.clientHeight > 1) el.scrollTop = el.scrollHeight;
 						return;
 					}
-					pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+					const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+					// Finger on the screen and the view is off the end: the user is leaving the bottom, so unpin immediately
+					// instead of waiting for the 80px threshold (inside it, re-pinning fought the drag and made the view tremble).
+					if (dragging.current && gap > 2) pinned.current = false;
+					else pinned.current = gap < 80;
 				}}
 				className="relative min-h-0 flex-1 overflow-y-auto"
 			>
