@@ -1011,7 +1011,12 @@ async fn install_one(
 /// npm's entry script that belongs to a Node install: `<dir>/node_modules/npm/bin/npm-cli.js` on Windows,
 /// `<dir>/../lib/node_modules/npm/bin/npm-cli.js` elsewhere. Run with that node, so no `npm` shim or shell is involved.
 fn npm_cli_for(node: &Path) -> Option<PathBuf> {
+    // Unix: resolve symlinks (Homebrew's node sits in bin/ but npm lives beside the real file). Windows: never, because
+    // canonicalize returns a `\\?\D:\...` path and npm then derives a broken root from it (lstat 'D:' -> EISDIR).
+    #[cfg(unix)]
     let node = node.canonicalize().unwrap_or_else(|_| node.to_path_buf());
+    #[cfg(not(unix))]
+    let node = node.to_path_buf();
     let dir = node.parent()?;
     [dir.join("node_modules/npm/bin/npm-cli.js"), dir.join("../lib/node_modules/npm/bin/npm-cli.js")].into_iter().find(|p| p.is_file())
 }
