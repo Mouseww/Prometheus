@@ -58,7 +58,7 @@ import { toModelRef } from "./events.ts";
 import { GoalTracker, type GoalView } from "./goal.ts";
 import { listExternalApps, openInExternalApp, openUrlNative, pickFolderNative } from "./native-dialog.ts";
 import { checkImages, imageOnlyTitle, titleWithoutNote } from "./images.ts";
-import { extraRoots, issueTicket, readChunk, resolveDownload, takeTicket } from "./downloads.ts";
+import { extraRoots, issuePanelTicket, issueTicket, panelTicketValid, readChunk, resolveDownload, takeTicket } from "./downloads.ts";
 import { UPLOAD_ROOT, pruneUploads, removeSessionUploads, saveAttachments } from "./uploads.ts";
 import { fullResultContent, slimMessage, slimMessages } from "./slim.ts";
 import { PermissionGate } from "./permission-gate.ts";
@@ -230,6 +230,11 @@ export class PrometheusHost {
 	/** The file a `file.link` ticket stands for (consumed by the HTTP download route). */
 	takeDownload(id: string) {
 		return takeTicket(id);
+	}
+
+	/** Whether `id` (from `panel.link`) still lets a plugin panel page load without the login cookie. */
+	panelTicketValid(id: string | null | undefined): boolean {
+		return panelTicketValid(id);
 	}
 
 	async dispose(): Promise<void> {
@@ -1374,6 +1379,7 @@ export class PrometheusHost {
 			await this.runtime.plugins.remove(id);
 			return null;
 		},
+		"panel.link": () => ({ id: issuePanelTicket() }),
 		"plugin.call": async ({ plugin, method, params }) => {
 			const handler = this.runtime.plugins.rpcs.get(`${plugin}/${method}`);
 			if (!handler) throw new AppError("pluginMethodNotFound", { plugin, method });

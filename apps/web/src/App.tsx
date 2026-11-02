@@ -227,11 +227,32 @@ function useResolvedTheme(): { theme: string; skin: string } {
  */
 function PanelFrame({ target, url }: { target: BackendTarget; url: string }) {
 	const { theme, skin } = useResolvedTheme();
+	const client = useStore((s) => s.client);
+	// The desktop shell's origin differs from the server's, so the login cookie never reaches this
+	// iframe. A short-lived pass fetched over the authenticated connection stands in for it; a server
+	// that does not know `panel.link` yields null and the cookie path is used as before.
+	const [pass, setPass] = useState<string | null | undefined>(undefined);
+	useEffect(() => {
+		let live = true;
+		setPass(undefined);
+		if (!client) {
+			setPass(null);
+			return;
+		}
+		client
+			.rpc("panel.link", {})
+			.then((r) => live && setPass(r.id))
+			.catch(() => live && setPass(null));
+		return () => {
+			live = false;
+		};
+	}, [client, url, theme, skin]);
+	if (pass === undefined) return <div className="h-full w-full bg-ink-900" />;
 	const sep = url.includes("?") ? "&" : "?";
 	return (
 		<iframe
 			title="plugin panel"
-			src={`${target.httpBase}${url}${sep}theme=${theme}&skin=${skin}`}
+			src={`${target.httpBase}${url}${sep}theme=${theme}&skin=${skin}${pass ? `&pt=${encodeURIComponent(pass)}` : ""}`}
 			sandbox="allow-scripts allow-forms"
 			className="h-full w-full border-0 bg-ink-900"
 		/>

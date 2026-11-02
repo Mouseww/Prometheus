@@ -83,6 +83,29 @@ export function takeTicket(id: string): Downloadable | undefined {
 	return t && t.expires >= Date.now() ? t.file : undefined;
 }
 
+const PANEL_TTL_MS = 60_000;
+const panelTickets = new Map<string, number>();
+
+/**
+ * A short-lived pass for loading a plugin panel's page. The desktop shell's origin differs from the
+ * server's, so the login cookie never reaches the sandboxed panel iframe; the client asks for this
+ * pass over its authenticated connection and puts it in the iframe address.
+ */
+export function issuePanelTicket(): string {
+	const now = Date.now();
+	for (const [id, expires] of panelTickets) if (expires < now) panelTickets.delete(id);
+	const id = randomUUID();
+	panelTickets.set(id, now + PANEL_TTL_MS);
+	return id;
+}
+
+/** Whether `id` is a live panel pass. Not consumed: the page may be requested again while it is valid. */
+export function panelTicketValid(id: string | null | undefined): boolean {
+	if (!id) return false;
+	const expires = panelTickets.get(id);
+	return expires !== undefined && expires >= Date.now();
+}
+
 /** Folders that, besides the conversation's own, may be downloaded from. */
 export function extraRoots(uploadRoot: string): string[] {
 	return [uploadRoot];

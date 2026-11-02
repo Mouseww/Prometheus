@@ -1160,6 +1160,8 @@ export interface RpcMethods {
 	"plugin.install": { params: { name: string; files: PluginFile[]; version?: string }; result: PluginInstallResult };
 	/** Pick up plugin folders that appeared under the data dir since startup. */
 	"plugin.scan": { params: Record<string, never>; result: PluginInfo[] };
+	/** A pass (valid for a minute) to put in a plugin panel iframe address as `pt=`, for shells whose origin differs from the server's and so cannot carry the login cookie. */
+	"panel.link": { params: Record<string, never>; result: { id: string } };
 	"plugin.setEnabled": { params: { id: string; enabled: boolean }; result: PluginInfo };
 	"plugin.reload": { params: { id: string }; result: PluginInfo };
 	"plugin.remove": { params: { id: string }; result: null };
