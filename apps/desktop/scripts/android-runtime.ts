@@ -305,6 +305,8 @@ try {
 		"android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
 		"android.permission.POST_NOTIFICATIONS",
 		"android.permission.WAKE_LOCK",
+		"android.permission.ACCESS_WIFI_STATE",
+		"android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
 		"android.permission.MANAGE_EXTERNAL_STORAGE",
 	];
 	for (const perm of perms) {
@@ -356,42 +358,85 @@ function keepAliveService(pkg: string): string {
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 
 // Keeps the process (and the local Node server it spawned) alive while the app is in the background.
+// The notification has Termux-style buttons: toggle the wakelock (CPU + Wi-Fi) and exit.
 class KeepAliveService : Service() {
   private var lock: PowerManager.WakeLock? = null
+  private var wifi: WifiManager.WifiLock? = null
+  private val channel = "prometheus_local"
 
   override fun onBind(intent: Intent?): IBinder? = null
 
-  override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-    val channel = "prometheus_local"
-    getSystemService(NotificationManager::class.java)
-      .createNotificationChannel(NotificationChannel(channel, "Local server", NotificationManager.IMPORTANCE_LOW))
-    val notification: Notification = Notification.Builder(this, channel)
+  private fun held(): Boolean = lock?.isHeld == true
+
+  private fun acquire() {
+    if (lock == null) lock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "prometheus:server")
+    if (lock?.isHeld != true) lock?.acquire()
+    if (wifi == null) {
+      @Suppress("DEPRECATION")
+      wifi = (applicationContext.getSystemService(WIFI_SERVICE) as WifiManager)
+        .createWifiLock(if (Build.VERSION.SDK_INT >= 29) WifiManager.WIFI_MODE_FULL_LOW_LATENCY else WifiManager.WIFI_MODE_FULL_HIGH_PERF, "prometheus:wifi")
+    }
+    if (wifi?.isHeld != true) wifi?.acquire()
+  }
+
+  private fun release() {
+    if (lock?.isHeld == true) lock?.release()
+    if (wifi?.isHeld == true) wifi?.release()
+  }
+
+  private fun action(name: String, code: Int): PendingIntent =
+    PendingIntent.getService(this, code, Intent(this, KeepAliveService::class.java).setAction(name), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+
+  private fun notification(): Notification {
+    val open = packageManager.getLaunchIntentForPackage(packageName)?.let { PendingIntent.getActivity(this, 0, it, PendingIntent.FLAG_IMMUTABLE) }
+    val on = held()
+    return Notification.Builder(this, channel)
       .setContentTitle("Prometheus")
-      .setContentText("Local server is running")
+      .setContentText(if (on) "Wakelock held, keeping connections alive" else "Wakelock released")
       .setSmallIcon(applicationInfo.icon)
       .setOngoing(true)
+      .setContentIntent(open)
+      .addAction(Notification.Action.Builder(null, if (on) "Release wakelock" else "Acquire wakelock", action(if (on) "RELEASE" else "ACQUIRE", 1)).build())
+      .addAction(Notification.Action.Builder(null, "Exit", action("EXIT", 2)).build())
       .build()
-    if (Build.VERSION.SDK_INT >= 34) {
-      startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-    } else {
-      startForeground(1, notification)
+  }
+
+  override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    getSystemService(NotificationManager::class.java)
+      .createNotificationChannel(NotificationChannel(channel, "Local server", NotificationManager.IMPORTANCE_LOW))
+    when (intent?.action) {
+      "ACQUIRE" -> acquire()
+      "RELEASE" -> release()
+      "EXIT" -> {
+        release()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+        android.os.Process.killProcess(android.os.Process.myPid())
+        return START_NOT_STICKY
+      }
+      else -> if (lock == null) acquire()
     }
-    if (lock == null) {
-      lock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "prometheus:server").apply { acquire() }
+    val n = notification()
+    if (Build.VERSION.SDK_INT >= 34) {
+      startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+    } else {
+      startForeground(1, n)
     }
     return START_STICKY
   }
 
   override fun onDestroy() {
-    lock?.release()
+    release()
     super.onDestroy()
   }
 }
@@ -409,6 +454,21 @@ function activityHelpersSource(): string {
       checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
     ) {
       requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
+    }
+    // Ask once to be exempt from battery optimisation, otherwise Doze cuts background network access.
+    val pm = getSystemService(android.os.PowerManager::class.java)
+    val bprefs = getSharedPreferences("prometheus", MODE_PRIVATE)
+    if (!pm.isIgnoringBatteryOptimizations(packageName) && !bprefs.getBoolean("asked_battery", false)) {
+      bprefs.edit().putBoolean("asked_battery", true).apply()
+      try {
+        startActivity(
+          android.content.Intent(
+            android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+            android.net.Uri.parse("package:" + packageName),
+          ),
+        )
+      } catch (_: Exception) {
+      }
     }
     // All-files access cannot be requested in a dialog; send the user to the settings page once.
     val prefs = getSharedPreferences("prometheus", MODE_PRIVATE)

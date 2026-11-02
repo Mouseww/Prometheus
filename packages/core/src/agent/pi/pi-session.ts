@@ -386,6 +386,16 @@ export class PiRuntimeSession implements RuntimeSession {
 		this.unsubscribe();
 		this.opts.onDispose?.();
 		this.listeners.clear();
+		// AgentSession.dispose() does not emit session_shutdown (only the PI runtime does), and extensions such as the MCP client
+		// close their connections and child processes there; without it every closed session leaves its MCP servers running.
+		try {
+			await Promise.race([
+				this.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" }),
+				new Promise<void>((resolve) => setTimeout(resolve, 5000).unref?.()),
+			]);
+		} catch {
+			/* a failing shutdown hook must not keep the session from being disposed */
+		}
 		this.session.dispose();
 	}
 }
