@@ -34,7 +34,7 @@ import type {
 	WorkspaceInfo,
 } from "@prometheus/protocol";
 import { create } from "zustand";
-import type { ConnState, PrometheusClient } from "./client.ts";
+import { OfflineError, type ConnState, type PrometheusClient } from "./client.ts";
 import { localizeError } from "./errors.ts";
 import { defineMessages, tr } from "./i18n.ts";
 import { noteToolResult } from "./runtimes.ts";
@@ -262,6 +262,8 @@ export function toast(message: string, level: Toast["level"] = "info"): void {
 	const id = uuid();
 	// 后端错误码在这里统一翻译，所有 toast 路径都不会漏。
 	const text = localizeError(message);
+	// The same message already on screen (a user clicking again while the link is down) is not stacked.
+	if (get().toasts.some((t) => t.message === text && t.level === level)) return;
 	set((s) => ({ toasts: [...s.toasts.slice(-4), { id, message: text, level }] }));
 	setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), level === "error" ? 8000 : 4000);
 }
@@ -280,6 +282,11 @@ export async function call<T>(fn: (c: PrometheusClient) => Promise<T>): Promise<
 		toast(errorText(err), "error");
 		return undefined;
 	}
+}
+
+/** True for the failure of a request that never reached the server because the connection is down. */
+export function isOffline(err: unknown): boolean {
+	return err instanceof OfflineError;
 }
 
 /** The connected server predates this method (a client newer than its remote server): the feature is simply absent there. */
@@ -743,9 +750,21 @@ export function onPluginChange(plugin: string, fn: () => void): () => void {
 	return () => void set_.delete(fn);
 }
 
+/** The permission mode new chats start in (Settings → default permission mode). */
+function defaultPermission(): PermissionMode {
+	return get().hostSettings?.defaultPermission ?? "default";
+}
+
+/** Stores fresh host settings; the new-chat page follows a changed default permission mode unless a chat is already open. */
+function applyHostSettings(hostSettings: HostSettings): void {
+	const changed = (get().hostSettings?.defaultPermission ?? "default") !== (hostSettings.defaultPermission ?? "default");
+	set({ hostSettings });
+	if (changed && !get().session) set({ draftPermission: defaultPermission() });
+}
+
 export async function refreshHostSettings(): Promise<void> {
 	const hostSettings = await call((c) => c.rpc("settings.get", {}));
-	if (hostSettings) set({ hostSettings });
+	if (hostSettings) applyHostSettings(hostSettings);
 }
 
 export async function refreshHostInfo(): Promise<void> {
@@ -755,7 +774,7 @@ export async function refreshHostInfo(): Promise<void> {
 
 export async function updateHostSettings(patch: Partial<HostSettings>): Promise<void> {
 	const hostSettings = await call((c) => c.rpc("settings.set", patch));
-	if (hostSettings) set({ hostSettings });
+	if (hostSettings) applyHostSettings(hostSettings);
 }
 
 export async function refreshModels(): Promise<void> {
@@ -969,7 +988,7 @@ export function startNewChat(): void {
 	buffer = [];
 	const draft = defaultDraft();
 	const wasPi = draft.draftRuntime === "pi" && get().draftRuntime === "pi" && (current.runtime ?? "pi") === "pi";
-	set({ session: null, commands: [], draftModel: wasPi ? current.model : null, draftPermission: "default", ...draft });
+	set({ session: null, commands: [], draftModel: wasPi ? current.model : null, draftPermission: defaultPermission(), ...draft });
 	if (!wasPi) void refreshDraftModels();
 }
 
@@ -1001,7 +1020,7 @@ export async function chooseWorkspace(path: string): Promise<void> {
 	await createSession(path);
 	const created = get().session;
 	if (!created || created.id === prev?.id) return;
-	set({ draftModel: null, draftPermission: "default" });
+	set({ draftModel: null, draftPermission: defaultPermission() });
 	if (permission !== created.permissionMode) await setPermissionMode(permission);
 	if (draftWasPi && model && (created.model?.provider !== model.provider || created.model.id !== model.id)) await setModel(model);
 	const ready = get().session;

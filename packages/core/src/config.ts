@@ -32,6 +32,8 @@ export interface PrometheusConfig {
 	workspaceRoot: string;
 	/** Agent id new chats start with; empty means PI. */
 	defaultAgent: string;
+	/** Permission mode new chats start in; empty means "default" (ask first). */
+	defaultPermission: string;
 }
 
 function normalizeNetwork(raw: Partial<NetworkConfig> | undefined): NetworkConfig {
@@ -49,7 +51,7 @@ export function defaultDataDir(): string {
 	return process.env.PROMETHEUS_HOME || join(homedir(), ".prometheus");
 }
 
-const EMPTY: PrometheusConfig = { gateways: [], agents: [], plugins: [], disabledPlugins: [], pluginSettings: {}, network: normalizeNetwork(undefined), workspaceRoot: "", defaultAgent: "" };
+const EMPTY: PrometheusConfig = { gateways: [], agents: [], plugins: [], disabledPlugins: [], pluginSettings: {}, network: normalizeNetwork(undefined), workspaceRoot: "", defaultAgent: "", defaultPermission: "" };
 
 /** config.json holds API keys, so it is always written owner-only. */
 export class ConfigStore {
@@ -76,6 +78,7 @@ export class ConfigStore {
 				network: normalizeNetwork(raw.network),
 				workspaceRoot: typeof raw.workspaceRoot === "string" ? raw.workspaceRoot : "",
 				defaultAgent: typeof raw.defaultAgent === "string" ? raw.defaultAgent : "",
+				defaultPermission: typeof raw.defaultPermission === "string" ? raw.defaultPermission : "",
 			};
 		} catch (err) {
 			if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
@@ -110,6 +113,13 @@ export class ConfigStore {
 	async setDefaultAgent(id: string): Promise<void> {
 		const next = id.trim();
 		this.config.defaultAgent = next === "pi" ? "" : next;
+		await this.persist();
+	}
+
+	/** Empty string (or "default") goes back to asking first. */
+	async setDefaultPermission(mode: string): Promise<void> {
+		const next = mode.trim();
+		this.config.defaultPermission = next === "default" ? "" : next;
 		await this.persist();
 	}
 

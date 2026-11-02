@@ -27,7 +27,7 @@ import { Button, PageHeader } from "./ui.tsx";
 const M = defineMessages({
 	zh: {
 		title: "运行环境",
-		subtitle: "按需安装 Python、Go、Rust、Git。安装包不再内置它们，需要时在这里下载。",
+		subtitle: "按需安装 Node.js、PI Agent、Python、Go、Rust、Git。安装包不再内置它们，需要时在这里下载。",
 		install: "安装",
 		reinstall: "重新安装",
 		uninstall: "卸载",
@@ -69,7 +69,7 @@ const M = defineMessages({
 	},
 	en: {
 		title: "Runtimes",
-		subtitle: "Install Python, Go, Rust and Git on demand. They are no longer bundled; download them here when needed.",
+		subtitle: "Install Node.js, the PI Agent, Python, Go, Rust and Git on demand. They are no longer bundled; download them here when needed.",
 		install: "Install",
 		reinstall: "Reinstall",
 		uninstall: "Uninstall",

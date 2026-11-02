@@ -232,6 +232,9 @@ const COMMAND_RUNTIME: Record<string, string> = {
 	rustc: "rust",
 	rustup: "rust",
 	git: "git",
+	node: "node",
+	npm: "node",
+	npx: "node",
 };
 
 const NOT_FOUND = [

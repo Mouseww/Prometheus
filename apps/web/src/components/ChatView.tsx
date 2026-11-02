@@ -11,7 +11,6 @@ import { Flame } from "./ui.tsx";
 
 const M = defineMessages({
 	zh: {
-		reconnecting: "连接中断，正在重连…",
 		opening: "正在打开会话…",
 		syncing: "正在同步最新内容…",
 		headline1: "想做什么，",
@@ -32,7 +31,6 @@ const M = defineMessages({
 		s4: "帮我写一个脚本，用来",
 	},
 	en: {
-		reconnecting: "Connection lost, reconnecting…",
 		opening: "Opening conversation…",
 		syncing: "Syncing the latest…",
 		headline1: "What do you want to do? ",
@@ -83,7 +81,6 @@ function ChatBody() {
 	const t = useT(M);
 	const session = useStore((s) => s.session);
 	const booted = useStore((s) => s.booted);
-	const conn = useStore((s) => s.conn);
 	const opening = useStore((s) => s.opening);
 	const scroller = useRef<HTMLDivElement | null>(null);
 	const pinned = useRef(true);
@@ -149,15 +146,10 @@ function ChatBody() {
 	if (opening && session?.id !== opening.id) return <Opening title={opening.title} />;
 
 	// No session yet, or one that has not received its first message: the new-chat page, which also hosts the workspace chooser.
-	if (!session || (session.messages.length === 0 && !session.pending)) return <NewChat reconnecting={conn !== "open"} />;
+	if (!session || (session.messages.length === 0 && !session.pending)) return <NewChat />;
 
 	return (
 		<>
-			{conn !== "open" && (
-				<div className="flex items-center justify-center gap-2 bg-ember-500/10 py-1.5 text-xs text-ember-300">
-					<LoaderCircle className="size-3 animate-spin" /> {t("reconnecting")}
-				</div>
-			)}
 			{session.banner && (
 				<div className="flex items-center justify-center gap-2 border-b border-ember-500/20 bg-ember-500/8 py-1.5 text-xs text-ember-200">
 					{session.banner.kind === "retry" ? <RotateCcw className="size-3" /> : <LoaderCircle className="size-3 animate-spin" />}
@@ -253,16 +245,11 @@ const SUGGESTIONS = [
 ] as const;
 
 /** Landing page for a chat that has no messages yet: branding plus the shared composer with a workspace chooser. */
-function NewChat({ reconnecting }: { reconnecting: boolean }) {
+function NewChat() {
 	const t = useT(M);
 	const [greeting] = useState(greetingKey);
 	return (
 		<>
-			{reconnecting && (
-				<div className="flex items-center justify-center gap-2 bg-ember-500/10 py-1.5 text-xs text-ember-300">
-					<LoaderCircle className="size-3 animate-spin" /> {t("reconnecting")}
-				</div>
-			)}
 			<div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 overflow-y-auto px-4 py-6 text-center md:px-6">
 				<div className="hero-flame relative animate-pop">
 					<Flame className="relative size-16 drop-shadow-[0_0_30px_rgb(var(--glow)/0.45)]" />

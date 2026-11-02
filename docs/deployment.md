@@ -72,7 +72,7 @@ docker run -p 7420:7420 -e PROMETHEUS_TOKEN=<至少16位随机串> \
 
 ### 内置 Node 运行时
 
-桌面安装包自带官方 Node（`bundle-node` 在打包时按构建机的平台/架构下载最新的 22.x，并校验 SHA256，放进 `node/` 资源目录），不依赖用户机器上的 Node 或 `PATH`——从 Finder 启动的 macOS 应用拿不到终端的 `PATH`，这正是过去报「No such file or directory」的原因。查找顺序：`PROMETHEUS_NODE` → 内置 Node → `PATH` 与常见安装位置（Homebrew、nvm、volta、asdf、fnm；仅开发构建等没有内置 Node 时才会走到）。`NODE_MAJOR`、`NODE_BUNDLE_ARCH` 环境变量可指定打包的 Node 大版本与架构。同时内置 npm 与 npx（追加在子进程 `PATH` 末尾，用户自己安装的同名工具优先）。发布时 macOS 同时构建 Apple Silicon（`macos-latest`）与 Intel（`macos-15-intel`）两个包；Intel 包没有 LanceDB 原生库，知识库向量检索不可用，其余功能不受影响。
+桌面安装包**不再自带 Node 和智能体引擎（PI Agent）**，体积更小；首次使用时在应用里一键安装（连接页点“本机”后出现安装向导，之后也可以在 设置 → 运行环境 里管理或卸载）。Node 来自官方发行版（固定 22.x 版本并校验 SHA-256，含 npm 与 npx），PI Agent（`@earendil-works/pi-*`）通过 npm 装进应用自己的数据目录（`runtimes/pi-agent`），都不碰系统环境；装 PI Agent 时没有 Node 会先自动装 Node。Node 的查找顺序：`PROMETHEUS_NODE` → 应用里装的 Node → `PATH` 与常见安装位置（Homebrew、nvm、volta、asdf、fnm；版本需 ≥ 22.19，太旧的会被忽略）。服务端包里的 `main.js` 只是一个启动器：发现 `PROMETHEUS_PI_DIR`（桌面端自动设置）下装有 PI Agent 就让服务端从那里导入，服务端本体是 `app.js`；清单见 `apps/desktop/src-tauri/runtimes.json`，PI 版本必须与工作区依赖一致（`apps/desktop/test/runtimesManifest.test.ts` 会检查）。自带运行环境的包不受影响：Android 与 macOS 10.15 的 Electron 版仍把 Node 和 PI Agent 打在包里（`SERVER_BUNDLE_PI=1` 也可强制）。发布时 macOS 同时构建 Apple Silicon（`macos-latest`）与 Intel（`macos-15-intel`）两个包；Intel 包没有 LanceDB 原生库，知识库向量检索不可用，其余功能不受影响。
 
 ### 安卓
 

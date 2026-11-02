@@ -360,6 +360,8 @@ export interface HostSettings {
 	workspaceRoot: string;
 	/** Agent id (a `RuntimeInfo.id`) new chats start with; "pi" when unset. Older servers omit it. */
 	defaultAgent?: string;
+	/** Permission mode new chats start in; "default" when unset. Older servers omit it. */
+	defaultPermission?: PermissionMode;
 }
 
 // ---------- Subagents ----------

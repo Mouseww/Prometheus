@@ -27,7 +27,8 @@ import { SubagentsView } from "./SubagentsView.tsx";
 import { LogsView } from "./LogsView.tsx";
 import { VeilView } from "./VeilView.tsx";
 import { SkillsView } from "./SkillsView.tsx";
-import { Button, PageHeader } from "./ui.tsx";
+import { PERMISSION_MODES, type PermissionMode } from "@prometheus/protocol";
+import { Button, PageHeader, Select } from "./ui.tsx";
 import { UsageView } from "./UsageView.tsx";
 import { VoiceSettings } from "./VoiceSettings.tsx";
 
@@ -69,6 +70,13 @@ const M = defineMessages({
 		workspaceRoot: "默认根目录",
 		workspaceRootHint: "选择工作区时从这里开始，并可以直接在它下面新建文件夹作为新工作区。留空则使用服务端主目录。",
 		workspaceRootEmpty: "未设置（使用主目录）",
+		defaultPermission: "默认权限模式",
+		defaultPermissionHint: "新对话一开始使用的权限模式，对话里仍可随时用输入框下方的选择器或 Shift+Tab 切换。选择「完全放行」或 Auto 后，新对话不再询问就会执行所有操作，请谨慎。",
+		perm_default: "默认：编辑文件、执行命令前先询问",
+		perm_acceptEdits: "自动编辑：项目内的文件编辑自动通过",
+		perm_plan: "计划模式：只读调研，批准计划后才修改",
+		perm_bypassPermissions: "完全放行：不再询问（有风险）",
+		perm_auto: "Auto：全部放行，选择题由 AI 自己决定（有风险）",
 		chooseRoot: "选择…",
 		clearRoot: "清除",
 		session: "会话",
@@ -149,6 +157,13 @@ const M = defineMessages({
 		workspaceRoot: "Default root folder",
 		workspaceRootHint: "The workspace picker starts here and you can create new folders under it right from the dialog. Leave empty to use the server's home directory.",
 		workspaceRootEmpty: "Not set (home directory)",
+		defaultPermission: "Default permission mode",
+		defaultPermissionHint: "The permission mode a new chat starts in. You can still change it any time from the picker under the input box or with Shift+Tab. With Bypass or Auto, new chats run everything without asking, so be careful.",
+		perm_default: "Default: ask before editing files or running commands",
+		perm_acceptEdits: "Accept edits: edits inside the project pass",
+		perm_plan: "Plan mode: read-only until you approve the plan",
+		perm_bypassPermissions: "Bypass permissions: never ask (risky)",
+		perm_auto: "Auto: everything allowed, the AI decides on its own (risky)",
 		chooseRoot: "Choose…",
 		clearRoot: "Clear",
 		session: "Session",
@@ -307,6 +322,27 @@ function WorkspaceRootRow() {
 	);
 }
 
+function DefaultPermissionRow() {
+	const t = useT(M);
+	const host = useStore((s) => s.hostSettings);
+	return (
+		<Row label={t("defaultPermission")} hint={t("defaultPermissionHint")}>
+			<Select
+				className="max-w-80"
+				value={host?.defaultPermission ?? "default"}
+				disabled={!host}
+				onChange={(e) => void updateHostSettings({ defaultPermission: e.target.value as PermissionMode })}
+			>
+				{PERMISSION_MODES.map((m) => (
+					<option key={m} value={m}>
+						{t(`perm_${m}`)}
+					</option>
+				))}
+			</Select>
+		</Row>
+	);
+}
+
 function AboutRow() {
 	const t = useT(M);
 	const info = useStore((s) => s.hostInfo);
@@ -462,6 +498,7 @@ function GeneralSettings() {
 
 					<Section title={t("workspace")}>
 						<WorkspaceRootRow />
+						<DefaultPermissionRow />
 					</Section>
 
 					{isDesktopShell() && (

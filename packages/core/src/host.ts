@@ -20,6 +20,7 @@ import {
 	type ImageContent,
 	type MessageRef,
 	type ModelRef,
+	type PermissionMode,
 	PROTOCOL_VERSION,
 	PERMISSION_MODES,
 	type PromptDisposition,
@@ -898,7 +899,13 @@ export class PrometheusHost {
 	}
 
 	private hostSettings(): HostSettings {
-		return { autoCompaction: this.pi.autoCompaction(), workspaceRoot: this.workspaceRoot(), defaultAgent: this.defaultAgent() };
+		return { autoCompaction: this.pi.autoCompaction(), workspaceRoot: this.workspaceRoot(), defaultAgent: this.defaultAgent(), defaultPermission: this.defaultPermission() };
+	}
+
+	/** The permission mode new chats start in; unknown values (a hand-edited config) fall back to asking first. */
+	private defaultPermission(): PermissionMode {
+		const mode = this.runtime.config.get().defaultPermission?.trim();
+		return PERMISSION_MODES.find((m) => m === mode) ?? "default";
 	}
 
 	/** The agent new chats start with; falls back to PI when the configured one was deleted or hidden. */
@@ -1098,7 +1105,7 @@ export class PrometheusHost {
 		"fs.mkdir": ({ parent, name }) => this.createDir(parent, name),
 
 		"settings.get": () => this.hostSettings(),
-		"settings.set": async ({ autoCompaction, workspaceRoot, defaultAgent }) => {
+		"settings.set": async ({ autoCompaction, workspaceRoot, defaultAgent, defaultPermission }) => {
 			if (typeof autoCompaction === "boolean") {
 				await this.pi.setAutoCompaction(autoCompaction);
 				// Live sessions cache their own SettingsManager.
@@ -1113,6 +1120,10 @@ export class PrometheusHost {
 				const next = defaultAgent.trim() || "pi";
 				if (next !== "pi" && !this.agentList().some((a) => a.id === next)) throw new AppError("notFound", { what: next });
 				await this.runtime.config.setDefaultAgent(next);
+			}
+			if (typeof defaultPermission === "string") {
+				if (!PERMISSION_MODES.includes(defaultPermission)) throw new AppError("unknownPermissionMode", { mode: String(defaultPermission) });
+				await this.runtime.config.setDefaultPermission(defaultPermission);
 			}
 			return this.hostSettings();
 		},

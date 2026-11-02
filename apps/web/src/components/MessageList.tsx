@@ -615,13 +615,28 @@ export function MessageList({
 		}
 	}, [start, messages, offset, onLoadEarlier, holdAnchoring]);
 	const sentinel = useRef<HTMLDivElement>(null);
+	// Earlier turns load lazily: only once the user has scrolled up themselves. Opening a conversation starts at the top for a moment
+	// before it jumps to the end, and that must not pull history in (it made the view jump around).
+	const interacted = useRef(false);
 	useEffect(() => {
 		const el = sentinel.current;
 		const scroller = root.current?.parentElement;
 		if (!el || !scroller || typeof IntersectionObserver === "undefined") return;
-		const io = new IntersectionObserver((entries) => entries.some((e) => e.isIntersecting) && void showMore(), { root: scroller, rootMargin: "400px 0px 0px 0px" });
+		const near = () => el.getBoundingClientRect().bottom > scroller.getBoundingClientRect().top - 400;
+		const io = new IntersectionObserver((entries) => interacted.current && entries.some((e) => e.isIntersecting) && void showMore(), { root: scroller, rootMargin: "400px 0px 0px 0px" });
 		io.observe(el);
-		return () => io.disconnect();
+		// The observer only reports changes, so a sentinel that is already in range needs a check when the user acts.
+		const onInput = (e: Event) => {
+			if (e instanceof WheelEvent && e.deltaY > 0) return;
+			interacted.current = true;
+			if (near()) void showMore();
+		};
+		const events = ["wheel", "touchmove", "pointerdown", "keydown"] as const;
+		for (const n of events) scroller.addEventListener(n, onInput, { passive: true });
+		return () => {
+			io.disconnect();
+			for (const n of events) scroller.removeEventListener(n, onInput);
+		};
 	}, [more, showMore]);
 
 	return (

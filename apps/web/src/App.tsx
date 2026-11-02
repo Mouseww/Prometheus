@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AutomationsView } from "./components/AutomationsView.tsx";
 import { ChatView } from "./components/ChatView.tsx";
 import { ConnectScreen } from "./components/ConnectScreen.tsx";
+import { SetupScreen } from "./components/SetupScreen.tsx";
 import { AppDialogHost } from "./components/AppDialog.tsx";
+import { ConnectionBanner, type Recovery } from "./components/ConnectionBanner.tsx";
 import { ContextMenuHost } from "./components/ContextMenuHost.tsx";
 import { DialogHost } from "./components/DialogHost.tsx";
 import { GitView } from "./components/GitView.tsx";
@@ -19,7 +21,7 @@ import { Modal } from "./components/ui.tsx";
 import { UpdateDialog } from "./components/UpdateDialog.tsx";
 import type { BackendTarget } from "./lib/client.ts";
 import { PrometheusClient } from "./lib/client.ts";
-import { clearSession, discoverBackend, establishCookie, isDesktopShell, saveMode, saveSession } from "./lib/backend.ts";
+import { clearSession, discoverBackend, establishCookie, isDesktopShell, parseSetupNeeded, type SetupComponent, saveMode, saveSession, startLocal } from "./lib/backend.ts";
 import { bindClient, openSession, pluginActive, setSpace, setView, useStore } from "./lib/store.ts";
 import { CONNECT_EVENT } from "./lib/platforms.ts";
 import { usePrefs } from "./lib/prefs.ts";
@@ -32,6 +34,8 @@ const closeView = () => setView("chat");
 export function App() {
 	const [target, setTarget] = useState<BackendTarget | null | undefined>(undefined);
 	const [bootError, setBootError] = useState<string | null>(null);
+	/** The local backend is waiting for components the installer leaves out (Node.js, the PI agent). */
+	const [setup, setSetup] = useState<SetupComponent[] | null>(null);
 	const [wantsPassword, setWantsPassword] = useState(false);
 	const isMobile = useIsMobile();
 	const [sidebar, setSidebar] = useState(() => window.innerWidth >= 768);
@@ -84,14 +88,31 @@ export function App() {
 		return () => window.removeEventListener("keydown", onKey);
 	}, []);
 
-	useEffect(() => {
-		discoverBackend().then(setTarget, (err: unknown) => {
-			// Saved local mode failed to start: drop back to the chooser with the reason.
-			saveMode(null);
-			setBootError(err instanceof Error ? err.message : String(err));
-			setTarget(null);
-		});
+	const boot = useCallback((afterInstall = false) => {
+		discoverBackend().then(
+			(next) => {
+				setBootError(null);
+				setSetup(null);
+				setTarget(next);
+			},
+			(err: unknown) => {
+				// Nothing broke: the installer just does not carry Node.js / the PI agent. Keep local mode and offer the install.
+				// Still missing right after an install means it did not take; say so rather than offering the same button forever.
+				const needed = parseSetupNeeded(err);
+				if (needed && !afterInstall) {
+					setSetup(needed.missing);
+					setTarget(null);
+					return;
+				}
+				setSetup(null);
+				// Saved local mode failed to start: drop back to the chooser with the reason.
+				saveMode(null);
+				setBootError(err instanceof Error ? err.message : String(err));
+				setTarget(null);
+			},
+		);
 	}, []);
+	useEffect(() => boot(), [boot]);
 
 	useEffect(() => {
 		if (!target) return;
@@ -111,6 +132,34 @@ export function App() {
 			useStore.setState({ client: null, session: null, conn: "idle", booted: false });
 		};
 	}, [target]);
+
+	// A local backend that died (crash, killed, out of memory) never comes back by reconnecting: the port is gone and the token was
+	// one-time. After a few seconds without an answer, check it and start a fresh one instead of retrying forever.
+	const [recovery, setRecovery] = useState<Recovery>({ state: "idle" });
+	useEffect(() => {
+		if (!target || target.label !== "local" || conn !== "closed") {
+			if (conn === "open") setRecovery({ state: "idle" });
+			return;
+		}
+		let dead = false;
+		const timer = window.setTimeout(async () => {
+			const alive = await fetch(`${target.httpBase}/api/health`, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok, () => false);
+			if (dead || alive) return;
+			setRecovery({ state: "restarting" });
+			try {
+				const { invoke } = await import("@tauri-apps/api/core");
+				await invoke("stop_local_backend");
+				const next = await startLocal();
+				if (!dead) setTarget(next);
+			} catch (err) {
+				if (!dead) setRecovery({ state: "failed", error: err instanceof Error ? err.message : String(err) });
+			}
+		}, 5000);
+		return () => {
+			dead = true;
+			window.clearTimeout(timer);
+		};
+	}, [target, conn, recovery.state === "failed"]);
 
 	// The platform switcher announces a new server; replacing the target tears down the old connection.
 	useEffect(() => {
@@ -155,10 +204,25 @@ export function App() {
 	}, [title]);
 
 	if (target === undefined) return <div className="forge-bg h-full" />;
+	if (target === null && setup) {
+		return (
+			<Shell>
+				<SetupScreen
+					missing={setup}
+					onReady={() => boot(true)}
+					onRemote={() => {
+						saveMode(null);
+						setSetup(null);
+					}}
+				/>
+				<UpdateDialog />
+			</Shell>
+		);
+	}
 	if (target === null || conn === "unauthorized") {
 		return (
 			<Shell>
-				<ConnectScreen unauthorized={conn === "unauthorized"} wantsPassword={wantsPassword} error={bootError} onConnect={setTarget} />
+				<ConnectScreen unauthorized={conn === "unauthorized"} onSetup={setSetup} wantsPassword={wantsPassword} error={bootError} onConnect={setTarget} />
 				<UpdateDialog />
 			</Shell>
 		);
@@ -167,6 +231,7 @@ export function App() {
 	return (
 		<div className="forge-bg flex h-full flex-col">
 			<TitleBar onToggleSidebar={() => setSidebar((v) => !v)} />
+			<ConnectionBanner recovery={recovery} />
 			<div className="relative flex min-h-0 flex-1">
 				{sidebar && isMobile && <div className="absolute inset-0 z-30 animate-fade bg-ink-950/60 backdrop-blur-[2px]" onClick={() => setSidebar(false)} aria-hidden />}
 				{sidebar && (

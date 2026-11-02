@@ -1,4 +1,5 @@
-// Downloads the official Node.js runtime for the build host into dist/node-runtime, which the desktop installer
+// Downloads the official Node.js runtime for the build host into dist/node-runtime. Only the legacy Electron macOS build ships it now
+// (the Tauri desktop installer fetches Node on first use, see runtimes.json). It used to be what the desktop installer
 // ships as the `node/` resource (node + npm + npx) so the app never depends on a Node install (or PATH) on the user's machine.
 // NODE_MAJOR picks the release line (default 22, newest patch); NODE_BUNDLE_ARCH overrides the target arch (x64 | arm64).
 import { execFileSync } from "node:child_process";

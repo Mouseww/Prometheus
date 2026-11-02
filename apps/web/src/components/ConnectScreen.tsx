@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { Globe, LoaderCircle, Monitor, ScanLine, Server } from "lucide-react";
 import { useEffect, useState } from "react";
 import { QrScanner } from "./QrScanner.tsx";
-import { isTauri, localSupported, passwordLogin, forgetServer, loadServerHistory, saveMode, saveRemote, saveSameOriginToken, saveSession, startLocal, targetFromUrl } from "../lib/backend.ts";
+import { isTauri, localSupported, parseSetupNeeded, passwordLogin, forgetServer, loadServerHistory, saveMode, saveRemote, saveSameOriginToken, saveSession, type SetupComponent, startLocal, targetFromUrl } from "../lib/backend.ts";
 import type { BackendTarget } from "../lib/client.ts";
 import { localizeError } from "../lib/errors.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
@@ -57,7 +57,7 @@ const M = defineMessages({
 	},
 });
 
-export function ConnectScreen({ unauthorized, error, onConnect, wantsPassword = false }: { unauthorized: boolean; error?: string | null; onConnect: (t: BackendTarget) => void; wantsPassword?: boolean }) {
+export function ConnectScreen({ unauthorized, error, onConnect, onSetup, wantsPassword = false }: { unauthorized: boolean; error?: string | null; onConnect: (t: BackendTarget) => void; onSetup?: (missing: SetupComponent[]) => void; wantsPassword?: boolean }) {
 	const t = useT(M);
 	const sameOrigin = !isTauri() && location.protocol.startsWith("http");
 	const [canLocal, setCanLocal] = useState(false);
@@ -89,6 +89,13 @@ export function ConnectScreen({ unauthorized, error, onConnect, wantsPassword = 
 			saveMode("local");
 			onConnect(target);
 		} catch (err) {
+			// The installer leaves out Node.js and the PI agent: that is a first-run install, not a failure.
+			const needed = parseSetupNeeded(err);
+			if (needed && onSetup) {
+				saveMode("local");
+				onSetup(needed.missing);
+				return;
+			}
 			setMessage(t("startFailed", { e: localizeError(err instanceof Error ? err.message : String(err)) }));
 		} finally {
 			setBusy(false);

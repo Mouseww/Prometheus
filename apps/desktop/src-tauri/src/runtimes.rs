@@ -41,6 +41,9 @@ struct Def {
     version: String,
     #[serde(default)]
     hidden: bool,
+    /// Desktop only: the Android build brings its own copy (or has no use for it), so the phone never lists or installs this.
+    #[serde(default)]
+    desktop_only: bool,
     /// Runtimes that must be installed first (only honoured where the runtime runs inside the guest rootfs).
     #[serde(default)]
     requires: Vec<String>,
@@ -65,13 +68,23 @@ enum Format {
     /// A single installer program; it is run rather than unpacked.
     #[serde(rename = "exe")]
     Exe,
+    /// npm packages installed into the runtime's own directory with the Node.js runtime (nothing is downloaded by us).
+    #[serde(rename = "npm")]
+    Npm,
 }
 
 #[derive(Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct Target {
     /// Tried in order; a failing mirror falls through to the next.
+    #[serde(default)]
     urls: Vec<String>,
+    /// Format `npm`: `name@version` specs to install.
+    #[serde(default)]
+    packages: Vec<String>,
+    /// Format `npm`: registries tried in order (a failing one falls through to the next).
+    #[serde(default)]
+    registries: Vec<String>,
     /// Pinned digest, or a URL of a checksum file to read it from.
     #[serde(default)]
     sha256: Option<String>,
@@ -143,8 +156,15 @@ fn target_key() -> String {
 /// The target for this platform, and whether it lives in the guest rootfs. On Android the ordinary
 /// `linux-aarch64` builds are used inside the Ubuntu rootfs; only the rootfs itself has an `android-*` entry.
 fn pick(def: &Def) -> Option<(&Target, bool)> {
+    if is_android() && def.desktop_only {
+        return None;
+    }
     let key = target_key();
     if let Some(t) = def.targets.get(&key) {
+        return Some((t, false));
+    }
+    // Platform independent entries (npm packages).
+    if let Some(t) = def.targets.get("*") {
         return Some((t, false));
     }
     if is_android() && def.id != ROOTFS_ID {
@@ -867,6 +887,9 @@ async fn install_one(
         target.run.extend(["--default-host".to_string(), p.host.clone()]);
     }
     let root = root_dir(app)?;
+    if target.format == Format::Npm {
+        return install_npm(app, def, &target, &root, em, cancel).await;
+    }
     let dest = payload_dir(&root, &def.id, guest);
     let work = root.join(&def.id);
     fs::create_dir_all(&work).map_err(|e| format!("无法创建目录 {}：{e}", work.display()))?;
@@ -920,7 +943,7 @@ async fn install_one(
             .await
             .map_err(|e| e.to_string())?
         }
-        Format::Exe => Ok(()),
+        Format::Exe | Format::Npm => Ok(()),
     };
     if let Err(e) = result {
         let _ = remove_tree(&staging);
@@ -943,6 +966,7 @@ async fn install_one(
                 prepare_rootfs(&dest)?;
             }
         }
+        Format::Npm => unreachable!("npm installs return before this point"),
         Format::Exe => {
             em.stage("setup", &def.name, 0, 0, 0);
             remove_tree(&dest).map_err(|e| format!("无法替换旧版本（文件被占用？）：{e}"))?;
@@ -979,6 +1003,119 @@ async fn install_one(
     if local.is_none() {
         let _ = fs::remove_file(&archive);
     }
+    Ok(())
+}
+
+// ------------------------------------------------------- Node.js and npm packages
+
+/// npm's entry script that belongs to a Node install: `<dir>/node_modules/npm/bin/npm-cli.js` on Windows,
+/// `<dir>/../lib/node_modules/npm/bin/npm-cli.js` elsewhere. Run with that node, so no `npm` shim or shell is involved.
+fn npm_cli_for(node: &Path) -> Option<PathBuf> {
+    let node = node.canonicalize().unwrap_or_else(|_| node.to_path_buf());
+    let dir = node.parent()?;
+    [dir.join("node_modules/npm/bin/npm-cli.js"), dir.join("../lib/node_modules/npm/bin/npm-cli.js")].into_iter().find(|p| p.is_file())
+}
+
+/// The Node.js runtime installed from the app (Settings → Runtimes, or the first-run setup), if it is really there.
+#[cfg(not(target_os = "android"))]
+pub fn installed_node(app: &AppHandle) -> Option<PathBuf> {
+    let root = root_dir(app).ok()?;
+    let def = find_def("node").ok()?;
+    installed_version(&root, &def)?;
+    let (target, _) = pick(&def)?;
+    Some(payload_dir(&root, "node", false).join(&target.check))
+}
+
+/// The Node used to run npm and the server: the installed runtime first, then a suitable one from the system.
+#[cfg(not(target_os = "android"))]
+fn find_node(app: &AppHandle) -> Option<PathBuf> {
+    if let Some(custom) = std::env::var_os("PROMETHEUS_NODE").filter(|v| !v.is_empty()) {
+        let p = PathBuf::from(custom);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    installed_node(app).or_else(|| crate::system_node().map(|(p, _)| p))
+}
+
+#[cfg(target_os = "android")]
+fn find_node(_: &AppHandle) -> Option<PathBuf> {
+    None
+}
+
+/// Where the PI agent packages live, when the installed copy is the version this build was made for.
+/// A different version is as good as none: the server is built against one API.
+pub fn pi_dir(app: &AppHandle) -> Option<PathBuf> {
+    let root = root_dir(app).ok()?;
+    let def = find_def("pi-agent").ok()?;
+    (installed_version(&root, &def)? == def.version).then(|| payload_dir(&root, &def.id, false))
+}
+
+/// `npm install` of the manifest's packages into a staging folder, swapped into place once it is complete.
+async fn install_npm(app: &AppHandle, def: &Def, target: &Target, root: &Path, em: &Emitter2, cancel: &Arc<AtomicBool>) -> Result<(), String> {
+    let node = find_node(app).ok_or("找不到 Node.js（需要 ≥ 22.19）。请先安装“Node.js”运行环境")?;
+    let npm = npm_cli_for(&node).ok_or("找不到 npm。请在运行环境里安装“Node.js”（官方发行版自带 npm）")?;
+    let dest = payload_dir(root, &def.id, false);
+    let work = root.join(&def.id);
+    let staging = work.join("staging");
+    fs::create_dir_all(&work).map_err(|e| format!("无法创建目录 {}：{e}", work.display()))?;
+    em.stage("setup", &def.name, 0, 0, 0);
+
+    let (stage2, t2, e2, c2) = (staging.clone(), target.clone(), em.clone(), cancel.clone());
+    let ran = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        remove_tree(&stage2).map_err(|e| e.to_string())?;
+        fs::create_dir_all(&stage2).map_err(|e| e.to_string())?;
+        fs::write(stage2.join("package.json"), r#"{"name":"prometheus-runtime","private":true}"#).map_err(|e| e.to_string())?;
+        // npm's lifecycle scripts run `node`, so the directory of the Node we use goes first on PATH.
+        let mut path_dirs: Vec<PathBuf> = node.parent().map(|d| vec![d.to_path_buf()]).unwrap_or_default();
+        if let Some(existing) = std::env::var_os("PATH") {
+            path_dirs.extend(std::env::split_paths(&existing));
+        }
+        let path = std::env::join_paths(path_dirs).map_err(|e| e.to_string())?;
+        let registries = if t2.registries.is_empty() { vec![String::new()] } else { t2.registries.clone() };
+        let mut last = String::new();
+        for registry in &registries {
+            let mut cmd = std::process::Command::new(&node);
+            cmd.arg(&npm).args(["install", "--no-audit", "--no-fund", "--omit=dev", "--no-progress"]).arg("--prefix").arg(&stage2);
+            if !registry.is_empty() {
+                cmd.arg("--registry").arg(registry);
+            }
+            cmd.args(&t2.packages)
+                .current_dir(&stage2)
+                .env("PATH", &path)
+                .env("npm_config_update_notifier", "false")
+                // onnxruntime-node would otherwise fetch CUDA libraries on Linux.
+                .env("ONNXRUNTIME_NODE_INSTALL_CUDA", "skip");
+            e2.log(format!("npm install（{}）", if registry.is_empty() { "默认源" } else { registry }));
+            match run_logged(cmd, &e2, &c2, "npm install") {
+                Ok(()) => {
+                    last.clear();
+                    break;
+                }
+                Err(err) if err == CANCELLED => return Err(err),
+                Err(err) => last = err,
+            }
+        }
+        if last.is_empty() { Ok(()) } else { Err(last) }
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    if let Err(e) = ran {
+        let _ = remove_tree(&staging);
+        return Err(e);
+    }
+
+    if !staging.join(&target.check).exists() {
+        let _ = remove_tree(&staging);
+        return Err(format!("安装完成但缺少 {}，安装可能不完整", target.check));
+    }
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    remove_tree(&dest).map_err(|e| format!("无法替换旧版本（文件被占用？）：{e}"))?;
+    fs::rename(&staging, &dest).map_err(|e| format!("无法完成安装：{e}"))?;
+    let marker = serde_json::to_string(&Marker { version: def.version.clone(), note: None }).map_err(|e| e.to_string())?;
+    fs::write(marker_path(root, &def.id), marker).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -1089,6 +1226,11 @@ async fn install(app: AppHandle, id: String, local: Option<PathBuf>, cancel: Arc
                 install_one(&app, &dep_def, None, None, &em, &cancel).await?;
             }
         }
+    } else if def.requires.iter().any(|d| d == "node") && find_node(&app).is_none_or(|n| npm_cli_for(&n).is_none()) {
+        // A system Node without npm does not count: the packages could not be installed with it.
+        let node_def = find_def("node")?;
+        em.log(format!("先安装依赖：{}", node_def.name));
+        install_one(&app, &node_def, None, None, &em, &cancel).await?;
     }
     let gnu = prepare_linker(&app, &def, &root, &em, &cancel).await?;
     install_one(&app, &def, local, gnu, &em, &cancel).await
@@ -1149,7 +1291,7 @@ pub fn runtime_list(app: AppHandle, state: tauri::State<'_, Installs>) -> Result
     let running = state.0.lock().unwrap();
     Ok(manifest()?
         .into_iter()
-        .filter(|d| !d.hidden)
+        .filter(|d| !d.hidden && !(is_android() && d.desktop_only))
         .map(|d| {
             let picked = pick(&d);
             Info {
@@ -1701,6 +1843,11 @@ mod tests {
         assert!(defs.iter().any(|d| d.id == "python"));
         for d in &defs {
             for (key, t) in &d.targets {
+                if t.format == Format::Npm {
+                    assert!(!t.packages.is_empty() && t.packages.iter().all(|p| p.contains('@') && !p.starts_with('-')), "{}:{key} npm packages must be name@version", d.id);
+                    assert!(!t.check.is_empty());
+                    continue;
+                }
                 assert!(!t.urls.is_empty(), "{}:{key} has no urls", d.id);
                 assert!(t.sha256.is_some() != t.sha256_url.is_some(), "{}:{key} needs exactly one of sha256 / sha256Url", d.id);
                 if let Some(s) = &t.sha256 {
@@ -1715,6 +1862,20 @@ mod tests {
                 assert!(defs.iter().any(|x| &x.id == r), "{} requires unknown {r}", d.id);
             }
         }
+    }
+
+    #[test]
+    fn node_and_pi_are_on_demand_runtimes() {
+        let node_def = find_def("node").unwrap();
+        assert!(node_def.desktop_only && !node_def.hidden);
+        for key in ["windows-x86_64", "windows-aarch64", "linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-aarch64"] {
+            let t = &node_def.targets[key];
+            assert!(t.urls[0].contains(&node_def.version), "{key}: url must carry the pinned version");
+            assert!(t.sha256.is_some());
+        }
+        let pi = find_def("pi-agent").unwrap();
+        assert!(pi.desktop_only && pi.requires == ["node"]);
+        assert!(pi.targets["*"].packages.iter().all(|p| p.ends_with(&format!("@{}", pi.version))), "every PI package is pinned to the manifest version");
     }
 
     #[test]

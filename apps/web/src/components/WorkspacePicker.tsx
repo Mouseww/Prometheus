@@ -13,12 +13,14 @@ const M = defineMessages({
 		add: "添加工作区…",
 		none: "还没有工作区",
 		personal: "个人空间",
+		offline: "连接已断开，恢复后才能选择工作区",
 	},
 	en: {
 		pick: "Choose workspace",
 		add: "Add workspace…",
 		none: "No workspaces yet",
 		personal: "Personal space",
+		offline: "Disconnected; workspaces can be chosen once it is back",
 	},
 });
 
@@ -30,6 +32,7 @@ export function WorkspacePicker({ children }: { children?: React.ReactNode }) {
 	// The assistant's home is the personal space, not a project to pick.
 	const workspaces = useMemo(() => all.filter((w) => spaceOf(w.path, home) === "work"), [all, home]);
 	const currentId = useStore((s) => s.session?.workspaceId);
+	const online = useStore((s) => s.conn === "open");
 	const { open, setOpen, ref } = usePopover();
 	// Kept outside the popover: the folder dialog is a portal, so a click inside it would count as "outside" and unmount it.
 	const [picking, setPicking] = useState(false);
@@ -40,11 +43,12 @@ export function WorkspacePicker({ children }: { children?: React.ReactNode }) {
 			<button
 				type="button"
 				onClick={() => setOpen(!open)}
+				disabled={!online}
 				className={clsx(
-					"flex max-w-52 shrink-0 items-center gap-1.5 rounded-lg px-2 py-1 text-xs transition-colors",
+					"flex max-w-52 shrink-0 items-center gap-1.5 rounded-lg px-2 py-1 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50",
 					active ? "text-ink-300 hover:bg-ink-800 hover:text-ink-100" : "bg-ember-500/10 text-ember-300 hover:bg-ember-500/15",
 				)}
-				title={active?.path}
+				title={online ? active?.path : t("offline")}
 			>
 				<FolderOpen className="size-3.5 shrink-0" />
 				<span className="truncate">{active?.name ?? t("pick")}</span>
@@ -56,7 +60,7 @@ export function WorkspacePicker({ children }: { children?: React.ReactNode }) {
 					{active.path}
 				</span>
 			)}
-			{open && (
+			{open && online && (
 				<div className="absolute bottom-full left-3 right-3 z-40 mb-2 md:left-0 md:right-auto md:w-72 animate-rise overflow-hidden rounded-xl border border-ink-700 bg-ink-900/97 shadow-2xl shadow-black/40 backdrop-blur">
 					<div className="max-h-[min(16rem,40dvh)] overflow-y-auto py-1">
 						{workspaces.length === 0 && <div className="px-3.5 py-4 text-center text-sm text-ink-500">{t("none")}</div>}

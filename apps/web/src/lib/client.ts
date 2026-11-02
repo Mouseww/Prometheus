@@ -5,12 +5,25 @@ const M = defineMessages({
 	zh: {
 		closedAbruptly: "连接已断开",
 		closed: "连接已关闭",
+		offline: "与服务端的连接已断开，操作未执行。正在自动重连，恢复后请重试",
 	},
 	en: {
 		closedAbruptly: "The connection was lost",
 		closed: "The connection is closed",
+		offline: "Not connected to the server, so nothing was done. Reconnecting automatically; try again once it is back",
 	},
 });
+
+/** The request never left: the socket is down (or did not come up in time). Callers show it once, not per click. */
+export class OfflineError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "OfflineError";
+	}
+}
+
+/** How long a request waits for a connection that is still being set up before it gives up. */
+const READY_TIMEOUT_MS = 8_000;
 
 export interface BackendTarget {
 	wsUrl: string;
@@ -47,7 +60,7 @@ export class PrometheusClient {
 	private unbindWake: (() => void) | undefined;
 	private lastSeen = 0;
 	private connectingSince = 0;
-	private waiters: (() => void)[] = [];
+	private waiters: { resolve: () => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }[] = [];
 	private readonly pending = new Map<string, Pending>();
 	private readonly subscriptions = new Set<string>();
 	/** Plugin topics being watched, as `<plugin>\0<topic>` with a reference count. */
@@ -131,7 +144,7 @@ export class PrometheusClient {
 			const now = Date.now();
 			if (this.state === "connecting" && now - this.connectingSince > 12_000) return this.drop();
 			if (this.state === "open") {
-				if (now - this.lastSeen > 50_000) return this.drop();
+				if (now - this.lastSeen > 35_000) return this.drop();
 				this.send({ type: "ping" });
 			}
 		};
@@ -270,12 +283,38 @@ export class PrometheusClient {
 		this.setState("open");
 		const waiters = this.waiters;
 		this.waiters = [];
-		for (const w of waiters) w();
+		for (const w of waiters) {
+			clearTimeout(w.timer);
+			w.resolve();
+		}
 	}
 
+	/**
+	 * Resolves once the socket is open. A request made while the link is down used to queue silently and then fire all at once on
+	 * reconnect (the user saw nothing, clicked again, and got every error together); now it fails right away, and a connection that
+	 * is still being set up gets a bounded wait.
+	 */
 	private ready(): Promise<void> {
 		if (this.state === "open") return Promise.resolve();
-		return new Promise((resolve) => this.waiters.push(resolve));
+		if (this.state !== "connecting" && this.state !== "idle") return Promise.reject(new OfflineError(tr(M, "offline")));
+		return new Promise((resolve, reject) => {
+			const waiter = {
+				resolve,
+				reject,
+				timer: setTimeout(() => {
+					this.waiters = this.waiters.filter((w) => w !== waiter);
+					reject(new OfflineError(tr(M, "offline")));
+				}, READY_TIMEOUT_MS),
+			};
+			this.waiters.push(waiter);
+		});
+	}
+
+	/** Reconnect now instead of waiting out the backoff (the banner's retry button). */
+	retryNow(): void {
+		if (this.state === "open" || this.state === "unauthorized") return;
+		this.retry = 0;
+		this.connect();
 	}
 
 	private send(frame: ClientFrame): void {
@@ -283,8 +322,14 @@ export class PrometheusClient {
 	}
 
 	private failPending(message: string): void {
-		for (const p of this.pending.values()) p.reject(new Error(message));
+		for (const p of this.pending.values()) p.reject(new OfflineError(message));
 		this.pending.clear();
+		const waiters = this.waiters;
+		this.waiters = [];
+		for (const w of waiters) {
+			clearTimeout(w.timer);
+			w.reject(new OfflineError(tr(M, "offline")));
+		}
 	}
 
 	private setState(state: ConnState): void {

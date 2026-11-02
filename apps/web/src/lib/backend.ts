@@ -117,10 +117,38 @@ export async function localSupported(): Promise<boolean> {
 	}
 }
 
+/** Runtimes the installer leaves out and the app installs on first use (ids from runtimes.json). */
+export type SetupComponent = "node" | "pi-agent";
+
+/** The local backend cannot start until these are installed; not a crash, so the UI offers the install instead of an error. */
+export class SetupNeeded extends Error {
+	readonly missing: SetupComponent[];
+	constructor(missing: SetupComponent[], detail: string) {
+		super(detail);
+		this.name = "SetupNeeded";
+		this.missing = missing;
+	}
+}
+
+/** Reads the desktop shell's `SETUP_NEEDED:node,pi-agent` error; undefined for anything else. */
+export function parseSetupNeeded(err: unknown): SetupNeeded | undefined {
+	if (err instanceof SetupNeeded) return err;
+	const text = err instanceof Error ? err.message : String(err);
+	const m = /^SETUP_NEEDED:([a-z,-]+)/.exec(text);
+	if (!m) return undefined;
+	const missing = (m[1] ?? "").split(",").filter((x): x is SetupComponent => x === "node" || x === "pi-agent");
+	return missing.length ? new SetupNeeded(missing, text) : undefined;
+}
+
 /** Start (or reuse) the bundled local server and return its address with the one-time token. */
 export async function startLocal(): Promise<BackendTarget> {
 	const { invoke } = await import("@tauri-apps/api/core");
-	const info = await invoke<{ port: number; token: string } | null>("start_local_backend");
+	let info: { port: number; token: string } | null;
+	try {
+		info = await invoke<{ port: number; token: string } | null>("start_local_backend");
+	} catch (err) {
+		throw parseSetupNeeded(err) ?? (err instanceof Error ? err : new Error(String(err)));
+	}
 	if (!info) throw new Error("local mode unavailable");
 	return { ...targetFromUrl(`http://127.0.0.1:${info.port}`, info.token), label: "local" };
 }

@@ -134,21 +134,6 @@ fn server_entry(app: &tauri::AppHandle) -> Option<PathBuf> {
     None
 }
 
-/// The Node runtime shipped inside the installer (`node/` resource, see scripts/bundle-node.ts).
-#[cfg(not(target_os = "android"))]
-fn bundled_node(app: &tauri::AppHandle) -> Option<PathBuf> {
-    // Windows keeps node.exe at the top (npm.cmd looks for node_modules beside it); Unix uses bin/ + lib/.
-    let root = strip_verbatim(app.path().resource_dir().ok()?.join("node"));
-    let p = if cfg!(windows) { root.join(NODE_EXE) } else { root.join("bin").join(NODE_EXE) };
-    #[cfg(unix)]
-    if p.is_file() && !is_executable(&p) {
-        // Resource copying can drop the exec bit; restore it rather than fail to start.
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755));
-    }
-    is_executable(&p).then_some(p)
-}
-
 /// What to run and how: the runtime, the server script, extra environment and an optional working directory.
 struct Launch {
     node: PathBuf,
@@ -227,48 +212,76 @@ fn node_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-/// Locates a `node` binary. `PROMETHEUS_NODE` wins, then the runtime bundled in the installer; only when that
-/// is missing (dev builds, stripped installs) does it search PATH and the usual install locations.
-/// Returns the binary and the extra directories that should be prepended to the child PATH.
+/// The oldest Node the server runs on (the same floor as `engines` in package.json).
 #[cfg(not(target_os = "android"))]
-fn resolve_node(bundled: Option<PathBuf>) -> Result<(PathBuf, Vec<PathBuf>, Vec<PathBuf>), String> {
+const MIN_NODE: (u32, u32) = (22, 19);
+
+/// `v22.19.0` -> (22, 19).
+#[cfg(not(target_os = "android"))]
+fn parse_node_version(text: &str) -> Option<(u32, u32)> {
+    let mut parts = text.trim().trim_start_matches('v').split('.');
+    Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
+}
+
+/// Asks the binary for its version: a stale `node` from years ago would otherwise fail later with a confusing syntax error.
+#[cfg(not(target_os = "android"))]
+fn node_is_new_enough(node: &std::path::Path) -> bool {
+    let mut cmd = Command::new(node);
+    cmd.arg("--version").stdin(Stdio::null()).stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+    let Ok(out) = cmd.output() else { return false };
+    out.status.success() && parse_node_version(&String::from_utf8_lossy(&out.stdout)).is_some_and(|v| v >= MIN_NODE)
+}
+
+/// A suitable Node already on this machine (PATH, then the usual install locations), with the directories its shims need on PATH.
+#[cfg(not(target_os = "android"))]
+pub(crate) fn system_node() -> Option<(PathBuf, Vec<PathBuf>)> {
+    let mut tried: Vec<String> = Vec::new();
+    if let Some(found) = find_node_in(std::env::var_os("PATH"), &mut tried) {
+        if node_is_new_enough(&found) {
+            return Some((found, node_dirs()));
+        }
+    }
+    node_dirs().into_iter().map(|d| d.join(NODE_EXE)).find(|c| is_executable(c) && node_is_new_enough(c)).map(|c| (c, node_dirs()))
+}
+
+/// Locates the `node` that runs the server. `PROMETHEUS_NODE` wins, then the runtime installed from the app, then one the
+/// machine already has. The installer ships none: with nothing usable the error asks the UI to offer the install
+/// (`SETUP_NEEDED:node`, see `setup_needed`). Returns the binary and the directories to prepend to the child PATH.
+#[cfg(not(target_os = "android"))]
+fn resolve_node(app: &tauri::AppHandle) -> Result<(PathBuf, Vec<PathBuf>), String> {
     if let Some(custom) = std::env::var_os("PROMETHEUS_NODE").filter(|v| !v.is_empty()) {
         let p = PathBuf::from(custom);
         // A bare name is left to the OS path search; an explicit path is checked before we try to run it.
         if p.components().count() > 1 && !is_executable(&p) {
             return Err(format!("PROMETHEUS_NODE 指向的 Node 不可执行：{}", p.display()));
         }
-        return Ok((p, Vec::new(), Vec::new()));
+        return Ok((p, Vec::new()));
     }
-    if let Some(node) = bundled {
-        // npm and npx sit next to the bundled node; appended, so a tool the user installed still wins.
-        let dir = node.parent().map(PathBuf::from).into_iter().collect();
-        return Ok((node, Vec::new(), dir));
+    if let Some(node) = runtimes::installed_node(app).filter(|p| is_executable(p)) {
+        return Ok((node, Vec::new()));
     }
-    // `Command::new("node")` lets the OS search PATH, which keeps Windows working the way it always has.
-    if cfg!(windows) {
-        return Ok((PathBuf::from(NODE_EXE), Vec::new(), Vec::new()));
+    if let Some((node, dirs)) = system_node() {
+        return Ok((node, dirs));
     }
-    let mut tried: Vec<String> = Vec::new();
-    if let Some(found) = find_node_in(std::env::var_os("PATH"), &mut tried) {
-        return Ok((found, node_dirs(), Vec::new()));
-    }
-    for dir in node_dirs() {
-        let candidate = dir.join(NODE_EXE);
-        tried.push(candidate.display().to_string());
-        if is_executable(&candidate) {
-            return Ok((candidate, node_dirs(), Vec::new()));
-        }
-    }
-    Err(format!(
-        "找不到 Node（node）：GUI 启动的 Prometheus 拿不到终端里的 PATH。请安装 Node ≥ 22.19，或在设置里把 PROMETHEUS_NODE 指向 node 的完整路径。已尝试：{}",
-        tried.join("、")
-    ))
+    Err(setup_needed(&["node"]))
+}
+
+/// The error the UI recognises as "components have to be installed first" rather than a crash:
+/// `SETUP_NEEDED:node,pi-agent` on the first line (runtime ids, see runtimes.json), a plain-language note after it.
+#[cfg(not(target_os = "android"))]
+fn setup_needed(missing: &[&str]) -> String {
+    let names: Vec<&str> = missing.iter().map(|m| if *m == "node" { "Node.js（≥ 22.19）" } else { "PI Agent" }).collect();
+    format!("SETUP_NEEDED:{}\n安装包不再自带运行环境，需要先安装：{}", missing.join(","), names.join("、"))
 }
 
 /// Homebrew and version managers put node outside the PATH a GUI launch inherits, so the child gets
 /// those directories prepended: npm, npx and any tool the agent runs then resolve too.
-/// `append` goes last (the bundled runtime's directory, which must not shadow the user's own tools).
+/// `append` goes last, after the inherited PATH (nothing uses it for now; the installer no longer ships a Node).
 #[cfg(not(target_os = "android"))]
 fn node_env(prepend: Vec<PathBuf>, append: Vec<PathBuf>) -> Vec<(&'static str, std::ffi::OsString)> {
     if prepend.is_empty() && append.is_empty() {
@@ -288,12 +301,29 @@ fn node_env(prepend: Vec<PathBuf>, append: Vec<PathBuf>) -> Vec<(&'static str, s
 #[cfg(not(target_os = "android"))]
 fn launch_target(app: &tauri::AppHandle) -> Result<Launch, String> {
     let entry = server_entry(app).ok_or("找不到 Prometheus 服务端入口（可设置 PROMETHEUS_SERVER_ENTRY）")?;
-    let (node, mut prepend, append) = resolve_node(bundled_node(app))?;
+    // Everything the installer leaves out is reported at once, so the UI can offer one install for all of it.
+    let node = match resolve_node(app) {
+        Ok(found) => Some(found),
+        Err(e) if e.starts_with("SETUP_NEEDED:") => None,
+        Err(e) => return Err(e),
+    };
+    // The installer does not carry the PI agent either (a bundle that does not has `pi-requirements.json` beside it): it
+    // lives in the app's own folder once installed, and the server's launcher resolves `@earendil-works/*` from there.
+    let needs_pi = entry.parent().is_some_and(|d| d.join("pi-requirements.json").is_file());
+    let pi = if needs_pi { runtimes::pi_dir(app) } else { None };
+    let missing: Vec<&str> = [node.is_none().then_some("node"), (needs_pi && pi.is_none()).then_some("pi-agent")].into_iter().flatten().collect();
+    if !missing.is_empty() {
+        return Err(setup_needed(&missing));
+    }
+    let (node, mut prepend) = node.expect("checked above");
     // Runtimes the user installed from the app win over whatever else is on PATH.
-    let (rt_bins, extra_env) = runtimes::desktop_env(app);
+    let (rt_bins, mut extra_env) = runtimes::desktop_env(app);
     prepend.splice(0..0, rt_bins);
+    if let Some(dir) = pi {
+        extra_env.push(("PROMETHEUS_PI_DIR".to_string(), dir.into_os_string()));
+    }
     let cwd = if std::env::var_os("PROMETHEUS_CWD").is_none() { app.path().home_dir().ok() } else { None };
-    Ok(Launch { node, entry, env: node_env(prepend, append), extra_env, cwd })
+    Ok(Launch { node, entry, env: node_env(prepend, Vec::new()), extra_env, cwd })
 }
 
 #[cfg(target_os = "android")]
@@ -621,6 +651,22 @@ mod tests {
         assert_eq!(find_node_in(Some(path), &mut tried), Some(node));
         assert_eq!(tried.len(), 2);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn node_versions_are_compared_by_major_and_minor() {
+        assert_eq!(parse_node_version("v22.19.0\n"), Some((22, 19)));
+        assert!(parse_node_version("v22.23.4").unwrap() >= MIN_NODE);
+        assert!(parse_node_version("v20.18.1").unwrap() < MIN_NODE);
+        assert!(parse_node_version("v22.9.0").unwrap() < MIN_NODE);
+        assert_eq!(parse_node_version("not node"), None);
+    }
+
+    #[test]
+    fn setup_errors_name_the_missing_runtimes() {
+        let e = setup_needed(&["node", "pi-agent"]);
+        assert!(e.starts_with("SETUP_NEEDED:node,pi-agent\n"), "{e}");
+        assert!(setup_needed(&["pi-agent"]).starts_with("SETUP_NEEDED:pi-agent\n"));
     }
 
     #[test]

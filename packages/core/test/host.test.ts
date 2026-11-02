@@ -246,6 +246,14 @@ describe("PrometheusHost RPC (characterization)", () => {
 		expect((await host.call("settings.set", { defaultAgent: "pi" })).defaultAgent).toBe("pi");
 	});
 
+	it("settings.set stores the default permission mode of new chats and rejects unknown ones", async () => {
+		expect((await host.call("settings.get", {})).defaultPermission).toBe("default");
+		expect((await host.call("settings.set", { defaultPermission: "plan" })).defaultPermission).toBe("plan");
+		expect((await host.call("settings.get", {})).defaultPermission).toBe("plan");
+		await expect(host.call("settings.set", { defaultPermission: "yolo" as never })).rejects.toMatchObject({ code: "unknownPermissionMode" });
+		expect((await host.call("settings.set", { defaultPermission: "default" })).defaultPermission).toBe("default");
+	});
+
 	it("session.delete removes a saved session and its file", async () => {
 		const seeded = seedSession("delete me");
 		await host.call("session.open", { sessionId: seeded.id });
