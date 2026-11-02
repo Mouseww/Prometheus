@@ -59,6 +59,14 @@ describe("sessionExists", () => {
 		expect(await plugins().sessionExists(sessionId)).toBe(true);
 		expect(await plugins().sessionExists("nope")).toBe(false);
 	});
+
+	it("a chat closed before its first message is gone: opening it must not start an unrelated session", async () => {
+		const { sessionId } = await plugins().openSession({ cwd });
+		await host.call("session.close", { sessionId });
+		// PI writes the file with the first message, so there is nothing on disk to reopen.
+		expect(await plugins().sessionExists(sessionId)).toBe(false);
+		await expect(host.call("session.open", { sessionId })).rejects.toMatchObject({ code: "sessionNotFound" });
+	});
 });
 
 describe("sessionAccess and the delegation cap", () => {

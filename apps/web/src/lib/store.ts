@@ -38,6 +38,7 @@ import type { ConnState, PrometheusClient } from "./client.ts";
 import { localizeError } from "./errors.ts";
 import { defineMessages, tr } from "./i18n.ts";
 import { noteToolResult } from "./runtimes.ts";
+import { effectiveSpace, samePath, type Space, spaceOf } from "./spaces.ts";
 
 const M = defineMessages({
 	zh: {
@@ -158,6 +159,11 @@ export interface SubagentUi {
 	known: string[];
 }
 
+const SPACE_KEY = "prometheus.space";
+function savedSpace(): Space {
+	return localStorage.getItem(SPACE_KEY) === "personal" ? "personal" : "work";
+}
+
 const SORT_KEY = "prometheus.subagentSort";
 function savedSort(): SubagentSort {
 	const v = localStorage.getItem(SORT_KEY);
@@ -176,6 +182,10 @@ interface State {
 	/** Result of a run that finished in a conversation the user was not looking at; cleared when it is opened. */
 	marks: Record<string, "done" | "error">;
 	workspaces: WorkspaceInfo[];
+	/** The space the user chose; see `useSpace` for the one actually shown (no assistant: work only). */
+	space: Space;
+	/** The assistant's home folder (null: no assistant) and its main chat, once known. */
+	assistant: { home: string; mainId: string | null } | null;
 	/** Every plugin the host knows, loaded or not; views use it to show or hide plugin-backed features. */
 	plugins: PluginInfo[];
 	hostSettings: HostSettings | null;
@@ -219,6 +229,8 @@ export const useStore = create<State>(() => ({
 	sessions: [],
 	marks: {},
 	workspaces: [],
+	space: savedSpace(),
+	assistant: null,
 	plugins: [],
 	hostSettings: null,
 	hostInfo: null,
@@ -479,9 +491,10 @@ export function handleFrame(frame: ServerFrame): void {
 			}
 			return;
 		case "plugins.changed":
-			void refreshPlugins();
+			void refreshPlugins().then(refreshAssistant);
 			return;
 		case "plugin.notify":
+			if (frame.plugin === "assistant") void refreshAssistant();
 			for (const fn of pluginListeners.get(frame.plugin) ?? []) fn();
 			return;
 		case "error":
@@ -626,6 +639,98 @@ export async function refreshPlugins(): Promise<void> {
 /** A plugin that is installed, enabled and running; its sidebar entry and chat features appear only then. */
 export function pluginActive(plugins: PluginInfo[], name: string): boolean {
 	return plugins.some((p) => p.name === name && p.status === "loaded");
+}
+
+// ---------- personal space / work space ----------
+
+/** Asks the assistant plugin where its home is. Quiet: the plugin may be off, or running without a session host. */
+export async function refreshAssistant(): Promise<void> {
+	if (!pluginActive(get().plugins, "assistant")) {
+		if (get().assistant) set({ assistant: null });
+		return;
+	}
+	const info = (await get()
+		.client?.rpc("plugin.call", { plugin: "assistant", method: "info", params: {} })
+		.catch(() => undefined)) as { home?: string; sessionId?: string | null } | undefined;
+	if (!info?.home) {
+		if (get().assistant) set({ assistant: null });
+		return;
+	}
+	const mainId = info.sessionId ?? null;
+	const cur = get().assistant;
+	if (cur?.home === info.home && cur.mainId === mainId) return;
+	set({ assistant: { home: info.home, mainId } });
+}
+
+/** The space shown now: the one chosen, or work when there is no assistant (and so no personal space). */
+export function useSpace(): Space {
+	return useStore((s) => effectiveSpace(s.space, s.assistant?.home ?? null));
+}
+
+/** Last conversation open in each space, so switching back lands where the user left off. */
+const lastInSpace: Partial<Record<Space, string>> = {};
+
+/** Open the assistant's main chat (creating it the first time). */
+export async function openAssistantMain(): Promise<void> {
+	const r = await pluginCall<{ sessionId: string }>("assistant", "main");
+	if (!r) return;
+	await openSession(r.sessionId);
+	void refreshAssistant();
+}
+
+/** Switch between the personal and the work space, reopening the conversation last used there. */
+export async function setSpace(space: Space): Promise<void> {
+	const { assistant } = get();
+	const home = assistant?.home ?? null;
+	if (!home && space === "personal") return;
+	const from = effectiveSpace(get().space, home);
+	if (from === space) {
+		set({ view: "chat" });
+		return;
+	}
+	const current = get().session;
+	if (current && current.messages.length > 0) lastInSpace[from] = current.id;
+	set({ space, view: "chat" });
+	localStorage.setItem(SPACE_KEY, space);
+	const here = get().sessions.filter((s) => !s.archived && spaceOf(s.cwd, home) === space);
+	const target = here.find((s) => s.id === lastInSpace[space]) ?? (space === "personal" ? here.find((s) => s.id === assistant?.mainId) : here[0]);
+	if (target) await openSession(target.id);
+	else if (space === "personal") await openAssistantMain();
+	else {
+		// The new-chat page keeps a blank chat it is already on, and the blank one here belongs to the other space:
+		// a first message typed now would land in it. Let go of it so the page starts from a workspace choice.
+		const blank = get().session;
+		if (blank && blank.messages.length === 0 && !blank.pending && !blank.isStreaming && spaceOf(blank.cwd, home) !== space) {
+			get().client?.unsubscribe(blank.id);
+			set({ session: null, commands: [] });
+		}
+		startNewChat();
+	}
+}
+
+/** New personal conversation: no folder to choose, it lives in the assistant's home. */
+export async function startPersonalChat(): Promise<void> {
+	const home = get().assistant?.home;
+	if (!home) return;
+	const current = get().session;
+	// Already on a blank personal chat: stay. The main chat does not count, it is not "a new one".
+	if (current && current.messages.length === 0 && !current.pending && samePath(current.cwd, home) && current.id !== get().assistant?.mainId) {
+		set({ view: "chat" });
+		return;
+	}
+	startNewChat();
+	await chooseWorkspace(home);
+}
+
+/** Opening a conversation from elsewhere (the pet, a notification, a search) shows the space it belongs to. */
+function followSession(s: State, prev: State): void {
+	if (!s.session || s.session.id === prev.session?.id) return;
+	const home = s.assistant?.home;
+	if (!home) return;
+	const space = spaceOf(s.session.cwd, home);
+	if (space === s.space) return;
+	localStorage.setItem(SPACE_KEY, space);
+	useStore.setState({ space });
 }
 
 const pluginListeners = new Map<string, Set<() => void>>();
@@ -924,6 +1029,8 @@ async function leaveSession(sessionId: string): Promise<void> {
 	await refreshSessions();
 	const next = get().sessions.find((s) => !s.archived && s.id !== sessionId && s.workspaceId === current.workspaceId);
 	if (next) await openSession(next.id);
+	// A personal chat has no folder to pick on the new-chat page, so go straight to a fresh one.
+	else if (spaceOf(current.cwd, get().assistant?.home ?? null) === "personal") await startPersonalChat();
 }
 
 export async function archiveSession(sessionId: string, archived: boolean): Promise<void> {
@@ -1243,6 +1350,7 @@ export async function dismissPackageJob(id: string): Promise<void> {
 export function bindClient(client: PrometheusClient): () => void {
 	set({ client, conn: client.state });
 	const offFrame = client.onFrame(handleFrame);
+	const offSpace = useStore.subscribe(followSession);
 	const offState = client.onState((conn) => {
 		set({ conn });
 		if (conn === "open") void onConnected();
@@ -1250,11 +1358,13 @@ export function bindClient(client: PrometheusClient): () => void {
 	return () => {
 		offFrame();
 		offState();
+		offSpace();
 	};
 }
 
 async function onConnected(): Promise<void> {
 	await Promise.all([refreshSessions(), refreshModels(), refreshWorkspaces(), refreshPlugins(), refreshHostSettings(), refreshHostInfo(), refreshPackageJobs(), refreshRuntimes(), refreshGateways()]);
+	await refreshAssistant();
 	const current = get().session;
 	const target = current?.id ?? (get().booted ? null : localStorage.getItem("prometheus.lastSession"));
 	const exists = target && get().sessions.some((s) => s.id === target && !s.archived);
@@ -1267,5 +1377,7 @@ async function onConnected(): Promise<void> {
 			void refreshDraftModels();
 		}
 	}
+	// The personal space has no folder to pick on the new-chat page, so it never rests there: open the main chat instead.
+	if (!get().session && effectiveSpace(get().space, get().assistant?.home ?? null) === "personal") await openAssistantMain();
 	set({ booted: true });
 }

@@ -514,6 +514,12 @@ export class PrometheusHost {
 			path = this.paths.get(sessionId);
 		}
 		if (!path) throw new AppError("sessionNotFound", { id: sessionId });
+		// PI writes the file with the first message, so a chat that was closed before anyone spoke in it has a remembered
+		// path but no file. Opening that path would silently start an unrelated new session in the default folder.
+		if (!existsSync(path)) {
+			this.paths.delete(sessionId);
+			throw new AppError("sessionNotFound", { id: sessionId });
+		}
 		return path;
 	}
 

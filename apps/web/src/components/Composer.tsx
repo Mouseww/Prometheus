@@ -6,7 +6,7 @@ import { defineMessages, useT } from "../lib/i18n.ts";
 import { type Attachment, AttachmentError, fileToAttachment, formatSize, isPicture, MAX_FILE_MB, MAX_FILES } from "../lib/attachments.ts";
 import { fileToImage, ImageError, imageSrc, MAX_IMAGES } from "../lib/images.ts";
 import { type SendMode, setPrefs, usePrefs } from "../lib/prefs.ts";
-import { abortRun, openSettings, pluginCall, sendPrompt, setModel, setPermissionMode, setThinking, toast, unqueue, useStore } from "../lib/store.ts";
+import { abortRun, openSettings, pluginCall, sendPrompt, setModel, setPermissionMode, setThinking, toast, unqueue, useSpace, useStore } from "../lib/store.ts";
 import { ContextMeter } from "./ContextMeter.tsx";
 import { ModePicker } from "./ModePicker.tsx";
 import { RuntimeMenu } from "./RuntimeMenu.tsx";
@@ -16,7 +16,7 @@ import { VoiceButton } from "./VoiceButton.tsx";
 import { usePopover } from "./TitleBar.tsx";
 import { BranchPicker } from "./BranchPicker.tsx";
 import { SessionChanges } from "./SessionChanges.tsx";
-import { WorkspaceChip, WorkspacePicker } from "./WorkspacePicker.tsx";
+import { PersonalChip, WorkspaceChip, WorkspacePicker } from "./WorkspacePicker.tsx";
 
 const M = defineMessages({
 	zh: {
@@ -337,6 +337,7 @@ function EffortPicker() {
 
 export function Composer({ newChat = false }: { newChat?: boolean }) {
 	const t = useT(M);
+	const personalSpace = useSpace() === "personal";
 	const session = useStore((s) => s.session);
 	const commands = useStore((s) => s.commands);
 	const editorText = useStore((s) => s.editorText);
@@ -674,7 +675,9 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 			<SessionChanges />
 
 			<div className="mb-2 px-1">
-				{newChat ? (
+				{newChat && personalSpace ? (
+					<PersonalChip />
+				) : newChat ? (
 					<WorkspacePicker>
 						<BranchPicker />
 					</WorkspacePicker>

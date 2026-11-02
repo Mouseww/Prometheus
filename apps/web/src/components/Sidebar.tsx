@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Collapse } from "./ui.tsx";
+import { Collapse, Flame } from "./ui.tsx";
 import { confirmDialog, promptDialog } from "../lib/dialogs.ts";
 import {
 	Archive,
@@ -21,7 +21,6 @@ import {
 	Plus,
 	PuzzleIcon,
 	Settings,
-	Sparkles,
 	Trash2,
 	X,
 } from "lucide-react";
@@ -33,7 +32,9 @@ import type { BackendTarget } from "../lib/client.ts";
 import { localizeError } from "../lib/errors.ts";
 import { defineMessages, relativeTime, useT } from "../lib/i18n.ts";
 import { usePrefs } from "../lib/prefs.ts";
+import { groupByAge, type AgeGroup, spaceOf } from "../lib/spaces.ts";
 import { PlatformSwitcher } from "./PlatformSwitcher.tsx";
+import { SpaceSwitcher } from "./SpaceSwitcher.tsx";
 import {
 	addWorkspace,
 	archiveSession,
@@ -44,7 +45,9 @@ import {
 	prefetchSession,
 	openSettings,
 	pluginActive,
-	pluginCall,
+	openAssistantMain,
+	startPersonalChat,
+	useSpace,
 	renameSession,
 	setView,
 	startNewChat,
@@ -69,8 +72,13 @@ const M = defineMessages({
 		newChat: "在此工作区新建对话",
 		newSession: "新会话",
 		startChat: "新对话",
-		assistant: "个人助理",
-		assistantHint: "一条长期的对话：它有自己的家，需要时把活派到你的项目里",
+		mainThread: "主线 · 普罗",
+		mainThreadHint: "助理的长期对话：它有自己的家，需要时把活派到你的项目里",
+		conversations: "对话",
+		ageToday: "今天",
+		ageWeek: "近 7 天",
+		ageEarlier: "更早",
+		noConversations: "还没有个人对话，点上面的「新对话」开始",
 		messages: "{n} 条",
 		archived: "已归档 ({n})",
 		rename: "重命名",
@@ -103,8 +111,13 @@ const M = defineMessages({
 		newChat: "New chat in this workspace",
 		newSession: "New chat",
 		startChat: "New chat",
-		assistant: "Personal assistant",
-		assistantHint: "One long-running chat: it has a home of its own and hands work to your projects when needed",
+		mainThread: "Main · Pro",
+		mainThreadHint: "The assistant's long-running chat: it has a home of its own and hands work to your projects when needed",
+		conversations: "Chats",
+		ageToday: "Today",
+		ageWeek: "Last 7 days",
+		ageEarlier: "Earlier",
+		noConversations: "No personal chats yet. Press New chat above to start",
 		messages: "{n} msgs",
 		archived: "Archived ({n})",
 		rename: "Rename",
@@ -462,10 +475,68 @@ function WorkspaceGroup({ w, sessions, activeId, current }: { w: WorkspaceInfo; 
 	);
 }
 
+const AGE_LABEL: Record<AgeGroup, "ageToday" | "ageWeek" | "ageEarlier"> = { today: "ageToday", week: "ageWeek", earlier: "ageEarlier" };
+
+/** Personal space: one row per conversation. The assistant's main chat is pinned on top, the rest are grouped by age. */
+function PersonalList({ sessions, mainId, activeId }: { sessions: SessionSummary[]; mainId: string | null; activeId?: string }) {
+	const t = useT(M);
+	const [showArchived, setShowArchived] = useState(false);
+	const main = sessions.find((s) => s.id === mainId);
+	const live = sessions.filter((s) => !s.archived && s.id !== mainId);
+	const archived = sessions.filter((s) => s.archived && s.id !== mainId);
+	const groups = useMemo(() => groupByAge(live), [live]);
+	const mainActive = Boolean(mainId) && mainId === activeId;
+	return (
+		<div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+			<button
+				type="button"
+				title={t("mainThreadHint")}
+				onClick={() => void (main ? openSession(main.id) : openAssistantMain())}
+				className={clsx(
+					"mb-1 flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors",
+					mainActive ? "border-ember-500/40 bg-ember-500/10" : "border-ember-500/15 bg-ember-500/[0.04] hover:bg-ember-500/10",
+				)}
+			>
+				<Flame className="size-4 shrink-0" />
+				<span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink-100">{t("mainThread")}</span>
+				{main?.running && <span className="size-1.5 animate-breathe rounded-full bg-amber-400" />}
+			</button>
+			{groups.length === 0 && archived.length === 0 && <div className="px-3 py-3 text-xs text-ink-600">{t("noConversations")}</div>}
+			{groups.map((g) => (
+				<div key={g.key} className="mt-2">
+					<div className="px-2 pb-1 font-mono text-[10.5px] tracking-[0.18em] text-ink-500 uppercase">{t(AGE_LABEL[g.key])}</div>
+					<div className="space-y-0.5">
+						{g.items.map((s) => (
+							<SessionRow key={s.id} s={s} active={s.id === activeId} />
+						))}
+					</div>
+				</div>
+			))}
+			{archived.length > 0 && (
+				<>
+					<button type="button" onClick={() => setShowArchived(!showArchived)} className="mt-2 flex items-center gap-1 px-2 py-1 text-[11px] text-ink-500 hover:text-ink-300">
+						{showArchived ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+						<Archive className="size-3" /> {t("archived", { n: archived.length })}
+					</button>
+					<Collapse open={showArchived}>
+						{archived.map((s) => (
+							<SessionRow key={s.id} s={s} active={s.id === activeId} />
+						))}
+					</Collapse>
+				</>
+			)}
+		</div>
+	);
+}
+
 export function Sidebar({ target, onDisconnect }: { target: BackendTarget; onDisconnect: () => void }) {
 	const t = useT(M);
 	const sessions = useStore((s) => s.sessions);
-	const workspaces = useStore((s) => s.workspaces);
+	const allWorkspaces = useStore((s) => s.workspaces);
+	const assistant = useStore((s) => s.assistant);
+	const space = useSpace();
+	// The assistant's home is the personal space, not a project: it never shows up in the project list.
+	const workspaces = useMemo(() => allWorkspaces.filter((w) => spaceOf(w.path, assistant?.home ?? null) === "work"), [allWorkspaces, assistant]);
 	const active = useStore((s) => s.session);
 	// The row clicked lights up at once, before its contents arrive.
 	const openingId = useStore((s) => s.opening?.id);
@@ -485,6 +556,7 @@ export function Sidebar({ target, onDisconnect }: { target: BackendTarget; onDis
 		for (const s of sessions) map.set(s.workspaceId, [...(map.get(s.workspaceId) ?? []), s]);
 		return map;
 	}, [sessions]);
+	const personal = useMemo(() => (assistant ? sessions.filter((s) => spaceOf(s.cwd, assistant.home) === "personal") : []), [sessions, assistant]);
 
 	const nav = [
 		{ view: "knowledge" as const, label: t("knowledge"), icon: BookOpen },
@@ -495,33 +567,24 @@ export function Sidebar({ target, onDisconnect }: { target: BackendTarget; onDis
 	// Plugin-backed entries come and go as plugins are switched on and off, with no restart.
 	const tools = [
 		...(pluginActive(plugins, "automations") ? [{ view: "automations" as const, label: t("automations"), icon: AlarmClock }] : []),
-		...(pluginActive(plugins, "git") ? [{ view: "git" as const, label: t("git"), icon: GitBranch }] : []),
+		...(space === "work" && pluginActive(plugins, "git") ? [{ view: "git" as const, label: t("git"), icon: GitBranch }] : []),
 	];
 
 	return (
 		<aside className="flex w-72 shrink-0 flex-col border-r hairline bg-ink-950/60 backdrop-blur max-md:w-full max-md:bg-ink-950">
 			<div className="px-2 pt-3">
+				{assistant && (
+					<div className="mb-2">
+						<SpaceSwitcher />
+					</div>
+				)}
 				<button
 					type="button"
-					onClick={startNewChat}
+					onClick={() => void (space === "personal" ? startPersonalChat() : startNewChat())}
 					className="flex w-full items-center gap-2 rounded-lg border border-ink-700 px-3 py-2 text-sm font-medium text-ink-100 transition-colors hover:border-ember-500/50 hover:bg-ink-850"
 				>
 					<Plus className="size-4 text-ember-400" /> {t("startChat")}
 				</button>
-				{pluginActive(plugins, "assistant") && (
-					<button
-						type="button"
-						title={t("assistantHint")}
-						onClick={async () => {
-							const r = await pluginCall<{ sessionId: string }>("assistant", "main");
-							if (r) await openSession(r.sessionId);
-						}}
-						className={clsx(navClass(false), "mt-1")}
-					>
-						<Sparkles className="size-4 text-ember-400" />
-						{t("assistant")}
-					</button>
-				)}
 				{tools.length > 0 && (
 					<div className="mt-1 space-y-0.5">
 						{tools.map((n) => (
@@ -533,6 +596,13 @@ export function Sidebar({ target, onDisconnect }: { target: BackendTarget; onDis
 					</div>
 				)}
 			</div>
+			{space === "personal" ? (
+				<>
+					<div className="px-4 pt-3 pb-1.5 font-mono text-[10.5px] tracking-[0.18em] text-ink-500 uppercase">{t("conversations")}</div>
+					<PersonalList sessions={personal} mainId={assistant?.mainId ?? null} activeId={openingId ?? active?.id} />
+				</>
+			) : (
+				<>
 			<div className="flex items-center justify-between px-3 pt-3 pb-1.5">
 				<span className="px-1 font-mono text-[10.5px] tracking-[0.18em] text-ink-500 uppercase">{t("workspaces")}</span>
 				<div className="flex items-center gap-0.5">
@@ -561,6 +631,8 @@ export function Sidebar({ target, onDisconnect }: { target: BackendTarget; onDis
 					<WorkspaceGroup key={w.id} w={w} sessions={grouped.get(w.id) ?? []} activeId={openingId ?? active?.id} current={active?.workspaceId === w.id} />
 				))}
 			</div>
+				</>
+			)}
 
 			<nav className="space-y-0.5 border-t hairline px-2 py-2">
 				{nav.map((n) => (

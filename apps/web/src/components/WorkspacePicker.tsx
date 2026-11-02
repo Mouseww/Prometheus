@@ -1,8 +1,9 @@
 import clsx from "clsx";
-import { Check, ChevronDown, FolderOpen, FolderPlus } from "lucide-react";
-import { useState } from "react";
+import { Check, ChevronDown, FolderOpen, FolderPlus, User } from "lucide-react";
+import { useMemo, useState } from "react";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { addWorkspace, chooseWorkspace, useStore } from "../lib/store.ts";
+import { spaceOf } from "../lib/spaces.ts";
+import { addWorkspace, chooseWorkspace, useSpace, useStore } from "../lib/store.ts";
 import { FolderPicker } from "./FolderPicker.tsx";
 import { usePopover } from "./TitleBar.tsx";
 
@@ -11,18 +12,23 @@ const M = defineMessages({
 		pick: "选择工作区",
 		add: "添加工作区…",
 		none: "还没有工作区",
+		personal: "个人空间",
 	},
 	en: {
 		pick: "Choose workspace",
 		add: "Add workspace…",
 		none: "No workspaces yet",
+		personal: "Personal space",
 	},
 });
 
 /** Workspace chooser shown above the composer on the new-chat page; the last entry opens the folder browser. */
 export function WorkspacePicker({ children }: { children?: React.ReactNode }) {
 	const t = useT(M);
-	const workspaces = useStore((s) => s.workspaces);
+	const all = useStore((s) => s.workspaces);
+	const home = useStore((s) => s.assistant?.home ?? null);
+	// The assistant's home is the personal space, not a project to pick.
+	const workspaces = useMemo(() => all.filter((w) => spaceOf(w.path, home) === "work"), [all, home]);
 	const currentId = useStore((s) => s.session?.workspaceId);
 	const { open, setOpen, ref } = usePopover();
 	// Kept outside the popover: the folder dialog is a portal, so a click inside it would count as "outside" and unmount it.
@@ -104,12 +110,25 @@ export function WorkspacePicker({ children }: { children?: React.ReactNode }) {
 
 /** Read-only workspace label for an existing conversation (the workspace can't change mid-chat). */
 export function WorkspaceChip() {
+	const space = useSpace();
 	const active = useStore((s) => s.workspaces.find((w) => w.id === s.session?.workspaceId));
+	if (space === "personal") return <PersonalChip />;
 	if (!active) return null;
 	return (
 		<span className="flex max-w-52 shrink-0 items-center gap-1.5 px-2 py-1 text-xs text-ink-400" title={active.path}>
 			<FolderOpen className="size-3.5 shrink-0" />
 			<span className="truncate">{active.name}</span>
+		</span>
+	);
+}
+
+/** Stands in for the workspace chooser in the personal space: there is no folder to pick, the chat lives in the assistant's home. */
+export function PersonalChip() {
+	const t = useT(M);
+	return (
+		<span className="flex shrink-0 items-center gap-1.5 px-2 py-1 text-xs text-ink-400">
+			<User className="size-3.5 shrink-0 text-ember-400" />
+			<span>{t("personal")}</span>
 		</span>
 	);
 }

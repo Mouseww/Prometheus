@@ -36,6 +36,14 @@ export default definePlugin({
 			return { sessionId, home: home.dir };
 		});
 
+		// What the app needs to tell the personal space from the work space: the home folder, and the main chat if it exists.
+		// Unlike `main` this creates nothing, so asking is free.
+		ctx.rpc("info", async () => {
+			const saved = (await store.read()).sessionId;
+			const alive = saved ? await ctx.sessionExists(saved) : false;
+			return { home: home.dir, sessionId: alive ? saved : null };
+		});
+
 		const delegateDeps: DelegateDeps = {
 			homeDir: home.dir,
 			workspaces: () => ctx.workspaces(),

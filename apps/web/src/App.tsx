@@ -20,7 +20,7 @@ import { UpdateDialog } from "./components/UpdateDialog.tsx";
 import type { BackendTarget } from "./lib/client.ts";
 import { PrometheusClient } from "./lib/client.ts";
 import { clearSession, discoverBackend, establishCookie, isDesktopShell, saveMode, saveSession } from "./lib/backend.ts";
-import { bindClient, openSession, pluginActive, setView, useStore } from "./lib/store.ts";
+import { bindClient, openSession, pluginActive, setSpace, setView, useStore } from "./lib/store.ts";
 import { CONNECT_EVENT } from "./lib/platforms.ts";
 import { usePrefs } from "./lib/prefs.ts";
 import { checkForUpdate } from "./lib/updater.ts";
@@ -70,6 +70,19 @@ export function App() {
 		)
 			setView("chat");
 	}, [view, plugins]);
+
+	// Ctrl/Cmd+1 personal space, Ctrl/Cmd+2 work space.
+	useEffect(() => {
+		const onKey = (e: KeyboardEvent) => {
+			if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+			if (e.key !== "1" && e.key !== "2") return;
+			if (!useStore.getState().assistant) return;
+			e.preventDefault();
+			void setSpace(e.key === "1" ? "personal" : "work");
+		};
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, []);
 
 	useEffect(() => {
 		discoverBackend().then(setTarget, (err: unknown) => {
