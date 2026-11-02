@@ -517,6 +517,8 @@ pub fn run() {
             runtimes::pm_uninstall,
             tray::set_close_to_tray,
             tray::show_main_window,
+            tray::tray_menu_action,
+            tray::tray_menu_close,
             tray::reveal_main_window,
             tray::open_session_in_main,
         ]);
