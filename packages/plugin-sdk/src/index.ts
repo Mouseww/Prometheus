@@ -86,12 +86,33 @@ export interface AgentRunOptions {
 	/** Default 30 minutes. */
 	timeoutMs?: number;
 	signal?: AbortSignal;
+	/**
+	 * The session this run is done on behalf of (a delegation). The host caps `access` at what that session may do
+	 * itself, so a plugin cannot hand out more than it was given. An unknown id counts as read-only.
+	 */
+	parentSessionId?: string;
+	/**
+	 * Continue this existing session instead of starting a new one (it must be idle). For the length of the run it is
+	 * unattended with `access`; afterwards it goes back to how it was. `cwd` is ignored.
+	 */
+	sessionId?: string;
+}
+
+export interface OpenSessionOptions {
+	/** Working directory; must exist. It is added to the workspace list. */
+	cwd: string;
+	name?: string;
+	/** Sent as the first message without waiting for the answer. The user is present: questions go to whoever has the chat open. */
+	prompt?: string;
+	model?: ModelRef;
 }
 
 export interface AgentRunResult {
 	/** The saved session, openable from the sidebar. */
 	sessionId: string;
 	status: "success" | "error" | "aborted";
+	/** What the run was actually allowed (after capping by `parentSessionId`). */
+	access: RunAccess;
 	/** The agent's final reply. */
 	text: string;
 	error?: string;
@@ -268,6 +289,10 @@ export interface PluginContext {
 	workspaces(): Promise<WorkspaceRef[]>;
 	/** Run the agent to completion without a user present, in a new saved session. Server host only. */
 	runAgent(options: AgentRunOptions): Promise<AgentRunResult>;
+	/** Start a saved session the user can open and talk to, like "new chat". Server host only. */
+	openSession(options: OpenSessionOptions): Promise<{ sessionId: string }>;
+	/** What the session may hand on to a delegated run right now (see `parentSessionId`). Unknown sessions: read-only. */
+	sessionAccess(sessionId: string): RunAccess;
 
 	/** Contribute a PI extension: tools, commands, providers, lifecycle hooks. */
 	extension(factory: ExtensionFactory): void;

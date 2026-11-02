@@ -6,6 +6,7 @@ import type { ExtensionAPI, InlineExtension, ToolDefinition } from "@earendil-wo
 import type {
 	AgentRunOptions,
 	AgentRunResult,
+	OpenSessionOptions,
 	ContextProvider,
 	GatewayTrafficHooks,
 	ResponseRewriter,
@@ -23,7 +24,7 @@ import type {
 	StreamPublishOptions,
 	WorkspaceRef,
 } from "@prometheus/plugin-sdk";
-import { AppError, encodeError, type GatewayConfig, type PanelInfo, type PluginFile, type PluginInfo, type PluginInstallResult } from "@prometheus/protocol";
+import { AppError, encodeError, type GatewayConfig, type PanelInfo, type PluginFile, type PluginInfo, type PluginInstallResult, type RunAccess } from "@prometheus/protocol";
 import { type Captured, type CapturedCommand, captureExtension, type Handler, HOOK_NAMES, type HookName } from "./agent/facade/pi-facade.ts";
 
 export interface PluginRoute {
@@ -199,6 +200,10 @@ export class PluginHost {
 	runAgent: (options: AgentRunOptions) => Promise<AgentRunResult> = async () => {
 		throw new AppError("pluginBackgroundUnsupported");
 	};
+	openSession: (options: OpenSessionOptions) => Promise<{ sessionId: string }> = async () => {
+		throw new AppError("pluginBackgroundUnsupported");
+	};
+	sessionAccess: (sessionId: string) => RunAccess = () => "readonly";
 	onChanged: () => void = () => {};
 	/** Wired by the server: pushes a `plugin.notify` frame for one plugin. */
 	notifyPlugin: (plugin: string) => void = () => {};
@@ -710,6 +715,8 @@ export class PluginHost {
 			gateways: () => this.options.gateways(),
 			workspaces: () => this.workspaces(),
 			runAgent: (options) => this.runAgent(options),
+			openSession: (options) => this.openSession(options),
+			sessionAccess: (id) => this.sessionAccess(id),
 			extension: (factory) => {
 				reg.factories.push(factory);
 			},

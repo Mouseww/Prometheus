@@ -4,7 +4,7 @@ import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { DEFAULT_CATALOG_URL, listModels, matchModelDefaults, mergeGatewayUpdate, type ModelCatalog, parseModelCatalog, redactGateway } from "@prometheus/gateway";
-import type { AgentRunOptions, AgentRunResult, PrometheusPlugin, StreamPublishOptions } from "@prometheus/plugin-sdk";
+import type { AgentRunOptions, AgentRunResult, OpenSessionOptions, PrometheusPlugin, StreamPublishOptions } from "@prometheus/plugin-sdk";
 import {
 	type AgentProfile,
 	type AgentUpdateInfo,
@@ -37,6 +37,7 @@ import {
 	type SessionSnapshot,
 	type SessionSummary,
 	type UIRequest,
+	type RunAccess,
 } from "@prometheus/protocol";
 import { ToolBus } from "./agent/bus/tool-bus.ts";
 import { bundledClaudeBinary, bundledClaudeVersion, ClaudeCodeRuntime } from "./agent/claude-code/cc-runtime.ts";
@@ -66,6 +67,7 @@ import { AGENT_PACKAGES, agentEntry, agentStatuses, cliVersion, compareVersions,
 import { bootstrap, type Runtime } from "./runtime.ts";
 import { AgentStore, runClaude, runCodex, SubagentRuntime } from "@prometheus/subagents";
 import { UIBridge } from "./ui-bridge.ts";
+import { ceilingFor, clampAccess } from "./access.ts";
 import { normalizeDir, WorkspaceStore, workspaceId } from "./workspaces.ts";
 import tauriConf from "../../../apps/desktop/src-tauri/tauri.conf.json" with { type: "json" };
 
@@ -201,6 +203,8 @@ export class PrometheusHost {
 		runtime.plugins.reloadSessions = () => this.reloadSessions();
 		runtime.plugins.workspaces = async () => (await this.workspaces.list()).map((w) => ({ id: w.id, path: w.path, name: w.name }));
 		runtime.plugins.runAgent = (opts) => this.runAgent(opts);
+		runtime.plugins.openSession = (opts) => this.openSession(opts);
+		runtime.plugins.sessionAccess = (id) => this.sessionAccess(id);
 		runtime.plugins.onChanged = () => this.listener.pluginsChanged();
 		runtime.plugins.notifyPlugin = (name) => this.listener.pluginNotify(name);
 		runtime.plugins.publishPlugin = (name, topic, data, opts) => this.listener.pluginEvent?.(name, topic, data, opts);
@@ -725,20 +729,50 @@ export class PrometheusHost {
 		};
 	}
 
-	/**
-	 * Runs the agent to completion in a new saved session with no user present (automations).
-	 * Nothing is ever asked: whatever `access` does not cover is refused, so the run cannot hang.
-	 */
-	private async runAgent(options: AgentRunOptions): Promise<AgentRunResult> {
+	/** What a session may hand on to a delegated run (see AgentRunOptions.parentSessionId). */
+	private sessionAccess(sessionId: string): RunAccess {
+		const live = this.live.get(sessionId);
+		return ceilingFor(live ? { unattended: live.gate.unattended, mode: live.gate.mode } : undefined);
+	}
+
+	/** A saved chat the user can open, as if they had pressed "new chat"; the optional first message runs in the background. */
+	private async openSession(options: OpenSessionOptions): Promise<{ sessionId: string }> {
 		const dir = options.cwd?.trim();
 		if (!dir || !existsSync(dir) || !statSync(dir).isDirectory()) throw new AppError("workdirNotFound", { dir });
 		await this.workspaces.add(dir);
 		const live = await this.attach((init) => this.pi.create({ ...init, cwd: normalizeDir(dir) }));
+		if (options.name?.trim()) live.session.setName(options.name.trim());
+		if (options.model) await live.session.setModel(options.model);
+		this.listener.sessionsChanged();
+		const id = live.session.id;
+		if (options.prompt?.trim()) void this.prompt(id, options.prompt, undefined, undefined).catch(() => {});
+		return { sessionId: id };
+	}
+
+	/**
+	 * Runs the agent to completion with no user present (automations, delegations), in a new saved session, or in
+	 * an existing idle one. Nothing is ever asked: whatever `access` does not cover is refused, so the run cannot hang.
+	 */
+	private async runAgent(options: AgentRunOptions): Promise<AgentRunResult> {
+		const access = options.parentSessionId === undefined ? options.access : clampAccess(options.access, this.sessionAccess(options.parentSessionId));
+		let live: LiveSession;
+		let resumed = false;
+		if (options.sessionId) {
+			live = await this.open(options.sessionId);
+			if (live.session.isStreaming) throw new AppError("generic");
+			resumed = true;
+		} else {
+			const dir = options.cwd?.trim();
+			if (!dir || !existsSync(dir) || !statSync(dir).isDirectory()) throw new AppError("workdirNotFound", { dir });
+			await this.workspaces.add(dir);
+			live = await this.attach((init) => this.pi.create({ ...init, cwd: normalizeDir(dir) }));
+		}
 		const { session, bridge, gate } = live;
 		const id = session.id;
-		gate.unattended = options.access;
+		const before = { unattended: gate.unattended, headless: bridge.headless };
+		gate.unattended = access;
 		bridge.headless = true;
-		if (options.name?.trim()) session.setName(options.name.trim());
+		if (!resumed && options.name?.trim()) session.setName(options.name.trim());
 		this.listener.sessionsChanged();
 
 		const stop = () => void session.abort().catch(() => {});
@@ -746,20 +780,28 @@ export class PrometheusHost {
 		options.signal?.addEventListener("abort", stop, { once: true });
 		try {
 			if (options.model) await session.setModel(options.model);
+			const seen = session.messages().length;
 			await session.run({ text: options.prompt });
 			const messages = session.messages();
-			const aborted = options.signal?.aborted || messages.some((m) => (m as unknown as { stopReason?: string }).stopReason === "aborted");
+			const fresh = messages.slice(seen);
+			const aborted = options.signal?.aborted || fresh.some((m) => (m as unknown as { stopReason?: string }).stopReason === "aborted");
 			const last = messages[messages.length - 1] as unknown as { stopReason?: string; errorMessage?: string } | undefined;
-			if (aborted) return { sessionId: id, status: "aborted", text: session.lastReply(), error: encodeError(new AppError("aborted")) };
-			if (last?.stopReason === "error") return { sessionId: id, status: "error", text: session.lastReply(), error: last.errorMessage ?? encodeError(new AppError("generic")) };
-			return { sessionId: id, status: "success", text: session.lastReply() };
+			if (aborted) return { sessionId: id, status: "aborted", access, text: session.lastReply(), error: encodeError(new AppError("aborted")) };
+			if (last?.stopReason === "error") return { sessionId: id, status: "error", access, text: session.lastReply(), error: last.errorMessage ?? encodeError(new AppError("generic")) };
+			return { sessionId: id, status: "success", access, text: session.lastReply() };
 		} catch (err) {
-			return { sessionId: id, status: "error", text: session.lastReply(), error: err instanceof Error ? err.message : String(err) };
+			return { sessionId: id, status: "error", access, text: session.lastReply(), error: err instanceof Error ? err.message : String(err) };
 		} finally {
 			clearTimeout(timeout);
 			options.signal?.removeEventListener("abort", stop);
-			// Nobody is subscribed to this session; release it once saved. It stays in the sidebar from disk.
-			await this.closeSession(id).catch(() => {});
+			if (resumed) {
+				// The chat carries on as it was: the user may be looking at it.
+				gate.unattended = before.unattended;
+				bridge.headless = before.headless;
+			} else {
+				// Nobody is subscribed to this session; release it once saved. It stays in the sidebar from disk.
+				await this.closeSession(id).catch(() => {});
+			}
 			this.listener.sessionsChanged();
 		}
 	}

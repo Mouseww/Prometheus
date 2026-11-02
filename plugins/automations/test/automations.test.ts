@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AutomationInput, AutomationSchedule } from "@prometheus/protocol";
+import type { AgentRunResult } from "@prometheus/plugin-sdk";
 import { AutomationEngine, type AutomationState, validateInput } from "../src/engine.ts";
 import { catchUpDue, describeSchedule, nextRun, validateSchedule } from "../src/schedule.ts";
 
@@ -69,15 +70,15 @@ function harness(initial: AutomationState = { tasks: [], runs: [] }, workspaces 
 	let now = local(2026, 1, 1, 9, 0);
 	let saved: AutomationState = structuredClone(initial);
 	const calls: { cwd: string; access: string; prompt: string }[] = [];
-	let outcome: () => Promise<{ sessionId: string; status: "success" | "error" | "aborted"; text: string; error?: string }> = async () => ({ sessionId: "s1", status: "success", text: "all done" });
+	let outcome: () => Promise<{ sessionId: string; status: "success" | "error" | "aborted"; access?: "readonly" | "edits" | "full"; text: string; error?: string }> = async () => ({ sessionId: "s1", status: "success", access: "readonly", text: "all done" });
 	let changes = 0;
 	const engine = new AutomationEngine({
 		load: async () => structuredClone(saved),
 		save: async (s) => void (saved = structuredClone(s)),
 		workspaces: async () => workspaces,
-		runAgent: async (o) => {
+		runAgent: async (o): Promise<AgentRunResult> => {
 			calls.push({ cwd: o.cwd, access: o.access, prompt: o.prompt });
-			return outcome();
+			return { access: o.access, ...(await outcome()) };
 		},
 		now: () => now,
 		changed: () => void changes++,
