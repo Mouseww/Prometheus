@@ -293,6 +293,8 @@ export interface PluginContext {
 	runAgent(options: AgentRunOptions): Promise<AgentRunResult>;
 	/** Start a saved session the user can open and talk to, like "new chat". Server host only. */
 	openSession(options: OpenSessionOptions): Promise<{ sessionId: string }>;
+	/** Call a method another active plugin exposed with `rpc`. Rejects when it is not there. */
+	callPlugin(plugin: string, method: string, params?: Record<string, unknown>): Promise<unknown>;
 	/** Whether a saved or open session with this id exists. */
 	sessionExists(sessionId: string): Promise<boolean>;
 	/** What the session may hand on to a delegated run right now (see `parentSessionId`). Unknown sessions: read-only. */

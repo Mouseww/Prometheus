@@ -719,6 +719,11 @@ export class PluginHost {
 			openSession: (options) => this.openSession(options),
 			sessionAccess: (id) => this.sessionAccess(id),
 			sessionExists: (id) => this.sessionExists(id),
+			callPlugin: async (plugin, method, params) => {
+				const handler = this.rpcs.get(`${plugin}/${method}`);
+				if (!handler) throw new AppError("pluginMethodNotFound", { plugin, method });
+				return (await handler(params ?? {})) ?? null;
+			},
 			extension: (factory) => {
 				reg.factories.push(factory);
 			},
