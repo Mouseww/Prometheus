@@ -823,7 +823,7 @@ export class PrometheusHost {
 	// ---------- message operations ----------
 
 	private resetMessages(id: string, live: LiveSession): void {
-		const all = live.session.messages();
+		const all = live.session.snapshotState().messages;
 		const page = tailPage(all, all.length, OPEN_TURNS);
 		this.listener.event(id, { type: "messages_reset", messages: page.messages, ...(page.offset > 0 ? { offset: page.offset } : {}) });
 		this.listener.sessionsChanged();

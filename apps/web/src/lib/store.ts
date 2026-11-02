@@ -164,7 +164,7 @@ function savedSort(): SubagentSort {
 	return v === "started" || v === "ended" ? v : "status";
 }
 
-export type SettingsTab = "general" | "agents" | "gateways" | "mcp" | "connectors" | "skills" | "modes" | "subagents" | "market" | "veil" | "plugins" | "voice" | "network" | "runtimes" | "platforms" | "ssh" | "usage";
+export type SettingsTab = "general" | "agents" | "gateways" | "mcp" | "connectors" | "skills" | "modes" | "subagents" | "market" | "veil" | "logs" | "plugins" | "voice" | "network" | "runtimes" | "platforms" | "ssh" | "usage";
 export type View = "chat" | "knowledge" | "memory" | "automations" | "git" | "settings" | { panel: string };
 
 interface State {

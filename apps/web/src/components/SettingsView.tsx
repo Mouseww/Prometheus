@@ -1,6 +1,6 @@
 import { copyToClipboard } from "../lib/clipboard.ts";
 import clsx from "clsx";
-import { BarChart3, Blocks, Boxes, Bot, Cable, Check, Copy, FolderOpen, Globe, Laptop, Layers, Mic, Moon, Network, Package, Plug, Server, Shield, Sparkles, Sun, SlidersHorizontal, Terminal } from "lucide-react";
+import { BarChart3, Blocks, Bug, Boxes, Bot, Cable, Check, Copy, FolderOpen, Globe, Laptop, Layers, Mic, Moon, Network, Package, Plug, Server, Shield, Sparkles, Sun, SlidersHorizontal, Terminal } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { isAndroid, isDesktopShell, isTauri, loadMode } from "../lib/backend.ts";
@@ -24,6 +24,7 @@ import { SshView } from "./SshView.tsx";
 import { PluginsView } from "./PluginsView.tsx";
 import { ModesView } from "./ModesView.tsx";
 import { SubagentsView } from "./SubagentsView.tsx";
+import { LogsView } from "./LogsView.tsx";
 import { VeilView } from "./VeilView.tsx";
 import { SkillsView } from "./SkillsView.tsx";
 import { Button, PageHeader } from "./ui.tsx";
@@ -43,6 +44,7 @@ const M = defineMessages({
 		modes: "模式",
 		subagents: "子代理",
 		veil: "隐私面罩",
+		logs: "错误日志",
 		voice: "语音输入",
 		network: "网络访问",
 		runtimes: "运行环境",
@@ -122,6 +124,7 @@ const M = defineMessages({
 		modes: "Modes",
 		subagents: "Subagents",
 		veil: "Privacy Mask",
+		logs: "Error log",
 		voice: "Voice",
 		network: "Network access",
 		runtimes: "Runtimes",
@@ -515,7 +518,10 @@ const TAB_GROUPS: { id: SettingsTab; icon: typeof Network; plugin?: string; loca
 		{ id: "veil", icon: Shield, plugin: "veil" },
 		{ id: "platforms", icon: Server },
 	],
-	[{ id: "usage", icon: BarChart3 }],
+	[
+		{ id: "usage", icon: BarChart3 },
+		{ id: "logs", icon: Bug, plugin: "logs" },
+	],
 ];
 
 export function SettingsView() {
@@ -568,6 +574,7 @@ export function SettingsView() {
 				{tab === "ssh" && <SshView />}
 				{tab === "plugins" && <PluginsView />}
 				{tab === "usage" && <UsageView />}
+				{tab === "logs" && <LogsView />}
 			</div>
 		</div>
 	);

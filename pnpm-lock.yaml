@@ -282,6 +282,9 @@ importers:
       '@prometheus/plugin-git':
         specifier: workspace:*
         version: link:../git
+      '@prometheus/plugin-logs':
+        specifier: workspace:*
+        version: link:../logs
       '@prometheus/plugin-mcp':
         specifier: workspace:*
         version: link:../mcp
@@ -378,6 +381,12 @@ importers:
       '@lancedb/lancedb':
         specifier: 0.40.0
         version: 0.40.0(@types/node@26.6.5)(apache-arrow@18.1.0)
+      '@prometheus/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+
+  plugins/logs:
+    dependencies:
       '@prometheus/plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk

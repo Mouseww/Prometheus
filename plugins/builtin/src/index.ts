@@ -6,6 +6,7 @@ import computerUse from "@prometheus/plugin-computer-use";
 import connectors from "@prometheus/plugin-connectors";
 import folder from "@prometheus/plugin-folder";
 import git from "@prometheus/plugin-git";
+import logs from "@prometheus/plugin-logs";
 import mcp from "@prometheus/plugin-mcp";
 import memory from "@prometheus/plugin-memory";
 import packages from "@prometheus/plugin-packages";
@@ -44,6 +45,7 @@ export const builtinPlugins: PrometheusPlugin[] = [
 	subagents,
 	voice,
 	veil,
+	logs,
 	// Personal assistant: its own home folder, delegation into projects
 	assistant,
 	// Workspace tools

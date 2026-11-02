@@ -209,7 +209,7 @@ describe("PiRuntimeSession message operations", () => {
 			navigateTree: vi.fn(async (_id: string) => ({ cancelled: false })),
 			sessionManager: {
 				getCwd: () => "/work",
-				buildSessionProjection: () => ({ entries: entries.map((m, i) => ({ sourceEntry: { id: `e${i}` }, messages: [m] })) }),
+				getBranch: () => entries.map((m, i) => ({ type: "message", id: `e${i}`, message: m })),
 				appendContextEdit: (id: string, v: null) => void edits.push([id, v]),
 			},
 			...overrides,
@@ -289,7 +289,7 @@ describe("PiRuntimeSession.fork", () => {
 			sessionManager: {
 				getCwd: () => "/work",
 				getEntry: (id: string) => ({ id, parentId: id === "e0" ? null : `e${Number(id.slice(1)) - 1}` }),
-				buildSessionProjection: () => ({ entries: [user, assistant, user2].map((m, i) => ({ sourceEntry: { id: `e${i}` }, messages: [m] })) }),
+				getBranch: () => [user, assistant, user2].map((m, i) => ({ type: "message", id: `e${i}`, message: m })),
 			},
 		};
 		const kept: unknown[] = [];
@@ -344,6 +344,17 @@ describe("PiRuntimeSession lifecycle", () => {
 		await adapter.dispose();
 		expect(dispose).toHaveBeenCalledTimes(1);
 		expect(onDispose).toHaveBeenCalledTimes(1);
+	});
+
+	it("keeps pre-compaction history visible, with the summary where it happened", () => {
+		const branch = [
+			{ type: "message", id: "e0", message: { role: "user", content: "hi", timestamp: 1 } },
+			{ type: "message", id: "e1", message: { role: "assistant", content: [], timestamp: 2 } },
+			{ type: "compaction", id: "e2", summary: "sum", tokensBefore: 10, firstKeptEntryId: "e1", timestamp: "2024-01-01T00:00:00Z" },
+		];
+		const { adapter } = make({ messages: [{ role: "compactionSummary" }], getAvailableThinkingLevels: () => [], getSteeringMessages: () => [], getFollowUpMessages: () => [], sessionManager: { getCwd: () => "/work", getBranch: () => branch } });
+		expect(adapter.snapshotState().messages.map((m) => m.role)).toEqual(["user", "assistant", "compactionSummary"]);
+		expect(adapter.messages().map((m) => m.role)).toEqual(["compactionSummary"]);
 	});
 
 	it("exposes the working directory without building a snapshot", () => {

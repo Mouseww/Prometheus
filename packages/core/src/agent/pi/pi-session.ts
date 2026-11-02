@@ -1,6 +1,6 @@
 // PiRuntimeSession: one PI AgentSession behind the runtime-neutral RuntimeSession interface.
 // The per-session PI logic that used to live in host.ts is here; the host sees only wire shapes.
-import { type AgentSession, type AgentSessionEvent, type ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
+import { type AgentSession, type AgentSessionEvent, type ModelRuntime, SessionManager, sessionEntryToContextMessages } from "@earendil-works/pi-coding-agent";
 import {
 	AppError,
 	type ChatMessage,
@@ -201,13 +201,37 @@ export class PiRuntimeSession implements RuntimeSession {
 		return this.session.messages as unknown as ChatMessage[];
 	}
 
+	/**
+	 * What the user sees: the whole branch, compaction included as a divider where it happened.
+	 * `messages()` is the model context and starts at the latest compaction summary, which would hide the history.
+	 */
+	private displayEntries(): Entry[] {
+		const branch = this.session.sessionManager.getBranch();
+		const edits = new Map<string, { content: unknown } | null>();
+		for (const e of branch) if (e.type === "context_edit") edits.set(e.targetId, e.replacement);
+		const out: Entry[] = [];
+		for (const e of branch) {
+			// Only the summary is shown for a compaction; its system message is part of the model context, not the chat.
+			const messages = e.type === "compaction" ? sessionEntryToContextMessages(e).slice(-1) : sessionEntryToContextMessages(e);
+			const edit = edits.get(e.id);
+			if (edit === null) continue;
+			for (const m of messages) {
+				const r = m as unknown as { role: string; content?: unknown };
+				const edited = edit && (r.role === "user" || r.role === "assistant" || r.role === "toolResult" || r.role === "custom");
+				const content = edited ? (r.role !== "user" && typeof edit.content === "string" ? [{ type: "text", text: edit.content }] : edit.content) : undefined;
+				out.push({ entryId: e.id, message: (edited ? { ...r, content } : m) as unknown as ChatMessage });
+			}
+		}
+		return out;
+	}
+
 	snapshotState(): RuntimeSnapshot {
 		const s = this.session;
 		return {
 			id: s.sessionId,
 			name: s.sessionName,
 			cwd: this.cwd,
-			messages: this.messages(),
+			messages: this.displayEntries().map((x) => x.message),
 			model: toModelRef(s.model),
 			thinkingLevel: s.thinkingLevel as ThinkingLevel,
 			availableThinkingLevels: s.getAvailableThinkingLevels() as ThinkingLevel[],
@@ -291,8 +315,7 @@ export class PiRuntimeSession implements RuntimeSession {
 	private locate(ref: MessageRef): { entryId: string; flat: Entry[]; pos: number } {
 		const s = this.session;
 		if (s.isStreaming) throw new AppError("waitForReply");
-		const projection = s.sessionManager.buildSessionProjection();
-		const flat: Entry[] = projection.entries.flatMap((e) => e.messages.map((m) => ({ entryId: e.sourceEntry.id, message: m as unknown as ChatMessage })));
+		const flat = this.displayEntries();
 		const hit = flat[ref.index];
 		if (!hit || hit.message.role !== ref.role || hit.message.timestamp !== ref.timestamp) throw new AppError("messageChanged");
 		return { entryId: hit.entryId, flat, pos: ref.index };

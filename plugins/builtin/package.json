@@ -29,6 +29,7 @@
     "@prometheus/plugin-subagents": "workspace:*",
     "@prometheus/plugin-terminal": "workspace:*",
     "@prometheus/plugin-todos": "workspace:*",
+    "@prometheus/plugin-logs": "workspace:*",
     "@prometheus/plugin-veil": "workspace:*",
     "@prometheus/plugin-voice": "workspace:*",
     "@prometheus/plugin-workbench": "workspace:*"
