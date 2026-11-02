@@ -57,6 +57,14 @@ function apply(p: Prefs): void {
 	root.dataset.motion = p.motion ? "on" : "off";
 	root.lang = p.lang === "zh" ? ["zh", "CN"].join("-") : "en";
 	root.style.colorScheme = light ? "light" : "dark";
+	// Keep the Android status bar in step with the resolved theme (a fixed dark value made light mode unreadable).
+	let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+	if (!meta) {
+		meta = document.createElement("meta");
+		meta.name = "theme-color";
+		document.head.appendChild(meta);
+	}
+	meta.content = light ? "#faf8f5" : "#1c1814";
 }
 
 apply(usePrefs.getState());
