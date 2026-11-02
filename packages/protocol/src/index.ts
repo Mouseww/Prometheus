@@ -55,6 +55,8 @@ export interface ToolResultMessage {
 	timestamp: number;
 	/** The text was cut to its start; this is the length of the full result. `session.toolResult` returns all of it. */
 	truncatedChars?: number;
+	/** Structured data a tool attached for UIs (not shown to the model), e.g. a delegation card. */
+	details?: unknown;
 }
 export interface OtherMessage { role: "bashExecution" | "custom" | "branchSummary" | "compactionSummary"; timestamp: number; [key: string]: unknown }
 export type ChatMessage = UserMessage | AssistantMessage | ToolResultMessage | OtherMessage;

@@ -21,6 +21,7 @@ import {
 	Plus,
 	PuzzleIcon,
 	Settings,
+	Sparkles,
 	Trash2,
 	X,
 } from "lucide-react";
@@ -43,6 +44,7 @@ import {
 	prefetchSession,
 	openSettings,
 	pluginActive,
+	pluginCall,
 	renameSession,
 	setView,
 	startNewChat,
@@ -67,6 +69,8 @@ const M = defineMessages({
 		newChat: "在此工作区新建对话",
 		newSession: "新会话",
 		startChat: "新对话",
+		assistant: "个人助理",
+		assistantHint: "一条长期的对话：它有自己的家，需要时把活派到你的项目里",
 		messages: "{n} 条",
 		archived: "已归档 ({n})",
 		rename: "重命名",
@@ -99,6 +103,8 @@ const M = defineMessages({
 		newChat: "New chat in this workspace",
 		newSession: "New chat",
 		startChat: "New chat",
+		assistant: "Personal assistant",
+		assistantHint: "One long-running chat: it has a home of its own and hands work to your projects when needed",
 		messages: "{n} msgs",
 		archived: "Archived ({n})",
 		rename: "Rename",
@@ -502,6 +508,20 @@ export function Sidebar({ target, onDisconnect }: { target: BackendTarget; onDis
 				>
 					<Plus className="size-4 text-ember-400" /> {t("startChat")}
 				</button>
+				{pluginActive(plugins, "assistant") && (
+					<button
+						type="button"
+						title={t("assistantHint")}
+						onClick={async () => {
+							const r = await pluginCall<{ sessionId: string }>("assistant", "main");
+							if (r) await openSession(r.sessionId);
+						}}
+						className={clsx(navClass(false), "mt-1")}
+					>
+						<Sparkles className="size-4 text-ember-400" />
+						{t("assistant")}
+					</button>
+				)}
 				{tools.length > 0 && (
 					<div className="mt-1 space-y-0.5">
 						{tools.map((n) => (

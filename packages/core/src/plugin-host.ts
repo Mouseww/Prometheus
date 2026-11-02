@@ -204,6 +204,7 @@ export class PluginHost {
 		throw new AppError("pluginBackgroundUnsupported");
 	};
 	sessionAccess: (sessionId: string) => RunAccess = () => "readonly";
+	sessionExists: (sessionId: string) => Promise<boolean> = async () => false;
 	onChanged: () => void = () => {};
 	/** Wired by the server: pushes a `plugin.notify` frame for one plugin. */
 	notifyPlugin: (plugin: string) => void = () => {};
@@ -717,6 +718,7 @@ export class PluginHost {
 			runAgent: (options) => this.runAgent(options),
 			openSession: (options) => this.openSession(options),
 			sessionAccess: (id) => this.sessionAccess(id),
+			sessionExists: (id) => this.sessionExists(id),
 			extension: (factory) => {
 				reg.factories.push(factory);
 			},

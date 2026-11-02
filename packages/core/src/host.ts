@@ -205,6 +205,7 @@ export class PrometheusHost {
 		runtime.plugins.runAgent = (opts) => this.runAgent(opts);
 		runtime.plugins.openSession = (opts) => this.openSession(opts);
 		runtime.plugins.sessionAccess = (id) => this.sessionAccess(id);
+		runtime.plugins.sessionExists = (id) => this.sessionExists(id);
 		runtime.plugins.onChanged = () => this.listener.pluginsChanged();
 		runtime.plugins.notifyPlugin = (name) => this.listener.pluginNotify(name);
 		runtime.plugins.publishPlugin = (name, topic, data, opts) => this.listener.pluginEvent?.(name, topic, data, opts);
@@ -735,11 +736,16 @@ export class PrometheusHost {
 		return ceilingFor(live ? { unattended: live.gate.unattended, mode: live.gate.mode } : undefined);
 	}
 
+	private async sessionExists(sessionId: string): Promise<boolean> {
+		if (this.live.has(sessionId) || this.index.get(sessionId)) return true;
+		return this.resolvePath(sessionId).then(() => true, () => false);
+	}
+
 	/** A saved chat the user can open, as if they had pressed "new chat"; the optional first message runs in the background. */
 	private async openSession(options: OpenSessionOptions): Promise<{ sessionId: string }> {
 		const dir = options.cwd?.trim();
 		if (!dir || !existsSync(dir) || !statSync(dir).isDirectory()) throw new AppError("workdirNotFound", { dir });
-		await this.workspaces.add(dir);
+		await this.workspaces.add(dir, options.workspaceName?.trim() || undefined);
 		const live = await this.attach((init) => this.pi.create({ ...init, cwd: normalizeDir(dir) }));
 		if (options.name?.trim()) live.session.setName(options.name.trim());
 		if (options.model) await live.session.setModel(options.model);

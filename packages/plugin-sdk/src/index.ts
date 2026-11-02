@@ -102,6 +102,8 @@ export interface OpenSessionOptions {
 	/** Working directory; must exist. It is added to the workspace list. */
 	cwd: string;
 	name?: string;
+	/** How the folder is listed in the sidebar when it is new to the app (default: its folder name). */
+	workspaceName?: string;
 	/** Sent as the first message without waiting for the answer. The user is present: questions go to whoever has the chat open. */
 	prompt?: string;
 	model?: ModelRef;
@@ -291,6 +293,8 @@ export interface PluginContext {
 	runAgent(options: AgentRunOptions): Promise<AgentRunResult>;
 	/** Start a saved session the user can open and talk to, like "new chat". Server host only. */
 	openSession(options: OpenSessionOptions): Promise<{ sessionId: string }>;
+	/** Whether a saved or open session with this id exists. */
+	sessionExists(sessionId: string): Promise<boolean>;
 	/** What the session may hand on to a delegated run right now (see `parentSessionId`). Unknown sessions: read-only. */
 	sessionAccess(sessionId: string): RunAccess;
 

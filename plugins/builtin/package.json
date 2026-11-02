@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@prometheus/knowledge-lancedb": "workspace:*",
+    "@prometheus/plugin-assistant": "workspace:*",
     "@prometheus/plugin-automations": "workspace:*",
     "@prometheus/plugin-browser": "workspace:*",
     "@prometheus/plugin-computer-use": "workspace:*",

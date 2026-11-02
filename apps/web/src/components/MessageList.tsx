@@ -13,6 +13,7 @@ import { imagesOf } from "../lib/images.ts";
 import { deleteMessage, editMessage, fetchToolResult, forkMessage, openFile, pluginActive, retryMessage, type ToolRun, toast, useStore } from "../lib/store.ts";
 import { ImageStrip } from "./ImageStrip.tsx";
 import { Markdown } from "./Markdown.tsx";
+import { DelegationCard, delegationOf } from "./DelegationCard.tsx";
 import { SubagentCard } from "./SubagentCard.tsx";
 
 /** Turns rendered when a conversation opens, and how many more each step adds. Earlier ones load as the user scrolls up. */
@@ -341,7 +342,9 @@ function AssistantBlock({
 				if (block.type === "thinking") return block.thinking.trim() ? <ThinkingBlock key={i} text={block.thinking} live={live && i === last} /> : null;
 				if (block.type === "toolCall") {
 					const card = <ToolCard key={block.id || i} call={block} run={tools[block.id]} result={results.get(block.id)} />;
-					return block.name === "subagent" ? <SubagentCard key={block.id || i} callId={block.id} fallback={card} /> : card;
+					if (block.name === "subagent") return <SubagentCard key={block.id || i} callId={block.id} fallback={card} />;
+					const delegation = block.name === "assistant_delegate" ? delegationOf(results.get(block.id)) : undefined;
+					return delegation ? <DelegationCard key={block.id || i} card={delegation} fallback={card} /> : card;
 				}
 				return (
 					<div key={i} className={clsx(live && i === last && "caret")}>

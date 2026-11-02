@@ -14,6 +14,7 @@ let previousAgentDir: string | undefined;
 type Plugins = {
 	openSession(o: { cwd: string; name?: string }): Promise<{ sessionId: string }>;
 	sessionAccess(id: string): string;
+	sessionExists(id: string): Promise<boolean>;
 	runAgent(o: Record<string, unknown>): Promise<{ sessionId: string; status: string; access: string }>;
 };
 const plugins = () => (host as unknown as { runtime: { plugins: Plugins } }).runtime.plugins;
@@ -49,6 +50,14 @@ describe("openSession", () => {
 
 	it("refuses a folder that does not exist", async () => {
 		await expect(plugins().openSession({ cwd: join(root, "nope") })).rejects.toMatchObject({ code: "workdirNotFound" });
+	});
+});
+
+describe("sessionExists", () => {
+	it("knows chats that were opened and rejects ids it has never seen", async () => {
+		const { sessionId } = await plugins().openSession({ cwd });
+		expect(await plugins().sessionExists(sessionId)).toBe(true);
+		expect(await plugins().sessionExists("nope")).toBe(false);
 	});
 });
 

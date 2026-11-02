@@ -1,4 +1,5 @@
 import lancedb from "@prometheus/knowledge-lancedb";
+import assistant from "@prometheus/plugin-assistant";
 import automations from "@prometheus/plugin-automations";
 import browser from "@prometheus/plugin-browser";
 import computerUse from "@prometheus/plugin-computer-use";
@@ -43,6 +44,8 @@ export const builtinPlugins: PrometheusPlugin[] = [
 	subagents,
 	voice,
 	veil,
+	// Personal assistant: its own home folder, delegation into projects
+	assistant,
 	// Workspace tools
 	git,
 	automations,
