@@ -32,7 +32,9 @@ const PORT = Number(process.env.PROMETHEUS_PORT ?? 7420);
 const TOKEN = process.env.PROMETHEUS_TOKEN ?? "";
 const WEB_ROOT = process.env.PROMETHEUS_WEB_ROOT ?? defaultWebRoot(dirname(fileURLToPath(import.meta.url)));
 const EXTRA_ORIGINS = new Set((process.env.PROMETHEUS_ALLOWED_ORIGINS ?? "").split(",").map((s) => s.trim()).filter(Boolean));
-const AUTH_TIMEOUT_MS = 5_000;
+const AUTH_TIMEOUT_MS = 15_000;
+/** Protocol-level ping interval; a client that never answers the next one is dropped so it can reconnect cleanly. */
+const HEARTBEAT_MS = 25_000;
 const MAX_FRAME_BYTES = 32 * 1024 * 1024;
 const COOKIE = "prometheus_token";
 /** An operator who binds a non-loopback HOST manages exposure themselves; a token on loopback (the desktop app) still allows these settings. */
@@ -426,13 +428,46 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage, kind: Kind) => {
 	send(client, { type: "hello", protocol: PROTOCOL_VERSION, authRequired: access.mode !== "none", ...(login ? { login } : {}), local: access.local });
 	const authTimer = client.authed ? undefined : setTimeout(() => ws.close(4001, "auth timeout"), AUTH_TIMEOUT_MS);
 
+	let alive = true;
+	ws.on("pong", () => {
+		alive = true;
+	});
+	const heartbeat = setInterval(() => {
+		if (!alive) return ws.terminate();
+		alive = false;
+		try {
+			ws.ping();
+		} catch {
+			ws.terminate();
+		}
+	}, HEARTBEAT_MS);
+
+	// Without a listener a socket error (bad frame, oversized message) is thrown as an uncaught exception and kills the server.
+	ws.on("error", (err) => {
+		console.error("[prometheus] WebSocket 错误", err.message);
+		ws.terminate();
+	});
+
 	ws.on("close", () => {
 		clearTimeout(authTimer);
+		clearInterval(heartbeat);
 		clients.delete(client);
-		for (const key of client.watches) reportWatchers(key);
+		try {
+			for (const key of client.watches) reportWatchers(key);
+		} catch (err) {
+			console.error("[prometheus] 更新订阅失败", err);
+		}
 	});
 
 	ws.on("message", async (raw) => {
+		try {
+			await onMessage(raw);
+		} catch (err) {
+			console.error("[prometheus] 处理消息失败", err);
+		}
+	});
+
+	async function onMessage(raw: import("ws").RawData): Promise<void> {
 		let frame: ClientFrame;
 		try {
 			frame = JSON.parse(raw.toString()) as ClientFrame;
@@ -464,6 +499,8 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage, kind: Kind) => {
 			case "auth":
 			case "login":
 				return send(client, { type: "auth_ok" });
+			case "ping":
+				return send(client, { type: "pong" });
 			case "subscribe":
 				client.sessions.add(frame.sessionId);
 				return;
@@ -507,8 +544,12 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage, kind: Kind) => {
 			default:
 				send(client, { type: "error", message: encodeError(new AppError("unknownFrameType")) });
 		}
-	});
+	}
 });
+
+// A stray error from a plugin or an agent must not take the whole server (and every connection) down.
+process.on("uncaughtException", (err) => console.error("[prometheus] uncaughtException", err));
+process.on("unhandledRejection", (err) => console.error("[prometheus] unhandledRejection", err));
 
 main.listen(PORT, HOST, () => {
 	const addr = main.address();

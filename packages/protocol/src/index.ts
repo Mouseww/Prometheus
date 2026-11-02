@@ -1179,6 +1179,8 @@ export type ClientFrame =
 	| { type: "login"; password: string }
 	| { type: "subscribe"; sessionId: string }
 	| { type: "unsubscribe"; sessionId: string }
+	/** Liveness probe: the server answers with `pong`, so a connection that silently died is noticed. */
+	| { type: "ping" }
 	/** Start receiving `plugin.event` frames for one topic of one plugin (see PluginContext.stream). */
 	| { type: "plugin.watch"; plugin: string; topic: string }
 	| { type: "plugin.unwatch"; plugin: string; topic: string }
@@ -1203,6 +1205,7 @@ export type ServerFrame =
 	 */
 	| { type: "plugin.event"; plugin: string; topic: string; data: unknown; binary?: Uint8Array }
 	| { type: "gateways.changed" }
+	| { type: "pong" }
 	| { type: "error"; message: string };
 
 // ---------- Built-in gateway presets ----------

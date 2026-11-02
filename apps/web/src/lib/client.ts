@@ -42,6 +42,11 @@ export class PrometheusClient {
 	private seq = 0;
 	private retry = 0;
 	private stopped = false;
+	private retryTimer: ReturnType<typeof setTimeout> | undefined;
+	private watchdog: ReturnType<typeof setInterval> | undefined;
+	private unbindWake: (() => void) | undefined;
+	private lastSeen = 0;
+	private connectingSince = 0;
 	private waiters: (() => void)[] = [];
 	private readonly pending = new Map<string, Pending>();
 	private readonly subscriptions = new Set<string>();
@@ -56,11 +61,32 @@ export class PrometheusClient {
 
 	connect(): void {
 		this.stopped = false;
+		clearTimeout(this.retryTimer);
+		// Never leave an older socket behind: it would stay registered on the server as a second client.
+		const old = this.ws;
+		this.ws = undefined;
+		if (old) {
+			old.onclose = null;
+			old.onmessage = null;
+			try {
+				old.close();
+			} catch {}
+		}
 		this.setState("connecting");
-		const ws = new WebSocket(this.target.wsUrl);
+		this.connectingSince = Date.now();
+		this.lastSeen = Date.now();
+		this.startWatchdog();
+		let ws: WebSocket;
+		try {
+			ws = new WebSocket(this.target.wsUrl);
+		} catch {
+			this.scheduleRetry();
+			return;
+		}
 		ws.binaryType = "arraybuffer";
 		this.ws = ws;
 		ws.onmessage = (ev) => {
+			this.lastSeen = Date.now();
 			if (ev.data instanceof ArrayBuffer) {
 				const decoded = decodeBinaryFrame(new Uint8Array(ev.data));
 				if (decoded?.header.type === "plugin.event") this.handle({ ...(decoded.header as Extract<ServerFrame, { type: "plugin.event" }>), binary: decoded.payload });
@@ -79,20 +105,78 @@ export class PrometheusClient {
 			this.failPending(tr(M, "closedAbruptly"));
 			// Closing the idle socket to ask for credentials must not replace the sign-in prompt with "closed".
 			if (this.state === "unauthorized") return;
-			if (ev.code === 4001 || ev.code === 4003) {
+			// 4001 is only the server's sign-in timeout (slow link, busy server): try again instead of asking for credentials.
+			if (ev.code === 4003) {
 				this.stopped = true;
 				this.setState("unauthorized");
 				return;
 			}
 			this.setState("closed");
-			if (this.stopped) return;
-			const delay = Math.min(500 * 2 ** this.retry++, 15_000);
-			setTimeout(() => !this.stopped && this.connect(), delay);
+			this.scheduleRetry();
 		};
+	}
+
+	private scheduleRetry(): void {
+		if (this.stopped) return;
+		clearTimeout(this.retryTimer);
+		const delay = Math.min(500 * 2 ** this.retry++, 10_000) + Math.random() * 300;
+		this.retryTimer = setTimeout(() => !this.stopped && this.connect(), delay);
+	}
+
+	/** Detects connections that died without a close (sleep, proxy timeout, dropped Wi-Fi) and forces a reconnect. */
+	private startWatchdog(): void {
+		if (this.watchdog) return;
+		const check = () => {
+			if (this.stopped || !this.ws) return;
+			const now = Date.now();
+			if (this.state === "connecting" && now - this.connectingSince > 12_000) return this.drop();
+			if (this.state === "open") {
+				if (now - this.lastSeen > 50_000) return this.drop();
+				this.send({ type: "ping" });
+			}
+		};
+		this.watchdog = setInterval(check, 15_000);
+		if (typeof window !== "undefined") {
+			const wake = () => {
+				if (this.stopped) return;
+				if (this.state === "closed") {
+					this.retry = 0;
+					this.connect();
+				} else if (this.state === "open") this.send({ type: "ping" });
+			};
+			const onVisible = () => document.visibilityState === "visible" && wake();
+			window.addEventListener("online", wake);
+			document.addEventListener("visibilitychange", onVisible);
+			this.unbindWake = () => {
+				window.removeEventListener("online", wake);
+				document.removeEventListener("visibilitychange", onVisible);
+			};
+		}
+	}
+
+	/** Gives up on the current socket and reconnects right away. */
+	private drop(): void {
+		const ws = this.ws;
+		this.ws = undefined;
+		if (ws) {
+			ws.onclose = null;
+			ws.onmessage = null;
+			try {
+				ws.close();
+			} catch {}
+		}
+		this.failPending(tr(M, "closedAbruptly"));
+		this.setState("closed");
+		this.scheduleRetry();
 	}
 
 	close(): void {
 		this.stopped = true;
+		clearTimeout(this.retryTimer);
+		clearInterval(this.watchdog);
+		this.watchdog = undefined;
+		this.unbindWake?.();
+		this.unbindWake = undefined;
 		this.ws?.close();
 		this.failPending(tr(M, "closed"));
 	}
@@ -145,6 +229,8 @@ export class PrometheusClient {
 
 	private handle(frame: ServerFrame): void {
 		switch (frame.type) {
+			case "pong":
+				return;
 			case "hello":
 				this.local = frame.local === true;
 				this.loginKind = !frame.authRequired ? "none" : (frame.login ?? "token");
