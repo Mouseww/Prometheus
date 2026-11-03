@@ -5,6 +5,7 @@ import type { ImageContent, ThinkingLevel } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { type Attachment, AttachmentError, fileToAttachment, formatSize, isPicture, MAX_FILE_MB, MAX_FILES } from "../lib/attachments.ts";
 import { fileToImage, ImageError, imageSrc, MAX_IMAGES } from "../lib/images.ts";
+import { inputAt, rememberInput } from "../lib/inputHistory.ts";
 import { aliasKey, type SendMode, setPrefs, usePrefs } from "../lib/prefs.ts";
 import { abortRun, openSettings, pluginCall, sendPrompt, setModel, setPermissionMode, setThinking, toast, unqueue, useSpace, useStore } from "../lib/store.ts";
 import { ContextMeter } from "./ContextMeter.tsx";
@@ -431,6 +432,8 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 	const [cursor, setCursor] = useState(0);
 	const ref = useRef<HTMLTextAreaElement>(null);
 	const streaming = session?.isStreaming ?? false;
+	// ArrowUp history: position in the sent messages (-1: not browsing) and what was typed before browsing.
+	const history = useRef({ at: -1, draft: "" });
 
 	useEffect(() => {
 		if (editorText) {
@@ -519,6 +522,8 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 		}
 		const attached = images;
 		const attachedDocs = docs;
+		rememberInput(value);
+		history.current = { at: -1, draft: "" };
 		setText("");
 		setImages([]);
 		setDocs([]);
@@ -627,6 +632,29 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 					setText(`/${pick.name} `);
 					return;
 				}
+			}
+		}
+		if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
+			const h = history.current;
+			const browsing = h.at >= 0 && text === inputAt(h.at);
+			let next: string | undefined;
+			if (e.key === "ArrowUp" && (browsing || !text)) {
+				const at = browsing ? h.at + 1 : 0;
+				const found = inputAt(at);
+				if (found !== undefined) {
+					history.current = { at, draft: browsing ? h.draft : text };
+					next = found;
+				} else if (browsing) next = text; // already at the oldest
+			} else if (e.key === "ArrowDown" && browsing) {
+				const at = h.at - 1;
+				history.current = { at, draft: h.draft };
+				next = at < 0 ? h.draft : inputAt(at);
+			}
+			if (next !== undefined) {
+				e.preventDefault();
+				setText(next);
+				requestAnimationFrame(() => ref.current?.setSelectionRange(next.length, next.length));
+				return;
 			}
 		}
 		if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
