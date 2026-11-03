@@ -79,6 +79,10 @@
 		"filename": "pool/main/liba/libandroid-selinux/libandroid-selinux_14.0.0.11-1_aarch64.deb",
 		"sha256": "00afd8c34087c2864737b51fd9d104dc5e955f6ec3c0f50c0c7ef5b4a56866b9"
 	},
+	"libandroid-shmem": {
+		"filename": "pool/main/liba/libandroid-shmem/libandroid-shmem_0.7_aarch64.deb",
+		"sha256": "0da3a24d558b93c92bcf8d611e0826a99ff96e396b148e6cdf33b47c47c57ff6"
+	},
 	"libandroid-support": {
 		"filename": "pool/main/liba/libandroid-support/libandroid-support_29-1_aarch64.deb",
 		"sha256": "f2f145d6135ad4843ac9670153be3e3944dc1e6f1736d46d2306c28f2b86f517"
@@ -100,8 +104,8 @@
 		"sha256": "2011bb9709261bb3d5ecaa6672faa333be14cf48ad4af37031e3e365309557ac"
 	},
 	"libexpat": {
-		"filename": "pool/main/libe/libexpat/libexpat_2.9.0_aarch64.deb",
-		"sha256": "f8a104e8227c9c181f6818658a3ee2fa4c107fac94219b068144fc6591086cdb"
+		"filename": "pool/main/libe/libexpat/libexpat_2.10.0_aarch64.deb",
+		"sha256": "0e4411f01f6fb664f3f04f9420289472f9afc30db01ea1c5d1e57fd9fa2354be"
 	},
 	"libffi": {
 		"filename": "pool/main/libf/libffi/libffi_3.8.0_aarch64.deb",
@@ -132,40 +136,44 @@
 		"sha256": "ab2e0a3408fe4934ffdf774bd5049a265db2e6db62dcb651baecbecfb81e3f0b"
 	},
 	"libnghttp3": {
-		"filename": "pool/main/libn/libnghttp3/libnghttp3_1.18.0_aarch64.deb",
-		"sha256": "0be2ee96def3608afaf24eb0b4b55f3484a37c95ea21bb1d6d85c7d543467603"
+		"filename": "pool/main/libn/libnghttp3/libnghttp3_1.19.0_aarch64.deb",
+		"sha256": "8bb6fa31f9281cd48047ec9a571cadf153538f5b38f0203ad7a4e221344b14a6"
 	},
 	"libngtcp2": {
-		"filename": "pool/main/libn/libngtcp2/libngtcp2_1.25.0_aarch64.deb",
-		"sha256": "f471bad7f4329b6b0b4aedf124e0a23a35f6ac99bfbae73304136f8bfd570fc3"
+		"filename": "pool/main/libn/libngtcp2/libngtcp2_1.26.0_aarch64.deb",
+		"sha256": "8225ecde58104ef5aa234fa54a1bea5051a8a9ef2937e5ba996b3e8dda68c8eb"
 	},
 	"libsmartcols": {
 		"filename": "pool/main/libs/libsmartcols/libsmartcols_2.42.4_aarch64.deb",
 		"sha256": "ee0bed102b2262e443d7f54c78f672b8c11cb0f78b982ed093dd92e73a683e84"
 	},
 	"libsqlite": {
-		"filename": "pool/main/libs/libsqlite/libsqlite_3.54.1_aarch64.deb",
-		"sha256": "0856cac8cc87f6e112f2eef4fcac6ad5cb08209ecb7cc260f997874fc186a3c0"
+		"filename": "pool/main/libs/libsqlite/libsqlite_3.54.1-1_aarch64.deb",
+		"sha256": "661fb995f7215845007b222a85266ae99d9443e87e0604f8677edfd738e6b81a"
 	},
 	"libssh2": {
 		"filename": "pool/main/libs/libssh2/libssh2_1.11.1-2_aarch64.deb",
 		"sha256": "1add4e0a926b848814e7e2f1817ea28b123c54cabd5bbc4e5cfd65291cbad84e"
+	},
+	"libtalloc": {
+		"filename": "pool/main/libt/libtalloc/libtalloc_2.5.0_aarch64.deb",
+		"sha256": "556591f43bb773ad8777e1a29522640866a55f95dab71914418b94a8c58ad5a7"
 	},
 	"ncurses": {
 		"filename": "pool/main/n/ncurses/ncurses_6.6.20260307+really6.5.20250830_aarch64.deb",
 		"sha256": "f44bbfdc3d42ec0217bffa978309390e59cea5a48a9a83226d4a496c42ad0b99"
 	},
 	"nodejs": {
-		"filename": "pool/main/n/nodejs/nodejs_26.12.1_aarch64.deb",
-		"sha256": "478b1ed7eb797b1525f6aacfdff6bc998cd4aee234d06d23ed456be2ac730105"
+		"filename": "pool/main/n/nodejs/nodejs_26.13.0_aarch64.deb",
+		"sha256": "1169a96a37be93d7aa7dcd773334ea4c9c0d0bea9fd100925d29ed7e7cc81320"
 	},
 	"nodejs-lts": {
-		"filename": "pool/main/n/nodejs-lts/nodejs-lts_24.22.1_aarch64.deb",
-		"sha256": "c4aae57009e4398613807d77ff395026455fe03b6d9d8a29f929212b04f74719"
+		"filename": "pool/main/n/nodejs-lts/nodejs-lts_24.22.2_aarch64.deb",
+		"sha256": "150d7dd382e92587808d96813b9538fe5c6c41fa33f1a1033daa4e30c6ff2695"
 	},
 	"npm": {
-		"filename": "pool/main/n/npm/npm_11.21.1_all.deb",
-		"sha256": "f2b5a5d88ec39bbaf2572b4febd032fbec1b78aa7b4382ffaf6b4afa7b1a4ddd"
+		"filename": "pool/main/n/npm/npm_12.2.1_all.deb",
+		"sha256": "2898344f7f54a44ead5926f0e03e958bee00e839c6fd84a47d54278ecb4a13e6"
 	},
 	"openssl": {
 		"filename": "pool/main/o/openssl/openssl_1:3.6.5_aarch64.deb",
@@ -178,6 +186,10 @@
 	"procps": {
 		"filename": "pool/main/p/procps/procps_4.0.7-2_aarch64.deb",
 		"sha256": "4dbc101282481bba10499c1f449bcf8d6ae2986872155dc09b643a70326fa1ad"
+	},
+	"proot": {
+		"filename": "pool/main/p/proot/proot_5.1.107.102_aarch64.deb",
+		"sha256": "10a394b585c2fc2b2c8502544f4e5f1be581dc8bfff79e8ba62f16207423e030"
 	},
 	"psmisc": {
 		"filename": "pool/main/p/psmisc/psmisc_23.7-1_aarch64.deb",

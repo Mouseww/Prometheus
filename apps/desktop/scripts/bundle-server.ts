@@ -65,8 +65,9 @@ const built = await build({
 	outdir: out,
 	// The PI layer is imported on demand by the host, so it must be a separate file: inlined, its imports of the (possibly
 	// absent) PI packages would be hoisted to the top of the server and stop it from starting without them.
-	splitting: true,
-	chunkNames: "chunks/[name]-[hash]",
+	// (Only the slim flavour: the flavours that carry PI have nothing optional to split off, and the Node 20 banner below
+	// would be repeated in every chunk with a path that is wrong from inside chunks/.)
+	...(withPi ? {} : { splitting: true, chunkNames: "chunks/[name]-[hash]" }),
 	bundle: true,
 	platform: "node",
 	format: "esm",
