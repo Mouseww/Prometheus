@@ -612,7 +612,7 @@ export function SettingsView() {
 	const groups = TAB_GROUPS.map((g) => g.filter((x) => (!x.plugin || pluginActive(plugins, x.plugin)) && (!x.local || localShell))).filter((g) => g.length > 0);
 	return (
 		<div className="@container flex min-h-0 flex-1 flex-col overflow-hidden @2xl:flex-row">
-			<nav className="flex shrink-0 gap-1 overflow-x-auto border-b hairline p-2 @2xl:block @2xl:w-44 @2xl:space-y-0.5 @2xl:overflow-x-visible @2xl:border-r @2xl:border-b-0 @2xl:p-3">
+			<nav className="flex shrink-0 gap-1 overflow-x-auto border-b hairline p-2 @2xl:block @2xl:min-h-0 @2xl:w-44 @2xl:space-y-0.5 @2xl:overflow-x-hidden @2xl:overflow-y-auto @2xl:border-r @2xl:border-b-0 @2xl:p-3">
 				{groups.map((group, i) => (
 					<div key={group[0]?.id} className={clsx("flex shrink-0 gap-1 @2xl:block @2xl:space-y-0.5", i > 0 && "border-l hairline pl-1 @2xl:mt-2 @2xl:border-t @2xl:border-l-0 @2xl:pt-2 @2xl:pl-0")}>
 						{group.map(({ id, icon: Icon }) => (

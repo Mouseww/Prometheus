@@ -7,7 +7,7 @@ import { type Attachment, AttachmentError, fileToAttachment, formatSize, isPictu
 import { fileToImage, ImageError, imageSrc, MAX_IMAGES } from "../lib/images.ts";
 import { aliasKey, type SendMode, setPrefs, usePrefs } from "../lib/prefs.ts";
 import { abortRun, openSettings, pluginCall, sendPrompt, setModel, setPermissionMode, setThinking, toast, unqueue, useSpace, useStore } from "../lib/store.ts";
-import { ContextMeter } from "./ContextMeter.tsx";
+import { ContextMeter, SpeedChip } from "./ContextMeter.tsx";
 import { ModePicker } from "./ModePicker.tsx";
 import { RuntimeMenu } from "./RuntimeMenu.tsx";
 import { GoalBar } from "./GoalBar.tsx";
@@ -169,7 +169,7 @@ ${current.provider}/${current.id}` : undefined}
 			>
 				<Cpu className="size-3.5 shrink-0" />
 				{/* The channel first and kept short, so a long model name cannot push it out of sight. */}
-				{current && <span className="max-w-24 shrink-0 truncate rounded bg-ink-800 px-1 py-px text-[10.5px] text-ink-400">{channel}</span>}
+				{current && <span className="max-w-24 shrink-0 truncate rounded bg-ink-800 px-1 py-px text-[10.5px] text-ink-400 @max-[28rem]:hidden">{channel}</span>}
 				<span className="min-w-0 truncate">{label}</span>
 				<ChevronDown className="size-3 shrink-0 opacity-60" />
 			</button>
@@ -365,7 +365,7 @@ function EffortPicker() {
 			>
 				<Brain className="size-3.5" />
 				<EffortBars value={lit} total={steps.length} />
-				<span>{t(level)}</span>
+				<span className="@max-[28rem]:hidden">{t(level)}</span>
 			</button>
 			{open && (
 				<div className="absolute bottom-full left-3 right-3 z-40 mb-2 md:left-0 md:right-auto md:w-80 animate-rise rounded-xl border border-ink-700 bg-ink-900/97 px-4 pt-3.5 pb-3 shadow-2xl shadow-black/40 backdrop-blur">
@@ -767,7 +767,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 
 			<div
 				className={clsx(
-					"rounded-2xl border bg-ink-900/85 shadow-[0_10px_40px_-12px_rgb(0_0_0/0.45)] backdrop-blur transition-colors",
+					"@container rounded-2xl border bg-ink-900/85 shadow-[0_10px_40px_-12px_rgb(0_0_0/0.45)] backdrop-blur transition-colors",
 					streaming ? "border-ember-500/35" : "border-ink-700 focus-within:border-ink-500",
 					dragging && "border-ember-400 ring-2 ring-ember-500/30",
 				)}
@@ -881,11 +881,12 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 						</div>
 					</div>
 				</div>
-				<div className="flex items-center gap-1 border-t border-ink-800/70 px-2 py-1">
+				<div className="flex flex-wrap items-center gap-x-1 border-t border-ink-800/70 px-2 py-1">
 					{newChat ? <RuntimeMenu mode="draft" /> : session ? <RuntimeMenu mode="session" /> : null}
 					<PermissionPicker />
 					<ModePicker />
 					<div className="flex-1" />
+					<SpeedChip />
 					<ContextMeter />
 				</div>
 			</div>

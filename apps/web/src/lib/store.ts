@@ -1,3 +1,4 @@
+import { speedTracker } from "./speed.ts";
 import { type Attachment, toWire } from "./attachments.ts";
 import { uuid } from "./uuid.ts";
 import { notifyTurnDone } from "./notify.ts";
@@ -479,6 +480,7 @@ export function handleFrame(frame: ServerFrame): void {
 			}
 			if (frame.event.type === "message_end" && frame.event.message.role === "assistant" && (frame.event.message as AssistantMessage).stopReason === "error") erroredRuns.add(frame.sessionId);
 			if (frame.event.type === "agent_settled" && !frame.event.aborted) notifyTurnDone(get().sessions.find((x) => x.id === frame.sessionId)?.name ?? active?.name ?? "");
+			speedTracker.feed(frame.sessionId, frame.event, Date.now());
 			if (frame.sessionId === active?.id) enqueue(frame.event);
 			return;
 		}

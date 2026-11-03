@@ -1,8 +1,9 @@
 import clsx from "clsx";
 import { Minimize2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import type { ContextBreakdown } from "@prometheus/protocol";
 import { cacheRate, fmtPercent, fmtTokens } from "../lib/format.ts";
+import { speedTracker } from "../lib/speed.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { call, refreshStats, toast, useStore } from "../lib/store.ts";
 import { Button } from "./ui.tsx";
@@ -26,6 +27,13 @@ const M = defineMessages({
 		busy: "对话进行中，无法压缩",
 		io: "累计输入 {i} · 输出 {o}",
 		cacheHit: "缓存命中率 {r}（读取 {c} / 写入 {w}）",
+		speed: "生成速度",
+		speedNow: "当前 {v} tokens/s（估算）",
+		speedLast: "上一条回复 {v} tokens/s · 输出 {n} tokens",
+		speedAvg: "本次打开以来平均 {v} tokens/s（{n} 条回复）",
+		speedTtft: "首字延迟 {v}",
+		speedNone: "还没有可统计的回复（需要流式输出）",
+		speedNote: "从第一个字出来开始计时，不含等待首字的时间；输出 token 数以模型上报为准，进行中的速度为估算。",
 	},
 	en: {
 		title: "Context usage",
@@ -44,6 +52,13 @@ const M = defineMessages({
 		busy: "Cannot compact while a run is in progress",
 		io: "Total input {i} · output {o}",
 		cacheHit: "Cache hit rate {r} (read {c} / write {w})",
+		speed: "Generation speed",
+		speedNow: "Now {v} tokens/s (estimated)",
+		speedLast: "Last reply {v} tokens/s · {n} tokens out",
+		speedAvg: "Average since opening {v} tokens/s ({n} replies)",
+		speedTtft: "Time to first token {v}",
+		speedNone: "No timed reply yet (needs streaming output)",
+		speedNote: "Timed from the first token, so the wait for it is not included. Token counts come from the model; the live figure is an estimate.",
 	},
 });
 
@@ -58,6 +73,37 @@ const PARTS: { key: keyof ContextBreakdown | "unattributed"; color: string }[] =
 ];
 
 const fmt = fmtTokens;
+
+/** Speed of the open conversation; re-reads twice a second while a reply is being written so the live figure moves. */
+function useSpeed() {
+	const id = useStore((s) => s.session?.id);
+	const streaming = useStore((s) => s.session?.isStreaming ?? false);
+	const summary = useSyncExternalStore(speedTracker.subscribe, () => speedTracker.summary(id ?? ""));
+	const [, tick] = useState(0);
+	useEffect(() => {
+		if (!streaming) return;
+		const iv = setInterval(() => tick((n) => n + 1), 500);
+		return () => clearInterval(iv);
+	}, [streaming]);
+	return { summary, live: id && streaming ? speedTracker.live(id, Date.now()) : null };
+}
+
+const fmtRate = (v: number) => (v >= 100 ? String(Math.round(v)) : v.toFixed(1));
+const fmtMs = (ms: number) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`);
+
+/** Footer figure: tokens per second of the reply being written, or of the last one. Details are in the usage popover. */
+export function SpeedChip() {
+	const t = useT(M);
+	const { summary, live } = useSpeed();
+	const rate = live?.tps ?? null;
+	const value = rate ?? (live ? null : (summary.last?.tps ?? null));
+	if (value === null) return null;
+	return (
+		<span className={clsx("shrink-0 whitespace-nowrap px-1 font-mono text-[11px] @max-[24rem]:hidden", rate !== null ? "text-ember-300" : "text-ink-500")} title={t("speed")}>
+			{rate !== null ? "~" : ""}{fmtRate(value)} t/s
+		</span>
+	);
+}
 
 function Ring({ percent }: { percent: number | null }) {
 	const p = Math.min(Math.max(percent ?? 0, 0), 100);
@@ -78,6 +124,7 @@ export function ContextMeter() {
 	const session = useStore((s) => s.session);
 	const { open, setOpen, ref } = usePopover();
 	const [starting, setStarting] = useState(false);
+	const { summary, live } = useSpeed();
 	const stats = session?.stats;
 	if (!session || !stats) return null;
 
@@ -145,6 +192,23 @@ export function ContextMeter() {
 							<span className="font-mono text-ink-400">{fmt(Math.max(window_ - total, 0))}</span>
 						</li>
 					</ul>
+
+					<div className="mt-3 border-t border-ink-800 pt-2.5">
+						<div className="text-xs font-medium text-ink-200">{t("speed")}</div>
+						<ul className="mt-1.5 space-y-1 font-mono text-[11px] text-ink-400">
+							{live?.tps != null && <li className="text-ember-300">{t("speedNow", { v: fmtRate(live.tps) })}</li>}
+							{summary.last ? (
+								<>
+									<li>{t("speedLast", { v: fmtRate(summary.last.tps), n: fmt(summary.last.outputTokens) })}</li>
+									<li>{t("speedTtft", { v: fmtMs(summary.last.ttftMs) })}</li>
+									{summary.avgTps != null && summary.replies > 1 && <li>{t("speedAvg", { v: fmtRate(summary.avgTps), n: summary.replies })}</li>}
+								</>
+							) : (
+								!live?.tps && <li className="text-ink-500">{t("speedNone")}</li>
+							)}
+						</ul>
+						<p className="mt-1.5 text-[10.5px] leading-snug text-ink-500">{t("speedNote")}</p>
+					</div>
 
 					<p className="mt-3 text-[11px] leading-snug text-ink-500">{stats.contextEstimated ? t("unknown") : t("estimate")}</p>
 					<p className="mt-1 font-mono text-[11px] text-ink-500">
