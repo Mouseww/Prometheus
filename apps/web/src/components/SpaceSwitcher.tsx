@@ -6,8 +6,8 @@ import { type Space, spaceOf } from "../lib/spaces.ts";
 import { setSpace, useSpace, useStore } from "../lib/store.ts";
 
 const M = defineMessages({
-	zh: { personal: "个人", work: "工作", hint: "Ctrl+1 个人 · Ctrl+2 工作", waiting: "另一边有 {n} 个对话有新结果" },
-	en: { personal: "Personal", work: "Work", hint: "Ctrl+1 personal · Ctrl+2 work", waiting: "{n} chat(s) on the other side have news" },
+	zh: { personal: "个人", work: "工作", hint: "Ctrl+1 个人 · Ctrl+2 工作", waiting: "另一边有 {n} 件事等你" },
+	en: { personal: "Personal", work: "Work", hint: "Ctrl+1 personal · Ctrl+2 work", waiting: "{n} thing(s) on the other side need you" },
 });
 
 /** Two-way switch at the top of the sidebar. The badge counts finished or failed runs the user has not looked at in the other space. */
@@ -17,12 +17,14 @@ export function SpaceSwitcher() {
 	const home = useStore((s) => s.assistant?.home ?? null);
 	const sessions = useStore((s) => s.sessions);
 	const marks = useStore((s) => s.marks);
+	const waiting = useStore((s) => s.assistant?.pending.length ?? 0);
 	// Computed here, not in the selector: a selector that returns a new object every time makes the store re-render forever.
 	const unseen = useMemo(() => {
 		const n: Record<Space, number> = { personal: 0, work: 0 };
 		for (const sess of sessions) if (marks[sess.id]) n[spaceOf(sess.cwd, home)]++;
+		n.personal += waiting;
 		return n;
-	}, [sessions, marks, home]);
+	}, [sessions, marks, home, waiting]);
 	const items: { id: Space; label: string; icon: typeof User }[] = [
 		{ id: "personal", label: t("personal"), icon: User },
 		{ id: "work", label: t("work"), icon: Briefcase },

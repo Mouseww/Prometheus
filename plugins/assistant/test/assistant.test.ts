@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { createAsk } from "../src/ask.ts";
 import { delegate, type DelegateDeps, pickProject } from "../src/delegate.ts";
 import { ensureHome, listNotes, notesIndex, PERSONA, readPersona, sameDir } from "../src/home.ts";
 import { type BriefingSettings, createBriefing, isDue, localDate, validTime } from "../src/briefing.ts";
@@ -310,5 +311,54 @@ describe("daily briefing", () => {
 		expect(bad.published).toHaveLength(0);
 		expect(bad.state().lastDate).toBe("2026-01-05");
 		expect(await bad.tick()).toBe(false);
+	});
+});
+
+describe("ask", () => {
+	const make = (ids: string[] = ["s1", "s2"]) => {
+		let changes = 0;
+		const a = createAsk({ delegated: (id) => ids.includes(id), changed: () => void changes++, now: () => 1000 });
+		return { a, changes: () => changes };
+	};
+
+	it("waits for the answer and hands it back", async () => {
+		const { a } = make();
+		const p = a.ask("s1", "Which?", ["A", "B"]);
+		const [q] = a.pending();
+		expect(q).toMatchObject({ sessionId: "s1", question: "Which?", options: ["A", "B"] });
+		expect(a.answer(q!.id, "A")).toBe(true);
+		expect(await p).toEqual({ ok: true, answer: "A" });
+		expect(a.pending()).toHaveLength(0);
+	});
+
+	it("only answers what is open, and not with an empty answer", async () => {
+		const { a } = make();
+		void a.ask("s1", "?");
+		const [q] = a.pending();
+		expect(a.answer(q!.id, "  ")).toBe(false);
+		expect(a.answer("nope", "x")).toBe(false);
+	});
+
+	it("refuses sessions that were not delegated and empty questions", async () => {
+		const { a } = make();
+		expect((await a.ask("main", "?")).ok).toBe(false);
+		expect((await a.ask(undefined, "?")).ok).toBe(false);
+		expect((await a.ask("s1", "  ")).ok).toBe(false);
+		expect(a.pending()).toHaveLength(0);
+	});
+
+	it("lets an aborted run go instead of hanging, and keeps one open question per run", async () => {
+		const { a } = make();
+		const ctl = new AbortController();
+		const p = a.ask("s1", "first", undefined, ctl.signal);
+		ctl.abort();
+		expect((await p).ok).toBe(false);
+		expect(a.pending()).toHaveLength(0);
+
+		const first = a.ask("s2", "one");
+		void a.ask("s2", "two");
+		expect((await first).ok).toBe(false);
+		expect(a.pending().map((q) => q.question)).toEqual(["two"]);
+		expect((await a.ask("s1", "x", undefined, AbortSignal.abort())).ok).toBe(false);
 	});
 });

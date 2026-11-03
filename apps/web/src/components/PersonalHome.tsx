@@ -1,8 +1,8 @@
-import { ChevronRight, Clock, Flame, Share2 } from "lucide-react";
+import { ChevronRight, CircleHelp, Clock, Flame, Share2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AutomationTask } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { onPluginChange, openSession, pluginCall, useStore } from "../lib/store.ts";
+import { onPluginChange, openSession, type PendingQuestion, pluginCall, toast, useStore } from "../lib/store.ts";
 import { delegatedRuns, delegationTitle } from "../lib/spaces.ts";
 import { Badge, PageHeader } from "./ui.tsx";
 
@@ -24,6 +24,10 @@ const M = defineMessages({
 		next: "下次 {at}",
 		paused: "已暂停",
 		open: "查看",
+		needsYou: "等你回答",
+		answerPlaceholder: "或者直接写答案…",
+		send: "回答",
+		gone: "这个问题已经不需要回答了（运行已结束）",
 	},
 	en: {
 		title: "Home",
@@ -42,6 +46,10 @@ const M = defineMessages({
 		next: "Next {at}",
 		paused: "Paused",
 		open: "Open",
+		needsYou: "Waiting for you",
+		answerPlaceholder: "Or type an answer…",
+		send: "Answer",
+		gone: "This question is no longer open (the run ended)",
 	},
 });
 
@@ -63,6 +71,48 @@ function Card({ icon, title, hint, children }: { icon: React.ReactNode; title: s
 	);
 }
 
+/** One question a delegated run is waiting on: option buttons plus a free answer. */
+function QuestionRow({ q, project, title }: { q: PendingQuestion; project: string; title: string }) {
+	const t = useT(M);
+	const [text, setText] = useState("");
+	const send = async (answer: string) => {
+		const r = await pluginCall<{ ok: boolean }>("assistant", "answer", { id: q.id, text: answer });
+		if (r && !r.ok) toast(t("gone"));
+	};
+	return (
+		<li className="rounded-lg border border-amber-500/30 bg-amber-500/[0.06] p-3">
+			<div className="mb-1 flex items-center gap-2 text-[11px] text-ink-500">
+				<button type="button" onClick={() => void openSession(q.sessionId)} className="truncate hover:text-ember-300">
+					{title}
+				</button>
+				<span className="font-mono">{project}</span>
+			</div>
+			<p className="mb-2 text-[13px] whitespace-pre-wrap text-ink-100">{q.question}</p>
+			{q.options.length > 0 && (
+				<div className="mb-2 flex flex-wrap gap-1.5">
+					{q.options.map((o) => (
+						<button key={o} type="button" onClick={() => void send(o)} className="rounded-md border border-ink-700 bg-ink-800 px-2.5 py-1 text-xs text-ink-100 hover:border-ember-500/60">
+							{o}
+						</button>
+					))}
+				</div>
+			)}
+			<form
+				className="flex gap-2"
+				onSubmit={(e) => {
+					e.preventDefault();
+					if (text.trim()) void send(text);
+				}}
+			>
+				<input value={text} onChange={(e) => setText(e.target.value)} placeholder={t("answerPlaceholder")} className="min-w-0 flex-1 rounded-md border border-ink-700 bg-ink-950 px-2 py-1 text-xs text-ink-100 outline-none focus:border-ember-500/60" />
+				<button type="submit" disabled={!text.trim()} className="rounded-md bg-ember-500 px-3 py-1 text-xs font-medium text-white disabled:opacity-40">
+					{t("send")}
+				</button>
+			</form>
+		</li>
+	);
+}
+
 const Empty = ({ text }: { text: string }) => <p className="text-xs text-ink-500">{text}</p>;
 
 /** The personal space's home page: what the assistant did and is doing, at a glance. */
@@ -71,6 +121,7 @@ export function PersonalHome() {
 	const sessions = useStore((s) => s.sessions);
 	const workspaces = useStore((s) => s.workspaces);
 	const delegated = useStore((s) => s.assistant?.delegated);
+	const pending = useStore((s) => s.assistant?.pending);
 	const [overview, setOverview] = useState<Overview | null>(null);
 	const [tasks, setTasks] = useState<AutomationTask[]>([]);
 
@@ -106,6 +157,18 @@ export function PersonalHome() {
 		<div className="flex h-full min-h-0 flex-col">
 			<PageHeader title={t("title")} subtitle={t("subtitle")} />
 			<div className="grid min-h-0 flex-1 content-start gap-4 overflow-y-auto p-4 @3xl:grid-cols-2 @3xl:p-8">
+				{pending && pending.length > 0 && (
+					<div className="@3xl:col-span-2">
+						<Card icon={<CircleHelp className="size-4 text-amber-400" />} title={t("needsYou")}>
+							<ul className="space-y-2">
+								{pending.map((q) => {
+									const s = sessions.find((x) => x.id === q.sessionId);
+									return <QuestionRow key={q.id} q={q} project={projectOf(s?.workspaceId ?? "")} title={delegationTitle(s?.name) || s?.firstMessage || ""} />;
+								})}
+							</ul>
+						</Card>
+					</div>
+				)}
 				<Card icon={<Flame className="size-4 text-ember-300" />} title={t("briefing")} hint={overview ? (overview.settings.enabled ? t("briefingOn", { time: overview.settings.time }) : t("briefingOff")) : undefined}>
 					{overview?.briefing ? <pre className="max-h-64 overflow-y-auto font-sans text-[13px] leading-relaxed whitespace-pre-wrap text-ink-200">{overview.briefing.text}</pre> : <Empty text={t("noBriefing")} />}
 				</Card>

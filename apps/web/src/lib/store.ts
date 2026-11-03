@@ -174,6 +174,15 @@ function savedSort(): SubagentSort {
 }
 
 export type SettingsTab = "general" | "agents" | "gateways" | "mcp" | "connectors" | "skills" | "modes" | "subagents" | "market" | "veil" | "logs" | "plugins" | "voice" | "network" | "runtimes" | "platforms" | "ssh" | "usage";
+/** A question a delegated run asked and is waiting on (plugins/assistant/src/ask.ts). */
+export interface PendingQuestion {
+	id: string;
+	sessionId: string;
+	question: string;
+	options: string[];
+	at: number;
+}
+
 export type View = "chat" | "home" | "knowledge" | "memory" | "automations" | "git" | "settings" | { panel: string };
 
 interface State {
@@ -188,7 +197,7 @@ interface State {
 	/** The space the user chose; see `useSpace` for the one actually shown (no assistant: work only). */
 	space: Space;
 	/** The assistant's home folder (null: no assistant) and its main chat, once known. */
-	assistant: { home: string; mainId: string | null; /** Sessions the assistant delegated to projects. */ delegated: ReadonlySet<string> } | null;
+	assistant: { home: string; mainId: string | null; /** Sessions the assistant delegated to projects. */ delegated: ReadonlySet<string>; /** Questions delegated runs are waiting on. */ pending: PendingQuestion[] } | null;
 	/** Every plugin the host knows, loaded or not; views use it to show or hide plugin-backed features. */
 	plugins: PluginInfo[];
 	hostSettings: HostSettings | null;
@@ -662,7 +671,7 @@ export async function refreshAssistant(): Promise<void> {
 	}
 	const info = (await get()
 		.client?.rpc("plugin.call", { plugin: "assistant", method: "info", params: {} })
-		.catch(() => undefined)) as { home?: string; sessionId?: string | null; delegated?: string[] } | undefined;
+		.catch(() => undefined)) as { home?: string; sessionId?: string | null; delegated?: string[]; pending?: PendingQuestion[] } | undefined;
 	if (!info?.home) {
 		if (get().assistant) set({ assistant: null });
 		return;
@@ -670,8 +679,9 @@ export async function refreshAssistant(): Promise<void> {
 	const mainId = info.sessionId ?? null;
 	const delegated = new Set(info.delegated ?? []);
 	const cur = get().assistant;
-	if (cur?.home === info.home && cur.mainId === mainId && cur.delegated.size === delegated.size && [...delegated].every((id) => cur.delegated.has(id))) return;
-	set({ assistant: { home: info.home, mainId, delegated } });
+	const pending = info.pending ?? [];
+	if (cur?.home === info.home && cur.mainId === mainId && cur.delegated.size === delegated.size && [...delegated].every((id) => cur.delegated.has(id)) && cur.pending.map((q) => q.id).join() === pending.map((q) => q.id).join()) return;
+	set({ assistant: { home: info.home, mainId, delegated, pending } });
 }
 
 /** The space shown now: the one chosen, or work when there is no assistant (and so no personal space). */

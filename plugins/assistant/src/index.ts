@@ -4,6 +4,7 @@ import { Type } from "typebox";
 import { createJsonStore, definePlugin } from "@prometheus/plugin-sdk";
 import { type DelegationCard, delegate, type DelegateDeps } from "./delegate.ts";
 import { type BriefingSettings, createBriefing, DEFAULT_BRIEFING, localDate, validTime } from "./briefing.ts";
+import { createAsk } from "./ask.ts";
 import { createInbound, MAX_BODY } from "./inbound.ts";
 import { ensureHome, listNotes, notesIndex, readPersona, sameDir } from "./home.ts";
 import { mainThread } from "./main-thread.ts";
@@ -41,7 +42,7 @@ export default definePlugin({
 		ctx.rpc("info", async () => {
 			const saved = (await store.read()).sessionId;
 			const alive = saved ? await ctx.sessionExists(saved) : false;
-			return { home: home.dir, sessionId: alive ? saved : null, delegated: [...delegations.keys()] };
+			return { home: home.dir, sessionId: alive ? saved : null, delegated: [...delegations.keys()], pending: asker.pending() };
 		});
 
 		const briefStore = createJsonStore<BriefingSettings>(join(ctx.dataDir, "briefing.json"), () => ({ ...DEFAULT_BRIEFING }));
@@ -66,6 +67,30 @@ export default definePlugin({
 		const delegations = new Map<string, string>();
 		void delegStore.read().then((d) => {
 			for (const e of d.list) delegations.set(e.sessionId, e.project);
+		});
+
+		const asker = createAsk({ delegated: (id) => delegations.has(id), changed: () => ctx.notifyChanged(), now: () => Date.now() });
+		ctx.rpc("answer", async (params) => {
+			const p = (params ?? {}) as { id?: string; text?: string };
+			return { ok: asker.answer(String(p.id ?? ""), String(p.text ?? "")) };
+		});
+
+		ctx.tools.register({
+			name: "assistant_ask",
+			label: "助理：向用户提问",
+			description:
+				"Only inside a run the assistant delegated: ask the user one question and wait for the answer. Use it when you cannot tell what they want and a wrong guess would waste the work; do not use it for things you can decide or look up. Offer short options when the answer is a choice. If the user does not answer in time the call fails: then decide yourself and say what you assumed.",
+			promptSnippet: "assistant_ask: ask the user one question and wait (delegated runs only; do not guess when unsure)",
+			// Asking changes nothing, so a read-only run may ask too.
+			annotations: { readOnlyHint: true },
+			parameters: Type.Object({
+				question: Type.String({ description: "One clear question" }),
+				options: Type.Optional(Type.Array(Type.String(), { description: "Up to 6 short choices; the user may also type something else" })),
+			}),
+			async execute(_id, p, signal, _onUpdate, tctx) {
+				const r = await asker.ask(tctx.sessionId, p.question, p.options, signal);
+				return r.ok ? { content: [{ type: "text" as const, text: `The user answered: ${r.answer}` }], details: {} } : { content: [{ type: "text" as const, text: r.reason }], details: {}, isError: true };
+			},
 		});
 
 		const delegateDeps: DelegateDeps = {

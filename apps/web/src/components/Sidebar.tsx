@@ -75,6 +75,7 @@ const M = defineMessages({
 		startChat: "新对话",
 		home: "主页",
 		delegated: "委派",
+		asking: "等你回答",
 		mainThread: "主线 · 普罗",
 		mainThreadHint: "助理的长期对话：它有自己的家，需要时把活派到你的项目里",
 		conversations: "对话",
@@ -116,6 +117,7 @@ const M = defineMessages({
 		startChat: "New chat",
 		home: "Home",
 		delegated: "Delegated",
+		asking: "Needs you",
 		mainThread: "Main · Pro",
 		mainThreadHint: "The assistant's long-running chat: it has a home of its own and hands work to your projects when needed",
 		conversations: "Chats",
@@ -243,6 +245,7 @@ function SessionRow({ s, active }: { s: SessionSummary; active: boolean }) {
 	const [editing, setEditing] = useState(false);
 	const [name, setName] = useState("");
 	const delegated = useStore((st) => Boolean(st.assistant?.delegated.has(s.id)));
+	const asking = useStore((st) => Boolean(st.assistant?.pending.some((q) => q.sessionId === s.id)));
 	const title = (delegated ? delegationTitle(s.name) : s.name) || localizeError(s.firstMessage ?? "") || t("newSession");
 	// Clicked, contents still on the way (or only the copy from the last visit is shown).
 	const mark = useStore((st) => (st.session?.id === s.id ? undefined : st.marks[s.id]));
@@ -293,6 +296,7 @@ function SessionRow({ s, active }: { s: SessionSummary; active: boolean }) {
 			<div className="min-w-0 flex-1">
 				<div className="flex items-center gap-1.5 truncate text-[13px] text-ink-200">
 					{delegated && <span className="shrink-0 rounded bg-ember-500/15 px-1 text-[10px] leading-4 text-ember-300">{t("delegated")}</span>}
+					{asking && <span className="shrink-0 rounded bg-amber-500/20 px-1 text-[10px] leading-4 text-amber-300">{t("asking")}</span>}
 					<span className="truncate">{title}</span>
 				</div>
 				<div className="flex items-center gap-1.5 text-[10.5px] text-ink-500">
