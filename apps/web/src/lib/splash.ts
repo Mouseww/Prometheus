@@ -4,8 +4,8 @@
  * (so the ignition never cuts off mid-flame) and hands over with the app rising in underneath.
  */
 
-/** Just long enough for the flame to catch; it used to be 1500 ms, which made every start feel slow even when the app was ready at once. */
-const MIN_MS = 500;
+/** Long enough for the flame to light and the wordmark to settle. */
+const MIN_MS = 1500;
 const OUT_MS = 520;
 
 let dismissed = false;
