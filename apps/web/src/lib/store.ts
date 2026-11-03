@@ -712,12 +712,13 @@ export async function setSpace(space: Space): Promise<void> {
 	}
 	const current = get().session;
 	if (current && current.messages.length > 0) lastInSpace[from] = current.id;
-	set({ space, view: "chat" });
+	// The personal space rests on its home page, which also holds the way into the assistant's main chat.
+	set({ space, view: space === "personal" ? "home" : "chat" });
 	localStorage.setItem(SPACE_KEY, space);
+	if (space === "personal") return;
 	const here = get().sessions.filter((s) => !s.archived && spaceOf(s.cwd, home) === space);
-	const target = here.find((s) => s.id === lastInSpace[space]) ?? (space === "personal" ? here.find((s) => s.id === assistant?.mainId) : here[0]);
+	const target = here.find((s) => s.id === lastInSpace[space]) ?? here[0];
 	if (target) await openSession(target.id);
-	else if (space === "personal") await openAssistantMain();
 	else {
 		// The new-chat page keeps a blank chat it is already on, and the blank one here belongs to the other space:
 		// a first message typed now would land in it. Let go of it so the page starts from a workspace choice.
@@ -1470,7 +1471,7 @@ async function onConnected(): Promise<void> {
 			void refreshDraftModels();
 		}
 	}
-	// The personal space has no folder to pick on the new-chat page, so it never rests there: open the main chat instead.
-	if (!get().session && effectiveSpace(get().space, get().assistant?.home ?? null) === "personal") await openAssistantMain();
+	// The personal space has no folder to pick on the new-chat page, so it never rests there: show the home page instead.
+	if (!get().session && effectiveSpace(get().space, get().assistant?.home ?? null) === "personal") set({ view: "home" });
 	set({ booted: true });
 }

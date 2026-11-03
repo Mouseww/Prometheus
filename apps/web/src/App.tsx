@@ -261,10 +261,9 @@ export function App() {
 					</div>
 				)}
 				<main className="relative flex min-w-0 flex-1 flex-col">
-					<ChatView />
-					{view !== "chat" && (
+					{view === "home" ? <PersonalHome /> : <ChatView />}
+					{view !== "chat" && view !== "home" && (
 						<Modal key={typeof view === "object" ? view.panel : view} onClose={closeView} floatingClose={typeof view === "object"}>
-							{view === "home" && <PersonalHome />}
 							{view === "knowledge" && <KnowledgeView />}
 							{view === "memory" && <MemoryView />}
 							{view === "automations" && <AutomationsView />}

@@ -1,8 +1,8 @@
-import { ChevronRight, CircleHelp, Clock, Flame, Share2 } from "lucide-react";
+import { ChevronRight, CircleHelp, Clock, Flame, MessageCircle, Share2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AutomationTask } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { onPluginChange, openSession, type PendingQuestion, pluginCall, toast, useStore } from "../lib/store.ts";
+import { onPluginChange, openAssistantMain, openSession, type PendingQuestion, pluginCall, toast, useStore } from "../lib/store.ts";
 import { delegatedRuns, delegationTitle } from "../lib/spaces.ts";
 import { Badge, PageHeader } from "./ui.tsx";
 
@@ -10,6 +10,8 @@ const M = defineMessages({
 	zh: {
 		title: "主页",
 		subtitle: "个人空间：简报、普罗派出去的活、自动化",
+		chat: "和普罗对话",
+		chatHint: "助理的长期对话：它有自己的家，需要时把活派到你的项目里",
 		briefing: "今日简报",
 		noBriefing: "还没有简报。对普罗说「每天 8 点给我一份简报」即可开启。",
 		briefingOn: "每天 {time} 生成，存为笔记",
@@ -32,6 +34,8 @@ const M = defineMessages({
 	en: {
 		title: "Home",
 		subtitle: "Personal space: briefing, work handed to projects, automations",
+		chat: "Talk to the assistant",
+		chatHint: "The assistant's long-running chat: it has a home of its own and hands work to your projects when needed",
 		briefing: "Today's briefing",
 		noBriefing: "No briefing yet. Tell the assistant \"brief me every day at 8\" to turn it on.",
 		briefingOn: "Every day at {time}, saved as a note",
@@ -169,6 +173,14 @@ export function PersonalHome() {
 						</Card>
 					</div>
 				)}
+				<button type="button" onClick={() => void openAssistantMain()} className="flex items-center gap-3 rounded-xl border border-ember-500/20 bg-ember-500/[0.05] px-4 py-3 text-left transition-colors hover:bg-ember-500/10 @3xl:col-span-2">
+					<MessageCircle className="size-5 shrink-0 text-ember-300" />
+					<span className="min-w-0 flex-1">
+						<span className="block text-sm font-medium text-ink-100">{t("chat")}</span>
+						<span className="block truncate text-xs text-ink-500">{t("chatHint")}</span>
+					</span>
+					<ChevronRight className="size-4 shrink-0 text-ink-600" />
+				</button>
 				<Card icon={<Flame className="size-4 text-ember-300" />} title={t("briefing")} hint={overview ? (overview.settings.enabled ? t("briefingOn", { time: overview.settings.time }) : t("briefingOff")) : undefined}>
 					{overview?.briefing ? <pre className="max-h-64 overflow-y-auto font-sans text-[13px] leading-relaxed whitespace-pre-wrap text-ink-200">{overview.briefing.text}</pre> : <Empty text={t("noBriefing")} />}
 				</Card>

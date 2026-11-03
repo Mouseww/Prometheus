@@ -31,10 +31,10 @@ export function ConnectionBanner({ recovery }: { recovery: Recovery }) {
 	const failed = recovery.state === "failed";
 	const text = failed ? t("failed", { e: recovery.error }) : recovery.state === "restarting" ? t("restarting") : conn === "connecting" ? t("connecting") : t("lost");
 	return (
-		<div role="alert" className="flex items-center justify-center gap-2 border-b border-rose-400/30 bg-rose-500/15 px-3 py-1.5 text-xs text-rose-200">
-			{failed ? <WifiOff className="size-3.5 shrink-0" /> : <LoaderCircle className="size-3.5 shrink-0 animate-spin" />}
+		<div role="alert" className="flex items-center justify-center gap-2 border-b border-ember-500/30 bg-ink-850 px-3 py-1.5 text-xs text-ink-200">
+			{failed ? <WifiOff className="size-3.5 shrink-0 text-rose-400" /> : <LoaderCircle className="size-3.5 shrink-0 animate-spin text-ember-400" />}
 			<span className="min-w-0 break-words">{text}</span>
-			<button type="button" onClick={() => client?.retryNow()} className="shrink-0 rounded-md border border-rose-300/40 px-2 py-0.5 hover:bg-rose-400/20">
+			<button type="button" onClick={() => client?.retryNow()} className="shrink-0 rounded-md bg-ember-500 px-2.5 py-0.5 font-medium text-ink-950 transition-colors hover:bg-ember-400">
 				{t("retry")}
 			</button>
 		</div>

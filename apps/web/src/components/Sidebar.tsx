@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Collapse, Flame } from "./ui.tsx";
+import { Collapse } from "./ui.tsx";
 import { confirmDialog, promptDialog } from "../lib/dialogs.ts";
 import {
 	Archive,
@@ -46,7 +46,6 @@ import {
 	prefetchSession,
 	openSettings,
 	pluginActive,
-	openAssistantMain,
 	startPersonalChat,
 	useSpace,
 	renameSession,
@@ -76,8 +75,7 @@ const M = defineMessages({
 		home: "主页",
 		delegated: "委派",
 		asking: "等你回答",
-		mainThread: "主线 · 普罗",
-		mainThreadHint: "助理的长期对话：它有自己的家，需要时把活派到你的项目里",
+		mainThreadHint: "个人主页：简报、委派、自动化，以及和普罗的主对话",
 		conversations: "对话",
 		ageToday: "今天",
 		ageWeek: "近 7 天",
@@ -118,8 +116,7 @@ const M = defineMessages({
 		home: "Home",
 		delegated: "Delegated",
 		asking: "Needs you",
-		mainThread: "Main · Pro",
-		mainThreadHint: "The assistant's long-running chat: it has a home of its own and hands work to your projects when needed",
+		mainThreadHint: "Personal home: briefing, delegations, automations and the main chat",
 		conversations: "Chats",
 		ageToday: "Today",
 		ageWeek: "Last 7 days",
@@ -498,24 +495,14 @@ function PersonalList({ sessions, mainId, activeId }: { sessions: SessionSummary
 	const live = sessions.filter((s) => !s.archived && s.id !== mainId);
 	const archived = sessions.filter((s) => s.archived && s.id !== mainId);
 	const groups = useMemo(() => groupByAge(live), [live]);
-	const mainActive = Boolean(mainId) && mainId === activeId;
+	const view = useStore((s) => s.view);
+	// The main chat is part of the home page, so the home row stays lit while it is open.
+	const homeActive = view === "home" || (Boolean(mainId) && mainId === activeId && view === "chat");
 	return (
 		<div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-			<button type="button" onClick={() => setView("home")} className="mb-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] text-ink-300 hover:bg-ink-800/70 hover:text-ink-100">
+			<button type="button" onClick={() => setView("home")} title={t("mainThreadHint")} className={clsx("mb-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors", homeActive ? "bg-ink-800 text-ink-100" : "text-ink-300 hover:bg-ink-800/70 hover:text-ink-100")}>
 				<Home className="size-4 shrink-0" />
-				{t("home")}
-			</button>
-			<button
-				type="button"
-				title={t("mainThreadHint")}
-				onClick={() => void (main ? openSession(main.id) : openAssistantMain())}
-				className={clsx(
-					"mb-1 flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors",
-					mainActive ? "border-ember-500/40 bg-ember-500/10" : "border-ember-500/15 bg-ember-500/[0.04] hover:bg-ember-500/10",
-				)}
-			>
-				<Flame className="size-4 shrink-0" />
-				<span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink-100">{t("mainThread")}</span>
+				<span className="min-w-0 flex-1 truncate">{t("home")}</span>
 				{main?.running && <span className="size-1.5 animate-breathe rounded-full bg-amber-400" />}
 			</button>
 			{groups.length === 0 && archived.length === 0 && <div className="px-3 py-3 text-xs text-ink-600">{t("noConversations")}</div>}
