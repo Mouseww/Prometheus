@@ -23,6 +23,7 @@ import { Modal } from "./components/ui.tsx";
 import { UpdateDialog } from "./components/UpdateDialog.tsx";
 import type { BackendTarget } from "./lib/client.ts";
 import { PrometheusClient } from "./lib/client.ts";
+import { BACK_LAYER, useBackLayer } from "./lib/back.ts";
 import { clearSession, discoverBackend, establishCookie, isDesktopShell, parseSetupNeeded, type SetupComponent, saveMode, saveSession, startLocal } from "./lib/backend.ts";
 import { bindClient, openSession, pluginActive, setSpace, setView, useStore } from "./lib/store.ts";
 import { CONNECT_EVENT } from "./lib/platforms.ts";
@@ -66,6 +67,10 @@ export function App() {
 	useEffect(() => {
 		setSidebar(!isMobile);
 	}, [isMobile]);
+
+	// The back gesture closes the drawer and the open view before it hands the app to the background (lib/back.ts).
+	useBackLayer(BACK_LAYER.view, view !== "chat", closeView);
+	useBackLayer(BACK_LAYER.drawer, isMobile && sidebar, () => setSidebar(false));
 
 	// A view whose plugin was just switched off would render against RPCs that no longer exist.
 	useEffect(() => {

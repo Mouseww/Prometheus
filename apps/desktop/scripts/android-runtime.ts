@@ -333,6 +333,8 @@ try {
 	const activityPath = join(srcDir, "MainActivity.kt");
 	if (!existsSync(activityPath)) throw new Error(`MainActivity.kt not found at ${activityPath}`);
 	let activity = readFileSync(activityPath, "utf8");
+	// tauri-cli writes platform line endings (CRLF on Windows); the call-site insertions below match on "\n".
+	activity = activity.replace(/\r\n/g, "\n");
 	if (!activity.includes("startPrometheusService")) {
 		const helpers = activityHelpersSource();
 		if (/super\.onCreate\(savedInstanceState\)/.test(activity)) {
@@ -345,8 +347,23 @@ try {
 			);
 		}
 		if (!activity.includes("startPrometheusService()") || !activity.includes("private fun startPrometheusService")) throw new Error("could not patch MainActivity.kt (template changed?)");
-		writeFileSync(activityPath, activity);
 	}
+	// The system bars are a second, independent patch: projects generated before it existed get it too.
+	if (!activity.includes("SystemBarBridge")) {
+		activity = activity.replace(/\n\}\s*$/, () => `\n${systemBarSource()}}\n`);
+		// Start dark, matching the default theme; the page corrects this as soon as the splash script runs.
+		if (/startPrometheusService\(\)\n/.test(activity)) activity = activity.replace(/startPrometheusService\(\)\n/, "startPrometheusService()\n    applySystemBarTheme(true)\n");
+		if (!activity.includes("applySystemBarTheme")) throw new Error("could not patch MainActivity.kt (template changed?)");
+	}
+	// The back gesture is a third one: the page decides what it closes, so it has to be patched in even on projects
+	// that already carry the other two.
+	if (!activity.includes("PrometheusBack")) {
+		activity = activity.replace(/\n\}\s*$/, () => `\n${backSource()}}\n`);
+		if (/applySystemBarTheme\(true\)\n/.test(activity)) activity = activity.replace(/applySystemBarTheme\(true\)\n/, "applySystemBarTheme(true)\n    installBackBridge()\n");
+		else if (/startPrometheusService\(\)\n/.test(activity)) activity = activity.replace(/startPrometheusService\(\)\n/, "startPrometheusService()\n    installBackBridge()\n");
+		if (!/\n\s+installBackBridge\(\)\n/.test(activity)) throw new Error("could not patch MainActivity.kt (template changed?)");
+	}
+	writeFileSync(activityPath, activity);
 	console.log("patched MainActivity.kt");
 } finally {
 	rmSync(work, { recursive: true, force: true });
@@ -484,6 +501,106 @@ function activityHelpersSource(): string {
       } catch (_: Exception) {
       }
     }
+  }
+`;
+}
+
+/**
+ * The system back gesture, handed to the page instead of finishing the activity from wherever the user was.
+ *
+ * The page exposes `window.PrometheusBack` (apps/web/src/lib/back.ts): it closes the topmost thing that can be closed
+ * — the full-screen composer, a view, the drawer — and answers false when nothing wanted the gesture, which is when
+ * the app goes to the background. The local server keeps running as a foreground service either way.
+ */
+function backSource(): string {
+	return `
+  // Both paths, because predictive back (API 33+) routes around onBackPressed when the app opts in. Only one of them
+  // is live per system configuration; the timestamp keeps a doubled event from closing two layers.
+  private var prometheusBackAt = 0L
+
+  private fun installBackBridge() {
+    if (android.os.Build.VERSION.SDK_INT < 33) return
+    try {
+      onBackInvokedDispatcher.registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT) { prometheusHandleBack() }
+    } catch (_: Throwable) {
+    }
+  }
+
+  @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+  override fun onBackPressed() {
+    if (!prometheusHandleBack()) super.onBackPressed()
+  }
+
+  /** True when the page took the gesture; false lets the caller fall back to the shell's own behaviour. */
+  private fun prometheusHandleBack(): Boolean {
+    val page = findPrometheusWebView(window.decorView) ?: return false
+    val now = android.os.SystemClock.elapsedRealtime()
+    if (now - prometheusBackAt < 300) return true
+    prometheusBackAt = now
+    page.evaluateJavascript("window.PrometheusBack ? (window.PrometheusBack() === true) : false") { answer ->
+      if (answer?.trim('"') != "true") moveTaskToBack(true)
+    }
+    return true
+  }
+
+  private fun findPrometheusWebView(view: android.view.View): android.webkit.WebView? {
+    if (view is android.webkit.WebView) return view
+    if (view is android.view.ViewGroup) {
+      for (i in 0 until view.childCount) {
+        findPrometheusWebView(view.getChildAt(i))?.let { return it }
+      }
+    }
+    return null
+  }
+`;
+}
+
+/**
+ * System bar appearance, driven by the page through the `PrometheusHost` bridge. Android picks the bar icon colour
+ * from the phone's theme, but the app theme is a user preference and the two often disagree (a dark app on a light
+ * phone got invisible icons). Calling `theme(true)` means a dark app theme, so the icons go light.
+ */
+function systemBarSource(): string {
+	return `
+  // The page reports its own theme (Settings > Appearance), which may differ from the phone's dark mode.
+  override fun onWebViewCreate(webView: android.webkit.WebView) {
+    super.onWebViewCreate(webView)
+    try {
+      webView.addJavascriptInterface(SystemBarBridge(), "PrometheusHost")
+    } catch (_: Throwable) {
+    }
+  }
+
+  inner class SystemBarBridge {
+    @android.webkit.JavascriptInterface
+    fun theme(dark: Boolean) {
+      runOnUiThread { applySystemBarTheme(dark) }
+    }
+  }
+
+  @Suppress("DEPRECATION")
+  private fun applySystemBarTheme(dark: Boolean) {
+    val w = window
+    if (android.os.Build.VERSION.SDK_INT < 35) {
+      w.statusBarColor = android.graphics.Color.TRANSPARENT
+      w.navigationBarColor = android.graphics.Color.TRANSPARENT
+    }
+    if (android.os.Build.VERSION.SDK_INT >= 29) {
+      w.isStatusBarContrastEnforced = false
+      w.isNavigationBarContrastEnforced = false
+    }
+    if (android.os.Build.VERSION.SDK_INT >= 30) {
+      val controller = w.insetsController ?: return
+      val lightBars = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+      // A dark app theme keeps light icons: clear the LIGHT_* appearance bits.
+      controller.setSystemBarsAppearance(if (dark) 0 else lightBars, lightBars)
+    } else {
+      var flags = w.decorView.systemUiVisibility
+      flags = if (dark) flags and android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv() else flags or android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+      w.decorView.systemUiVisibility = flags
+    }
+    // Behind the transparent bars: the app's own background, so no white strip appears in dark mode.
+    w.setBackgroundDrawableResource(if (dark) android.R.color.black else android.R.color.white)
   }
 `;
 }

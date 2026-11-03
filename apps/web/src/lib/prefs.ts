@@ -31,6 +31,8 @@ interface Prefs {
 	motion: boolean;
 	/** The "ignition" splash shown while the app starts. */
 	splash: boolean;
+	/** Enter sends the message (Shift+Enter breaks the line); off means Enter only breaks the line. */
+	enterToSend: boolean;
 	/** Desktop: download and install updates by itself while no agent is running. */
 	idleUpdate: boolean;
 	/** Display names the user gave models, keyed by `provider/id`. Only changes what is shown. */
@@ -40,9 +42,25 @@ interface Prefs {
 export const aliasKey = (provider: string, id: string) => `${provider}/${id}`;
 
 const KEY = "prometheus.prefs";
+// Touch keyboards have no comfortable Enter-to-send: there, Enter breaks the line unless the user opts in.
+const touchFirst = window.matchMedia("(pointer: coarse)").matches;
 
 function load(): Prefs {
-	const fallback: Prefs = { theme: "dark", skin: "ember", lang: navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en", closeToTray: true, sendMode: "followUp", chatWidth: null, notifyOnDone: false, notifyBackgroundOnly: true, motion: true, splash: true, idleUpdate: true, modelAliases: {} };
+	const fallback: Prefs = {
+		theme: "dark",
+		skin: "ember",
+		lang: navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en",
+		closeToTray: true,
+		sendMode: "followUp",
+		chatWidth: null,
+		notifyOnDone: false,
+		notifyBackgroundOnly: true,
+		motion: true,
+		splash: true,
+		enterToSend: !touchFirst,
+		idleUpdate: true,
+		modelAliases: {},
+	};
 	try {
 		return { ...fallback, ...(JSON.parse(localStorage.getItem(KEY) ?? "{}") as Partial<Prefs>) };
 	} catch {
@@ -53,6 +71,7 @@ function load(): Prefs {
 export const usePrefs = create<Prefs>(load);
 
 import { onMediaChange } from "./media.ts";
+import { syncNativeTheme } from "./native.ts";
 const media = window.matchMedia("(prefers-color-scheme: light)");
 
 function apply(p: Prefs): void {
@@ -63,6 +82,8 @@ function apply(p: Prefs): void {
 	root.dataset.motion = p.motion ? "on" : "off";
 	root.lang = p.lang === "zh" ? ["zh", "CN"].join("-") : "en";
 	root.style.colorScheme = light ? "light" : "dark";
+	// Android: the status bar icons follow the app theme, not the phone's (the two can differ).
+	syncNativeTheme(!light);
 	// Keep the Android status bar in step with the resolved theme (a fixed dark value made light mode unreadable).
 	let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
 	if (!meta) {
