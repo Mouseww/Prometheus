@@ -995,8 +995,21 @@ export function startNewChat(): void {
 /** The agent a new chat starts with: the one set as default under Agent runtimes, or PI when it is missing or unavailable. */
 function defaultDraft(): { draftRuntime: RuntimeKind; draftAgentId: string } {
 	const id = get().hostSettings?.defaultAgent ?? "pi";
-	const info = id === "pi" ? undefined : get().runtimes.find((r) => r.id === id && r.health.available);
-	return info ? { draftRuntime: info.kind, draftAgentId: info.id } : { draftRuntime: "pi", draftAgentId: "pi" };
+	const all = get().runtimes;
+	// PI is optional (the installer does not carry it): when it is not installed the first agent that works takes its place.
+	const piMissing = all.length > 0 && all.find((r) => r.id === "pi")?.health.available === false;
+	const wanted = id === "pi" && !piMissing ? undefined : all.find((r) => r.id === id && r.health.available);
+	const chosen = wanted ?? (piMissing ? all.find((r) => r.health.available) : undefined);
+	return chosen ? { draftRuntime: chosen.kind, draftAgentId: chosen.id } : { draftRuntime: "pi", draftAgentId: "pi" };
+}
+
+/** Re-pick the agent of the untouched new-chat page, after the set of usable agents changed (one was just installed). */
+export function resetDraftAgent(): void {
+	if (get().session) return;
+	const draft = defaultDraft();
+	if (draft.draftAgentId === get().draftAgentId) return;
+	set({ ...draft, draftModel: null });
+	void refreshDraftModels();
 }
 
 /** Make `agentId` the agent of new chats; the new-chat page, if showing and untouched, follows right away. */

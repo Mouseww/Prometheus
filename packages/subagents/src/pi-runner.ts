@@ -1,4 +1,4 @@
-import { createAgentSession, DefaultResourceLoader, type ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { SubagentStep } from "@prometheus/protocol";
 import type { RunHooks, RunJob } from "./types.ts";
 
@@ -51,6 +51,8 @@ export function createPiRunner(deps: PiRunnerDeps) {
 	};
 
 	return async function runPi(job: RunJob, hooks: RunHooks, signal: AbortSignal): Promise<string> {
+		// Imported here, not at the top: this module is loaded even when the PI packages are not installed.
+		const { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager } = await import("@earendil-works/pi-coding-agent");
 		const requested = job.model?.trim() || deps.parentModel() || "";
 		const { model: modelSpec, level } = splitModel(requested);
 		const model = modelSpec ? find(modelSpec) : undefined;

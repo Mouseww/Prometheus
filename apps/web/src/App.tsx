@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { AutomationsView } from "./components/AutomationsView.tsx";
 import { ChatView } from "./components/ChatView.tsx";
 import { ConnectScreen } from "./components/ConnectScreen.tsx";
+import { AgentSetup } from "./components/AgentSetup.tsx";
 import { SetupScreen } from "./components/SetupScreen.tsx";
 import { AppDialogHost } from "./components/AppDialog.tsx";
 import { ConnectionBanner, type Recovery } from "./components/ConnectionBanner.tsx";
@@ -25,7 +26,7 @@ import { clearSession, discoverBackend, establishCookie, isDesktopShell, parseSe
 import { bindClient, openSession, pluginActive, setSpace, setView, useStore } from "./lib/store.ts";
 import { CONNECT_EVENT } from "./lib/platforms.ts";
 import { usePrefs } from "./lib/prefs.ts";
-import { checkForUpdate } from "./lib/updater.ts";
+import { checkForUpdate, startIdleUpdater } from "./lib/updater.ts";
 import { dismissSplash } from "./lib/splash.ts";
 import { useIsMobile } from "./lib/viewport.ts";
 
@@ -161,6 +162,16 @@ export function App() {
 		};
 	}, [target, conn, recovery.state === "failed"]);
 
+	// No agent runtime works yet (the installer carries none): offer to install one, PI preselected. Any usable one ends it.
+	const [agentSkipped, setAgentSkipped] = useState(false);
+	const runtimes = useStore((s) => s.runtimes);
+	const needAgent = conn === "open" && booted && !agentSkipped && runtimes.length > 0 && !runtimes.some((r) => r.health.available);
+	const restartBackend = useCallback(async () => {
+		const { invoke } = await import("@tauri-apps/api/core");
+		await invoke("stop_local_backend");
+		setTarget(await startLocal());
+	}, []);
+
 	// The platform switcher announces a new server; replacing the target tears down the old connection.
 	useEffect(() => {
 		const onConnect = (e: Event) => {
@@ -175,6 +186,7 @@ export function App() {
 
 	useEffect(() => {
 		void checkForUpdate(true);
+		return startIdleUpdater();
 	}, []);
 
 	const closeToTray = usePrefs((p) => p.closeToTray);
@@ -224,6 +236,14 @@ export function App() {
 			<Shell>
 				<ConnectScreen unauthorized={conn === "unauthorized"} onSetup={setSetup} wantsPassword={wantsPassword} error={bootError} onConnect={setTarget} />
 				<UpdateDialog />
+			</Shell>
+		);
+	}
+
+	if (needAgent) {
+		return (
+			<Shell>
+				<AgentSetup local={target.label === "local" && isDesktopShell()} onRestartBackend={restartBackend} onSkip={() => setAgentSkipped(true)} />
 			</Shell>
 		);
 	}

@@ -1,4 +1,5 @@
-import { createCodingTools, createReadOnlyTools } from "@earendil-works/pi-coding-agent";
+// Optional: without the PI packages the static list below is all there is.
+const pi = await import("@earendil-works/pi-coding-agent").catch(() => undefined);
 
 /**
  * Tools a mode can name, listed statically.
@@ -35,12 +36,12 @@ export function knownTools(): string[] {
 	if (cache) return cache;
 	const names = new Set<string>(PLUGIN_TOOLS);
 	try {
-		for (const t of createCodingTools(process.cwd())) names.add(t.name);
+		for (const t of pi?.createCodingTools(process.cwd()) ?? []) names.add(t.name);
 	} catch {
 		// The platform has no bash (or a factory needs a real cwd); the static list still stands.
 	}
 	try {
-		for (const t of createReadOnlyTools(process.cwd())) names.add(t.name);
+		for (const t of pi?.createReadOnlyTools(process.cwd()) ?? []) names.add(t.name);
 	} catch {
 		// same
 	}

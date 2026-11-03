@@ -1,4 +1,5 @@
-import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+// Optional: PI packages are managed by the PI agent, which may not be installed.
+const pi = await import("@earendil-works/pi-coding-agent").catch(() => undefined);
 import { definePlugin } from "@prometheus/plugin-sdk";
 import type { PackageInfo, PackageJob, PackageSearchPage, PackageUpdateInfo } from "@prometheus/protocol";
 import { captureCommandOutput } from "./capture.ts";
@@ -19,6 +20,11 @@ export default definePlugin({
 	name: "packages",
 	version: "0.1.0",
 	setup(ctx) {
+		if (!pi) {
+			ctx.log.warn("PI Agent 未安装，PI 扩展包管理不可用");
+			return;
+		}
+		const { SettingsManager, DefaultPackageManager } = pi;
 		const registry = resolveRegistry(ctx.settings.registry);
 		const settings = SettingsManager.create(ctx.cwd, ctx.agentDir);
 		const manager = new DefaultPackageManager({ cwd: ctx.cwd, agentDir: ctx.agentDir, settingsManager: settings });

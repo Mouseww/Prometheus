@@ -55,7 +55,38 @@ export function withAgentBin(dataDir: string, env: Record<string, string | undef
 
 const NPM = process.platform === "win32" ? "npm.cmd" : "npm";
 
-function runNpm(args: string[], timeoutMs: number): Promise<string> {
+/** Registries tried in order when the user has not configured one: the official one, then a mirror reachable from mainland China. */
+export const NPM_REGISTRIES = ["https://registry.npmjs.org/", "https://registry.npmmirror.com/"];
+const FAST_FAIL = ["--fetch-retries=1", "--fetch-retry-mintimeout=2000", "--fetch-timeout=30000"];
+
+async function reachable(registry: string): Promise<boolean> {
+	try {
+		return (await fetch(`${registry}-/ping`, { signal: AbortSignal.timeout(5000) })).ok;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * `npm install`-style commands with a fallback registry. A registry the user configured themselves (env or npmrc) is left
+ * alone. Otherwise the official one is probed first (5 s): if it cannot be reached the mirror goes first, so nobody waits
+ * out npm's multi-minute retries. Each attempt fails fast, then the next registry is tried.
+ */
+export async function runNpmWithFallback(args: string[], timeoutMs: number): Promise<string> {
+	if (process.env.npm_config_registry || process.env.NPM_CONFIG_REGISTRY) return runNpm(args, timeoutMs);
+	const order = (await reachable(NPM_REGISTRIES[0]!)) ? NPM_REGISTRIES : [...NPM_REGISTRIES].reverse();
+	let first: unknown;
+	for (const registry of order) {
+		try {
+			return await runNpm([...args, "--registry", registry, ...FAST_FAIL], timeoutMs);
+		} catch (err) {
+			first ??= err;
+		}
+	}
+	throw first;
+}
+
+export function runNpm(args: string[], timeoutMs: number): Promise<string> {
 	return new Promise((resolve, reject) => {
 		execFile(NPM, args, { timeout: timeoutMs, windowsHide: true, maxBuffer: 16 * 1024 * 1024, shell: process.platform === "win32" }, (err, stdout, stderr) => {
 			if (err) {
@@ -102,7 +133,7 @@ export async function installAgentCli(dataDir: string, agent: string, prefix?: s
 	if (!npm.ok) throw new Error(`找不到 npm：${npm.reason}`);
 	const target = prefix ?? agentInstallPrefix(dataDir);
 	await mkdir(target, { recursive: true });
-	const output = await runNpm(["install", "--global", "--prefix", target, "--no-fund", "--no-audit", "--loglevel=error", `${pkg.pkg}@latest`], 15 * 60_000);
+	const output = await runNpmWithFallback(["install", "--global", "--prefix", target, "--no-fund", "--no-audit", "--loglevel=error", `${pkg.pkg}@latest`], 15 * 60_000);
 	const command = prefix ? agentEntry(dataDir, agent) : installedCli(dataDir, agent);
 	if (!command) throw new Error(`安装完成，但没有找到 ${pkg.bin} 可执行文件。\n${output.trim().split(/\r?\n/).slice(-6).join("\n")}`);
 	return { command, output };

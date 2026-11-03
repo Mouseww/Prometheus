@@ -25,6 +25,7 @@ export const ERROR_PARAMS = {
 	aborted: [],
 	modelNotFound: ["provider", "id"],
 	unknownPermissionMode: ["mode"],
+	piNotInstalled: [],
 	unknownRuntime: ["runtime"],
 	reloadFailed: ["error"],
 	extensionError: ["error"],

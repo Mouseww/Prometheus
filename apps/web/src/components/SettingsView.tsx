@@ -88,6 +88,8 @@ const M = defineMessages({
 		notifyDenied: "系统已拒绝通知权限。请在系统设置里允许 Prometheus 发送通知，然后重新开启。",
 		notifyUnsupported: "当前环境不支持系统通知。",
 		window: "窗口",
+		idleUpdate: "闲时自动更新",
+		idleUpdateHint: "没有 Agent 在运行（且持续两分钟）时，自动下载并安装新版本，然后重启 Prometheus。运行中的任务不会被打断。仅桌面版。",
 		closeToTray: "关闭时最小化到托盘",
 		closeToTrayHint: "关闭窗口后 Prometheus 继续在后台运行，会话不会中断；点击托盘图标查看运行中的会话，右键可显示、隐藏或退出。",
 		autoCompact: "自动压缩上下文",
@@ -175,6 +177,8 @@ const M = defineMessages({
 		notifyDenied: "The system denied notification permission. Allow notifications for Prometheus in system settings, then turn this on again.",
 		notifyUnsupported: "System notifications are not supported here.",
 		window: "Window",
+		idleUpdate: "Update when idle",
+		idleUpdateHint: "When no agent has been running for two minutes, download and install new versions automatically, then restart Prometheus. Running tasks are never interrupted. Desktop only.",
 		closeToTray: "Minimize to tray on close",
 		closeToTrayHint: "Closing the window keeps Prometheus running in the background so sessions are not interrupted. Click the tray icon to see running sessions; right-click to show, hide or quit.",
 		autoCompact: "Auto-compact context",
@@ -503,6 +507,9 @@ function GeneralSettings() {
 
 					{isDesktopShell() && (
 						<Section title={t("window")}>
+							<Row label={t("idleUpdate")} hint={t("idleUpdateHint")}>
+								<Toggle checked={prefs.idleUpdate} onChange={(idleUpdate) => setPrefs({ idleUpdate })} />
+							</Row>
 							<Row label={t("closeToTray")} hint={t("closeToTrayHint")}>
 								<Toggle checked={prefs.closeToTray} onChange={(closeToTray) => setPrefs({ closeToTray })} />
 							</Row>

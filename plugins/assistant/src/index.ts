@@ -1,6 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { createJsonStore, definePlugin } from "@prometheus/plugin-sdk";
 import { type DelegationCard, delegate, type DelegateDeps } from "./delegate.ts";
 import { type BriefingSettings, createBriefing, DEFAULT_BRIEFING, localDate, validTime } from "./briefing.ts";

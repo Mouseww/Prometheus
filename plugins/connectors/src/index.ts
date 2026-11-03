@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { definePlugin } from "@prometheus/plugin-sdk";
 import { buildAuthorizeUrl, exchangeCode, pkcePair, pollDevice, startDevice, type TokenResult } from "./oauth.ts";
 import { providerById, providers } from "./providers/index.ts";

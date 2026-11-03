@@ -1,6 +1,6 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { definePlugin } from "@prometheus/plugin-sdk";
 import { OPEN_FILE_TOOL } from "@prometheus/protocol";
 import { readForViewer, resolveAllowed } from "./files.ts";

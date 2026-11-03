@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { ExtensionFactory, InlineExtension } from "@earendil-works/pi-coding-agent";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { piAgentDir } from "./pi-paths.ts";
 import { toProviderConfig } from "@prometheus/gateway";
 import { KnowledgeService, registerKnowledge } from "@prometheus/knowledge";
 import type { HostKind, PrometheusPlugin } from "@prometheus/plugin-sdk";
@@ -36,7 +36,7 @@ export async function bootstrap(options: BootstrapOptions): Promise<Runtime> {
 	const plugins = new PluginHost({
 		host: options.host,
 		dataDir,
-		agentDir: getAgentDir(),
+		agentDir: piAgentDir(),
 		cwd: options.cwd ?? process.cwd(),
 		settings: (name) => config.get().pluginSettings[name] ?? {},
 		gateways: () => config.gateways(),

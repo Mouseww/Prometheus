@@ -1,4 +1,4 @@
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import type { ExtensionAPI } from "@prometheus/plugin-sdk";
 import { type ComputerService, UserFacingError } from "./computer.ts";
 import { OPS } from "./protocol.ts";

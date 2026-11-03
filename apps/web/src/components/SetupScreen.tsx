@@ -8,12 +8,10 @@ import { Button, Flame } from "./ui.tsx";
 
 const M = defineMessages({
 	zh: {
-		title: "先装好运行环境",
-		intro: "为了让安装包保持小巧，Prometheus 不再自带 Node.js 和智能体引擎（PI Agent），首次使用时在这里一键安装。只需要做一次，之后会随应用一起更新。",
+		title: "先装好 Node.js",
+		intro: "为了让安装包保持小巧，Prometheus 不再自带 Node.js，首次使用时在这里一键安装。只需要做一次。装好后再选择要用的智能体（PI、Claude Code、Codex 等）。",
 		node: "Node.js 22",
 		nodeDesc: "后端的运行环境，含 npm（约 35 MB）",
-		pi: "PI Agent",
-		piDesc: "默认的智能体引擎及其模型库（约 70 MB，通过 npm 安装）",
 		done: "已就绪",
 		pending: "待安装",
 		install: "一键安装",
@@ -24,12 +22,10 @@ const M = defineMessages({
 		note: "需要联网。安装位置在应用自己的数据目录里，卸载时删除即可；已装有合适的 Node.js 时会直接使用。",
 	},
 	en: {
-		title: "Set up the runtime first",
-		intro: "To keep the installer small, Prometheus no longer ships Node.js or its agent engine (PI Agent). Install them here in one click the first time you use it. It only has to be done once; they are updated along with the app.",
+		title: "Install Node.js first",
+		intro: "To keep the installer small, Prometheus no longer ships Node.js. Install it here in one click the first time you use it; it only has to be done once. Afterwards you choose which agent to use (PI, Claude Code, Codex, ...).",
 		node: "Node.js 22",
 		nodeDesc: "Runs the backend, includes npm (about 35 MB)",
-		pi: "PI Agent",
-		piDesc: "The default agent engine and its model library (about 70 MB, installed with npm)",
 		done: "Ready",
 		pending: "Not installed",
 		install: "Install",
@@ -49,8 +45,7 @@ export function SetupScreen({ missing, onReady, onRemote }: { missing: SetupComp
 	const t = useT(M);
 	const jobs = useRuntimes((s) => s.jobs);
 	const [starting, setStarting] = useState(false);
-	// Installing the PI agent installs Node.js first when it is missing, so one job covers both.
-	const target: SetupComponent = missing.includes("pi-agent") ? "pi-agent" : "node";
+	const target: SetupComponent = "node";
 	const job = jobs[target];
 	const running = !!job && !job.finished;
 	const failed = !!job && job.finished && !job.ok;
@@ -66,10 +61,7 @@ export function SetupScreen({ missing, onReady, onRemote }: { missing: SetupComp
 		}
 	}, [job?.finished, job?.ok, starting, onReady]);
 
-	const rows: { id: SetupComponent; name: string; desc: string }[] = [
-		{ id: "node", name: t("node"), desc: t("nodeDesc") },
-		{ id: "pi-agent", name: t("pi"), desc: t("piDesc") },
-	];
+	const rows: { id: SetupComponent; name: string; desc: string }[] = [{ id: "node", name: t("node"), desc: t("nodeDesc") }];
 
 	return (
 		<div className="flex h-full items-center justify-center overflow-y-auto px-4 py-8">

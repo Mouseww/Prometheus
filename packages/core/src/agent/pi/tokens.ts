@@ -5,6 +5,8 @@ import type { ContextBreakdown } from "@prometheus/protocol";
 const CJK = /[\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]/gu;
 
 /** chars/4 undercounts CJK badly (roughly one token per character), so weigh those separately. */
+export { firstUserText } from "../../first-text.ts";
+
 export function approxTokens(text: string): number {
 	const cjk = text.match(CJK)?.length ?? 0;
 	return cjk + Math.ceil((text.length - cjk) / 4);
@@ -37,12 +39,6 @@ export function hasReportedUsage(s: AgentSession): boolean {
 		const a = m as unknown as { role: string; stopReason?: string; usage?: Parameters<typeof calculateContextTokens>[0] };
 		return a.role === "assistant" && a.stopReason !== "aborted" && a.stopReason !== "error" && !!a.usage && calculateContextTokens(a.usage) > 0;
 	});
-}
-
-export function firstUserText(messages: readonly { role: string }[]): string {
-	const m = messages.find((x) => x.role === "user") as unknown as { content?: string | Block[] } | undefined;
-	if (!m) return "";
-	return typeof m.content === "string" ? m.content : (m.content ?? []).map((b) => (b.type === "text" ? (b.text ?? "") : "")).join("");
 }
 
 export function contextBreakdown(s: AgentSession): ContextBreakdown {

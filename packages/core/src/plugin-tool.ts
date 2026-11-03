@@ -1,4 +1,4 @@
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import type { InlineExtension } from "@earendil-works/pi-coding-agent";
 import { INSTALL_PLUGIN_TOOL } from "./permissions.ts";
 import type { PluginHost } from "./plugin-host.ts";

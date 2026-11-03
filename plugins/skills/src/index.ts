@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { loadSkillsFromDir, type Skill } from "@earendil-works/pi-coding-agent";
+import type { Skill } from "@earendil-works/pi-coding-agent";
 import { createJsonStore, definePlugin } from "@prometheus/plugin-sdk";
 import type { SkillDocument, SkillInfo } from "@prometheus/protocol";
 import { checkSkillDocument, renderSkill, requireSkillName } from "./skill-file.ts";
@@ -10,6 +10,10 @@ import { BUILTIN_SKILLS, installBuiltinSkills } from "./builtin-skills.ts";
 interface State {
 	disabled: string[];
 }
+
+// Optional: without the PI packages there is no skill loader, and the lists stay empty until the PI agent is installed.
+const pi = await import("@earendil-works/pi-coding-agent").catch(() => undefined);
+const loadSkillsFromDir: NonNullable<typeof pi>["loadSkillsFromDir"] = (opts) => pi?.loadSkillsFromDir(opts) ?? { skills: [], diagnostics: [] };
 
 export default definePlugin({
 	name: "skills",

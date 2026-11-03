@@ -6,6 +6,7 @@ import type { GatewayConfig, KnowledgeBaseInfo, KnowledgeDocumentInfo, Knowledge
 import { localizeError } from "../lib/errors.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { call, toast } from "../lib/store.ts";
+import { OptionalPackageNotice } from "./OptionalPackageNotice.tsx";
 import { Badge, Button, Dialog, Empty, Field, Input, PageHeader, Select, Textarea } from "./ui.tsx";
 
 const M = defineMessages({
@@ -140,6 +141,7 @@ export function KnowledgeView() {
 					</Button>
 				}
 			/>
+			<OptionalPackageNotice id="lancedb" />
 			<div className="flex min-h-0 flex-1 flex-col md:flex-row">
 				<div className="max-h-[38%] w-full shrink-0 space-y-1 overflow-y-auto border-b hairline p-3 md:max-h-none md:w-72 md:border-r md:border-b-0">
 					{bases.map((b) => (

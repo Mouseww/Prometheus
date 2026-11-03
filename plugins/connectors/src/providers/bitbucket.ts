@@ -1,4 +1,4 @@
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { request } from "../http.ts";
 import type { ConnectorProvider, OperationContext } from "../types.ts";
 

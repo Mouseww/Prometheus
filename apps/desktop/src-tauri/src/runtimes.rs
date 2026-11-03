@@ -21,6 +21,10 @@ use tauri::{AppHandle, Emitter, Manager};
 
 const MANIFEST: &str = include_str!("../runtimes.json");
 const CANCELLED: &str = "已取消";
+const SLOW: &str = "速度过慢，改用下一个下载源";
+/// A source slower than this after a grace period is given up on when another source is left to try.
+const SLOW_BYTES_PER_SEC: f64 = 60.0 * 1024.0;
+const SLOW_AFTER_SECS: f64 = 10.0;
 const ROOTFS_ID: &str = "rootfs";
 /// Pseudo runtime id used for progress events of the Visual Studio Build Tools install.
 const MSVC_ID: &str = "msvc";
@@ -537,8 +541,19 @@ async fn expected_sha(client: &reqwest::Client, target: &Target) -> Result<Strin
         return Ok(sha.to_ascii_lowercase());
     }
     let url = target.sha256_url.as_deref().ok_or("清单缺少校验值")?;
-    let text = fetch_text(client, url).await?;
-    parse_sha(&text).ok_or_else(|| format!("无法解析校验文件：{url}"))
+    // The checksum file sits next to the download, so a mirror of the download usually hosts it too: try those when the
+    // official host cannot be reached. The digest is still checked against the file itself, so a mirror cannot slip in a bad one.
+    let mut last = String::new();
+    for candidate in std::iter::once(url.to_string()).chain(target.urls.iter().map(|u| format!("{u}.sha256"))) {
+        match fetch_text(client, &candidate).await {
+            Ok(text) => match parse_sha(&text) {
+                Some(sha) => return Ok(sha),
+                None => last = format!("无法解析校验文件：{candidate}"),
+            },
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
 }
 
 /// Streams one URL into `part`, resuming when a partial file exists.
@@ -548,6 +563,7 @@ async fn download_one(
     part: &Path,
     em: &Emitter2,
     cancel: &AtomicBool,
+    may_switch: bool,
 ) -> Result<(), String> {
     use futures_util::StreamExt;
     let have = fs::metadata(part).map(|m| m.len()).unwrap_or(0);
@@ -587,6 +603,11 @@ async fn download_one(
         got += chunk.len() as u64;
         let secs = began.elapsed().as_secs_f64().max(0.001);
         em.progress("download", url, start + got, total, (got as f64 / secs) as u64);
+        // Reachable but crawling (a throttled route to GitHub, say): give another source a go. The partial file is kept and
+        // resumed from, and the slow source is retried at the end if nothing else works.
+        if may_switch && secs > SLOW_AFTER_SECS && (got as f64 / secs) < SLOW_BYTES_PER_SEC {
+            return Err(SLOW.into());
+        }
     }
     if total > 0 && start + got < total {
         return Err("连接中断".into());
@@ -596,16 +617,30 @@ async fn download_one(
 
 async fn download(client: &reqwest::Client, target: &Target, part: &Path, em: &Emitter2, cancel: &AtomicBool) -> Result<(), String> {
     let mut last = String::new();
-    for url in &target.urls {
+    let mut slow: Vec<&String> = Vec::new();
+    // Pass 1 moves on from a source that is dead or crawling; pass 2 goes back to the crawling ones and sees them through.
+    for (i, url) in target.urls.iter().enumerate() {
         em.stage("download", url, 0, 0, 0);
         em.log(format!("下载 {url}"));
-        match download_one(client, url, part, em, cancel).await {
+        let may_switch = i + 1 < target.urls.len();
+        match download_one(client, url, part, em, cancel, may_switch).await {
             Ok(()) => return Ok(()),
             Err(e) if e == CANCELLED => return Err(e),
             Err(e) => {
                 em.log(format!("该源失败：{e}"));
+                if e == SLOW {
+                    slow.push(url);
+                }
                 last = e;
             }
+        }
+    }
+    for url in slow {
+        em.log(format!("其他源都不可用，回到较慢的源继续：{url}"));
+        match download_one(client, url, part, em, cancel, false).await {
+            Ok(()) => return Ok(()),
+            Err(e) if e == CANCELLED => return Err(e),
+            Err(e) => last = e,
         }
     }
     Err(format!("所有下载源均失败：{last}"))
@@ -1056,6 +1091,14 @@ pub fn pi_dir(app: &AppHandle) -> Option<PathBuf> {
     (installed_version(&root, &def)? == def.version).then(|| payload_dir(&root, &def.id, false))
 }
 
+/// Whether a registry answers its ping within 5 seconds (plain TCP + HTTP, no TLS stack needed: it only has to be reachable).
+fn registry_reachable(registry: &str) -> bool {
+    use std::net::{TcpStream, ToSocketAddrs};
+    let host = registry.trim_start_matches("https://").trim_start_matches("http://").trim_end_matches('/');
+    let Some(addr) = (host, 443).to_socket_addrs().ok().and_then(|mut a| a.next()) else { return false };
+    TcpStream::connect_timeout(&addr, Duration::from_secs(5)).is_ok()
+}
+
 /// `npm install` of the manifest's packages into a staging folder, swapped into place once it is complete.
 async fn install_npm(app: &AppHandle, def: &Def, target: &Target, root: &Path, em: &Emitter2, cancel: &Arc<AtomicBool>) -> Result<(), String> {
     let node = find_node(app).ok_or("找不到 Node.js（需要 ≥ 22.19）。请先安装“Node.js”运行环境")?;
@@ -1077,11 +1120,15 @@ async fn install_npm(app: &AppHandle, def: &Def, target: &Target, root: &Path, e
             path_dirs.extend(std::env::split_paths(&existing));
         }
         let path = std::env::join_paths(path_dirs).map_err(|e| e.to_string())?;
-        let registries = if t2.registries.is_empty() { vec![String::new()] } else { t2.registries.clone() };
+        // Probe the first registry (5 s): when it cannot be reached the mirror goes first instead of after npm's long retries.
+        let mut registries = if t2.registries.is_empty() { vec![String::new()] } else { t2.registries.clone() };
+        if registries.len() > 1 && !registry_reachable(&registries[0]) {
+            registries.reverse();
+        }
         let mut last = String::new();
         for registry in &registries {
             let mut cmd = std::process::Command::new(&node);
-            cmd.arg(&npm).args(["install", "--no-audit", "--no-fund", "--omit=dev", "--no-progress"]).arg("--prefix").arg(&stage2);
+            cmd.arg(&npm).args(["install", "--no-audit", "--no-fund", "--omit=dev", "--no-progress"]).arg("--prefix").arg(&stage2).args(["--fetch-retries=1", "--fetch-retry-mintimeout=2000", "--fetch-timeout=30000"]);
             if !registry.is_empty() {
                 cmd.arg("--registry").arg(registry);
             }

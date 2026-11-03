@@ -1,4 +1,4 @@
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import type { ConnectorProvider, OperationContext } from "../types.ts";
 
 const MAX_ROWS = 200;

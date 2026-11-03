@@ -2,7 +2,7 @@
 // Model traffic goes through the gateway relay, Prometheus tools through the tool bus, permissions through
 // the single PermissionGate (docs/agent-runtime.md §4, §6, §7, §12.1).
 import { withLoopbackNoProxy } from "../loopback-env.ts";
-import { type Options, query, type Query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { Options, Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { GatewayChoice } from "../types.ts";
 import { AppError, gatewayAs, type ChatMessage, type CommandInfo, type ModelRef, type PermissionMode, type PromptDisposition, type SessionEvent, type SessionStats, type ThinkingLevel, type ToolInfo } from "@prometheus/protocol";
 import type { PluginTool, PluginToolContext } from "@prometheus/plugin-sdk";
@@ -219,6 +219,8 @@ export class ClaudeCodeSession implements RuntimeSession {
 		}
 		options.env = withLoopbackNoProxy(env);
 
+		// Imported here: the installer does not carry the Agent SDK (it is installed on demand).
+		const { query } = await import("@anthropic-ai/claude-agent-sdk");
 		const q = query({ prompt: this.input(), options });
 		this.q = q;
 		this.pump = this.consume(q);

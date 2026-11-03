@@ -28,6 +28,7 @@ export class LanceStore implements KnowledgeStore {
 	static async open(options: KnowledgeStoreOptions): Promise<LanceStore> {
 		// Loaded on first use: platforms without a native binding (Android) must still be able to start the server.
 		const { connect } = await import("@lancedb/lancedb").catch((err: unknown) => {
+			if ((err as { code?: string })?.code === "ERR_MODULE_NOT_FOUND") throw new Error("向量库组件（LanceDB）尚未安装：请在知识库页面点“安装”");
 			throw new Error(`当前平台不支持 LanceDB 向量库：${err instanceof Error ? err.message.split("\n")[0] : String(err)}`);
 		});
 		const db = await connect(options.dataDir);

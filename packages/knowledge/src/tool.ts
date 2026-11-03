@@ -1,4 +1,4 @@
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import type { PluginContext } from "@prometheus/plugin-sdk";
 import type { KnowledgeService } from "./service.ts";
 

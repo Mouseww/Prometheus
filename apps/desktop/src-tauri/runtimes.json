@@ -22,7 +22,7 @@
     {
       "id": "node",
       "name": "Node.js",
-      "description": "Prometheus 后端的运行环境（官方 Node.js 22 LTS，含 npm 与 npx）。安装包本身不再自带，首次使用时在这里安装；也可以使用系统里已有的 Node ≥ 22.13。",
+      "description": "Prometheus 后端的运行环境（官方 Node.js 22，含 npm 与 npx）。安装包本身不再自带，首次使用时在这里安装；也可以使用系统里已有的 Node ≥ 22.19。",
       "version": "22.23.4",
       "desktopOnly": true,
       "probe": [
@@ -118,7 +118,7 @@
     {
       "id": "pi-agent",
       "name": "PI Agent",
-      "description": "Prometheus 默认的智能体引擎（@earendil-works/pi-coding-agent 及其模型库）。安装包本身不再自带，首次使用时通过 npm 安装到应用自己的目录，卸载只需删除该目录；需要 Node.js（没有会先自动安装）。",
+      "description": "可选的智能体引擎之一（与 Claude Code、Codex 等并列），Prometheus 原生支持全部功能。安装包不自带，需要时通过 npm 装到应用自己的目录，卸载只需删除该目录；需要 Node.js（没有会先自动安装）。",
       "version": "1.2.0",
       "desktopOnly": true,
       "requires": [
@@ -157,7 +157,9 @@
       "targets": {
         "windows-x86_64": {
           "urls": [
-            "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.13.17%2B20261021-x86_64-pc-windows-msvc-install_only.tar.gz"
+            "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.13.17%2B20261021-x86_64-pc-windows-msvc-install_only.tar.gz",
+            "https://cdn.npmmirror.com/binaries/python-build-standalone/20261021/cpython-3.13.17%2B20261021-x86_64-pc-windows-msvc-install_only.tar.gz",
+            "https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.13.17%2B20261021-x86_64-pc-windows-msvc-install_only.tar.gz"
           ],
           "sha256": "e10b46d9b03a3a494297f336770f55f86474d683061137b1cf595e12e47bcef5",
           "sizeMb": 40,
@@ -171,7 +173,9 @@
         },
         "windows-aarch64": {
           "urls": [
-            "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.13.17%2B20261021-aarch64-pc-windows-msvc-install_only.tar.gz"
+            "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.13.17%2B20261021-aarch64-pc-windows-msvc-install_only.tar.gz",
+            "https://cdn.npmmirror.com/binaries/python-build-standalone/20261021/cpython-3.13.17%2B20261021-aarch64-pc-windows-msvc-install_only.tar.gz",
+            "https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.13.17%2B20261021-aarch64-pc-windows-msvc-install_only.tar.gz"
           ],
           "sha256": "dd7f2c489a30356b02dc0aca8c210400a09952b06a955d432313d605f8850765",
           "sizeMb": 40,
@@ -185,7 +189,9 @@
         },
         "linux-x86_64": {
           "urls": [
-            "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.13.17%2B20261021-x86_64-unknown-linux-gnu-install_only.tar.gz"
+            "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.13.17%2B20261021-x86_64-unknown-linux-gnu-install_only.tar.gz",
+            "https://cdn.npmmirror.com/binaries/python-build-standalone/20261021/cpython-3.13.17%2B20261021-x86_64-unknown-linux-gnu-install_only.tar.gz",
+            "https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.13.17%2B20261021-x86_64-unknown-linux-gnu-install_only.tar.gz"
           ],
           "sha256": "cbda6f7767884fc456860b11fd184391a9320cae00a86c0f49a1c7ac6e236f7a",
           "sizeMb": 40,
@@ -198,7 +204,9 @@
         },
         "linux-aarch64": {
           "urls": [
-            "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.13.17%2B20261021-aarch64-unknown-linux-gnu-install_only.tar.gz"
+            "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.13.17%2B20261021-aarch64-unknown-linux-gnu-install_only.tar.gz",
+            "https://cdn.npmmirror.com/binaries/python-build-standalone/20261021/cpython-3.13.17%2B20261021-aarch64-unknown-linux-gnu-install_only.tar.gz",
+            "https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.13.17%2B20261021-aarch64-unknown-linux-gnu-install_only.tar.gz"
           ],
           "sha256": "616ab0a31b2a3f28119582f4d1943e342f13bac2ec5a8dfe8572c3c0bcadb95a",
           "sizeMb": 40,
@@ -211,7 +219,9 @@
         },
         "macos-x86_64": {
           "urls": [
-            "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.13.17%2B20261021-x86_64-apple-darwin-install_only.tar.gz"
+            "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.13.17%2B20261021-x86_64-apple-darwin-install_only.tar.gz",
+            "https://cdn.npmmirror.com/binaries/python-build-standalone/20261021/cpython-3.13.17%2B20261021-x86_64-apple-darwin-install_only.tar.gz",
+            "https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.13.17%2B20261021-x86_64-apple-darwin-install_only.tar.gz"
           ],
           "sha256": "b7d7c2dd63545cabe996191b6f20f0b652c7de123d9ca451dda7e5f1ebbcbbbc",
           "sizeMb": 40,
@@ -224,7 +234,9 @@
         },
         "macos-aarch64": {
           "urls": [
-            "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.13.17%2B20261021-aarch64-apple-darwin-install_only.tar.gz"
+            "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.13.17%2B20261021-aarch64-apple-darwin-install_only.tar.gz",
+            "https://cdn.npmmirror.com/binaries/python-build-standalone/20261021/cpython-3.13.17%2B20261021-aarch64-apple-darwin-install_only.tar.gz",
+            "https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.13.17%2B20261021-aarch64-apple-darwin-install_only.tar.gz"
           ],
           "sha256": "9c985cbf327425873469896ce748c7134b6deca8edb81e93c589ad2fc5aff445",
           "sizeMb": 40,
@@ -257,42 +269,42 @@
             "https://dl.google.com/go/go1.27.3.windows-amd64.zip",
             "https://mirrors.aliyun.com/golang/go1.27.3.windows-amd64.zip"
           ],
-          "sha256Url": "https://dl.google.com/go/go1.27.3.windows-amd64.zip.sha256",
           "sizeMb": 80,
           "format": "zip",
           "strip": 1,
           "bin": [
             "bin"
           ],
-          "check": "bin/go.exe"
+          "check": "bin/go.exe",
+          "sha256": "f26081f438319757f8a1b46d7d0b2c5ec7583d4038e485e0aa725cfde7885fff"
         },
         "windows-aarch64": {
           "urls": [
             "https://dl.google.com/go/go1.27.3.windows-arm64.zip",
             "https://mirrors.aliyun.com/golang/go1.27.3.windows-arm64.zip"
           ],
-          "sha256Url": "https://dl.google.com/go/go1.27.3.windows-arm64.zip.sha256",
           "sizeMb": 80,
           "format": "zip",
           "strip": 1,
           "bin": [
             "bin"
           ],
-          "check": "bin/go.exe"
+          "check": "bin/go.exe",
+          "sha256": "c507872ff21f8a7cd3c1c217b059c6f7271a4a9d8e692810ef9dd3e1f601197c"
         },
         "linux-x86_64": {
           "urls": [
             "https://dl.google.com/go/go1.27.3.linux-amd64.tar.gz",
             "https://mirrors.aliyun.com/golang/go1.27.3.linux-amd64.tar.gz"
           ],
-          "sha256Url": "https://dl.google.com/go/go1.27.3.linux-amd64.tar.gz.sha256",
           "sizeMb": 80,
           "format": "tar.gz",
           "strip": 1,
           "bin": [
             "bin"
           ],
-          "check": "bin/go"
+          "check": "bin/go",
+          "sha256": "65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40"
         },
         "linux-aarch64": {
           "urls": [
@@ -313,28 +325,28 @@
             "https://dl.google.com/go/go1.27.3.darwin-amd64.tar.gz",
             "https://mirrors.aliyun.com/golang/go1.27.3.darwin-amd64.tar.gz"
           ],
-          "sha256Url": "https://dl.google.com/go/go1.27.3.darwin-amd64.tar.gz.sha256",
           "sizeMb": 80,
           "format": "tar.gz",
           "strip": 1,
           "bin": [
             "bin"
           ],
-          "check": "bin/go"
+          "check": "bin/go",
+          "sha256": "b6f8e931e4ab497fcde6da8ae4499a58f9d258e55c8a80824a516eae5950a750"
         },
         "macos-aarch64": {
           "urls": [
             "https://dl.google.com/go/go1.27.3.darwin-arm64.tar.gz",
             "https://mirrors.aliyun.com/golang/go1.27.3.darwin-arm64.tar.gz"
           ],
-          "sha256Url": "https://dl.google.com/go/go1.27.3.darwin-arm64.tar.gz.sha256",
           "sizeMb": 80,
           "format": "tar.gz",
           "strip": 1,
           "bin": [
             "bin"
           ],
-          "check": "bin/go"
+          "check": "bin/go",
+          "sha256": "dd3908cf20959d798c1e06ebe5b72213f0505ce01373b40ce3110975a6cd99c2"
         }
       }
     },
@@ -556,7 +568,9 @@
       "targets": {
         "windows-x86_64": {
           "urls": [
-            "https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.3/MinGit-2.56.0.3-64-bit.zip"
+            "https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.3/MinGit-2.56.0.3-64-bit.zip",
+            "https://cdn.npmmirror.com/binaries/git-for-windows/v2.56.0.windows.3/MinGit-2.56.0.3-64-bit.zip",
+            "https://ghfast.top/https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.3/MinGit-2.56.0.3-64-bit.zip"
           ],
           "sha256": "2e5619966e588fde5f8122c5557cad50c0fbafcaed736689f40ec1dfb1d78ea7",
           "sizeMb": 40,
@@ -568,7 +582,9 @@
         },
         "windows-aarch64": {
           "urls": [
-            "https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.3/MinGit-2.56.0.3-arm64.zip"
+            "https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.3/MinGit-2.56.0.3-arm64.zip",
+            "https://cdn.npmmirror.com/binaries/git-for-windows/v2.56.0.windows.3/MinGit-2.56.0.3-arm64.zip",
+            "https://ghfast.top/https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.3/MinGit-2.56.0.3-arm64.zip"
           ],
           "sha256": "042e7fda964e2072c11435fd0efeb822083c8f5a07c8b00456247bbb5334589d",
           "sizeMb": 40,
@@ -589,7 +605,8 @@
       "targets": {
         "windows-x86_64": {
           "urls": [
-            "https://github.com/mstorsjo/llvm-mingw/releases/download/20260421/llvm-mingw-20260421-ucrt-x86_64.zip"
+            "https://github.com/mstorsjo/llvm-mingw/releases/download/20260421/llvm-mingw-20260421-ucrt-x86_64.zip",
+            "https://ghfast.top/https://github.com/mstorsjo/llvm-mingw/releases/download/20260421/llvm-mingw-20260421-ucrt-x86_64.zip"
           ],
           "sha256": "0c47b9fc1043b68a8d7e8e022b878f11306ed35beacf858864b36b096a0acd95",
           "sizeMb": 178,

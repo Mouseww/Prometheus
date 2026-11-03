@@ -50,16 +50,15 @@ jobs:
         run: |
           test -f dist/server-bundle/pi-requirements.json
           ! test -d dist/server-bundle/node_modules/@earendil-works
+          ! test -d dist/server-bundle/node_modules/@lancedb
+          ! test -d dist/server-bundle/node_modules/@anthropic-ai
           ! test -e dist/node-runtime
           echo "PI agent packages left out of the bundle: $(cat dist/server-bundle/pi-requirements.json | tr -d '\n ')" | tee -a "$GITHUB_STEP_SUMMARY"
 
-      - name: Server starts without Claude Code and the embedding packages (PI agent installed the way the app does it)
+      - name: Server starts with no agent installed (the PI agent is optional)
         shell: bash
         run: |
-          export PROMETHEUS_HOST=127.0.0.1 PROMETHEUS_PORT=0 PROMETHEUS_HOME="$RUNNER_TEMP/prom-home" PROMETHEUS_PI_DIR="$RUNNER_TEMP/pi-agent"
-          mkdir -p "$PROMETHEUS_PI_DIR"
-          echo '{"name":"prometheus-runtime","private":true}' > "$PROMETHEUS_PI_DIR/package.json"
-          npm install --prefix "$PROMETHEUS_PI_DIR" --no-audit --no-fund --omit=dev $(node -p "Object.entries(require('./dist/server-bundle/pi-requirements.json')).map(([n,v])=>n+'@'+v).join(' ')")
+          export PROMETHEUS_HOST=127.0.0.1 PROMETHEUS_PORT=0 PROMETHEUS_HOME="$RUNNER_TEMP/prom-home" PROMETHEUS_PI_DIR="$RUNNER_TEMP/no-pi"
           node dist/server-bundle/main.js > server.log 2>&1 &
           pid=$!
           for i in $(seq 1 60); do grep -q PROMETHEUS_READY server.log && break; kill -0 $pid 2>/dev/null || break; sleep 1; done

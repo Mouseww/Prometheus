@@ -269,6 +269,20 @@ export function agentPreset(id: string): AgentPreset | undefined {
 	return BUILTIN_AGENTS.find((a) => a.id === id) ?? ACP_PRESETS.find((a) => a.id === id);
 }
 
+/** An npm package installed on demand into Prometheus' own folder instead of shipping in the installer. */
+export interface OptionalPackageInfo {
+	id: "lancedb" | "claude-agent-sdk";
+	name: string;
+	version: string;
+	sizeMb: number;
+	/** Usable now: installed by Prometheus, or shipped with this build. */
+	installed: boolean;
+	/** Installed by Prometheus (so removable from here). */
+	managed: boolean;
+	/** This machine can install it (npm is available and a native library exists for it). */
+	installable: boolean;
+}
+
 /** Whether a newer version of an agent's CLI is published, and whether Prometheus can install it. */
 export interface AgentUpdateInfo {
 	/** Agent id. */
@@ -1057,6 +1071,10 @@ export interface RpcMethods {
 	/** `agent` names the agent (built-in or preset id) whose npm package to install; `kind` is the older form (built-in id). */
 	"agent.install": { params: { kind?: RuntimeKind; agent?: string }; result: { command: string } };
 	"agent.uninstall": { params: { kind?: RuntimeKind; agent?: string }; result: null };
+	/** Big npm packages the installer leaves out (the LanceDB vector store, the Claude Agent SDK) and whether they are usable. */
+	"package.optionalList": { params: Record<string, never>; result: OptionalPackageInfo[] };
+	"package.optionalInstall": { params: { id: string }; result: OptionalPackageInfo };
+	"package.optionalUninstall": { params: { id: string }; result: OptionalPackageInfo };
 	/** Compares each agent's CLI with the newest published version (cached for an hour; `refresh` asks npm again). `id` limits it to one agent. */
 	"agent.checkUpdates": { params: { id?: string; refresh?: boolean }; result: AgentUpdateInfo[] };
 	/**

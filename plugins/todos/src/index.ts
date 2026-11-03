@@ -1,4 +1,4 @@
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { definePlugin } from "@prometheus/plugin-sdk";
 import { parseTodos, TODO_TOOL, type TodoItem } from "@prometheus/protocol";
 

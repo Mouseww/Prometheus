@@ -1,6 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { McpClient, StdioTransport, StreamableHttpTransport, type McpTransport } from "@earendil-works/pi-mcp";
+import type { McpTransport } from "@earendil-works/pi-mcp";
+
+// The MCP client comes with the PI packages; without them servers cannot be connected until the PI agent is installed.
+const mcp = await import("@earendil-works/pi-mcp").catch(() => undefined);
+const needMcp = (): NonNullable<typeof mcp> => {
+	if (!mcp) throw new Error("PI Agent is not installed (needed to connect MCP servers)");
+	return mcp;
+};
 import { createJsonStore, definePlugin } from "@prometheus/plugin-sdk";
 import type { McpProbeResult, McpServerInfo, McpServerSpec } from "@prometheus/protocol";
 import { fromPiConfig, mergeSpec, NAME_PATTERN, parseSpec, redactSpec, toPiConfig } from "./spec.ts";
@@ -20,14 +27,14 @@ function expandRecord(record: Record<string, string> | undefined): Record<string
 }
 
 function transportFor(spec: McpServerSpec, cwd: string): McpTransport {
-	if (spec.type === "http") return new StreamableHttpTransport({ url: spec.url ?? "", headers: expandRecord(spec.headers), openGetStream: false });
-	return new StdioTransport({ command: spec.command ?? "", args: spec.args, env: expandRecord(spec.env), cwd: spec.cwd ?? cwd, stderr: "pipe" });
+	if (spec.type === "http") return new (needMcp().StreamableHttpTransport)({ url: spec.url ?? "", headers: expandRecord(spec.headers), openGetStream: false });
+	return new (needMcp().StdioTransport)({ command: spec.command ?? "", args: spec.args, env: expandRecord(spec.env), cwd: spec.cwd ?? cwd, stderr: "pipe" });
 }
 
 /** Connect once, list tools, disconnect: lets users check a server before an agent depends on it. */
 export async function probe(spec: McpServerSpec, cwd: string): Promise<McpProbeResult> {
 	const started = performance.now();
-	const client = new McpClient({ name: "prometheus", version: "0.1.0" });
+	const client = new (needMcp().McpClient)({ name: "prometheus", version: "0.1.0" });
 	const signal = AbortSignal.timeout(PROBE_TIMEOUT_MS);
 	try {
 		const init = await Promise.race([

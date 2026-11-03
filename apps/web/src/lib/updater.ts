@@ -1,6 +1,8 @@
 import type { Update } from "@tauri-apps/plugin-updater";
 import { create } from "zustand";
 import { isAndroid, isDesktopShell, isTauri, localSupported } from "./backend.ts";
+import { usePrefs } from "./prefs.ts";
+import { useStore } from "./store.ts";
 import { isNewer } from "./version.ts";
 
 export type UpdatePhase = "idle" | "checking" | "uptodate" | "available" | "installing" | "error";
@@ -89,8 +91,55 @@ async function installAndroid(): Promise<void> {
 	}
 }
 
-/** Downloads first, then stops the local server (its files are locked on Windows) and installs. */
-export async function installUpdate(): Promise<void> {
+/** No agent is working: no chat is streaming and no session in the list is running (automations and goals show up there too). */
+export function agentsIdle(): boolean {
+	const s = useStore.getState();
+	return !s.session?.isStreaming && !s.sessions.some((x) => x.running);
+}
+
+const IDLE_TICK_MS = 30_000;
+/** How long everything must stay quiet before an update is installed on its own. */
+const IDLE_NEEDED_MS = 2 * 60_000;
+const RECHECK_MS = 6 * 60 * 60_000;
+
+/**
+ * Idle auto-update (desktop, setting "Update when idle", on by default): checks for a new version every few hours and, once
+ * no agent has been running for two minutes, downloads and installs it. If an agent starts while the download runs, the
+ * install (which restarts the backend) waits until it is quiet again. Returns the stop function.
+ */
+export function startIdleUpdater(): () => void {
+	let idleSince: number | null = null;
+	let lastCheck = Date.now();
+	let busy = false;
+	const tick = async () => {
+		if (busy || !usePrefs.getState().idleUpdate || isAndroid() || !(await updaterSupported())) return;
+		if (!agentsIdle()) {
+			idleSince = null;
+			return;
+		}
+		idleSince ??= Date.now();
+		const { phase } = useUpdater.getState();
+		if (phase === "installing" || phase === "checking") return;
+		if (phase !== "available" && Date.now() - lastCheck > RECHECK_MS) {
+			lastCheck = Date.now();
+			await checkForUpdate(true);
+		}
+		if (useUpdater.getState().phase !== "available" || Date.now() - idleSince < IDLE_NEEDED_MS) return;
+		busy = true;
+		try {
+			// The dialog is for updates the user decides on; this one happens quietly.
+			useUpdater.setState({ dismissed: true });
+			await installUpdate(true);
+		} finally {
+			busy = false;
+		}
+	};
+	const timer = setInterval(() => void tick(), IDLE_TICK_MS);
+	return () => clearInterval(timer);
+}
+
+/** Downloads first, then stops the local server (its files are locked on Windows) and installs. `whenIdle`: wait for a quiet moment before the restart. */
+export async function installUpdate(whenIdle = false): Promise<void> {
 	if (isAndroid()) return installAndroid();
 	const update = pending;
 	if (!update) return;
@@ -98,6 +147,16 @@ export async function installUpdate(): Promise<void> {
 	try {
 		const { invoke } = await import("@tauri-apps/api/core");
 		await update.download();
+		if (whenIdle) {
+			// Restarting the backend would cut a running agent short: hold on until nothing runs (or the user turned this off).
+			while (!agentsIdle()) {
+				if (!usePrefs.getState().idleUpdate) {
+					useUpdater.setState({ phase: "available", dismissed: false });
+					return;
+				}
+				await new Promise((r) => setTimeout(r, 10_000));
+			}
+		}
 		await invoke("stop_local_backend");
 		await update.install();
 		await invoke("relaunch_app");

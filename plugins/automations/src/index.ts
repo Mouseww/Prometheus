@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { createJsonStore, definePlugin } from "@prometheus/plugin-sdk";
 import type { AutomationInput, AutomationRun, AutomationTask } from "@prometheus/protocol";
 import { AutomationEngine, type AutomationState } from "./engine.ts";

@@ -49,12 +49,15 @@ import { AcpRuntime } from "./agent/acp/acp-runtime.ts";
 import { ACP_CAPABILITIES } from "./agent/acp/acp-session.ts";
 import { OPENCODE_CAPABILITIES } from "./agent/opencode/opencode-session.ts";
 import { CC_CAPABILITIES } from "./agent/claude-code/cc-session.ts";
-import { PiRuntime } from "./agent/pi/pi-runtime.ts";
-import { PI_CAPABILITIES } from "./agent/pi/pi-session.ts";
+import type { PiRuntime } from "./agent/pi/pi-runtime.ts";
+import { PI_CAPABILITIES } from "./agent/pi/capabilities.ts";
+import { collectUsage } from "./usage.ts";
+import { installOptionalPackage, isOptionalPackage, OPTIONAL_PACKAGES, type OptionalPackageId, optionalPackageStatus, uninstallOptionalPackage } from "./optional-packages.ts";
+import { isPiMissing, piAgentDir } from "./pi-paths.ts";
 import { buildHandoff, handoffBlock } from "./agent/handoff.ts";
 import { GatewayRelay } from "./agent/relay/gateway-relay.ts";
 import { SessionIndex } from "./agent/session-index.ts";
-import { firstUserText } from "./agent/pi/tokens.ts";
+import { firstUserText } from "./first-text.ts";
 import type { AgentRuntime, ResumeInit, RuntimeServices, RuntimeSession, SessionHooks } from "./agent/types.ts";
 import { toModelRef } from "./events.ts";
 import { GoalTracker, type GoalView } from "./goal.ts";
@@ -174,7 +177,8 @@ type Handlers = { [M in Exclude<RpcMethod, ServerRpcMethod>]: (params: RpcParams
 /** Embeddable Prometheus host: one agent runtime, many sessions, all exposed through the RPC surface. */
 export class PrometheusHost {
 	readonly runtime: Runtime;
-	private readonly pi: PiRuntime;
+	/** Null when the PI agent is not installed: the other runtimes keep working and PI is offered for install. */
+	private readonly pi: PiRuntime | null;
 	private readonly cwd: string;
 	private readonly live = new Map<string, LiveSession>();
 	private readonly opening = new Map<string, Promise<LiveSession>>();
@@ -194,7 +198,7 @@ export class PrometheusHost {
 		emit: (id, goal) => this.listener.event(id, { type: "goal_update", goal }),
 	});
 
-	private constructor(runtime: Runtime, pi: PiRuntime, options: PrometheusHostOptions) {
+	private constructor(runtime: Runtime, pi: PiRuntime | null, options: PrometheusHostOptions) {
 		this.runtime = runtime;
 		this.pi = pi;
 		this.cwd = options.cwd ?? process.cwd();
@@ -213,16 +217,30 @@ export class PrometheusHost {
 	}
 
 	/** PI's model registry (shares auth.json/models.json with the TUI). */
-	get modelRuntime(): PiRuntime["modelRuntime"] {
-		return this.pi.modelRuntime;
+	get modelRuntime(): PiRuntime["modelRuntime"] | undefined {
+		return this.pi?.modelRuntime;
+	}
+
+	/** The PI runtime, or the error that tells the client to offer installing it. */
+	private get needPi(): PiRuntime {
+		if (!this.pi) throw new AppError("piNotInstalled");
+		return this.pi;
 	}
 
 	static async create(options: PrometheusHostOptions): Promise<PrometheusHost> {
 		const runtime = await bootstrap({ host: "server", dataDir: options.dataDir, cwd: options.cwd, builtinPlugins: options.builtinPlugins });
-		const pi = await PiRuntime.start({ runtime, cwd: options.cwd ?? process.cwd() });
+		let pi: PiRuntime | null = null;
+		try {
+			// Loaded on demand: the desktop installer does not carry the PI packages, and without them every other runtime still works.
+			const { PiRuntime } = await import("./agent/pi/pi-runtime.ts");
+			pi = await PiRuntime.start({ runtime, cwd: options.cwd ?? process.cwd() });
+		} catch (err) {
+			if (!isPiMissing(err)) throw err;
+			console.warn("[prometheus] PI agent is not installed; only the other agent runtimes are available");
+		}
 		const host = new PrometheusHost(runtime, pi, options);
 		await host.index.load();
-		pi.syncGateways();
+		pi?.syncGateways();
 		void pruneUploads().catch(() => {});
 		return host;
 	}
@@ -290,7 +308,7 @@ export class PrometheusHost {
 
 	/** Runtime for a kind and, for custom agents, the profile whose executable and environment it uses. Profiles are read per use, so edits reach new sessions. */
 	private async runtimeFor(kind: RuntimeKind, agent?: string): Promise<AgentRuntime> {
-		if (kind === "pi") return this.pi;
+		if (kind === "pi") return this.needPi;
 		const key = agent ?? kind;
 		let rt = this.externalRuntimes.get(key);
 		if (rt) return rt;
@@ -452,12 +470,12 @@ export class PrometheusHost {
 		let session: RuntimeSession | undefined;
 		let id = "";
 		const subagents = new SubagentRuntime({
-			store: new AgentStore(this.pi.agentDir),
+			store: new AgentStore(this.pi?.agentDir ?? piAgentDir()),
 			cwd: () => session?.cwd ?? this.cwd,
 			emit: (runs) => this.listener.event(id, { type: "subagents_update", runs }),
 			runners: {
 				// Reads the chat's model and thinking level lazily: the session does not exist yet.
-				pi: this.pi.subagentRunner(() => session),
+				pi: this.pi ? this.pi.subagentRunner(() => session) : async () => { throw new AppError("piNotInstalled"); },
 				"claude-code": runClaude,
 				codex: runCodex,
 			},
@@ -536,7 +554,7 @@ export class PrometheusHost {
 					return this.attach((init) => rt.resume({ runtime: entry.runtime, id: entry.id, nativeId: entry.nativeId, cwd: entry.cwd, name: entry.name }, entry.seed ? { ...init, history: entry.seed } : init), entry.gateway);
 				}
 				const path = await this.resolvePath(sessionId);
-				return this.attach((init) => this.pi.resume({ runtime: "pi", id: sessionId, nativeId: sessionId, path }, init));
+				return this.attach((init) => this.needPi.resume({ runtime: "pi", id: sessionId, nativeId: sessionId, path }, init));
 			})();
 			pending.finally(() => this.opening.delete(sessionId)).catch(() => {});
 			this.opening.set(sessionId, pending);
@@ -634,14 +652,14 @@ export class PrometheusHost {
 		const live = this.live.get(sessionId);
 		const path = live?.session.ref().path ?? (await this.resolvePath(sessionId).catch(() => undefined));
 		await this.closeSession(sessionId);
-		if (path) await this.pi.deleteNative({ runtime: "pi", id: sessionId, nativeId: sessionId, path });
+		if (path && this.pi) await this.pi.deleteNative({ runtime: "pi", id: sessionId, nativeId: sessionId, path });
 		this.paths.delete(sessionId);
 		await this.workspaces.setArchived(sessionId, false);
 		this.listener.sessionsChanged();
 	}
 
 	private async listSessions(): Promise<SessionSummary[]> {
-		const infos = await this.pi.listNative();
+		const infos = (await this.pi?.listNative()) ?? [];
 		for (const info of infos) if (info.ref.path) this.paths.set(info.ref.id, info.ref.path);
 		await this.workspaces.ensure(infos.map((i) => ({ path: i.cwd, modified: i.modified })));
 		const archived = await this.workspaces.archived();
@@ -753,7 +771,7 @@ export class PrometheusHost {
 		const dir = options.cwd?.trim();
 		if (!dir || !existsSync(dir) || !statSync(dir).isDirectory()) throw new AppError("workdirNotFound", { dir });
 		await this.workspaces.add(dir, options.workspaceName?.trim() || undefined);
-		const live = await this.attach((init) => this.pi.create({ ...init, cwd: normalizeDir(dir) }));
+		const live = await this.attach((init) => this.needPi.create({ ...init, cwd: normalizeDir(dir) }));
 		if (options.name?.trim()) live.session.setName(options.name.trim());
 		if (options.model) await live.session.setModel(options.model);
 		this.listener.sessionsChanged();
@@ -778,7 +796,7 @@ export class PrometheusHost {
 			const dir = options.cwd?.trim();
 			if (!dir || !existsSync(dir) || !statSync(dir).isDirectory()) throw new AppError("workdirNotFound", { dir });
 			await this.workspaces.add(dir);
-			live = await this.attach((init) => this.pi.create({ ...init, cwd: normalizeDir(dir) }));
+			live = await this.attach((init) => this.needPi.create({ ...init, cwd: normalizeDir(dir) }));
 		}
 		const { session, bridge, gate } = live;
 		const id = session.id;
@@ -862,7 +880,7 @@ export class PrometheusHost {
 		const live = this.require(sessionId);
 		if (!live.session.fork) throw new AppError("generic");
 		const { editorText, ...forkRef } = await live.session.fork(ref);
-		const forked = await this.attach((init) => this.pi.resume(forkRef, init));
+		const forked = await this.attach((init) => this.needPi.resume(forkRef, init));
 		const baseName = live.session.snapshotState().name;
 		if (baseName) forked.session.setName(`${baseName} (fork)`);
 		this.listener.sessionsChanged();
@@ -899,7 +917,7 @@ export class PrometheusHost {
 	}
 
 	private hostSettings(): HostSettings {
-		return { autoCompaction: this.pi.autoCompaction(), workspaceRoot: this.workspaceRoot(), defaultAgent: this.defaultAgent(), defaultPermission: this.defaultPermission() };
+		return { autoCompaction: this.pi?.autoCompaction() ?? true, workspaceRoot: this.workspaceRoot(), defaultAgent: this.defaultAgent(), defaultPermission: this.defaultPermission() };
 	}
 
 	/** The permission mode new chats start in; unknown values (a hand-edited config) fall back to asking first. */
@@ -944,7 +962,7 @@ export class PrometheusHost {
 	private readonly handlers: Handlers = {
 		"host.info": () => ({
 			version: PROMETHEUS_VERSION,
-			piVersion: this.pi.version,
+			piVersion: this.pi?.version ?? "",
 			protocol: PROTOCOL_VERSION,
 			cwd: this.cwd,
 			platform: process.platform,
@@ -955,7 +973,7 @@ export class PrometheusHost {
 			const dir = cwd?.trim() || this.cwd;
 			if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new AppError("workdirNotFound", { dir });
 			await this.workspaces.add(dir);
-			const live = kind && kind !== "pi" ? await this.createExternal(kind, agent, dir, this.gatewayFromModel(model, gateway)) : await this.attach((init) => this.pi.create({ ...init, cwd: normalizeDir(dir) }));
+			const live = kind && kind !== "pi" ? await this.createExternal(kind, agent, dir, this.gatewayFromModel(model, gateway)) : await this.attach((init) => this.needPi.create({ ...init, cwd: normalizeDir(dir) }));
 			if (name?.trim()) live.session.setName(name.trim());
 			this.listener.sessionsChanged();
 			return this.snapshot(live);
@@ -967,7 +985,7 @@ export class PrometheusHost {
 			const from = source.session.ref().runtime;
 			const dir = state.cwd;
 			const seed = state.messages.slice(-SEED_MESSAGES);
-			const live = kind !== "pi" ? await this.createExternal(kind, agent, dir, this.gatewayFromModel(model, gateway), seed) : await this.attach((init) => this.pi.create({ ...init, cwd: normalizeDir(dir), history: seed }));
+			const live = kind !== "pi" ? await this.createExternal(kind, agent, dir, this.gatewayFromModel(model, gateway), seed) : await this.attach((init) => this.needPi.create({ ...init, cwd: normalizeDir(dir), history: seed }));
 			if (state.name) live.session.setName(state.name);
 			live.gate.setMode(source.gate.mode);
 			const handoff = buildHandoff(state.messages, this.agentName(from, this.index.get(sessionId)?.agent));
@@ -1107,7 +1125,7 @@ export class PrometheusHost {
 		"settings.get": () => this.hostSettings(),
 		"settings.set": async ({ autoCompaction, workspaceRoot, defaultAgent, defaultPermission }) => {
 			if (typeof autoCompaction === "boolean") {
-				await this.pi.setAutoCompaction(autoCompaction);
+				await this.pi?.setAutoCompaction(autoCompaction);
 				// Live sessions cache their own SettingsManager.
 				for (const { session } of this.live.values()) session.setAutoCompaction?.(autoCompaction);
 			}
@@ -1129,7 +1147,7 @@ export class PrometheusHost {
 		},
 		"session.stats": ({ sessionId }) => this.require(sessionId).session.usage(),
 
-		"usage.stats": ({ days }) => this.pi.collectUsage(days ?? 0),
+		"usage.stats": ({ days }) => (this.pi ? this.pi.collectUsage(days ?? 0) : collectUsage([], 0)),
 
 		"chat.prompt": async ({ sessionId, text, images, files, delivery }) => {
 			if (!text.trim() && !images?.length && !files?.length) throw new AppError("messageEmpty");
@@ -1165,9 +1183,9 @@ export class PrometheusHost {
 			return null;
 		},
 
-		"model.list": () => this.pi.listModels({ mode: "native" }),
+		"model.list": async () => (this.pi ? this.pi.listModels({ mode: "native" }) : []),
 		"runtime.list": async (): Promise<RuntimeInfo[]> => {
-			const out: RuntimeInfo[] = [{ id: "pi", name: "PI", kind: "pi", health: await this.pi.probe(), capabilities: PI_CAPABILITIES }];
+			const out: RuntimeInfo[] = [{ id: "pi", name: "PI", kind: "pi", health: this.pi ? await this.pi.probe() : { available: false, missing: true }, capabilities: PI_CAPABILITIES }];
 			// Probes start processes (an ACP handshake takes seconds): run them side by side.
 			const agents = await Promise.all(
 				this.agentList()
@@ -1187,7 +1205,7 @@ export class PrometheusHost {
 			return [...out, ...agents];
 		},
 		"runtime.models": async ({ runtime: kind, agent }) => {
-			if (kind === "pi") return this.pi.listModels({ mode: "native" });
+			if (kind === "pi") return this.pi ? this.pi.listModels({ mode: "native" }) : [];
 			const rt = await this.runtimeFor(kind, agent);
 			return rt.listAllModels ? rt.listAllModels(this.runtime.config.gateways()) : rt.listModels({ mode: "native" });
 		},
@@ -1241,6 +1259,8 @@ export class PrometheusHost {
 			try {
 				// A CLI that is already installed with npm is updated where it is, whoever installed it; otherwise it goes
 				// into Prometheus' own folder.
+				// Claude Code is driven through the Agent SDK, which the installer does not carry either.
+				if (id === "claude-code" && !(await optionalPackageStatus(this.runtime.dataDir, "claude-agent-sdk")).installed) await installOptionalPackage(this.runtime.dataDir, "claude-agent-sdk");
 				const profile = this.profileOf(agent ?? kind ?? id);
 				const running = agentEntry(this.runtime.dataDir, id, { ...process.env, ...(profile?.env ?? {}) });
 				const { command } = await installAgentCli(this.runtime.dataDir, id, running ? npmPrefixOf(id, running) : undefined);
@@ -1259,6 +1279,18 @@ export class PrometheusHost {
 			for (const key of [...this.externalRuntimes.keys()]) this.retireRuntime(key);
 			return null;
 		},
+		"package.optionalList": () => Promise.all((Object.keys(OPTIONAL_PACKAGES) as OptionalPackageId[]).map((id) => optionalPackageStatus(this.runtime.dataDir, id))),
+		"package.optionalInstall": async ({ id }) => {
+			if (!isOptionalPackage(id)) throw new AppError("notFound", { what: id });
+			await installOptionalPackage(this.runtime.dataDir, id);
+			return optionalPackageStatus(this.runtime.dataDir, id);
+		},
+		"package.optionalUninstall": async ({ id }) => {
+			if (!isOptionalPackage(id)) throw new AppError("notFound", { what: id });
+			await uninstallOptionalPackage(this.runtime.dataDir, id);
+			if (id === "claude-agent-sdk") for (const key of [...this.externalRuntimes.keys()]) this.retireRuntime(key);
+			return optionalPackageStatus(this.runtime.dataDir, id);
+		},
 		"agent.checkUpdates": async ({ id, refresh }) => {
 			const agents = this.agentList().filter((a) => (id ? a.id === id : a.enabled !== false));
 			return Promise.all(agents.map((a) => this.updateInfo(a, refresh === true)));
@@ -1272,7 +1304,7 @@ export class PrometheusHost {
 				this.index.patch(sessionId, { gateway: this.gatewayFromModel(model) });
 				return null;
 			}
-			const target = this.pi.getModel(model.provider, model.id);
+			const target = this.needPi.getModel(model.provider, model.id);
 			if (!target) throw new AppError("modelNotFound", { provider: model.provider, id: model.id });
 			await session.setModel(model);
 			this.listener.event(sessionId, { type: "model_changed", model: toModelRef(target) });
@@ -1306,13 +1338,13 @@ export class PrometheusHost {
 		"gateway.list": () => this.runtime.config.gateways().map(redactGateway),
 		"gateway.save": async ({ gateway }) => {
 			const saved = await this.runtime.config.saveGateway(gateway);
-			this.pi.syncGateways();
+			this.pi?.syncGateways();
 			this.listener.gatewaysChanged();
 			return redactGateway(saved);
 		},
 		"gateway.delete": async ({ id }) => {
 			await this.runtime.config.deleteGateway(id);
-			this.pi.syncGateways();
+			this.pi?.syncGateways();
 			this.listener.gatewaysChanged();
 			return null;
 		},
@@ -1320,11 +1352,11 @@ export class PrometheusHost {
 			const g = this.runtime.config.gateways().find((x) => x.id === id);
 			if (!g) throw new AppError("gatewayNotFound", { id });
 			const modelId = model ?? g.models[0]?.id;
-			const target = modelId && this.pi.getModel(id, modelId);
+			const target = modelId && this.needPi.getModel(id, modelId);
 			if (!target) throw new AppError("gatewayNotRegistered");
 			const started = performance.now();
 			try {
-				const reply = await this.pi.completeSimple(
+				const reply = await this.needPi.completeSimple(
 					target,
 					{ messages: [{ role: "user", content: "Reply with the single word: OK", timestamp: Date.now() }] },
 					{ signal: AbortSignal.timeout(30_000) },
@@ -1350,8 +1382,8 @@ export class PrometheusHost {
 			const norm = (id: string) => id.toLowerCase().replace(/^.*\//, "").replace(/[\s_.:]+/g, "-");
 			const exact = new Map<string, ModelPricing>();
 			const loose = new Map<string, ModelPricing>();
-			for (const m of this.pi.getModels()) {
-				if (this.pi.registeredGateways.has(m.provider)) continue;
+			for (const m of this.pi?.getModels() ?? []) {
+				if (this.pi?.registeredGateways.has(m.provider)) continue;
 				const c = m.cost;
 				if (!c || (!c.input && !c.output)) continue;
 				const price = { input: c.input, output: c.output, cacheRead: c.cacheRead ?? 0, cacheWrite: c.cacheWrite ?? 0 };
@@ -1383,7 +1415,7 @@ export class PrometheusHost {
 		},
 		"gateway.piList": async () => {
 			const existing = new Set(this.runtime.config.gateways().map((g) => g.id));
-			return (await this.pi.readPiGateways()).map(({ gateway: g, missingKey }) => ({
+			return ((await this.pi?.readPiGateways()) ?? []).map(({ gateway: g, missingKey }) => ({
 				id: g.id,
 				name: g.name,
 				baseUrl: g.baseUrl,
@@ -1398,7 +1430,7 @@ export class PrometheusHost {
 			const wanted = ids ? new Set(ids) : undefined;
 			const imported: string[] = [];
 			const skipped: { id: string; reason: string }[] = [];
-			for (const { gateway, missingKey } of await this.pi.readPiGateways()) {
+			for (const { gateway, missingKey } of (await this.pi?.readPiGateways()) ?? []) {
 				if (wanted && !wanted.has(gateway.id)) continue;
 				if (existing.has(gateway.id)) skipped.push({ id: gateway.id, reason: encodeError(new AppError("gatewayExists")) });
 				else if (missingKey) skipped.push({ id: gateway.id, reason: encodeError(new AppError("gatewayKeyUnreadable")) });
@@ -1412,7 +1444,7 @@ export class PrometheusHost {
 				}
 			}
 			if (imported.length) {
-				this.pi.syncGateways();
+				this.pi?.syncGateways();
 				this.listener.gatewaysChanged();
 			}
 			return { imported, skipped };

@@ -16,6 +16,8 @@ const NATIVE_MODELS: ModelInfo[] = [
 	{ provider: "claude-code", id: "haiku", name: "Claude Haiku", reasoning: false, vision: true, contextWindow: 200_000 },
 ];
 
+const isModuleMissing = (err: unknown): boolean => (err as { code?: string })?.code === "ERR_MODULE_NOT_FOUND";
+
 async function sdk() {
 	return import("@anthropic-ai/claude-agent-sdk");
 }
@@ -87,7 +89,9 @@ export class ClaudeCodeRuntime implements AgentRuntime {
 		try {
 			const exe = this.executable();
 			if (exe && !existsSync(exe)) return { available: false, reason: `Claude Code not found at ${exe}` };
-			await sdk();
+			await sdk().catch((err: unknown) => {
+				throw new Error(isModuleMissing(err) ? "The Claude Agent SDK is not installed" : err instanceof Error ? err.message : String(err));
+			});
 			if (!exe && !bundledClaudeBinary()) return { available: false, reason: "Claude Code is not installed" };
 			// Login state is read from the credentials file only; probing never sends a request.
 			const loggedIn = existsSync(join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), ".credentials.json")) || existsSync(join(homedir(), ".claude.json"));

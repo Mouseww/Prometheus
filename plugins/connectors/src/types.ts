@@ -1,4 +1,4 @@
-import type { TSchema } from "@earendil-works/pi-ai";
+import type { TSchema } from "typebox";
 
 /** How the token endpoint wants its request: form body (default), JSON body, or form body with HTTP Basic client auth. */
 export type TokenStyle = "form" | "json" | "basic";

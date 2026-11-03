@@ -253,20 +253,22 @@ pub(crate) fn system_node() -> Option<(PathBuf, Vec<PathBuf>)> {
 /// machine already has. The installer ships none: with nothing usable the error asks the UI to offer the install
 /// (`SETUP_NEEDED:node`, see `setup_needed`). Returns the binary and the directories to prepend to the child PATH.
 #[cfg(not(target_os = "android"))]
-fn resolve_node(app: &tauri::AppHandle) -> Result<(PathBuf, Vec<PathBuf>), String> {
+fn resolve_node(app: &tauri::AppHandle) -> Result<(PathBuf, Vec<PathBuf>, Vec<PathBuf>), String> {
     if let Some(custom) = std::env::var_os("PROMETHEUS_NODE").filter(|v| !v.is_empty()) {
         let p = PathBuf::from(custom);
         // A bare name is left to the OS path search; an explicit path is checked before we try to run it.
         if p.components().count() > 1 && !is_executable(&p) {
             return Err(format!("PROMETHEUS_NODE 指向的 Node 不可执行：{}", p.display()));
         }
-        return Ok((p, Vec::new()));
+        return Ok((p, Vec::new(), Vec::new()));
     }
     if let Some(node) = runtimes::installed_node(app).filter(|p| is_executable(p)) {
-        return Ok((node, Vec::new()));
+        // npm and npx sit next to it and the agent installer needs them on PATH; appended, so a tool the user installed still wins.
+        let dir = node.parent().map(PathBuf::from).into_iter().collect();
+        return Ok((node, Vec::new(), dir));
     }
     if let Some((node, dirs)) = system_node() {
-        return Ok((node, dirs));
+        return Ok((node, dirs, Vec::new()));
     }
     Err(setup_needed(&["node"]))
 }
@@ -281,7 +283,7 @@ fn setup_needed(missing: &[&str]) -> String {
 
 /// Homebrew and version managers put node outside the PATH a GUI launch inherits, so the child gets
 /// those directories prepended: npm, npx and any tool the agent runs then resolve too.
-/// `append` goes last, after the inherited PATH (nothing uses it for now; the installer no longer ships a Node).
+/// `append` goes last, after the inherited PATH (the app-installed Node's folder, so npm resolves without shadowing the user's tools).
 #[cfg(not(target_os = "android"))]
 fn node_env(prepend: Vec<PathBuf>, append: Vec<PathBuf>) -> Vec<(&'static str, std::ffi::OsString)> {
     if prepend.is_empty() && append.is_empty() {
@@ -301,29 +303,17 @@ fn node_env(prepend: Vec<PathBuf>, append: Vec<PathBuf>) -> Vec<(&'static str, s
 #[cfg(not(target_os = "android"))]
 fn launch_target(app: &tauri::AppHandle) -> Result<Launch, String> {
     let entry = server_entry(app).ok_or("找不到 Prometheus 服务端入口（可设置 PROMETHEUS_SERVER_ENTRY）")?;
-    // Everything the installer leaves out is reported at once, so the UI can offer one install for all of it.
-    let node = match resolve_node(app) {
-        Ok(found) => Some(found),
-        Err(e) if e.starts_with("SETUP_NEEDED:") => None,
-        Err(e) => return Err(e),
-    };
-    // The installer does not carry the PI agent either (a bundle that does not has `pi-requirements.json` beside it): it
-    // lives in the app's own folder once installed, and the server's launcher resolves `@earendil-works/*` from there.
-    let needs_pi = entry.parent().is_some_and(|d| d.join("pi-requirements.json").is_file());
-    let pi = if needs_pi { runtimes::pi_dir(app) } else { None };
-    let missing: Vec<&str> = [node.is_none().then_some("node"), (needs_pi && pi.is_none()).then_some("pi-agent")].into_iter().flatten().collect();
-    if !missing.is_empty() {
-        return Err(setup_needed(&missing));
-    }
-    let (node, mut prepend) = node.expect("checked above");
+    // Node.js is the one thing the server cannot start without. The PI agent is optional like any other agent runtime: when it
+    // is installed (from the app) the server is told where, and without it the server starts and offers the install.
+    let (node, mut prepend, append) = resolve_node(app)?;
     // Runtimes the user installed from the app win over whatever else is on PATH.
     let (rt_bins, mut extra_env) = runtimes::desktop_env(app);
     prepend.splice(0..0, rt_bins);
-    if let Some(dir) = pi {
+    if let Some(dir) = runtimes::pi_dir(app) {
         extra_env.push(("PROMETHEUS_PI_DIR".to_string(), dir.into_os_string()));
     }
     let cwd = if std::env::var_os("PROMETHEUS_CWD").is_none() { app.path().home_dir().ok() } else { None };
-    Ok(Launch { node, entry, env: node_env(prepend, Vec::new()), extra_env, cwd })
+    Ok(Launch { node, entry, env: node_env(prepend, append), extra_env, cwd })
 }
 
 #[cfg(target_os = "android")]

@@ -1,5 +1,5 @@
 import type { InlineExtension } from "@earendil-works/pi-coding-agent";
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import type { SubagentDetail, SubagentRun, SubagentState, SubagentStep } from "@prometheus/protocol";
 import type { AgentStore, AgentView, RunnerKind } from "./agents.ts";
 import { CLI_BINARY, cliAvailable } from "./cli-runner.ts";

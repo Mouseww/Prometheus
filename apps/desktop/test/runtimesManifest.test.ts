@@ -60,4 +60,14 @@ describe("on-demand PI agent", () => {
 			expect(t?.urls[0], key).toContain(`v${node?.version}/`);
 		}
 	});
+
+	it("gives every download a second source, so an unreachable official host does not block the install", () => {
+		for (const r of manifest.runtimes) {
+			for (const [key, t] of Object.entries(r.targets)) {
+				if (!t.urls.length) continue;
+				expect(t.urls.length, `${r.id}:${key} has a single source`).toBeGreaterThan(1);
+				expect(new Set(t.urls.map((u) => new URL(u).host)).size, `${r.id}:${key} sources share one host`).toBeGreaterThan(1);
+			}
+		}
+	});
 });

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { createJsonStore, definePlugin } from "@prometheus/plugin-sdk";
 import type { MemoryEntry, MemoryScope } from "@prometheus/protocol";
 import { cleanTags, MAX_CONTENT, normalizeProject, renderMemoryIndex, renderMemorySection, search, selectForPrompt, visibleTo } from "./recall.ts";

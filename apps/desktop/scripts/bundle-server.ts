@@ -17,6 +17,8 @@ const nodeTarget = process.env.SERVER_NODE_TARGET ?? "node22";
 const android = process.argv.includes("--android");
 const withPi = android || nodeTarget !== "node22" || process.env.SERVER_BUNDLE_PI === "1";
 const PI_SCOPE = "@earendil-works/";
+/** Installed on demand by the server too (packages/core/src/optional-packages.ts), so they are not shipped in the slim bundle. */
+const ON_DEMAND = new Set(["@lancedb/lancedb", "@anthropic-ai/claude-agent-sdk"]);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const out = join(root, android ? "dist/server-bundle-android" : "dist/server-bundle");
 const readPkg = (p: string) => JSON.parse(readFileSync(join(root, p, "package.json"), "utf8"));
@@ -49,7 +51,7 @@ const piRequirements: Record<string, string> = {};
 for (const dir of sources) {
 	for (const [name, version] of Object.entries<string>(readPkg(dir).dependencies ?? {})) {
 		if (version.startsWith("workspace:") || (noLancedb && NOT_ON_ANDROID.has(name))) continue;
-		if (name.startsWith(PI_SCOPE) && !withPi) piRequirements[name] = version;
+		if ((name.startsWith(PI_SCOPE) || ON_DEMAND.has(name)) && !withPi) piRequirements[name] = version;
 		else dependencies[name] = version;
 	}
 }
@@ -59,8 +61,12 @@ mkdirSync(out, { recursive: true });
 
 const built = await build({
 	metafile: true,
-	entryPoints: [join(root, "apps/server/src/main.ts")],
-	outfile: join(out, withPi ? "main.js" : "app.js"),
+	entryPoints: { [withPi ? "main" : "app"]: join(root, "apps/server/src/main.ts") },
+	outdir: out,
+	// The PI layer is imported on demand by the host, so it must be a separate file: inlined, its imports of the (possibly
+	// absent) PI packages would be hoisted to the top of the server and stop it from starting without them.
+	splitting: true,
+	chunkNames: "chunks/[name]-[hash]",
 	bundle: true,
 	platform: "node",
 	format: "esm",
@@ -162,7 +168,7 @@ if (nodeTarget !== "node22") {
 }
 if (!withPi) {
 	// Nothing of the PI agent (nor its provider SDKs) may have slipped into the install.
-	const leaked = ["@earendil-works", "@google", "@aws-sdk", "@smithy"].filter((n) => existsSync(join(out, "node_modules", n)));
+	const leaked = ["@earendil-works", "@lancedb", "@anthropic-ai", "@google", "@aws-sdk", "@smithy"].filter((n) => existsSync(join(out, "node_modules", n)));
 	if (leaked.length) throw new Error(`the bundle still carries the PI agent's dependencies: ${leaked.join(", ")}`);
 }
 console.log(`server bundle -> ${out}${withPi ? " (with the PI agent)" : " (PI agent installed on demand)"}`);

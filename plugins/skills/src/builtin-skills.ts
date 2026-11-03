@@ -85,7 +85,7 @@ A plugin is a module whose default export is \`definePlugin({ name, version?, se
 
 \`\`\`ts
 import { definePlugin } from "@prometheus/plugin-sdk";
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 
 export default definePlugin({
   name: "hello",
