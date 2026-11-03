@@ -1,8 +1,8 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Type } from "typebox";
-import { createJsonStore, definePlugin } from "@prometheus/plugin-sdk";
-import { type DelegationCard, delegate, type DelegateDeps } from "./delegate.ts";
+import { type ContextContribution, createJsonStore, definePlugin } from "@prometheus/plugin-sdk";
+import { type DelegationCard, delegate, type DelegateDeps, type LiveRun, waitOn } from "./delegate.ts";
 import { type BriefingSettings, createBriefing, DEFAULT_BRIEFING, localDate, validTime } from "./briefing.ts";
 import { createAsk } from "./ask.ts";
 import { createInbound, MAX_BODY } from "./inbound.ts";
@@ -10,6 +10,10 @@ import { ensureHome, listNotes, notesIndex, readPersona, sameDir } from "./home.
 import { mainThread } from "./main-thread.ts";
 
 const NAME = "assistant";
+
+const DELEGATED_RUN = `# Delegated run
+The assistant handed you this task on the user's behalf. Go straight to it: read the files the task names or points to instead of searching the whole project, and use no tool the task does not need (no browser, no web search unless asked). Finish with a short report.
+One exception to "do not ask questions": if you cannot tell what the user wants and a wrong guess would waste the work, call assistant_ask once with a clear question (and short options when it is a choice). The assistant answers from what the user said. Do not ask about things you can decide or look up; decide and state the assumption.`;
 
 export default definePlugin({
 	name: NAME,
@@ -69,7 +73,14 @@ export default definePlugin({
 			for (const e of d.list) delegations.set(e.sessionId, e.project);
 		});
 
-		const asker = createAsk({ delegated: (id) => delegations.has(id), changed: () => ctx.notifyChanged(), now: () => Date.now() });
+		const live = new Map<string, LiveRun>();
+		const asker = createAsk({
+			delegated: (id) => delegations.has(id),
+			changed: () => ctx.notifyChanged(),
+			now: () => Date.now(),
+			// A run waiting for an answer does not use up its time budget.
+			waiting: (id, w) => (w ? live.get(id)?.budget.pause() : live.get(id)?.budget.resume()),
+		});
 		ctx.rpc("answer", async (params) => {
 			const p = (params ?? {}) as { id?: string; text?: string };
 			return { ok: asker.answer(String(p.id ?? ""), String(p.text ?? "")) };
@@ -93,7 +104,47 @@ export default definePlugin({
 			},
 		});
 
+		const outcomeResult = (r: { text: string; card: DelegationCard }) => ({
+			content: [{ type: "text" as const, text: r.text }],
+			details: { delegation: r.card },
+			...(r.card.status === "refused" ? { isError: true } : {}),
+		});
+
+		ctx.tools.register({
+			name: "assistant_wait",
+			label: "助理：继续等待委派结果",
+			description: "Keep waiting for a delegated run that is still going (assistant_delegate told you so). Returns its result, or its next question.",
+			promptSnippet: "assistant_wait: keep waiting for a delegated run by session id",
+			annotations: { readOnlyHint: true },
+			parameters: Type.Object({ session: Type.String({ description: "Session id from assistant_delegate" }) }),
+			async execute(_id, p, signal, _u, tctx) {
+				if (!sameDir(tctx.cwd, home.dir)) return { ...outcomeResult({ text: "Only usable from the assistant's own home.", card: { project: "", status: "refused", requested: "readonly", access: "readonly" } }) };
+				return outcomeResult(await waitOn(delegateDeps, String(p.session ?? ""), signal));
+			},
+		});
+
+		ctx.tools.register({
+			name: "assistant_reply",
+			label: "助理：回答委派运行的提问",
+			description:
+				"Answer the question a delegated run is waiting on (assistant_delegate or assistant_wait returned it), then wait for the run's result or its next question. Answer from what the user asked and what you know of them; if that does not settle it, ask the user in chat first and pass their answer.",
+			promptSnippet: "assistant_reply: answer a delegated run's question, then keep waiting",
+			annotations: { readOnlyHint: true },
+			parameters: Type.Object({ session: Type.String({ description: "Session id of the run that asked" }), answer: Type.String({ description: "The answer" }) }),
+			async execute(_id, p, signal, _u, tctx) {
+				const bad = (text: string) => outcomeResult({ text, card: { project: "", status: "refused", requested: "readonly", access: "readonly" } });
+				if (!sameDir(tctx.cwd, home.dir)) return bad("Only usable from the assistant's own home.");
+				const sid = String(p.session ?? "");
+				const q = asker.pending().find((x) => x.sessionId === sid);
+				if (!q) return bad(`Session ${sid} has no open question (the user may have answered it already, or it timed out). Use assistant_wait to see how the run is doing.`);
+				if (!asker.answer(q.id, String(p.answer ?? ""))) return bad("Write the answer.");
+				return outcomeResult(await waitOn(delegateDeps, sid, signal));
+			},
+		});
+
 		const delegateDeps: DelegateDeps = {
+			live,
+			nextQuestion: (id, signal) => asker.next(id, signal),
 			delegatedProject: (id) => delegations.get(id),
 			started: (id, project) => {
 				if (delegations.has(id)) return;
@@ -124,7 +175,7 @@ export default definePlugin({
 			name: "assistant_delegate",
 			label: "助理：派活到项目",
 			description:
-				"Hand one clearly described task to a project folder: a separate agent run starts there, does the work and returns its report. Only usable from your own home. The run can never do more than this chat is allowed to; ask for 'edits' only when the user wants files changed.",
+				"Hand one clearly described task to a project folder: a separate agent run starts there, does the work and returns its report. Only usable from your own home. The run can never do more than this chat is allowed to; ask for 'edits' only when the user wants files changed. Give the task everything the run needs (paths, the user's preferences and decisions) so it does not have to ask. If the run does ask something, the result is its question: answer it with assistant_reply.",
 			promptSnippet: "assistant_delegate: run a task inside one of the user's projects and get its report",
 			annotations: { readOnlyHint: true },
 			parameters: Type.Object({
@@ -210,7 +261,8 @@ ${text}
 			},
 		});
 
-		ctx.context.provide(async (req) => {
+		ctx.context.provide(async (req): Promise<ContextContribution | undefined> => {
+			if (req.sessionId && delegations.has(req.sessionId)) return { static: { sections: { delegated_run: DELEGATED_RUN } } };
 			if (!sameDir(req.cwd, home.dir)) return undefined;
 			const persona = readPersona(home);
 			const index = notesIndex(listNotes(home));

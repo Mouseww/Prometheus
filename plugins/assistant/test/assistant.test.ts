@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createAsk } from "../src/ask.ts";
-import { delegate, type DelegateDeps, pickProject } from "../src/delegate.ts";
+import { budget, delegate, type DelegateDeps, pickProject, waitOn } from "../src/delegate.ts";
 import { ensureHome, listNotes, notesIndex, PERSONA, readPersona, sameDir } from "../src/home.ts";
 import { type BriefingSettings, createBriefing, isDue, localDate, validTime } from "../src/briefing.ts";
 import { channelLabel, createInbound } from "../src/inbound.ts";
@@ -70,6 +70,8 @@ function deps(over: Partial<DelegateDeps> = {}) {
 			runs.push({ ...o });
 			return { sessionId: "child", status: "success", access: o.access, text: "done" };
 		},
+		live: new Map(),
+		nextQuestion: async () => new Promise(() => {}),
 		delegatedProject: (id) => known.get(id),
 		started: (id, project) => void known.set(id, project),
 		...over,
@@ -360,5 +362,110 @@ describe("ask", () => {
 		expect((await first).ok).toBe(false);
 		expect(a.pending().map((q) => q.question)).toEqual(["two"]);
 		expect((await a.ask("s1", "x", undefined, AbortSignal.abort())).ok).toBe(false);
+	});
+});
+
+describe("delegate: a question goes back to the calling chat", () => {
+	/** A run that starts, asks once through the real ask module, then finishes with the answer. */
+	function rig() {
+		const known = new Map<string, string>();
+		const ask = createAsk({ delegated: (id) => known.has(id), changed: () => {}, now: () => 1 });
+		const d: DelegateDeps = {
+			homeDir: "/data/home",
+			workspaces: async () => projects,
+			live: new Map(),
+			nextQuestion: (id, sig) => ask.next(id, sig),
+			delegatedProject: (id) => known.get(id),
+			started: (id, p) => void known.set(id, p),
+			runAgent: async (o) => {
+				o.onStart?.("child");
+				const a = await ask.ask("child", "Which style?", ["serious", "playful"], o.signal);
+				return { sessionId: "child", status: "success", access: o.access, text: a.ok ? `styled ${a.answer}` : `no answer: ${a.reason}` };
+			},
+		};
+		return { d, ask };
+	}
+	const call = { cwd: "/data/home", sessionId: "main" };
+
+	it("returns the question instead of blocking, then the result after the answer", async () => {
+		const { d, ask } = rig();
+		const first = await delegate(d, call, { project: "Beta", task: "x" });
+		expect(first.card.status).toBe("asking");
+		expect(first.text).toContain("Which style?");
+		expect(first.text).toContain("serious | playful");
+		expect(d.live.has("child")).toBe(true);
+
+		ask.answer(ask.pending()[0]!.id, "playful");
+		const done = await waitOn(d, "child");
+		expect(done.card.status).toBe("success");
+		expect(done.text).toContain("styled playful");
+		await Promise.resolve();
+		expect(d.live.has("child")).toBe(false);
+	});
+
+	it("stops a running delegation when the calling chat is aborted", async () => {
+		const { d } = rig();
+		d.runAgent = (o) =>
+			new Promise((resolve) => {
+				o.onStart?.("long");
+				o.signal?.addEventListener("abort", () => resolve({ sessionId: "long", status: "aborted", access: o.access, text: "" }));
+			});
+		const ctl = new AbortController();
+		const p = delegate(d, { ...call, signal: ctl.signal }, { project: "Beta", task: "x" });
+		await new Promise((r) => setTimeout(r, 10));
+		ctl.abort();
+		expect((await p).card.status).toBe("aborted");
+	});
+
+	it("says so when nothing is running in that session", async () => {
+		const { d } = rig();
+		expect((await waitOn(d, "ghost")).card.status).toBe("refused");
+	});
+});
+
+describe("budget", () => {
+	it("does not count paused time and can be cleared", async () => {
+		let fired = 0;
+		const b = budget(60, () => void fired++);
+		b.pause();
+		await new Promise((r) => setTimeout(r, 120));
+		expect(fired).toBe(0);
+		b.resume();
+		await new Promise((r) => setTimeout(r, 100));
+		expect(fired).toBe(1);
+
+		const c = budget(30, () => void fired++);
+		c.clear();
+		await new Promise((r) => setTimeout(r, 60));
+		expect(fired).toBe(1);
+	});
+});
+
+describe("ask: expiry and next", () => {
+	it("an unanswered question fails after its wait, and tells the run to decide itself", async () => {
+		const a = createAsk({ delegated: () => true, changed: () => {}, now: () => 1, waitMs: 20 });
+		const r = await a.ask("s", "?");
+		expect(r.ok).toBe(false);
+		expect(a.pending()).toHaveLength(0);
+	});
+
+	it("next() resolves with a question asked later, and undefined when aborted", async () => {
+		const a = createAsk({ delegated: () => true, changed: () => {}, now: () => 1 });
+		const n = a.next("s");
+		void a.ask("s", "late?");
+		expect((await n)?.question).toBe("late?");
+		const ctl = new AbortController();
+		const m = a.next("other", ctl.signal);
+		ctl.abort();
+		expect(await m).toBeUndefined();
+	});
+
+	it("reports waiting state so the run's clock can pause", async () => {
+		const seen: boolean[] = [];
+		const a = createAsk({ delegated: () => true, changed: () => {}, now: () => 1, waiting: (_s, w) => void seen.push(w) });
+		const p = a.ask("s", "?");
+		a.answer(a.pending()[0]!.id, "ok");
+		await p;
+		expect(seen).toEqual([true, false]);
 	});
 });

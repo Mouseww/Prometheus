@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { ChevronRight, CircleAlert, CircleCheck, CircleSlash, ShieldAlert } from "lucide-react";
+import { ChevronRight, CircleAlert, CircleHelp, CircleCheck, CircleSlash, ShieldAlert } from "lucide-react";
 import type { ToolResultMessage } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { openSession } from "../lib/store.ts";
@@ -11,6 +11,8 @@ const M = defineMessages({
 		error: "出错了",
 		aborted: "已中止",
 		refused: "没有派出",
+		asking: "在向你提问",
+		running: "仍在进行",
 		readonly: "只读",
 		edits: "可改文件",
 		full: "完全权限",
@@ -23,6 +25,8 @@ const M = defineMessages({
 		error: "Failed",
 		aborted: "Aborted",
 		refused: "Not sent",
+		asking: "Asking a question",
+		running: "Still running",
 		readonly: "Read-only",
 		edits: "Can edit files",
 		full: "Full access",
@@ -34,7 +38,7 @@ const M = defineMessages({
 export interface Delegation {
 	sessionId?: string;
 	project: string;
-	status: "success" | "error" | "aborted" | "refused";
+	status: "success" | "error" | "aborted" | "refused" | "asking" | "running";
 	requested: "readonly" | "edits" | "full";
 	access: "readonly" | "edits" | "full";
 }
@@ -49,13 +53,13 @@ export function delegationOf(result: ToolResultMessage | undefined): Delegation 
 /** A delegated run shown as one line: where it went, how it ended, what it was allowed, and a way into its chat. */
 export function DelegationCard({ card, fallback }: { card: Delegation; fallback: React.ReactNode }) {
 	const t = useT(M);
-	const Icon = card.status === "success" ? CircleCheck : card.status === "refused" ? CircleSlash : CircleAlert;
+	const Icon = card.status === "success" ? CircleCheck : card.status === "refused" ? CircleSlash : card.status === "asking" || card.status === "running" ? CircleHelp : CircleAlert;
 	const lowered = card.access !== card.requested;
 	return (
 		<div className="space-y-2">
 			<div className="overflow-hidden rounded-xl border border-ink-800 bg-ink-900/70">
 				<div className="flex items-center gap-2.5 px-3 py-2">
-					<Icon className={clsx("size-4 shrink-0", card.status === "success" ? "text-emerald-400" : card.status === "refused" ? "text-ink-500" : "text-rose-400")} />
+					<Icon className={clsx("size-4 shrink-0", card.status === "success" ? "text-emerald-400" : card.status === "refused" ? "text-ink-500" : card.status === "asking" || card.status === "running" ? "text-amber-400" : "text-rose-400")} />
 					<span className="shrink-0 text-[11px] text-ink-500">{t("title")}</span>
 					<span className="min-w-0 flex-1 truncate font-mono text-[13px] font-medium text-ink-100">{card.project}</span>
 					<span className="shrink-0 text-xs text-ink-400">{t(card.status)}</span>
