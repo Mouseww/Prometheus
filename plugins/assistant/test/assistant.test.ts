@@ -60,6 +60,7 @@ describe("pickProject", () => {
 });
 
 function deps(over: Partial<DelegateDeps> = {}) {
+	const known = new Map<string, string>();
 	const runs: Record<string, unknown>[] = [];
 	const d: DelegateDeps = {
 		homeDir: "/data/home",
@@ -68,9 +69,11 @@ function deps(over: Partial<DelegateDeps> = {}) {
 			runs.push({ ...o });
 			return { sessionId: "child", status: "success", access: o.access, text: "done" };
 		},
+		delegatedProject: (id) => known.get(id),
+		started: (id, project) => void known.set(id, project),
 		...over,
 	};
-	return { d, runs };
+	return { d, runs, known };
 }
 
 describe("delegate", () => {
@@ -108,6 +111,46 @@ describe("delegate", () => {
 		const { d, runs } = deps();
 		await delegate(d, { cwd: "/data/home", sessionId: undefined }, { project: "Beta", task: "x", access: "edits" });
 		expect(runs[0]).not.toHaveProperty("parentSessionId");
+	});
+});
+
+describe("delegate: one piece of work, one session", () => {
+	it("records the session as soon as it starts and carries on the same one when asked", async () => {
+		const { d, runs, known } = deps({
+			runAgent: async (o) => {
+				const id = o.sessionId ?? "child";
+				o.onStart?.(id);
+				runs2.push({ ...o });
+				return { sessionId: id, status: "success", access: o.access, text: "done" };
+			},
+		});
+		const runs2: Record<string, unknown>[] = [];
+		const first = await delegate(d, { cwd: "/data/home", sessionId: "m" }, { project: "Beta", task: "x" });
+		expect(known.get("child")).toBe("Beta");
+		expect(first.text).toContain("session child");
+		await delegate(d, { cwd: "/data/home", sessionId: "m" }, { project: "Beta", task: "more", continue_session: "child" });
+		expect(runs2[1]).toMatchObject({ sessionId: "child" });
+		expect(runs).toHaveLength(0);
+	});
+
+	it("refuses a session it did not delegate or one from another project", async () => {
+		const { d, runs, known } = deps();
+		known.set("old", "Alpha");
+		expect((await delegate(d, { cwd: "/data/home", sessionId: "m" }, { project: "Beta", task: "x", continue_session: "nope" })).card.status).toBe("refused");
+		expect((await delegate(d, { cwd: "/data/home", sessionId: "m" }, { project: "Beta", task: "x", continue_session: "old" })).text).toContain('belongs to project "Alpha"');
+		expect(runs).toHaveLength(0);
+	});
+
+	it("says so when the session to continue is busy", async () => {
+		const { d, known } = deps({
+			runAgent: async () => {
+				throw new Error("busy");
+			},
+		});
+		known.set("busy", "Beta");
+		const r = await delegate(d, { cwd: "/data/home", sessionId: "m" }, { project: "Beta", task: "x", continue_session: "busy" });
+		expect(r.card.status).toBe("refused");
+		expect(r.text).toContain("still running");
 	});
 });
 

@@ -40,3 +40,22 @@ export function groupByAge<T extends { modified: string }>(items: readonly T[], 
 	}
 	return (["today", "week", "earlier"] as const).filter((k) => out[k].length > 0).map((key) => ({ key, items: out[key] }));
 }
+
+/** Prefix `assistant_delegate` puts on the names of the sessions it starts; only used to tidy titles, never to identify them. */
+export const DELEGATION_PREFIX = "助理派活：";
+
+/**
+ * Runs the assistant handed to projects (known by session id, which the assistant plugin records), newest first.
+ * "running" is what is in progress now; "done" is the most recent finished ones (capped), so the home page stays short.
+ */
+export function delegatedRuns<T extends { id: string; modified: string; running: boolean; archived: boolean }>(
+	sessions: readonly T[],
+	delegated: ReadonlySet<string>,
+	doneLimit = 5,
+): { running: T[]; done: T[] } {
+	const mine = sessions.filter((s) => !s.archived && delegated.has(s.id)).sort((a, b) => Date.parse(b.modified) - Date.parse(a.modified));
+	return { running: mine.filter((s) => s.running), done: mine.filter((s) => !s.running).slice(0, doneLimit) };
+}
+
+/** The title of a delegated run without the prefix. */
+export const delegationTitle = (name: string | undefined): string => (name ?? "").replace(DELEGATION_PREFIX, "").trim();

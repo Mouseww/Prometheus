@@ -174,7 +174,7 @@ function savedSort(): SubagentSort {
 }
 
 export type SettingsTab = "general" | "agents" | "gateways" | "mcp" | "connectors" | "skills" | "modes" | "subagents" | "market" | "veil" | "logs" | "plugins" | "voice" | "network" | "runtimes" | "platforms" | "ssh" | "usage";
-export type View = "chat" | "knowledge" | "memory" | "automations" | "git" | "settings" | { panel: string };
+export type View = "chat" | "home" | "knowledge" | "memory" | "automations" | "git" | "settings" | { panel: string };
 
 interface State {
 	client: PrometheusClient | null;
@@ -188,7 +188,7 @@ interface State {
 	/** The space the user chose; see `useSpace` for the one actually shown (no assistant: work only). */
 	space: Space;
 	/** The assistant's home folder (null: no assistant) and its main chat, once known. */
-	assistant: { home: string; mainId: string | null } | null;
+	assistant: { home: string; mainId: string | null; /** Sessions the assistant delegated to projects. */ delegated: ReadonlySet<string> } | null;
 	/** Every plugin the host knows, loaded or not; views use it to show or hide plugin-backed features. */
 	plugins: PluginInfo[];
 	hostSettings: HostSettings | null;
@@ -662,15 +662,16 @@ export async function refreshAssistant(): Promise<void> {
 	}
 	const info = (await get()
 		.client?.rpc("plugin.call", { plugin: "assistant", method: "info", params: {} })
-		.catch(() => undefined)) as { home?: string; sessionId?: string | null } | undefined;
+		.catch(() => undefined)) as { home?: string; sessionId?: string | null; delegated?: string[] } | undefined;
 	if (!info?.home) {
 		if (get().assistant) set({ assistant: null });
 		return;
 	}
 	const mainId = info.sessionId ?? null;
+	const delegated = new Set(info.delegated ?? []);
 	const cur = get().assistant;
-	if (cur?.home === info.home && cur.mainId === mainId) return;
-	set({ assistant: { home: info.home, mainId } });
+	if (cur?.home === info.home && cur.mainId === mainId && cur.delegated.size === delegated.size && [...delegated].every((id) => cur.delegated.has(id))) return;
+	set({ assistant: { home: info.home, mainId, delegated } });
 }
 
 /** The space shown now: the one chosen, or work when there is no assistant (and so no personal space). */

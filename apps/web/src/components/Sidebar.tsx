@@ -14,6 +14,7 @@ import {
 	FolderSearch,
 	FolderPlus,
 	GitBranch,
+	Home,
 	LoaderCircle,
 	LogOut,
 	MoreHorizontal,
@@ -32,7 +33,7 @@ import type { BackendTarget } from "../lib/client.ts";
 import { localizeError } from "../lib/errors.ts";
 import { defineMessages, relativeTime, useT } from "../lib/i18n.ts";
 import { usePrefs } from "../lib/prefs.ts";
-import { groupByAge, type AgeGroup, spaceOf } from "../lib/spaces.ts";
+import { delegationTitle, groupByAge, type AgeGroup, spaceOf } from "../lib/spaces.ts";
 import { PlatformSwitcher } from "./PlatformSwitcher.tsx";
 import { SpaceSwitcher } from "./SpaceSwitcher.tsx";
 import {
@@ -72,6 +73,8 @@ const M = defineMessages({
 		newChat: "在此工作区新建对话",
 		newSession: "新会话",
 		startChat: "新对话",
+		home: "主页",
+		delegated: "委派",
 		mainThread: "主线 · 普罗",
 		mainThreadHint: "助理的长期对话：它有自己的家，需要时把活派到你的项目里",
 		conversations: "对话",
@@ -111,6 +114,8 @@ const M = defineMessages({
 		newChat: "New chat in this workspace",
 		newSession: "New chat",
 		startChat: "New chat",
+		home: "Home",
+		delegated: "Delegated",
 		mainThread: "Main · Pro",
 		mainThreadHint: "The assistant's long-running chat: it has a home of its own and hands work to your projects when needed",
 		conversations: "Chats",
@@ -237,7 +242,8 @@ function SessionRow({ s, active }: { s: SessionSummary; active: boolean }) {
 	const lang = usePrefs((p) => p.lang);
 	const [editing, setEditing] = useState(false);
 	const [name, setName] = useState("");
-	const title = s.name || localizeError(s.firstMessage ?? "") || t("newSession");
+	const delegated = useStore((st) => Boolean(st.assistant?.delegated.has(s.id)));
+	const title = (delegated ? delegationTitle(s.name) : s.name) || localizeError(s.firstMessage ?? "") || t("newSession");
 	// Clicked, contents still on the way (or only the copy from the last visit is shown).
 	const mark = useStore((st) => (st.session?.id === s.id ? undefined : st.marks[s.id]));
 	const loading = useStore((st) => st.opening?.id === s.id || (st.session?.id === s.id && !!st.session.preview));
@@ -285,7 +291,10 @@ function SessionRow({ s, active }: { s: SessionSummary; active: boolean }) {
 		>
 			{active && <span className="absolute top-1.5 bottom-1.5 left-0 w-0.5 rounded-full bg-ember-500" />}
 			<div className="min-w-0 flex-1">
-				<div className="truncate text-[13px] text-ink-200">{title}</div>
+				<div className="flex items-center gap-1.5 truncate text-[13px] text-ink-200">
+					{delegated && <span className="shrink-0 rounded bg-ember-500/15 px-1 text-[10px] leading-4 text-ember-300">{t("delegated")}</span>}
+					<span className="truncate">{title}</span>
+				</div>
 				<div className="flex items-center gap-1.5 text-[10.5px] text-ink-500">
 					{loading ? (
 			<LoaderCircle className="size-2.5 animate-spin text-ember-400" />
@@ -488,6 +497,10 @@ function PersonalList({ sessions, mainId, activeId }: { sessions: SessionSummary
 	const mainActive = Boolean(mainId) && mainId === activeId;
 	return (
 		<div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+			<button type="button" onClick={() => setView("home")} className="mb-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] text-ink-300 hover:bg-ink-800/70 hover:text-ink-100">
+				<Home className="size-4 shrink-0" />
+				{t("home")}
+			</button>
 			<button
 				type="button"
 				title={t("mainThreadHint")}

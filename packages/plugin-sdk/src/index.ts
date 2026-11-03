@@ -96,6 +96,8 @@ export interface AgentRunOptions {
 	 * unattended with `access`; afterwards it goes back to how it was. `cwd` is ignored.
 	 */
 	sessionId?: string;
+	/** Called as soon as the session exists, before the run finishes, so a caller can record it while the run is still going. */
+	onStart?: (sessionId: string) => void;
 }
 
 export interface OpenSessionOptions {

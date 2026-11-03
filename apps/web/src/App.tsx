@@ -9,6 +9,7 @@ import { ConnectionBanner, type Recovery } from "./components/ConnectionBanner.t
 import { ContextMenuHost } from "./components/ContextMenuHost.tsx";
 import { DialogHost } from "./components/DialogHost.tsx";
 import { GitView } from "./components/GitView.tsx";
+import { PersonalHome } from "./components/PersonalHome.tsx";
 import { KnowledgeView } from "./components/KnowledgeView.tsx";
 import { MemoryView } from "./components/MemoryView.tsx";
 import { SettingsView } from "./components/SettingsView.tsx";
@@ -263,6 +264,7 @@ export function App() {
 					<ChatView />
 					{view !== "chat" && (
 						<Modal key={typeof view === "object" ? view.panel : view} onClose={closeView} floatingClose={typeof view === "object"}>
+							{view === "home" && <PersonalHome />}
 							{view === "knowledge" && <KnowledgeView />}
 							{view === "memory" && <MemoryView />}
 							{view === "automations" && <AutomationsView />}

@@ -807,6 +807,11 @@ export class PrometheusHost {
 		gate.unattended = access;
 		bridge.headless = true;
 		if (!resumed && options.name?.trim()) session.setName(options.name.trim());
+		try {
+			options.onStart?.(id);
+		} catch {
+			// a recording hook must never break the run
+		}
 		this.listener.sessionsChanged();
 
 		const stop = () => void session.abort().catch(() => {});

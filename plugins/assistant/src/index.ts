@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Type } from "typebox";
 import { createJsonStore, definePlugin } from "@prometheus/plugin-sdk";
@@ -41,10 +41,40 @@ export default definePlugin({
 		ctx.rpc("info", async () => {
 			const saved = (await store.read()).sessionId;
 			const alive = saved ? await ctx.sessionExists(saved) : false;
-			return { home: home.dir, sessionId: alive ? saved : null };
+			return { home: home.dir, sessionId: alive ? saved : null, delegated: [...delegations.keys()] };
+		});
+
+		const briefStore = createJsonStore<BriefingSettings>(join(ctx.dataDir, "briefing.json"), () => ({ ...DEFAULT_BRIEFING }));
+
+		// The personal home page: the newest briefing note (if any) and the briefing's settings.
+		ctx.rpc("overview", async () => {
+			const note = listNotes(home, 200).find((n) => /^简报-.+\.md$/.test(n.name));
+			let briefing: { name: string; text: string } | null = null;
+			if (note) {
+				try {
+					briefing = { name: note.name, text: readFileSync(join(home.notes, note.name), "utf8").slice(0, 4000) };
+				} catch {
+					// removed since listing
+				}
+			}
+			return { briefing, settings: await briefStore.read() };
+		});
+
+		// Which sessions the assistant delegated, and to which project: the app marks them and the home page lists them
+		// from this, not from the session's name (which the user may change).
+		const delegStore = createJsonStore<{ list: { sessionId: string; project: string; at: number }[] }>(join(ctx.dataDir, "delegations.json"), () => ({ list: [] }));
+		const delegations = new Map<string, string>();
+		void delegStore.read().then((d) => {
+			for (const e of d.list) delegations.set(e.sessionId, e.project);
 		});
 
 		const delegateDeps: DelegateDeps = {
+			delegatedProject: (id) => delegations.get(id),
+			started: (id, project) => {
+				if (delegations.has(id)) return;
+				delegations.set(id, project);
+				void delegStore.update((d) => ({ list: [...d.list, { sessionId: id, project, at: Date.now() }].slice(-300) })).then(() => ctx.notifyChanged());
+			},
 			homeDir: home.dir,
 			workspaces: () => ctx.workspaces(),
 			runAgent: (o) => ctx.runAgent(o),
@@ -76,6 +106,7 @@ export default definePlugin({
 				project: Type.String({ description: "Project name or id from assistant_projects" }),
 				task: Type.String({ description: "What to do, how far to go, and what result to bring back" }),
 				access: Type.Optional(Type.Union([Type.Literal("readonly"), Type.Literal("edits")])),
+				continue_session: Type.Optional(Type.String({ description: "Session id returned by an earlier delegation to the same project. Use it when the new task is more of the same work, so it goes back into that session instead of piling up a new one. Leave out for unrelated work." })),
 			}),
 			async execute(_id, params, signal, _onUpdate, tctx) {
 				const r = await delegate(delegateDeps, { cwd: tctx.cwd, sessionId: tctx.sessionId, signal }, params);
@@ -114,7 +145,6 @@ export default definePlugin({
 		});
 
 		// Daily briefing: off until the user asks for it (assistant_briefing); the text lands in notes/.
-		const briefStore = createJsonStore<BriefingSettings>(join(ctx.dataDir, "briefing.json"), () => ({ ...DEFAULT_BRIEFING }));
 		const tickBriefing = createBriefing({
 			load: () => briefStore.read(),
 			save: async (s) => void (await briefStore.update(() => s)),

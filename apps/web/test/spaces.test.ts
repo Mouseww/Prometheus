@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { effectiveSpace, groupByAge, samePath, spaceOf } from "../src/lib/spaces.ts";
+import { delegatedRuns, delegationTitle, effectiveSpace, groupByAge, samePath, spaceOf } from "../src/lib/spaces.ts";
 
 describe("spaces", () => {
 	it("compares paths across slash style, case and trailing separators", () => {
@@ -32,5 +32,17 @@ describe("spaces", () => {
 		expect(g.map((x) => x.key)).toEqual(["today", "week", "earlier"]);
 		expect(g[0]?.items.map((x) => x.id)).toEqual(["t1", "t2"]);
 		expect(groupByAge([{ modified: at("2026-05-14T09:00:00") }], now).map((x) => x.key)).toEqual(["today"]);
+	});
+
+	it("splits delegated runs into running and recent finished, by session id, ignoring others and archived ones", () => {
+		const mk = (id: string, modified: string, running = false, archived = false) => ({ id, name: id, modified, running, archived });
+		const r = delegatedRuns(
+			[mk("a", "2026-05-01T10:00:00Z"), mk("b", "2026-05-03T10:00:00Z", true), mk("c", "2026-05-02T10:00:00Z"), mk("old", "2026-04-01T10:00:00Z", false, true), mk("plain", "2026-05-04T10:00:00Z")],
+			new Set(["a", "b", "c", "old"]),
+			1,
+		);
+		expect(r.running.map((s) => s.id)).toEqual(["b"]);
+		expect(r.done.map((s) => s.id)).toEqual(["c"]);
+		expect(delegationTitle("助理派活：整理表")).toBe("整理表");
 	});
 });
