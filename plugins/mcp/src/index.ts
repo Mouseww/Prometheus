@@ -1,13 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { McpTransport } from "@earendil-works/pi-mcp";
-
-// The MCP client comes with the PI packages; without them servers cannot be connected until the PI agent is installed.
-const mcp = await import("@earendil-works/pi-mcp").catch(() => undefined);
-const needMcp = (): NonNullable<typeof mcp> => {
-	if (!mcp) throw new Error("PI Agent is not installed (needed to connect MCP servers)");
-	return mcp;
-};
+import { HttpTransport, McpClient, StdioTransport, type Transport } from "./client.ts";
 import { createJsonStore, definePlugin } from "@prometheus/plugin-sdk";
 import type { McpProbeResult, McpServerInfo, McpServerSpec } from "@prometheus/protocol";
 import { fromPiConfig, mergeSpec, NAME_PATTERN, parseSpec, redactSpec, toPiConfig } from "./spec.ts";
@@ -26,22 +19,19 @@ function expandRecord(record: Record<string, string> | undefined): Record<string
 	return record && Object.fromEntries(Object.entries(record).map(([k, v]) => [k, expandEnv(v)]));
 }
 
-function transportFor(spec: McpServerSpec, cwd: string): McpTransport {
-	if (spec.type === "http") return new (needMcp().StreamableHttpTransport)({ url: spec.url ?? "", headers: expandRecord(spec.headers), openGetStream: false });
-	return new (needMcp().StdioTransport)({ command: spec.command ?? "", args: spec.args, env: expandRecord(spec.env), cwd: spec.cwd ?? cwd, stderr: "pipe" });
+function transportFor(spec: McpServerSpec, cwd: string): Transport {
+	if (spec.type === "http") return new HttpTransport({ url: spec.url ?? "", headers: expandRecord(spec.headers) });
+	return new StdioTransport({ command: spec.command ?? "", args: spec.args, env: expandRecord(spec.env), cwd: spec.cwd ?? cwd });
 }
 
 /** Connect once, list tools, disconnect: lets users check a server before an agent depends on it. */
 export async function probe(spec: McpServerSpec, cwd: string): Promise<McpProbeResult> {
 	const started = performance.now();
-	const client = new (needMcp().McpClient)({ name: "prometheus", version: "0.1.0" });
+	const client = new McpClient(transportFor(spec, cwd));
 	const signal = AbortSignal.timeout(PROBE_TIMEOUT_MS);
 	try {
-		const init = await Promise.race([
-			client.connect(transportFor(spec, cwd)),
-			new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(new Error("连接超时")))),
-		]);
-		const tools = init.capabilities.tools ? await client.listTools({ signal }) : [];
+		const init = await client.connect(signal);
+		const tools = init.hasTools ? await client.listTools(signal) : [];
 		return {
 			ok: true,
 			latencyMs: Math.round(performance.now() - started),

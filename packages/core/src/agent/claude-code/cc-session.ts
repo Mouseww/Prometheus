@@ -12,6 +12,7 @@ import type { BusSession } from "../bus/tool-bus.ts";
 import type { RelayGrant } from "../relay/gateway-relay.ts";
 import type { PromptDelivery, RuntimeCapabilities, RuntimeServices, RuntimeSession, RuntimeSnapshot, SessionHooks, SessionInit, SessionRef, UserInput } from "../types.ts";
 import { CcMapper } from "./event-map.ts";
+import { userMcpServers } from "../user-mcp.ts";
 import { canonicalTool, PROMETHEUS_MCP_SERVER } from "./tool-map.ts";
 
 export const CC_CAPABILITIES: RuntimeCapabilities = {
@@ -191,7 +192,11 @@ export class ClaudeCodeSession implements RuntimeSession {
 			tools: NATIVE_TOOLS,
 			disallowedTools: ["Task", "Agent"],
 			strictMcpConfig: true,
-			mcpServers: { [PROMETHEUS_MCP_SERVER]: { type: "http", url: this.busSession.url, headers: { Authorization: `Bearer ${this.busSession.token}` }, alwaysLoad: true } as never },
+			mcpServers: {
+				[PROMETHEUS_MCP_SERVER]: { type: "http", url: this.busSession.url, headers: { Authorization: `Bearer ${this.busSession.token}` }, alwaysLoad: true } as never,
+				// The servers from Settings -> MCP, so they work without the PI agent too.
+				...Object.fromEntries((await userMcpServers(this.services.plugins)).map((s) => [s.name, (s.type === "http" ? { type: "http", url: s.url, headers: s.headers } : { type: "stdio", command: s.command, args: s.args, env: s.env }) as never])),
+			},
 			systemPrompt: { type: "preset", preset: "claude_code", append: await this.staticContext(), snapshot: false } as never,
 			...(this.resume ? { resume: this.nativeId } : { sessionId: this.nativeId }),
 			canUseTool: async (toolName, input, o) => this.canUseTool(toolName, input, o.signal),

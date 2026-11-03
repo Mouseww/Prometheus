@@ -1,19 +1,15 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { Skill } from "@earendil-works/pi-coding-agent";
 import { createJsonStore, definePlugin } from "@prometheus/plugin-sdk";
 import type { SkillDocument, SkillInfo } from "@prometheus/protocol";
+import { loadSkillsFromDir, type Skill } from "./loader.ts";
 import { checkSkillDocument, renderSkill, requireSkillName } from "./skill-file.ts";
 import { BUILTIN_SKILLS, installBuiltinSkills } from "./builtin-skills.ts";
 
 interface State {
 	disabled: string[];
 }
-
-// Optional: without the PI packages there is no skill loader, and the lists stay empty until the PI agent is installed.
-const pi = await import("@earendil-works/pi-coding-agent").catch(() => undefined);
-const loadSkillsFromDir: NonNullable<typeof pi>["loadSkillsFromDir"] = (opts) => pi?.loadSkillsFromDir(opts) ?? { skills: [], diagnostics: [] };
 
 export default definePlugin({
 	name: "skills",
@@ -27,8 +23,8 @@ export default definePlugin({
 		const builtinNames = new Set(BUILTIN_SKILLS.map((s) => s.name));
 		const state = createJsonStore<State>(join(ctx.dataDir, "state.json"), () => ({ disabled: [] }));
 
-		const ownSkills = (): Skill[] => loadSkillsFromDir({ dir: library, source: "prometheus" }).skills.filter((s) => !builtinNames.has(s.name));
-		const shippedSkills = (): Skill[] => loadSkillsFromDir({ dir: builtinDir, source: "prometheus" }).skills.filter((s) => builtinNames.has(s.name));
+		const ownSkills = (): Skill[] => loadSkillsFromDir({ dir: library }).skills.filter((s) => !builtinNames.has(s.name));
+		const shippedSkills = (): Skill[] => loadSkillsFromDir({ dir: builtinDir }).skills.filter((s) => builtinNames.has(s.name));
 		const skillDir = (name: string) => join(library, requireSkillName(name));
 
 		// Enabled library skills join PI's own discovery (~/.pi/agent/skills, <project>/.pi/skills).
@@ -37,6 +33,22 @@ export default definePlugin({
 				const disabled = new Set((await state.read()).disabled);
 				return { skillPaths: [...shippedSkills(), ...ownSkills()].filter((s) => !disabled.has(s.name)).map((s) => s.baseDir) };
 			});
+		});
+
+		// PI loads skills itself (above). The other agents get the same list as a short index in their system prompt and read
+		// the SKILL.md they need with their own file tools, so skills work without the PI agent.
+		ctx.context.provide(async (req) => {
+			if (req.runtime === "pi") return undefined;
+			const disabled = new Set((await state.read()).disabled);
+			const all = [
+				...[...shippedSkills(), ...ownSkills()].filter((s) => !disabled.has(s.name)),
+				...loadSkillsFromDir({ dir: join(ctx.agentDir, "skills") }).skills,
+				...loadSkillsFromDir({ dir: resolve(req.cwd, ".pi", "skills") }).skills,
+			].filter((s) => !s.disableModelInvocation);
+			const seen = new Set<string>();
+			const lines = all.filter((s) => !seen.has(s.name) && seen.add(s.name)).map((s) => `- ${s.name}: ${s.description.replace(/\s+/g, " ").slice(0, 300)} (${s.filePath})`);
+			if (!lines.length) return undefined;
+			return { static: { sections: { prometheus_skills: ["# Skills", "When a task matches one of these skills, read its SKILL.md first and follow it. Paths are absolute.", ...lines].join("\n") } } };
 		});
 
 		ctx.rpc("list", async (): Promise<SkillInfo[]> => {
@@ -53,8 +65,8 @@ export default definePlugin({
 			return [
 				...shippedSkills().map((s) => toInfo(s, "builtin")),
 				...ownSkills().map((s) => toInfo(s, "prometheus")),
-				...loadSkillsFromDir({ dir: join(ctx.agentDir, "skills"), source: "user" }).skills.map((s) => toInfo(s, "user")),
-				...loadSkillsFromDir({ dir: resolve(ctx.cwd, ".pi", "skills"), source: "project" }).skills.map((s) => toInfo(s, "project")),
+				...loadSkillsFromDir({ dir: join(ctx.agentDir, "skills") }).skills.map((s) => toInfo(s, "user")),
+				...loadSkillsFromDir({ dir: resolve(ctx.cwd, ".pi", "skills") }).skills.map((s) => toInfo(s, "project")),
 			];
 		});
 

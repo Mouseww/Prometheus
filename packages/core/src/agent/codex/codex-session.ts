@@ -1,6 +1,7 @@
 // CodexSession: one `codex app-server` process and one thread behind the runtime-neutral RuntimeSession.
 // Model traffic goes through the gateway relay, Prometheus tools through the tool bus (as an MCP server),
 // approvals through the single PermissionGate (docs/agent-runtime.md §4, §6, §7, §12.2).
+import { userMcpServers } from "../user-mcp.ts";
 import { copyFile, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { withLoopbackNoProxy } from "../loopback-env.ts";
@@ -204,6 +205,13 @@ export class CodexSession implements RuntimeSession {
 			`bearer_token_env_var = "PROMETHEUS_MCP_TOKEN"`,
 			`default_tools_approval_mode = "approve"`,
 			``,
+			...(await userMcpServers(services.plugins)).flatMap((s) => [
+				`[mcp_servers.${tomlString(s.name)}]`,
+				...(s.type === "http"
+					? [`url = ${tomlString(s.url)}`, ...(Object.keys(s.headers).length ? [`http_headers = { ${Object.entries(s.headers).map(([k, v]) => `${tomlString(k)} = ${tomlString(v)}`).join(", ")} }`] : [])]
+					: [`command = ${tomlString(s.command)}`, `args = [${s.args.map(tomlString).join(", ")}]`, ...(Object.keys(s.env).length ? [`env = { ${Object.entries(s.env).map(([k, v]) => `${tomlString(k)} = ${tomlString(v)}`).join(", ")} }`] : [])]),
+				``,
+			]),
 		].join("\n");
 		await writeFile(join(home, "config.toml"), toml, "utf8");
 

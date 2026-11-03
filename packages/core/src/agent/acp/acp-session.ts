@@ -2,6 +2,7 @@
 // RuntimeSession. Prometheus tools reach the agent as an MCP server (the tool bus, over HTTP or a stdio bridge),
 // permission requests go through the single PermissionGate, and the agent is kept in its own "ask" mode so that the
 // gate decides by Prometheus' permission mode (docs/agent-runtime.md §4, §6, §12.6).
+import { userMcpServers } from "../user-mcp.ts";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { PluginTool, PluginToolContext } from "@prometheus/plugin-sdk";
@@ -288,11 +289,17 @@ export class AcpSession implements RuntimeSession {
 	/** The tool bus, as the agent can reach it: over HTTP when it supports that, else through the stdio bridge. */
 	private async mcpServers(): Promise<unknown[]> {
 		const bus = this.busSession!;
-		if (asObject(this.agentCaps.mcpCapabilities).http) {
-			return [{ type: "http", name: MCP_NAME, url: bus.url, headers: [{ name: "Authorization", value: `Bearer ${bus.token}` }] }];
+		const pairs = (r: Record<string, string>) => Object.entries(r).map(([name, value]) => ({ name, value }));
+		const canHttp = Boolean(asObject(this.agentCaps.mcpCapabilities).http);
+		// The servers from Settings -> MCP ride along (remote ones only when the agent can speak HTTP MCP).
+		const own: unknown[] = (await userMcpServers(this.services.plugins, [MCP_NAME])).flatMap((s): unknown[] =>
+			s.type === "http" ? (canHttp ? [{ type: "http", name: s.name, url: s.url, headers: pairs(s.headers) }] : []) : [{ name: s.name, command: s.command, args: s.args, env: pairs(s.env) }],
+		);
+		if (canHttp) {
+			return [{ type: "http", name: MCP_NAME, url: bus.url, headers: [{ name: "Authorization", value: `Bearer ${bus.token}` }] }, ...own];
 		}
 		const script = await mcpBridgeScript(this.services.dataDir);
-		return [{ name: MCP_NAME, command: process.execPath, args: [script], env: [{ name: "PROMETHEUS_MCP_URL", value: bus.url }, { name: "PROMETHEUS_MCP_TOKEN", value: bus.token }] }];
+		return [{ name: MCP_NAME, command: process.execPath, args: [script], env: [{ name: "PROMETHEUS_MCP_URL", value: bus.url }, { name: "PROMETHEUS_MCP_TOKEN", value: bus.token }] }, ...own];
 	}
 
 	private async openSession(mcpServers: unknown[]): Promise<void> {
