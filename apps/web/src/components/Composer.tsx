@@ -1,7 +1,8 @@
 import clsx from "clsx";
-import { ArrowUp, Brain, Check, ChevronDown, CornerDownRight, Cpu, File as FileIcon, FileText, Folder as FolderIcon, ListEnd, Paperclip, Pencil, Search, Square, X } from "lucide-react";
+import { ArrowUp, Brain, Check, ChevronDown, CornerDownRight, Cpu, File as FileIcon, FileText, Folder as FolderIcon, ListEnd, Maximize2, Minimize2, Paperclip, Pencil, Search, Square, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ImageContent, ThinkingLevel } from "@prometheus/protocol";
+import { createPortal } from "react-dom";
+import type { CommandInfo, ImageContent, ThinkingLevel } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { type Attachment, AttachmentError, fileToAttachment, formatSize, isPicture, MAX_FILE_MB, MAX_FILES } from "../lib/attachments.ts";
 import { fileToImage, ImageError, imageSrc, MAX_IMAGES } from "../lib/images.ts";
@@ -70,6 +71,8 @@ const M = defineMessages({
 		badImage: "无法读取这张图片",
 		noVision: "当前模型不支持图片，图片可能被忽略或报错，请换用带“视觉”标记的模型",
 		dropHere: "松开即可添加文件或图片",
+		expand: "放大输入",
+		collapse: "收起",
 	},
 	en: {
 		placeholder: "Give the agent a task, type / for commands",
@@ -121,8 +124,130 @@ const M = defineMessages({
 		badImage: "Could not read that image",
 		noVision: "This model does not accept images, so they may be ignored or rejected. Pick a model marked \"vision\"",
 		dropHere: "Drop to add images",
+		expand: "Expand the composer",
+		collapse: "Collapse",
 	},
 });
+
+/**
+ * The "/command" suggestions. Rendered twice: above the inline composer, and inside the expanded sheet — that one covers
+ * the page, so the inline copy would sit behind it and typing "/" there showed nothing.
+ */
+function SlashCommands({ items, cursor, onPick }: { items: CommandInfo[]; cursor: number; onPick: (c: CommandInfo) => void }) {
+	return (
+		<>
+			{items.map((c, i) => (
+				<button
+					key={`${c.source}:${c.name}`}
+					type="button"
+					onMouseDown={(e) => {
+						e.preventDefault();
+						onPick(c);
+					}}
+					className={clsx("flex w-full items-baseline gap-3 px-3.5 py-2 text-left", i === cursor ? "bg-ink-800" : "hover:bg-ink-850")}
+				>
+					<span className="font-mono text-sm text-ember-300">/{c.name}</span>
+					<span className="min-w-0 flex-1 truncate text-xs text-ink-400">{c.description}</span>
+					<span className="font-mono text-[10px] text-ink-600 uppercase">{c.source}</span>
+				</button>
+			))}
+		</>
+	);
+}
+
+/** The "@file" suggestions, shared by the inline composer and the expanded sheet for the same reason. */
+function Mentions({ items, cursor, onPick, onHover }: { items: { path: string; dir: boolean }[]; cursor: number; onPick: (item: { path: string; dir: boolean }) => void; onHover: (index: number) => void }) {
+	return (
+		<>
+			{items.map((it, i) => {
+				const slash = it.path.lastIndexOf("/");
+				const name = it.path.slice(slash + 1);
+				const dir = slash >= 0 ? it.path.slice(0, slash) : "";
+				const Icon = it.dir ? FolderIcon : FileIcon;
+				return (
+					<button
+						key={it.path}
+						type="button"
+						onMouseDown={(e) => {
+							e.preventDefault();
+							onPick(it);
+						}}
+						onMouseEnter={() => onHover(i)}
+						className={clsx("flex w-full items-baseline gap-2 px-3.5 py-2 text-left", i === cursor ? "bg-ink-800" : "hover:bg-ink-850")}
+					>
+						<Icon className="size-3.5 shrink-0 self-center text-ink-400" />
+						<span className="font-mono text-sm text-ember-300">
+							{name}
+							{it.dir ? "/" : ""}
+						</span>
+						<span className="min-w-0 flex-1 truncate font-mono text-xs text-ink-500">{dir}</span>
+					</button>
+				);
+			})}
+		</>
+	);
+}
+
+/**
+ * Attached pictures and documents, shown above the input. The expanded sheet renders the same strip: attachments are
+ * shared state, so without it a file added in the inline composer would be invisible (and unremovable) there.
+ */
+function Attachments({
+	docs,
+	images,
+	reading,
+	onRemoveDoc,
+	onRemoveImage,
+	className,
+}: {
+	docs: Attachment[];
+	images: ImageContent[];
+	reading: number;
+	onRemoveDoc: (index: number) => void;
+	onRemoveImage: (index: number) => void;
+	className?: string;
+}) {
+	const t = useT(M);
+	return (
+		<div className={clsx("flex flex-wrap gap-2", className)}>
+			{docs.map((d, i) => (
+				<div key={`d${i}`} className="flex h-16 max-w-56 items-center gap-2 rounded-lg border border-ink-700 bg-ink-950 py-1 pr-1.5 pl-2.5" title={d.name}>
+					<FileText className="size-5 shrink-0 text-ember-300" />
+					<span className="min-w-0">
+						<span className="block truncate text-xs text-ink-200">{d.name}</span>
+						<span className="block font-mono text-[10.5px] text-ink-500">{formatSize(d.size)}</span>
+					</span>
+					<button
+						type="button"
+						onClick={() => onRemoveDoc(i)}
+						className="grid size-5 shrink-0 place-items-center rounded-full text-ink-400 hover:bg-rose-500 hover:text-white"
+						title={t("removeFile")}
+						aria-label={t("removeFile")}
+					>
+						<X className="size-3" />
+					</button>
+				</div>
+			))}
+			{images.map((img, i) => (
+				<div key={i} className="group/thumb relative size-16 overflow-hidden rounded-lg border border-ink-700 bg-ink-950">
+					<img src={imageSrc(img)} alt="" className="size-full object-cover" />
+					<button
+						type="button"
+						onClick={() => onRemoveImage(i)}
+						className="absolute top-0.5 right-0.5 grid size-5 place-items-center rounded-full bg-ink-950/80 text-ink-200 opacity-0 transition-opacity group-hover/thumb:opacity-100 nohover:opacity-100 hover:bg-rose-500 hover:text-white focus-visible:opacity-100"
+						title={t("removeImage")}
+						aria-label={t("removeImage")}
+					>
+						<X className="size-3" />
+					</button>
+				</div>
+			))}
+			{Array.from({ length: reading }, (_, i) => (
+				<div key={`r${i}`} className="size-16 animate-pulse rounded-lg border border-ink-800 bg-ink-850" />
+			))}
+		</div>
+	);
+}
 
 function ModelPicker() {
 	const t = useT(M);
@@ -429,11 +554,20 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 	const models = useStore((s) => s.models);
 	const model = useStore((s) => s.session?.model ?? s.draftModel);
 	const sendMode = usePrefs((p) => p.sendMode);
+	const enterToSend = usePrefs((p) => p.enterToSend);
 	const [cursor, setCursor] = useState(0);
 	const ref = useRef<HTMLTextAreaElement>(null);
 	const streaming = session?.isStreaming ?? false;
 	// ArrowUp history: position in the sent messages (-1: not browsing) and what was typed before browsing.
 	const history = useRef({ at: -1, draft: "" });
+	const [expanded, setExpanded] = useState(false);
+	const expandedRef = useRef<HTMLTextAreaElement>(null);
+	/** The textarea being typed into: the expanded sheet covers the inline one. */
+	const activeInput = () => (expanded ? expandedRef.current : ref.current);
+	const collapse = () => {
+		setExpanded(false);
+		requestAnimationFrame(() => ref.current?.focus());
+	};
 
 	useEffect(() => {
 		if (editorText) {
@@ -504,21 +638,29 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 		setText(next);
 		setCaret(pos);
 		requestAnimationFrame(() => {
-			const el = ref.current;
+			const el = activeInput();
 			if (!el) return;
 			el.focus();
 			el.setSelectionRange(pos, pos);
 		});
 	};
 
-	const submit = async () => {
+	const pickSlash = (c: CommandInfo) => {
+		const next = `/${c.name} `;
+		setText(next);
+		setCaret(next.length);
+		activeInput()?.focus();
+	};
+
+	/** Sends the draft; resolves false when nothing went out, so the expanded sheet only closes on a real send. */
+	const submit = async (): Promise<boolean> => {
 		const value = text.trim();
-		if ((!value && !images.length && !docs.length) || reading > 0) return;
+		if ((!value && !images.length && !docs.length) || reading > 0) return false;
 		// The copy from the last visit is on screen and not followed yet; sending waits the moment until the real one is in.
-		if (session?.preview) return;
+		if (session?.preview) return false;
 		if (!session) {
 			toast(t("needWorkspace"), "warning");
-			return;
+			return false;
 		}
 		const attached = images;
 		const attachedDocs = docs;
@@ -534,6 +676,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 			setImages(attached);
 			setDocs(attachedDocs);
 		}
+		return ok;
 	};
 
 	/**
@@ -629,7 +772,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 				const pick = matches[cursor];
 				if (pick && `/${pick.name}` !== text) {
 					e.preventDefault();
-					setText(`/${pick.name} `);
+					pickSlash(pick);
 					return;
 				}
 			}
@@ -657,9 +800,17 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 				return;
 			}
 		}
-		if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+		// Esc leaves the expanded sheet first; while a reply is running it still stops that instead.
+		if (e.key === "Escape" && expanded && !streaming) {
 			e.preventDefault();
-			void submit();
+			collapse();
+			return;
+		}
+		// Enter only sends when the user asked for it (the default on desktop). On a phone Enter breaks the line and the
+		// send button sends, which is what touch keyboards expect.
+		if (e.key === "Enter" && !e.shiftKey && enterToSend && !e.nativeEvent.isComposing) {
+			e.preventDefault();
+			void submit().then((sent) => sent && setExpanded(false));
 		}
 		if (e.key === "Escape" && streaming) {
 			e.preventDefault();
@@ -712,49 +863,13 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 		>
 			{showMention && (
 				<div className="absolute right-3 bottom-full left-3 z-30 mb-2 overflow-hidden rounded-xl border border-ink-700 bg-ink-900/95 shadow-2xl shadow-black/40 backdrop-blur md:right-5 md:left-5">
-					{mentionItems.map((it, i) => {
-						const slash = it.path.lastIndexOf("/");
-						const name = it.path.slice(slash + 1);
-						const dir = slash >= 0 ? it.path.slice(0, slash) : "";
-						const Icon = it.dir ? FolderIcon : FileIcon;
-						return (
-							<button
-								key={it.path}
-								type="button"
-								onMouseDown={(e) => {
-									e.preventDefault();
-									pickMention(it);
-								}}
-								onMouseEnter={() => setMentionCursor(i)}
-								className={clsx("flex w-full items-baseline gap-2 px-3.5 py-2 text-left", i === mentionCursor ? "bg-ink-800" : "hover:bg-ink-850")}
-							>
-								<Icon className="size-3.5 shrink-0 self-center text-ink-400" />
-								<span className="font-mono text-sm text-ember-300">{name}{it.dir ? "/" : ""}</span>
-								<span className="min-w-0 flex-1 truncate font-mono text-xs text-ink-500">{dir}</span>
-							</button>
-						);
-					})}
+					<Mentions items={mentionItems} cursor={mentionCursor} onPick={pickMention} onHover={setMentionCursor} />
 				</div>
 			)}
 
 			{matches.length > 0 && !showMention && (
-				<div className="absolute right-3 bottom-full left-3 z-30 md:right-5 md:left-5 mb-2 overflow-hidden rounded-xl border border-ink-700 bg-ink-900/95 shadow-2xl shadow-black/40 backdrop-blur">
-					{matches.map((c, i) => (
-						<button
-							key={`${c.source}:${c.name}`}
-							type="button"
-							onMouseDown={(e) => {
-								e.preventDefault();
-								setText(`/${c.name} `);
-								ref.current?.focus();
-							}}
-							className={clsx("flex w-full items-baseline gap-3 px-3.5 py-2 text-left", i === cursor ? "bg-ink-800" : "hover:bg-ink-850")}
-						>
-							<span className="font-mono text-sm text-ember-300">/{c.name}</span>
-							<span className="min-w-0 flex-1 truncate text-xs text-ink-400">{c.description}</span>
-							<span className="font-mono text-[10px] text-ink-600 uppercase">{c.source}</span>
-						</button>
-					))}
+				<div className="absolute right-3 bottom-full left-3 z-30 mb-2 overflow-hidden rounded-xl border border-ink-700 bg-ink-900/95 shadow-2xl shadow-black/40 backdrop-blur md:right-5 md:left-5">
+					<SlashCommands items={matches} cursor={cursor} onPick={pickSlash} />
 				</div>
 			)}
 
@@ -802,43 +917,14 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 			>
 				{dragging && <div className="px-4 pt-3 text-xs text-ember-300">{t("dropHere")}</div>}
 				{(images.length > 0 || docs.length > 0 || reading > 0) && (
-					<div className="flex flex-wrap gap-2 px-3 pt-3">
-						{docs.map((d, i) => (
-							<div key={`d${i}`} className="flex h-16 max-w-56 items-center gap-2 rounded-lg border border-ink-700 bg-ink-950 py-1 pr-1.5 pl-2.5" title={d.name}>
-								<FileText className="size-5 shrink-0 text-ember-300" />
-								<span className="min-w-0">
-									<span className="block truncate text-xs text-ink-200">{d.name}</span>
-									<span className="block font-mono text-[10.5px] text-ink-500">{formatSize(d.size)}</span>
-								</span>
-								<button
-									type="button"
-									onClick={() => setDocs((cur) => cur.filter((_, j) => j !== i))}
-									className="grid size-5 shrink-0 place-items-center rounded-full text-ink-400 hover:bg-rose-500 hover:text-white"
-									title={t("removeFile")}
-									aria-label={t("removeFile")}
-								>
-									<X className="size-3" />
-								</button>
-							</div>
-						))}
-						{images.map((img, i) => (
-							<div key={i} className="group/thumb relative size-16 overflow-hidden rounded-lg border border-ink-700 bg-ink-950">
-								<img src={imageSrc(img)} alt="" className="size-full object-cover" />
-								<button
-									type="button"
-									onClick={() => setImages((cur) => cur.filter((_, j) => j !== i))}
-									className="absolute top-0.5 right-0.5 grid size-5 place-items-center rounded-full bg-ink-950/80 text-ink-200 opacity-0 transition-opacity group-hover/thumb:opacity-100 nohover:opacity-100 hover:bg-rose-500 hover:text-white focus-visible:opacity-100"
-									title={t("removeImage")}
-									aria-label={t("removeImage")}
-								>
-									<X className="size-3" />
-								</button>
-							</div>
-						))}
-						{Array.from({ length: reading }, (_, i) => (
-							<div key={`r${i}`} className="size-16 animate-pulse rounded-lg border border-ink-800 bg-ink-850" />
-						))}
-					</div>
+					<Attachments
+						docs={docs}
+						images={images}
+						reading={reading}
+						onRemoveDoc={(i) => setDocs((cur) => cur.filter((_, j) => j !== i))}
+						onRemoveImage={(i) => setImages((cur) => cur.filter((_, j) => j !== i))}
+						className="px-3 pt-3"
+					/>
 				)}
 				{lacksVision && <div className="px-4 pt-2 text-[11px] text-ember-300">{t("noVision")}</div>}
 				<textarea
@@ -885,6 +971,15 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 						<EffortPicker />
 					</div>
 					<div className="flex shrink-0 items-center gap-1">
+						<button
+							type="button"
+							onClick={() => setExpanded(true)}
+							className="grid size-8 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-800 hover:text-ink-100"
+							title={t("expand")}
+							aria-label={t("expand")}
+						>
+							<Maximize2 className="size-4" />
+						</button>
 						<VoiceButton onText={insertDictation} />
 						{streaming && (
 							<button type="button" onClick={() => void abortRun()} className="grid size-8 place-items-center rounded-lg bg-ink-800 text-ink-200 hover:bg-ink-700" aria-label={t("abort")} title={t("abort")}>
@@ -917,6 +1012,79 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 					<ContextMeter />
 				</div>
 			</div>
+
+			{/* Full-screen sheet for long input, mostly on phones where the box above is cramped. Everything it needs is
+			    rendered inside it: the suggestions and the attachment thumbnails would otherwise sit behind this panel. */}
+			{expanded &&
+				createPortal(
+					<div className="fixed inset-0 z-[55] flex flex-col bg-ink-950" style={{ paddingTop: "env(safe-area-inset-top, 0px)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
+						<div className="flex items-center gap-2 border-b border-ink-800 px-3 py-2">
+							<span className="min-w-0 flex-1 truncate text-sm font-medium text-ink-200">{t("expand")}</span>
+							<button
+								type="button"
+								onClick={collapse}
+								className="grid size-8 place-items-center rounded-lg text-ink-400 hover:bg-ink-800 hover:text-ink-100"
+								title={t("collapse")}
+								aria-label={t("collapse")}
+							>
+								<Minimize2 className="size-4" />
+							</button>
+						</div>
+						{(images.length > 0 || docs.length > 0 || reading > 0) && (
+							<div className="shrink-0 border-b border-ink-800">
+								<Attachments
+									docs={docs}
+									images={images}
+									reading={reading}
+									onRemoveDoc={(i) => setDocs((cur) => cur.filter((_, j) => j !== i))}
+									onRemoveImage={(i) => setImages((cur) => cur.filter((_, j) => j !== i))}
+									className="px-3 py-2"
+								/>
+							</div>
+						)}
+						<div className="flex min-h-0 flex-1 flex-col">
+							<textarea
+								ref={expandedRef}
+								autoFocus
+								value={text}
+								onChange={(e) => {
+									setText(e.target.value);
+									setCaret(e.target.selectionStart);
+								}}
+								onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+								onKeyDown={onKeyDown}
+								onPaste={onPaste}
+								placeholder={streaming ? t("placeholderStreaming", { mode: t(sendMode) }) : t("placeholder")}
+								className="min-h-0 w-full flex-1 resize-none bg-transparent px-4 py-3 text-[15px] leading-relaxed text-ink-100 placeholder:text-ink-500 focus:outline-none"
+							/>
+							{showMention && (
+								<div className="max-h-56 shrink-0 overflow-y-auto border-t border-ink-800">
+									<Mentions items={mentionItems} cursor={mentionCursor} onPick={pickMention} onHover={setMentionCursor} />
+								</div>
+							)}
+							{matches.length > 0 && !showMention && (
+								<div className="max-h-56 shrink-0 overflow-y-auto border-t border-ink-800">
+									<SlashCommands items={matches} cursor={cursor} onPick={pickSlash} />
+								</div>
+							)}
+						</div>
+						<div className="flex items-center justify-end gap-2 border-t border-ink-800 px-3 py-2">
+							<button type="button" onClick={collapse} className="rounded-lg px-3 py-1.5 text-sm text-ink-300 hover:bg-ink-800">
+								{t("collapse")}
+							</button>
+							<button
+								type="button"
+								onClick={() => void submit().then((sent) => sent && setExpanded(false))}
+								disabled={(!text.trim() && images.length === 0 && docs.length === 0) || reading > 0 || !session || !!session.preview}
+								className="inline-flex items-center gap-1.5 rounded-lg bg-ember-500 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-ember-400 disabled:bg-ink-800 disabled:text-ink-600"
+							>
+								<ArrowUp className="size-4" strokeWidth={2.5} />
+								{t("send")}
+							</button>
+						</div>
+					</div>,
+					document.body,
+				)}
 		</div>
 	);
 }
