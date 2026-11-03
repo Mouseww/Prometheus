@@ -132,8 +132,8 @@
 		"sha256": "bd2a18f433321d7be49a4e86248696c0551a8df273b2a7c34ce729abe48ce15d"
 	},
 	"libnghttp2": {
-		"filename": "pool/main/libn/libnghttp2/libnghttp2_1.70.0_aarch64.deb",
-		"sha256": "ab2e0a3408fe4934ffdf774bd5049a265db2e6db62dcb651baecbecfb81e3f0b"
+		"filename": "pool/main/libn/libnghttp2/libnghttp2_1.71.0_aarch64.deb",
+		"sha256": "ae33e7b21e0636be8686b9b13a20e31267f047f69cb26b4befd70c9a9bae221e"
 	},
 	"libnghttp3": {
 		"filename": "pool/main/libn/libnghttp3/libnghttp3_1.19.0_aarch64.deb",
