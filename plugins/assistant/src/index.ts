@@ -74,6 +74,23 @@ export default definePlugin({
 		});
 
 		const live = new Map<string, LiveRun>();
+
+		// A delegated run that finished with nobody waiting for it (its question was answered on the home page): put the
+		// result in the chat that delegated it. That chat may be busy, so try for a couple of minutes.
+		const deliverResult = async (parent: string, text: string) => {
+			const prompt = `（系统通知，不是用户说的话）你之前派出的一个委派运行刚刚结束，它的提问是用户在主页上回答的，你的 assistant_delegate 调用当时已经返回，所以结果现在才到。请向用户简要汇报结果，不要再派新活。
+
+${text}`;
+			for (let i = 0; i < 24; i++) {
+				try {
+					if (!(await ctx.sessionExists(parent))) return;
+					await ctx.runAgent({ cwd: home.dir, sessionId: parent, prompt, access: "readonly", timeoutMs: 5 * 60_000 });
+					return;
+				} catch {
+					await new Promise((r) => setTimeout(r, 5000));
+				}
+			}
+		};
 		const asker = createAsk({
 			delegated: (id) => delegations.has(id),
 			changed: () => ctx.notifyChanged(),
@@ -144,6 +161,7 @@ export default definePlugin({
 
 		const delegateDeps: DelegateDeps = {
 			live,
+			deliver: (parent, text) => void deliverResult(parent, text),
 			nextQuestion: (id, signal) => asker.next(id, signal),
 			delegatedProject: (id) => delegations.get(id),
 			started: (id, project) => {
@@ -182,6 +200,7 @@ export default definePlugin({
 				project: Type.String({ description: "Project name or id from assistant_projects" }),
 				task: Type.String({ description: "What to do, how far to go, and what result to bring back" }),
 				access: Type.Optional(Type.Union([Type.Literal("readonly"), Type.Literal("edits")])),
+				title: Type.Optional(Type.String({ description: "A short name for this run (under 20 characters), shown in lists, e.g. \"整理盾构选型表\"" })),
 				continue_session: Type.Optional(Type.String({ description: "Session id returned by an earlier delegation to the same project. Use it when the new task is more of the same work, so it goes back into that session instead of piling up a new one. Leave out for unrelated work." })),
 			}),
 			async execute(_id, params, signal, _onUpdate, tctx) {

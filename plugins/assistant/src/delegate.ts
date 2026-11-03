@@ -23,6 +23,8 @@ export interface DelegateDeps {
 	started(sessionId: string, project: string): void;
 	/** Runs that are going right now, by session id. */
 	live: Map<string, LiveRun>;
+	/** A run nobody was waiting for has finished (the user answered its question from the home page): tell the chat that delegated it. */
+	deliver?(parentSessionId: string, text: string): void;
 	/** The session's open question, now or when it next asks (undefined when `signal` aborts first). */
 	nextQuestion(sessionId: string, signal: AbortSignal): Promise<PendingQuestion | undefined>;
 }
@@ -68,6 +70,8 @@ export interface LiveRun {
 	result: Promise<Finished>;
 	budget: Budget;
 	stop(): void;
+	/** How many tool calls are waiting on this run right now. */
+	waiters: number;
 }
 
 /** How long one tool call waits before telling the model the run is still going. */
@@ -80,6 +84,18 @@ export interface DelegateParams {
 	access?: string;
 	/** Session id of an earlier delegation to carry on instead of starting a new one. */
 	continue_session?: string;
+	/** Short name for the run, shown in lists. */
+	title?: string;
+}
+
+/** A list title: the model's own short title, else the task up to its first sentence break, cut at a word-ish length. */
+export function runTitle(title: string | undefined, task: string): string {
+	const oneLine = (s: string) => s.replace(/\s+/g, " ").trim();
+	const t = oneLine(title ?? "");
+	if (t) return t.slice(0, 30);
+	const first = oneLine(task).split(/[。!?！？;；]|\.\s/)[0] ?? "";
+	const base = first || oneLine(task);
+	return base.length > 28 ? `${base.slice(0, 27)}…` : base;
 }
 
 export interface DelegateCall {
@@ -135,7 +151,7 @@ export async function delegate(deps: DelegateDeps, call: DelegateCall, params: D
 		.runAgent({
 			cwd: ws.path,
 			prompt: task,
-			name: `助理派活：${task.replace(/\s+/g, " ").slice(0, 24)}`,
+			name: `助理派活：${runTitle(params.title, task)}`,
 			access: requested,
 			...(again ? { sessionId: again } : {}),
 			onStart: (id) => {
@@ -159,8 +175,18 @@ export async function delegate(deps: DelegateDeps, call: DelegateCall, params: D
 		const f = await result;
 		return finish({ project: ws.name, requested }, f, again);
 	}
-	deps.live.set(id, { project: ws.name, requested, result, budget: timer, stop: () => ctl.abort() });
-	void result.then(() => deps.live.delete(id));
+	const run: LiveRun = { project: ws.name, requested, result, budget: timer, stop: () => ctl.abort(), waiters: 0 };
+	deps.live.set(id, run);
+	void result.then((f) => {
+		deps.live.delete(id);
+		// Nobody was waiting (the answer came from the home page, after the calling tool had already returned): say so in the chat.
+		if (run.waiters > 0 || !call.sessionId || !deps.deliver) return;
+		try {
+			deps.deliver(call.sessionId, finish({ project: ws.name, requested }, f).text);
+		} catch {
+			// a failed run with nothing to report; the session and the home page still show it
+		}
+	});
 	return await waitOn(deps, id, call.signal);
 }
 
@@ -192,6 +218,7 @@ export async function waitOn(deps: DelegateDeps, sessionId: string, signal?: Abo
 	let giveUp: ReturnType<typeof setTimeout> | undefined;
 	const onAbort = () => run.stop();
 	signal?.addEventListener("abort", onAbort, { once: true });
+	run.waiters++;
 	try {
 		const r = await Promise.race([
 			run.result.then((f) => ({ k: "done" as const, f })),
@@ -213,6 +240,7 @@ Answer it with assistant_reply if the user's request and what you know of them s
 		}
 		return { text: `The run in session ${sessionId} is still going. Call assistant_wait with this session id to keep waiting, or tell the user it is in progress.`, card: { ...card, status: "running" } };
 	} finally {
+		run.waiters--;
 		stopWaiting.abort();
 		if (giveUp) clearTimeout(giveUp);
 		signal?.removeEventListener("abort", onAbort);

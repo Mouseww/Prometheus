@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createAsk } from "../src/ask.ts";
-import { budget, delegate, type DelegateDeps, pickProject, waitOn } from "../src/delegate.ts";
+import { budget, delegate, runTitle, type DelegateDeps, pickProject, waitOn } from "../src/delegate.ts";
 import { ensureHome, listNotes, notesIndex, PERSONA, readPersona, sameDir } from "../src/home.ts";
 import { type BriefingSettings, createBriefing, isDue, localDate, validTime } from "../src/briefing.ts";
 import { channelLabel, createInbound } from "../src/inbound.ts";
@@ -467,5 +467,62 @@ describe("ask: expiry and next", () => {
 		a.answer(a.pending()[0]!.id, "ok");
 		await p;
 		expect(seen).toEqual([true, false]);
+	});
+});
+
+describe("runTitle", () => {
+	it("prefers the model's title, else the first sentence, never cutting mid-sentence silently", () => {
+		expect(runTitle("整理盾构选型表", "long task text")).toBe("整理盾构选型表");
+		expect(runTitle(undefined, "读取项目根目录下的 notes.txt。在总结之前先问用户风格")).toBe("读取项目根目录下的 notes.txt");
+		const long = runTitle(undefined, "a".repeat(60));
+		expect(long.length).toBeLessThanOrEqual(28);
+		expect(long.endsWith("…")).toBe(true);
+		expect(runTitle("  ", "  ")).toBe("");
+	});
+});
+
+describe("delegate: result reaches the chat when nobody waited", () => {
+	function rig(opts: { answerFromHome: boolean }) {
+		const delivered: { parent: string; text: string }[] = [];
+		const known = new Map<string, string>();
+		const ask = createAsk({ delegated: (id) => known.has(id), changed: () => {}, now: () => 1 });
+		const d: DelegateDeps = {
+			homeDir: "/data/home",
+			workspaces: async () => projects,
+			live: new Map(),
+			deliver: (parent, text) => void delivered.push({ parent, text }),
+			nextQuestion: (id, sig) => ask.next(id, sig),
+			delegatedProject: (id) => known.get(id),
+			started: (id, p) => void known.set(id, p),
+			runAgent: async (o) => {
+				o.onStart?.("child");
+				const a = await ask.ask("child", "Which?", ["A"], o.signal);
+				return { sessionId: "child", status: "success", access: o.access, text: a.ok ? `got ${a.answer}` : "none" };
+			},
+		};
+		return { d, ask, delivered, opts };
+	}
+	const call = { cwd: "/data/home", sessionId: "main" };
+
+	it("delivers the result to the delegating chat when the answer came from elsewhere", async () => {
+		const { d, ask, delivered } = rig({ answerFromHome: true });
+		const first = await delegate(d, call, { project: "Beta", task: "x" });
+		expect(first.card.status).toBe("asking"); // the tool call has returned
+		ask.answer(ask.pending()[0]!.id, "A"); // the user answers on the home page
+		await new Promise((r) => setTimeout(r, 10));
+		expect(delivered).toHaveLength(1);
+		expect(delivered[0]).toMatchObject({ parent: "main" });
+		expect(delivered[0]!.text).toContain("got A");
+	});
+
+	it("does not deliver when a tool call was waiting and gets the result itself", async () => {
+		const { d, ask, delivered } = rig({ answerFromHome: false });
+		await delegate(d, call, { project: "Beta", task: "x" });
+		// What assistant_reply does: answer, then at once wait for the result.
+		ask.answer(ask.pending()[0]!.id, "A");
+		const waiting = waitOn(d, "child");
+		expect((await waiting).card.status).toBe("success");
+		await new Promise((r) => setTimeout(r, 10));
+		expect(delivered).toHaveLength(0);
 	});
 });
