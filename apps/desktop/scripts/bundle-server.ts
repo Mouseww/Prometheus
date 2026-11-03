@@ -98,7 +98,7 @@ const built = await build({
 			used.add(spec.startsWith("@") ? spec.split("/").slice(0, 2).join("/") : (spec.split("/")[0] as string));
 		}
 	}
-	const undeclared = [...used].filter((n) => !(n in dependencies) && !(n in piRequirements) && !builtinModules.includes(n));
+	const undeclared = [...used].filter((n) => !(n in dependencies) && !(n in piRequirements) && !NOT_ON_ANDROID.has(n) && !builtinModules.includes(n));
 	if (undeclared.length) throw new Error(`the server bundle imports packages that no workspace package declares: ${undeclared.join(", ")}`);
 }
 if (nodeTarget !== "node22") cpSync(join(dirname(fileURLToPath(import.meta.url)), "node20-polyfills.js"), join(out, "polyfills.js"));
