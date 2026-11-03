@@ -47,7 +47,7 @@ export function SpaceSwitcher() {
 							on ? "bg-ink-800 text-ink-100 shadow-sm" : "text-ink-400 hover:text-ink-200",
 						)}
 					>
-						<Icon className={clsx("size-3.5", on && (id === "personal" ? "text-ember-400" : "text-sky-400"))} />
+						<Icon className={clsx("size-3.5", on && "text-ember-400")} />
 						{label}
 						{n > 0 && <span className="absolute top-0.5 right-1.5 min-w-4 rounded-full bg-ember-500 px-1 text-center font-mono text-[9.5px] leading-4 font-semibold text-white">{n}</span>}
 					</button>

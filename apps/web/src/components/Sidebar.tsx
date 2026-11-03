@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Collapse } from "./ui.tsx";
+import { Collapse, Flame } from "./ui.tsx";
 import { confirmDialog, promptDialog } from "../lib/dialogs.ts";
 import {
 	Archive,
@@ -45,6 +45,7 @@ import {
 	openSession,
 	prefetchSession,
 	openSettings,
+	openAssistantMain,
 	pluginActive,
 	startPersonalChat,
 	useSpace,
@@ -75,7 +76,8 @@ const M = defineMessages({
 		home: "主页",
 		delegated: "委派",
 		asking: "等你回答",
-		mainThreadHint: "个人主页：简报、委派、自动化，以及和普罗的主对话",
+		mainThread: "普罗",
+		mainThreadHint: "助理的长期对话：它有自己的家，需要时把活派到你的项目里",
 		conversations: "对话",
 		ageToday: "今天",
 		ageWeek: "近 7 天",
@@ -116,7 +118,8 @@ const M = defineMessages({
 		home: "Home",
 		delegated: "Delegated",
 		asking: "Needs you",
-		mainThreadHint: "Personal home: briefing, delegations, automations and the main chat",
+		mainThread: "Pro",
+		mainThreadHint: "The assistant's long-running chat: it has a home of its own and hands work to your projects when needed",
 		conversations: "Chats",
 		ageToday: "Today",
 		ageWeek: "Last 7 days",
@@ -496,13 +499,17 @@ function PersonalList({ sessions, mainId, activeId }: { sessions: SessionSummary
 	const archived = sessions.filter((s) => s.archived && s.id !== mainId);
 	const groups = useMemo(() => groupByAge(live), [live]);
 	const view = useStore((s) => s.view);
-	// The main chat is part of the home page, so the home row stays lit while it is open.
-	const homeActive = view === "home" || (Boolean(mainId) && mainId === activeId && view === "chat");
+	const mainActive = Boolean(mainId) && mainId === activeId && view === "chat";
 	return (
 		<div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-			<button type="button" onClick={() => setView("home")} title={t("mainThreadHint")} className={clsx("mb-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors", homeActive ? "bg-ink-800 text-ink-100" : "text-ink-300 hover:bg-ink-800/70 hover:text-ink-100")}>
-				<Home className="size-4 shrink-0" />
-				<span className="min-w-0 flex-1 truncate">{t("home")}</span>
+			<button
+				type="button"
+				title={t("mainThreadHint")}
+				onClick={() => void (main ? openSession(main.id) : openAssistantMain())}
+				className={clsx("mb-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors", mainActive ? "bg-ink-800 text-ink-100" : "text-ink-300 hover:bg-ink-800/70 hover:text-ink-100")}
+			>
+				<Flame className="size-4 shrink-0 text-ember-400" />
+				<span className="min-w-0 flex-1 truncate">{t("mainThread")}</span>
 				{main?.running && <span className="size-1.5 animate-breathe rounded-full bg-amber-400" />}
 			</button>
 			{groups.length === 0 && archived.length === 0 && <div className="px-3 py-3 text-xs text-ink-600">{t("noConversations")}</div>}
@@ -570,6 +577,7 @@ export function Sidebar({ target, onDisconnect }: { target: BackendTarget; onDis
 		clsx("flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm transition-colors", on ? "bg-ink-800 text-ink-100" : "text-ink-400 hover:bg-ink-850 hover:text-ink-100");
 	// Plugin-backed entries come and go as plugins are switched on and off, with no restart.
 	const tools = [
+		...(space === "personal" ? [{ view: "home" as const, label: t("home"), icon: Home }] : []),
 		...(pluginActive(plugins, "automations") ? [{ view: "automations" as const, label: t("automations"), icon: AlarmClock }] : []),
 		...(space === "work" && pluginActive(plugins, "git") ? [{ view: "git" as const, label: t("git"), icon: GitBranch }] : []),
 	];

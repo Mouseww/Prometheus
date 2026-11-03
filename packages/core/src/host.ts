@@ -69,6 +69,7 @@ import { extraRoots, issuePanelTicket, issueTicket, panelTicketValid, readChunk,
 import { UPLOAD_ROOT, pruneUploads, removeSessionUploads, saveAttachments } from "./uploads.ts";
 import { fullResultContent, slimMessage, slimMessages } from "./slim.ts";
 import { PermissionGate } from "./permission-gate.ts";
+import { PermissionStore } from "./permission-store.ts";
 import { AGENT_PACKAGES, agentEntry, agentStatuses, cliVersion, compareVersions, installAgentCli, isManaged, latestVersion, npmAvailable, npmPrefixOf, uninstallAgentCli, withAgentBin } from "./agent/install.ts";
 import { bootstrap, type Runtime } from "./runtime.ts";
 import { AgentStore, runClaude, runCodex, SubagentRuntime } from "@prometheus/subagents";
@@ -189,6 +190,7 @@ export class PrometheusHost {
 	private readonly listener: HostListener;
 	private readonly workspaces: WorkspaceStore;
 	private readonly index: SessionIndex;
+	private readonly permissions: PermissionStore;
 	private readonly externalRuntimes = new Map<string, AgentRuntime>();
 	/** Runtimes replaced after a profile edit; what they keep across chats (a shared server) stops with the host. */
 	private readonly retiredRuntimes: AgentRuntime[] = [];
@@ -208,6 +210,7 @@ export class PrometheusHost {
 		this.listener = options.listener;
 		this.workspaces = new WorkspaceStore(join(runtime.dataDir, "workspaces.json"));
 		this.index = new SessionIndex(join(runtime.dataDir, "sessions", "index.json"));
+		this.permissions = new PermissionStore(join(runtime.dataDir, "sessions", "permissions.json"));
 		runtime.plugins.reloadSessions = () => this.reloadSessions();
 		runtime.plugins.workspaces = async () => (await this.workspaces.list()).map((w) => ({ id: w.id, path: w.path, name: w.name }));
 		runtime.plugins.runAgent = (opts) => this.runAgent(opts);
@@ -243,6 +246,7 @@ export class PrometheusHost {
 		}
 		const host = new PrometheusHost(runtime, pi, options);
 		await host.index.load();
+		await host.permissions.load();
 		pi?.syncGateways();
 		void pruneUploads().catch(() => {});
 		return host;
@@ -521,6 +525,12 @@ export class PrometheusHost {
 			// PI announces this itself; the others change the gate (also when a plan is approved) and the picker must follow.
 			this.listener.event(started.id, { type: "permission_mode_changed", mode });
 		};
+		// Remember every change, so the chat comes back in the same mode when it is opened again.
+		const announce = gate.onModeChange;
+		gate.onModeChange = (mode) => {
+			this.permissions.set(started.id, mode);
+			announce?.(mode);
+		};
 		bridge.auto = gate.mode === "auto";
 		const live = { session: started, bridge, gate, subagents };
 		this.live.set(started.id, live);
@@ -551,18 +561,25 @@ export class PrometheusHost {
 		let pending = this.opening.get(sessionId);
 		if (!pending) {
 			pending = (async () => {
-				const entry = this.index.get(sessionId);
-				if (entry && entry.runtime !== "pi") {
-					const rt = await this.runtimeFor(entry.runtime, entry.agent);
-					return this.attach((init) => rt.resume({ runtime: entry.runtime, id: entry.id, nativeId: entry.nativeId, cwd: entry.cwd, name: entry.name }, entry.seed ? { ...init, history: entry.seed } : init), entry.gateway);
-				}
-				const path = await this.resolvePath(sessionId);
-				return this.attach((init) => this.needPi.resume({ runtime: "pi", id: sessionId, nativeId: sessionId, path }, init));
+				const live = await this.openFresh(sessionId);
+				// Back to the mode it was left in; a chat from before modes were remembered gets the default setting.
+				live.gate.setMode(this.permissions.get(sessionId) ?? this.defaultPermission());
+				return live;
 			})();
 			pending.finally(() => this.opening.delete(sessionId)).catch(() => {});
 			this.opening.set(sessionId, pending);
 		}
 		return pending;
+	}
+
+	private async openFresh(sessionId: string): Promise<LiveSession> {
+		const entry = this.index.get(sessionId);
+		if (entry && entry.runtime !== "pi") {
+			const rt = await this.runtimeFor(entry.runtime, entry.agent);
+			return this.attach((init) => rt.resume({ runtime: entry.runtime, id: entry.id, nativeId: entry.nativeId, cwd: entry.cwd, name: entry.name }, entry.seed ? { ...init, history: entry.seed } : init), entry.gateway);
+		}
+		const path = await this.resolvePath(sessionId);
+		return this.attach((init) => this.needPi.resume({ runtime: "pi", id: sessionId, nativeId: sessionId, path }, init));
 	}
 
 	private require(sessionId: string): LiveSession {
@@ -642,6 +659,7 @@ export class PrometheusHost {
 	/** Removes a session for good: its live state, transcript, uploads and list entry. */
 	private async deleteSession(sessionId: string): Promise<void> {
 		void removeSessionUploads(sessionId).catch(() => {});
+		this.permissions.delete(sessionId);
 		const entry = this.index.get(sessionId);
 		if (entry && entry.runtime !== "pi") {
 			await this.closeSession(sessionId);
