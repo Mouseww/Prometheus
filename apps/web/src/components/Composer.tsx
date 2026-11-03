@@ -1,7 +1,6 @@
 import clsx from "clsx";
-import { ArrowUp, Brain, Check, ChevronDown, CornerDownRight, Cpu, File as FileIcon, FileText, Folder as FolderIcon, ListEnd, Maximize2, Minimize2, Paperclip, Pencil, Search, Square, X } from "lucide-react";
+import { ArrowUp, Brain, Check, ChevronDown, CornerDownRight, Cpu, File as FileIcon, FileText, Folder as FolderIcon, ListEnd, Maximize2, Paperclip, Pencil, Search, Square, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import type { CommandInfo, ImageContent, ThinkingLevel } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { type Attachment, AttachmentError, fileToAttachment, formatSize, isPicture, MAX_FILE_MB, MAX_FILES } from "../lib/attachments.ts";
@@ -11,6 +10,7 @@ import { aliasKey, type SendMode, setPrefs, usePrefs } from "../lib/prefs.ts";
 import { abortRun, openSettings, pluginCall, sendPrompt, setModel, setPermissionMode, setThinking, toast, unqueue, useSpace, useStore } from "../lib/store.ts";
 import { BACK_LAYER, useBackLayer } from "../lib/back.ts";
 import { useVisualViewport } from "../lib/viewport.ts";
+import { ComposerSheet, isSheetSendChord } from "./ComposerSheet.tsx";
 import { ContextMeter } from "./ContextMeter.tsx";
 import { ModePicker } from "./ModePicker.tsx";
 import { RuntimeMenu } from "./RuntimeMenu.tsx";
@@ -572,6 +572,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 		requestAnimationFrame(() => ref.current?.focus());
 	};
 	const sheet = useVisualViewport();
+	const canSend = (!!text.trim() || images.length > 0 || docs.length > 0) && reading === 0 && !!session && !session.preview;
 
 	// A view (settings, git, ...) is drawn under the sheet's portal: step aside rather than hide it.
 	useEffect(() => {
@@ -823,7 +824,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 		}
 		// Enter only sends when the user asked for it (the default on desktop). On a phone Enter breaks the line and the
 		// send button sends, which is what touch keyboards expect.
-		if (e.key === "Enter" && !e.shiftKey && enterToSend && !e.nativeEvent.isComposing) {
+		if (e.key === "Enter" && !e.shiftKey && (enterToSend || (expanded && isSheetSendChord(e))) && !e.nativeEvent.isComposing) {
 			e.preventDefault();
 			void submit().then((sent) => sent && setExpanded(false));
 		}
@@ -943,6 +944,16 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 					/>
 				)}
 				{lacksVision && <div className="px-4 pt-2 text-[11px] text-ember-300">{t("noVision")}</div>}
+				<div className="group/ta relative">
+				<button
+					type="button"
+					onClick={() => setExpanded(true)}
+					className="absolute top-2 right-2 z-10 grid size-6 place-items-center rounded-md text-ink-500 opacity-60 transition hover:bg-ink-800 hover:text-ink-100 hover:opacity-100 group-focus-within/ta:opacity-100"
+					title={t("expand")}
+					aria-label={t("expand")}
+				>
+					<Maximize2 className="size-3.5" />
+				</button>
 				<textarea
 					ref={ref}
 					autoFocus
@@ -956,8 +967,9 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 					onPaste={onPaste}
 					rows={1}
 					placeholder={streaming ? t("placeholderStreaming", { mode: t(sendMode) }) : t("placeholder")}
-					className="block max-h-64 w-full resize-none bg-transparent px-4 pt-3.5 pb-2 text-[15px] text-ink-100 placeholder:text-ink-500 focus:outline-none"
+					className="block max-h-64 w-full resize-none bg-transparent py-3.5 pr-9 pb-2 pl-4 text-[15px] text-ink-100 placeholder:text-ink-500 focus:outline-none"
 				/>
+				</div>
 				<div className="flex items-center gap-1 px-2 pb-2">
 					<label
 						className={clsx(
@@ -987,15 +999,6 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 						<EffortPicker />
 					</div>
 					<div className="flex shrink-0 items-center gap-1">
-						<button
-							type="button"
-							onClick={() => setExpanded(true)}
-							className="grid size-8 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-800 hover:text-ink-100"
-							title={t("expand")}
-							aria-label={t("expand")}
-						>
-							<Maximize2 className="size-4" />
-						</button>
 						<VoiceButton onText={insertDictation} />
 						{streaming && (
 							<button type="button" onClick={() => void abortRun()} className="grid size-8 place-items-center rounded-lg bg-ink-800 text-ink-200 hover:bg-ink-700" aria-label={t("abort")} title={t("abort")}>
@@ -1006,7 +1009,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 							<button
 								type="button"
 								onClick={() => void submit()}
-								disabled={(!text.trim() && images.length === 0 && docs.length === 0) || reading > 0 || !session || !!session.preview}
+								disabled={!canSend}
 								title={session ? (streaming ? t("sendAs", { mode: t(sendMode) }) : undefined) : t("needWorkspace")}
 								className={clsx(
 									"grid h-8 place-items-center bg-ember-500 text-white transition hover:bg-ember-400 disabled:bg-ink-800 disabled:text-ink-600",
@@ -1029,82 +1032,63 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 				</div>
 			</div>
 
-			{/* Full-screen sheet for long input, mostly on phones where the box above is cramped. Everything it needs is
-			    rendered inside it: the suggestions and the attachment thumbnails would otherwise sit behind this panel.
-			    It follows the visual viewport so the keyboard cannot cover the suggestions at its bottom. */}
-			{expanded &&
-				createPortal(
-					<div
-						className="fixed right-0 left-0 z-[55] flex flex-col overflow-hidden bg-ink-950"
-						style={{ top: sheet.top, height: sheet.height, paddingTop: "env(safe-area-inset-top, 0px)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
-					>
-						<div className="flex items-center gap-2 border-b border-ink-800 px-3 py-2">
-							<span className="min-w-0 flex-1 truncate text-sm font-medium text-ink-200">{t("expand")}</span>
-							<button
-								type="button"
-								onClick={collapse}
-								className="grid size-8 place-items-center rounded-lg text-ink-400 hover:bg-ink-800 hover:text-ink-100"
-								title={t("collapse")}
-								aria-label={t("collapse")}
-							>
-								<Minimize2 className="size-4" />
-							</button>
-						</div>
-						{(images.length > 0 || docs.length > 0 || reading > 0) && (
-							<div className="shrink-0 border-b border-ink-800">
-								<Attachments
-									docs={docs}
-									images={images}
-									reading={reading}
-									onRemoveDoc={(i) => setDocs((cur) => cur.filter((_, j) => j !== i))}
-									onRemoveImage={(i) => setImages((cur) => cur.filter((_, j) => j !== i))}
-									className="px-3 py-2"
-								/>
-							</div>
-						)}
-						<div className="flex min-h-0 flex-1 flex-col">
-							<textarea
-								ref={expandedRef}
-								autoFocus
-								value={text}
-								onChange={(e) => {
-									setText(e.target.value);
-									setCaret(e.target.selectionStart);
-								}}
-								onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
-								onKeyDown={onKeyDown}
-								onPaste={onPaste}
-								placeholder={streaming ? t("placeholderStreaming", { mode: t(sendMode) }) : t("placeholder")}
-								className="min-h-0 w-full flex-1 resize-none bg-transparent px-4 py-3 text-[15px] leading-relaxed text-ink-100 placeholder:text-ink-500 focus:outline-none"
+			{/* The expanded editor owns only layout; the draft, suggestions and actions stay here so both boxes agree. It
+			    follows the visual viewport so a phone keyboard cannot cover the suggestions at its bottom. */}
+			{expanded && (
+				<ComposerSheet
+					value={text}
+					onChange={(v, c) => {
+						setText(v);
+						setCaret(c);
+					}}
+					onCaret={setCaret}
+					onKeyDown={onKeyDown}
+					onPaste={onPaste}
+					textareaRef={expandedRef}
+					placeholder={streaming ? t("placeholderStreaming", { mode: t(sendMode) }) : t("placeholder")}
+					attachments={
+						images.length > 0 || docs.length > 0 || reading > 0 ? (
+							<Attachments
+								docs={docs}
+								images={images}
+								reading={reading}
+								onRemoveDoc={(i) => setDocs((cur) => cur.filter((_, j) => j !== i))}
+								onRemoveImage={(i) => setImages((cur) => cur.filter((_, j) => j !== i))}
+								className="px-4 py-2.5 md:px-5"
 							/>
-							{showMention && (
-								<div className="max-h-56 shrink-0 overflow-y-auto border-t border-ink-800">
-									<Mentions items={mentionItems} cursor={mentionCursor} onPick={pickMention} onHover={setMentionCursor} />
-								</div>
-							)}
-							{showCommands && (
-								<div className="max-h-56 shrink-0 overflow-y-auto border-t border-ink-800">
-									<SlashCommands items={matches} cursor={cursor} onPick={pickSlash} />
-								</div>
-							)}
-						</div>
-						<div className="flex items-center justify-end gap-2 border-t border-ink-800 px-3 py-2">
-							<button type="button" onClick={collapse} className="rounded-lg px-3 py-1.5 text-sm text-ink-300 hover:bg-ink-800">
-								{t("collapse")}
-							</button>
-							<button
-								type="button"
-								onClick={() => void submit().then((sent) => sent && setExpanded(false))}
-								disabled={(!text.trim() && images.length === 0 && docs.length === 0) || reading > 0 || !session || !!session.preview}
-								className="inline-flex items-center gap-1.5 rounded-lg bg-ember-500 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-ember-400 disabled:bg-ink-800 disabled:text-ink-600"
-							>
-								<ArrowUp className="size-4" strokeWidth={2.5} />
-								{t("send")}
-							</button>
-						</div>
-					</div>,
-					document.body,
-				)}
+						) : undefined
+					}
+					suggestions={
+						showMention ? (
+							<div className="max-h-56 shrink-0 overflow-y-auto border-t border-ink-800">
+								<Mentions items={mentionItems} cursor={mentionCursor} onPick={pickMention} onHover={setMentionCursor} />
+							</div>
+						) : showCommands ? (
+							<div className="max-h-56 shrink-0 overflow-y-auto border-t border-ink-800">
+								<SlashCommands items={matches} cursor={cursor} onPick={pickSlash} />
+							</div>
+						) : undefined
+					}
+					tools={<VoiceButton onText={insertDictation} />}
+					toolbar={
+						<>
+							<ModelPicker />
+							<EffortPicker />
+							<PermissionPicker />
+							<ModePicker />
+						</>
+					}
+					onFiles={(list) => void addFiles(list)}
+					enterToSend={enterToSend}
+					canSend={canSend}
+					sendIcon={streaming ? (sendMode === "steer" ? <CornerDownRight className="size-4" strokeWidth={2.5} /> : <ListEnd className="size-4" strokeWidth={2.5} />) : undefined}
+					sendTitle={streaming ? t("sendAs", { mode: t(sendMode) }) : undefined}
+					streaming={streaming}
+					onSend={() => void submit().then((sent) => sent && setExpanded(false))}
+					onClose={collapse}
+					viewport={sheet}
+				/>
+			)}
 		</div>
 	);
 }
