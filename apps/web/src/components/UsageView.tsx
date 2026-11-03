@@ -107,13 +107,15 @@ export function UsageView() {
 	const [days, setDays] = useState<number>(30);
 	const [stats, setStats] = useState<UsageStats | null>(null);
 	const [loading, setLoading] = useState(true);
+	const [failed, setFailed] = useState(false);
 
 	useEffect(() => {
 		let stale = false;
 		setLoading(true);
 		void call((c) => c.rpc("usage.stats", { days })).then((s) => {
 			if (stale) return;
-			if (s) setStats(s);
+			setStats(s ?? null);
+			setFailed(!s);
 			setLoading(false);
 		});
 		return () => {
@@ -145,7 +147,9 @@ export function UsageView() {
 				}
 			/>
 			<div className="min-h-0 flex-1 overflow-y-auto">
-				{empty ? (
+				{!stats && (loading || failed) ? (
+					<div className="p-8 text-center text-sm text-ink-400">{loading ? "加载中…（会话较多时需要几秒）" : "加载失败，请切换时间范围重试"}</div>
+				) : empty ? (
 					<Empty icon={<BarChart3 className="size-5" />} title={t("empty")}>
 						{t("emptyBody")}
 					</Empty>
