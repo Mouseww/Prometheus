@@ -333,6 +333,8 @@ try {
 	const activityPath = join(srcDir, "MainActivity.kt");
 	if (!existsSync(activityPath)) throw new Error(`MainActivity.kt not found at ${activityPath}`);
 	let activity = readFileSync(activityPath, "utf8");
+	// tauri-cli writes platform line endings (CRLF on Windows); the call-site insertions below match on "\n".
+	activity = activity.replace(/\r\n/g, "\n");
 	if (!activity.includes("startPrometheusService")) {
 		const helpers = activityHelpersSource();
 		if (/super\.onCreate\(savedInstanceState\)/.test(activity)) {
