@@ -773,7 +773,19 @@ export class BrowserCore implements TabHost {
 		return next;
 	}
 
+	/** The tab each conversation's agent worked on last, so the panel can show that conversation's page when it is opened. */
+	private readonly sessionTab = new Map<string, string>();
+
+	/** Bring forward the page this conversation was using. Does nothing while the agent works or when it has none (the user's tab stays). */
+	focusSession(sessionId: string): boolean {
+		const id = this.sessionTab.get(sessionId);
+		if (!id || this.agent.busy || !this.hasTab(id)) return false;
+		if (this.activeId !== id) this.activate(id);
+		return true;
+	}
+
 	setAgentTab(tab: Tab, action: string): void {
+		if (this.agent.sessionId) this.sessionTab.set(this.agent.sessionId, tab.id);
 		if (this.activeId !== tab.id) this.activate(tab.id);
 		this.agent = { ...this.agent, tab: tab.id, action };
 		this.changed();

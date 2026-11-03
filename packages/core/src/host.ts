@@ -39,6 +39,8 @@ import {
 	type SessionSummary,
 	type UIRequest,
 	type RunAccess,
+	GOAL_DEFAULT_TURNS,
+	GOAL_MAX_TURNS,
 } from "@prometheus/protocol";
 import { ToolBus } from "./agent/bus/tool-bus.ts";
 import { bundledClaudeBinary, bundledClaudeVersion, ClaudeCodeRuntime } from "./agent/claude-code/cc-runtime.ts";
@@ -196,6 +198,7 @@ export class PrometheusHost {
 		prompt: (id, text) => this.prompt(id, text, undefined, undefined),
 		view: (id) => this.goalView(id),
 		emit: (id, goal) => this.listener.event(id, { type: "goal_update", goal }),
+		defaultTurns: () => this.runtime.config.get().goalTurns || GOAL_DEFAULT_TURNS,
 	});
 
 	private constructor(runtime: Runtime, pi: PiRuntime | null, options: PrometheusHostOptions) {
@@ -917,7 +920,7 @@ export class PrometheusHost {
 	}
 
 	private hostSettings(): HostSettings {
-		return { autoCompaction: this.pi?.autoCompaction() ?? true, workspaceRoot: this.workspaceRoot(), defaultAgent: this.defaultAgent(), defaultPermission: this.defaultPermission() };
+		return { autoCompaction: this.pi?.autoCompaction() ?? true, workspaceRoot: this.workspaceRoot(), defaultAgent: this.defaultAgent(), defaultPermission: this.defaultPermission(), goalTurns: this.runtime.config.get().goalTurns || GOAL_DEFAULT_TURNS };
 	}
 
 	/** The permission mode new chats start in; unknown values (a hand-edited config) fall back to asking first. */
@@ -1123,7 +1126,7 @@ export class PrometheusHost {
 		"fs.mkdir": ({ parent, name }) => this.createDir(parent, name),
 
 		"settings.get": () => this.hostSettings(),
-		"settings.set": async ({ autoCompaction, workspaceRoot, defaultAgent, defaultPermission }) => {
+		"settings.set": async ({ autoCompaction, workspaceRoot, defaultAgent, defaultPermission, goalTurns }) => {
 			if (typeof autoCompaction === "boolean") {
 				await this.pi?.setAutoCompaction(autoCompaction);
 				// Live sessions cache their own SettingsManager.
@@ -1143,6 +1146,7 @@ export class PrometheusHost {
 				if (!PERMISSION_MODES.includes(defaultPermission)) throw new AppError("unknownPermissionMode", { mode: String(defaultPermission) });
 				await this.runtime.config.setDefaultPermission(defaultPermission);
 			}
+			if (typeof goalTurns === "number") await this.runtime.config.setGoalTurns(Math.min(GOAL_MAX_TURNS, goalTurns));
 			return this.hostSettings();
 		},
 		"session.stats": ({ sessionId }) => this.require(sessionId).session.usage(),

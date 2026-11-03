@@ -5,7 +5,7 @@ import type { ImageContent, ThinkingLevel } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { type Attachment, AttachmentError, fileToAttachment, formatSize, isPicture, MAX_FILE_MB, MAX_FILES } from "../lib/attachments.ts";
 import { fileToImage, ImageError, imageSrc, MAX_IMAGES } from "../lib/images.ts";
-import { type SendMode, setPrefs, usePrefs } from "../lib/prefs.ts";
+import { aliasKey, type SendMode, setPrefs, usePrefs } from "../lib/prefs.ts";
 import { abortRun, openSettings, pluginCall, sendPrompt, setModel, setPermissionMode, setThinking, toast, unqueue, useSpace, useStore } from "../lib/store.ts";
 import { ContextMeter } from "./ContextMeter.tsx";
 import { ModePicker } from "./ModePicker.tsx";
@@ -37,7 +37,11 @@ const M = defineMessages({
 		send: "发送",
 		needWorkspace: "请先选择工作区",
 		pickModel: "选择模型",
-		searchModel: "搜索模型…",
+		searchModel: "搜索模型或渠道…",
+		alias: "设置显示别名",
+		aliasFor: "{name} 的别名",
+		aliasSave: "保存（留空则恢复原名）",
+		aliasCancel: "取消",
 		noModels: "没有可用模型",
 		ownLogin: "自带登录",
 		addGateway: "去添加 AI 网关",
@@ -84,7 +88,11 @@ const M = defineMessages({
 		send: "Send",
 		needWorkspace: "Choose a workspace first",
 		pickModel: "Choose model",
-		searchModel: "Search models…",
+		searchModel: "Search models or channels…",
+		alias: "Set a display alias",
+		aliasFor: "Alias for {name}",
+		aliasSave: "Save (leave empty to restore the name)",
+		aliasCancel: "Cancel",
 		noModels: "No models available",
 		ownLogin: "Own login",
 		addGateway: "Add an AI gateway",
@@ -122,19 +130,33 @@ function ModelPicker() {
 	const current = useStore((s) => s.session?.model ?? s.draftModel);
 	const { open, setOpen, ref } = usePopover();
 	const [q, setQ] = useState("");
+	const aliases = usePrefs((p) => p.modelAliases);
+	/** `provider/id` of the model whose alias is being edited. */
+	const [editing, setEditing] = useState<string | null>(null);
+	const [draftAlias, setDraftAlias] = useState("");
+	const saveAlias = (key: string) => {
+		const next = { ...aliases };
+		const v = draftAlias.trim();
+		if (v) next[key] = v;
+		else delete next[key];
+		setPrefs({ modelAliases: next });
+		setEditing(null);
+	};
 	/** Heading of a model group: the agent's own login, or the gateway the models come from. */
 	const groupName = (provider: string) => (provider === "claude-code" || provider === "codex" || provider === "opencode" || provider === "acp" ? t("ownLogin") : (gateways.find((g) => g.id === provider)?.name ?? provider));
 	const groups = useMemo(() => {
-		const filtered = models.filter((m) => `${m.provider} ${m.id} ${m.name}`.toLowerCase().includes(q.toLowerCase()));
+		const filtered = models.filter((m) => `${groupName(m.provider)} ${m.provider} ${m.id} ${m.name} ${aliases[aliasKey(m.provider, m.id)] ?? ""}`.toLowerCase().includes(q.toLowerCase()));
 		const map = new Map<string, typeof models>();
 		for (const m of filtered) map.set(m.provider, [...(map.get(m.provider) ?? []), m]);
 		return [...map.entries()];
-	}, [models, q]);
+		// biome-ignore lint/correctness/useExhaustiveDependencies: groupName only depends on gateways and the language
+	}, [models, q, aliases, gateways]);
 	const info = current && models.find((m) => m.provider === current.provider && m.id === current.id);
-	const label = current ? (info?.name ?? current.id) : t("pickModel");
+	const label = current ? ((current && aliases[aliasKey(current.provider, current.id)]) || info?.name || current.id) : t("pickModel");
+	const channel = current ? groupName(current.provider) : "";
 
 	return (
-		<div ref={ref} className="min-w-0 max-w-full md:relative md:max-w-60">
+		<div ref={ref} className="min-w-0 max-w-full md:relative md:max-w-80">
 			<button
 				type="button"
 				onClick={() => setOpen(!open)}
@@ -142,14 +164,17 @@ function ModelPicker() {
 					"flex w-full min-w-0 max-w-full items-center gap-1.5 rounded-lg px-2 py-1 text-xs transition-colors",
 					current ? "text-ink-300 hover:bg-ink-800 hover:text-ink-100" : "bg-ember-500/10 text-ember-300 hover:bg-ember-500/15",
 				)}
-				title={current ? `${current.provider}/${current.id}` : undefined}
+				title={current ? `${channel} / ${info?.name ?? current.id}
+${current.provider}/${current.id}` : undefined}
 			>
 				<Cpu className="size-3.5 shrink-0" />
+				{/* The channel first and kept short, so a long model name cannot push it out of sight. */}
+				{current && <span className="max-w-24 shrink-0 truncate rounded bg-ink-800 px-1 py-px text-[10.5px] text-ink-400">{channel}</span>}
 				<span className="min-w-0 truncate">{label}</span>
 				<ChevronDown className="size-3 shrink-0 opacity-60" />
 			</button>
 			{open && (
-				<div className="absolute bottom-full left-3 right-3 z-40 mb-2 md:left-0 md:right-auto md:w-80 animate-rise overflow-hidden rounded-xl border border-ink-700 bg-ink-900/97 shadow-2xl shadow-black/40 backdrop-blur">
+				<div className="absolute bottom-full left-3 right-3 z-40 mb-2 md:left-0 md:right-auto md:w-[26rem] animate-rise overflow-hidden rounded-xl border border-ink-700 bg-ink-900/97 shadow-2xl shadow-black/40 backdrop-blur">
 					<div className="flex items-center gap-2 border-b border-ink-800 px-3">
 						<Search className="size-3.5 text-ink-500" />
 						<input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("searchModel")} className="w-full bg-transparent py-2.5 text-sm focus:outline-none" />
@@ -172,25 +197,76 @@ function ModelPicker() {
 						)}
 						{groups.map(([provider, list]) => (
 							<div key={provider}>
-								<div className="px-3.5 pt-2.5 pb-1 font-mono text-[10.5px] tracking-widest text-ink-500 uppercase">{groupName(provider)}</div>
+								<div className="sticky top-0 z-10 bg-ink-900/97 px-3.5 pt-2.5 pb-1 font-mono text-[10.5px] tracking-widest text-ink-500 uppercase backdrop-blur">{groupName(provider)}</div>
 								{list.map((m) => {
 									const active = current?.provider === m.provider && current.id === m.id;
+									const key = aliasKey(m.provider, m.id);
+									const alias = aliases[key];
+									if (editing === key) {
+										return (
+											<form
+												key={m.id}
+												className="flex items-center gap-1.5 px-3.5 py-1.5"
+												onSubmit={(e) => {
+													e.preventDefault();
+													saveAlias(key);
+												}}
+											>
+												<input
+													autoFocus
+													value={draftAlias}
+													onChange={(e) => setDraftAlias(e.target.value)}
+													onKeyDown={(e) => e.key === "Escape" && (e.stopPropagation(), setEditing(null))}
+													placeholder={m.name}
+													aria-label={t("aliasFor", { name: m.name })}
+													className="min-w-0 flex-1 rounded-md border border-ink-700 bg-ink-950 px-2 py-1 text-sm focus:border-ember-500 focus:outline-none"
+												/>
+												<button type="submit" className="rounded-md p-1 text-ember-300 hover:bg-ink-800" title={t("aliasSave")} aria-label={t("aliasSave")}>
+													<Check className="size-4" />
+												</button>
+												<button type="button" onClick={() => setEditing(null)} className="rounded-md p-1 text-ink-400 hover:bg-ink-800" title={t("aliasCancel")} aria-label={t("aliasCancel")}>
+													<X className="size-4" />
+												</button>
+											</form>
+										);
+									}
 									return (
-										<button
-											key={m.id}
-											type="button"
-											onClick={() => {
-												setOpen(false);
-												void setModel({ provider: m.provider, id: m.id });
-											}}
-											className={clsx("flex w-full items-center gap-2 px-3.5 py-1.5 text-left text-sm", active ? "bg-ember-500/10 text-ember-200" : "text-ink-200 hover:bg-ink-800")}
-										>
-											<span className="w-3.5 shrink-0">{active && <Check className="size-3.5" />}</span>
-											<span className="min-w-0 flex-1 truncate">{m.name}</span>
-											{m.reasoning && <span className="font-mono text-[10px] text-sky-400">{t("thinking")}</span>}
-											{m.vision && <span className="font-mono text-[10px] text-moss-400">{t("vision")}</span>}
-											<span className="font-mono text-[10px] text-ink-600">{Math.round(m.contextWindow / 1000)}k</span>
-										</button>
+										<div key={m.id} className={clsx("group/model flex items-start", active ? "bg-ember-500/10 text-ember-200" : "text-ink-200 hover:bg-ink-800")}>
+											<button
+												type="button"
+												onClick={() => {
+													setOpen(false);
+													void setModel({ provider: m.provider, id: m.id });
+												}}
+												title={`${m.name}
+${m.provider}/${m.id}`}
+												className="flex min-w-0 flex-1 items-start gap-2 py-1.5 pr-1 pl-3.5 text-left text-sm"
+											>
+												<span className="mt-0.5 w-3.5 shrink-0">{active && <Check className="size-3.5" />}</span>
+												<span className="min-w-0 flex-1">
+													{/* Long names wrap (two lines at most) instead of being cut off. */}
+													<span className="line-clamp-2 break-all">{alias || m.name}</span>
+													{alias && <span className="block truncate font-mono text-[10.5px] text-ink-500">{m.name}</span>}
+												</span>
+												<span className="mt-0.5 flex shrink-0 items-center gap-1.5">
+													{m.reasoning && <span className="font-mono text-[10px] text-sky-400">{t("thinking")}</span>}
+													{m.vision && <span className="font-mono text-[10px] text-moss-400">{t("vision")}</span>}
+													<span className="font-mono text-[10px] text-ink-600">{Math.round(m.contextWindow / 1000)}k</span>
+												</span>
+											</button>
+											<button
+												type="button"
+												onClick={() => {
+													setDraftAlias(alias ?? "");
+													setEditing(key);
+												}}
+												className="mt-1 mr-2 shrink-0 rounded-md p-1 text-ink-500 opacity-0 transition-opacity hover:bg-ink-700 hover:text-ink-100 group-hover/model:opacity-100 focus-visible:opacity-100 max-md:opacity-100"
+												title={t("alias")}
+												aria-label={t("alias")}
+											>
+												<Pencil className="size-3" />
+											</button>
+										</div>
 									);
 								})}
 							</div>

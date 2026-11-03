@@ -23,6 +23,8 @@ export interface GoalDeps {
 	/** Pause between turns, so a settled run is fully written and the user can step in. */
 	delayMs?: number;
 	now?: () => number;
+	/** Turn budget of a goal that names none (Settings -> default goal turns). */
+	defaultTurns?: () => number;
 }
 
 export class GoalTracker {
@@ -32,6 +34,11 @@ export class GoalTracker {
 
 	constructor(deps: GoalDeps) {
 		this.deps = deps;
+	}
+
+	private defaultTurns(): number {
+		const n = Math.floor(this.deps.defaultTurns?.() ?? GOAL_DEFAULT_TURNS);
+		return Number.isFinite(n) && n >= 1 ? Math.min(n, GOAL_MAX_TURNS) : GOAL_DEFAULT_TURNS;
 	}
 
 	get(sessionId: string): GoalState | undefined {
@@ -44,7 +51,7 @@ export class GoalTracker {
 		if (!text) throw new Error("empty objective");
 		this.cancelTimer(sessionId);
 		const now = this.now();
-		const limit = Math.min(GOAL_MAX_TURNS, Math.max(1, Math.floor(maxTurns ?? GOAL_DEFAULT_TURNS)));
+		const limit = Math.min(GOAL_MAX_TURNS, Math.max(1, Math.floor(maxTurns ?? this.defaultTurns())));
 		this.put(sessionId, { objective: text, status: "active", turns: 0, maxTurns: limit, startedAt: now, updatedAt: now });
 		const view = this.deps.view(sessionId);
 		if (view && !view.isStreaming) await this.step(sessionId);
@@ -64,7 +71,7 @@ export class GoalTracker {
 		const goal = this.goals.get(sessionId);
 		if (!goal) return null;
 		if (goal.status === "complete") return goal;
-		const maxTurns = goal.turns >= goal.maxTurns ? goal.turns + Math.min(goal.maxTurns, GOAL_DEFAULT_TURNS) : goal.maxTurns;
+		const maxTurns = goal.turns >= goal.maxTurns ? goal.turns + Math.min(goal.maxTurns, this.defaultTurns()) : goal.maxTurns;
 		const next = this.update(sessionId, { status: "active", maxTurns, note: undefined });
 		const view = this.deps.view(sessionId);
 		// The last reply is what stopped the goal; reading it again would stop it right away.

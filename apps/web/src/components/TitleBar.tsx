@@ -1,10 +1,10 @@
 import clsx from "clsx";
-import { Code, ExternalLink, FolderOpen, FolderTree, Globe, Minus, PanelLeft, PanelRight, Square, SquareTerminal, X } from "lucide-react";
+import { Code, ExternalLink, FolderOpen, FolderTree, Globe, Minus, PanelLeft, PanelRight, PanelRightClose, PanelRightOpen, Square, SquareTerminal, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { isDesktopShell, isLoopbackHost } from "../lib/backend.ts";
 import { localizeError } from "../lib/errors.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { call, closeWorkbenchTab, NO_SUBAGENTS, openBrowserTab, openFolderTab, openTerminalTab, pluginActive, toggleSubagentPanel, useStore } from "../lib/store.ts";
+import { call, NO_SUBAGENTS, pluginActive, toggleSubagentPanel, toggleWorkbenchKind, toggleWorkbenchPanel, useStore } from "../lib/store.ts";
 import { TURN_DONE_EVENT } from "../lib/notify.ts";
 import { Flame } from "./ui.tsx";
 
@@ -28,6 +28,8 @@ const M = defineMessages({
 		terminal: "终端",
 		browser: "内置浏览器",
 		folder: "文件夹",
+		foldClose: "收起侧边栏",
+		foldOpen: "展开侧边栏",
 		subagents: "子代理",
 		toggleSidebar: "切换侧栏",
 		minimize: "最小化",
@@ -43,6 +45,8 @@ const M = defineMessages({
 		terminal: "Terminal",
 		browser: "Built-in browser",
 		folder: "Folder",
+		foldClose: "Collapse side panel",
+		foldOpen: "Expand side panel",
 		subagents: "Subagents",
 		toggleSidebar: "Toggle sidebar",
 		minimize: "Minimize",
@@ -99,16 +103,37 @@ function SubagentToggle() {
 	);
 }
 
+/** Folds the whole side panel (files, shell, browser) away and back, keeping every tab. */
+function WorkbenchFold() {
+	const t = useT(M);
+	const has = useStore((s) => s.workbench.tabs.length > 0);
+	const collapsed = useStore((s) => s.workbench.collapsed ?? false);
+	if (!has) return null;
+	const Icon = collapsed ? PanelRightOpen : PanelRightClose;
+	return (
+		<button
+			type="button"
+			onClick={toggleWorkbenchPanel}
+			aria-pressed={!collapsed}
+			className={clsx("rounded-md p-1.5 hover:bg-ink-800", collapsed ? "text-ink-400 hover:text-ink-100" : "bg-ink-800 text-ember-300")}
+			title={collapsed ? t("foldOpen") : t("foldClose")}
+			aria-label={collapsed ? t("foldOpen") : t("foldClose")}
+		>
+			<Icon className="size-4" />
+		</button>
+	);
+}
+
 function TerminalToggle() {
 	const t = useT(M);
 	const enabled = useStore((s) => pluginActive(s.plugins, "terminal"));
-	const open = useStore((s) => s.workbench.tabs.some((x) => x.kind === "terminal"));
+	const open = useStore((s) => !s.workbench.collapsed && s.workbench.tabs.some((x) => x.id === s.workbench.active && x.kind === "terminal"));
 	const cwd = useStore((s) => s.session?.cwd ?? "");
 	if (!enabled) return null;
 	return (
 		<button
 			type="button"
-			onClick={() => (open ? closeWorkbenchTab("terminal") : openTerminalTab(cwd))}
+			onClick={() => toggleWorkbenchKind("terminal", cwd)}
 			aria-pressed={open}
 			className={clsx("rounded-md p-1.5 hover:bg-ink-800", open ? "bg-ink-800 text-ember-300" : "text-ink-400 hover:text-ink-100")}
 			title={t("terminal")}
@@ -122,12 +147,13 @@ function TerminalToggle() {
 function BrowserToggle() {
 	const t = useT(M);
 	const enabled = useStore((s) => pluginActive(s.plugins, "browser") && pluginActive(s.plugins, "workbench"));
-	const open = useStore((s) => s.workbench.tabs.some((x) => x.kind === "browser"));
+	const open = useStore((s) => !s.workbench.collapsed && s.workbench.tabs.some((x) => x.id === s.workbench.active && x.kind === "browser"));
+	const cwd = useStore((s) => s.session?.cwd ?? "");
 	if (!enabled) return null;
 	return (
 		<button
 			type="button"
-			onClick={() => (open ? closeWorkbenchTab("browser") : openBrowserTab())}
+			onClick={() => toggleWorkbenchKind("browser", cwd)}
 			aria-pressed={open}
 			className={clsx("rounded-md p-1.5 hover:bg-ink-800", open ? "bg-ink-800 text-ember-300" : "text-ink-400 hover:text-ink-100")}
 			title={t("browser")}
@@ -141,13 +167,13 @@ function BrowserToggle() {
 function FolderToggle() {
 	const t = useT(M);
 	const enabled = useStore((s) => pluginActive(s.plugins, "folder"));
-	const open = useStore((s) => s.workbench.tabs.some((x) => x.kind === "folder"));
+	const open = useStore((s) => !s.workbench.collapsed && s.workbench.tabs.some((x) => x.id === s.workbench.active && x.kind === "folder"));
 	const cwd = useStore((s) => s.session?.cwd ?? "");
 	if (!enabled) return null;
 	return (
 		<button
 			type="button"
-			onClick={() => (open ? closeWorkbenchTab("folder") : openFolderTab(cwd))}
+			onClick={() => toggleWorkbenchKind("folder", cwd)}
 			aria-pressed={open}
 			className={clsx("rounded-md p-1.5 hover:bg-ink-800", open ? "bg-ink-800 text-ember-300" : "text-ink-400 hover:text-ink-100")}
 			title={t("folder")}
@@ -214,6 +240,7 @@ function SessionTools() {
 			<FolderToggle />
 			<TerminalToggle />
 			<BrowserToggle />
+			<WorkbenchFold />
 			<SubagentToggle />
 		</div>
 	);

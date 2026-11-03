@@ -1,11 +1,11 @@
 import clsx from "clsx";
-import { Check, Copy, Eye, FileText, FolderTree, Globe, LoaderCircle, RefreshCw, SquareTerminal, X } from "lucide-react";
+import { Check, Copy, Eye, FileText, FolderTree, Globe, LoaderCircle, PanelRightClose, RefreshCw, SquareTerminal, X } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { copyToClipboard } from "../lib/clipboard.ts";
 import { highlightLines, languageFor } from "../lib/highlight.ts";
 import type { WorkbenchFile } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { activateWorkbenchTab, closeWorkbenchTab, pluginCall, toast, useStore, type WorkbenchTab } from "../lib/store.ts";
+import { activateWorkbenchTab, closeWorkbenchTab, pluginCall, toast, toggleWorkbenchPanel, useStore, type WorkbenchTab } from "../lib/store.ts";
 import { Markdown } from "./Markdown.tsx";
 import { FolderView } from "./FolderView.tsx";
 import { TerminalView } from "./TerminalView.tsx";
@@ -17,6 +17,7 @@ const M = defineMessages({
 	zh: {
 		title: "查看器",
 		close: "关闭",
+		fold: "收起侧边栏",
 		terminal: "终端",
 		folder: "文件夹",
 		browser: "浏览器",
@@ -32,6 +33,7 @@ const M = defineMessages({
 	en: {
 		title: "Viewer",
 		close: "Close",
+		fold: "Collapse side panel",
 		terminal: "Terminal",
 		folder: "Folder",
 		browser: "Browser",
@@ -55,6 +57,7 @@ export function WorkbenchPanel() {
 	// Settings and other pages open over the chat area; the panel steps aside (kept mounted) so they get the full width.
 	const pageOpen = useStore((s) => s.view !== "chat");
 	const wide = useStore((s) => s.workbench.wide ?? false);
+	const collapsed = useStore((s) => s.workbench.collapsed ?? false);
 	if (!enabled || !tabs.length) return null;
 	const tab = tabs.find((x) => x.id === active) ?? tabs[0];
 	if (!tab) return null;
@@ -62,7 +65,7 @@ export function WorkbenchPanel() {
 	return (
 		<aside
 			className={clsx(
-				pageOpen ? "hidden" : "flex",
+				pageOpen || collapsed ? "hidden" : "flex",
 				"shrink-0 flex-col border-l hairline bg-ink-900/80 backdrop-blur max-md:absolute max-md:inset-y-0 max-md:right-0 max-md:z-30 max-md:w-full max-md:bg-ink-900 max-md:shadow-2xl",
 				browser && wide ? "w-[min(80rem,calc(100%-24rem))]" : browser ? "w-[32rem] lg:w-[44rem] 2xl:w-[56rem]" : "w-[28rem] max-md:w-[min(30rem,100%)] lg:w-[38rem]",
 			)}
@@ -88,6 +91,9 @@ export function WorkbenchPanel() {
 						</button>
 					</div>
 				))}
+				<button type="button" onClick={toggleWorkbenchPanel} className="ml-auto grid size-6 shrink-0 place-items-center rounded-md text-ink-400 hover:bg-ink-800 hover:text-ink-100" title={t("fold")} aria-label={t("fold")}>
+					<PanelRightClose className="size-4" />
+				</button>
 			</div>
 			<div className="min-h-0 flex-1">
 				{tab.kind === "terminal" ? (

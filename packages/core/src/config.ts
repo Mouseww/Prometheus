@@ -34,6 +34,8 @@ export interface PrometheusConfig {
 	defaultAgent: string;
 	/** Permission mode new chats start in; empty means "default" (ask first). */
 	defaultPermission: string;
+	/** Default turn budget of a /goal; 0 means the built-in 30. */
+	goalTurns: number;
 }
 
 function normalizeNetwork(raw: Partial<NetworkConfig> | undefined): NetworkConfig {
@@ -51,7 +53,7 @@ export function defaultDataDir(): string {
 	return process.env.PROMETHEUS_HOME || join(homedir(), ".prometheus");
 }
 
-const EMPTY: PrometheusConfig = { gateways: [], agents: [], plugins: [], disabledPlugins: [], pluginSettings: {}, network: normalizeNetwork(undefined), workspaceRoot: "", defaultAgent: "", defaultPermission: "" };
+const EMPTY: PrometheusConfig = { gateways: [], agents: [], plugins: [], disabledPlugins: [], pluginSettings: {}, network: normalizeNetwork(undefined), workspaceRoot: "", defaultAgent: "", defaultPermission: "", goalTurns: 0 };
 
 /** config.json holds API keys, so it is always written owner-only. */
 export class ConfigStore {
@@ -79,6 +81,7 @@ export class ConfigStore {
 				workspaceRoot: typeof raw.workspaceRoot === "string" ? raw.workspaceRoot : "",
 				defaultAgent: typeof raw.defaultAgent === "string" ? raw.defaultAgent : "",
 				defaultPermission: typeof raw.defaultPermission === "string" ? raw.defaultPermission : "",
+				goalTurns: typeof raw.goalTurns === "number" && raw.goalTurns >= 1 ? Math.floor(raw.goalTurns) : 0,
 			};
 		} catch (err) {
 			if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
@@ -113,6 +116,12 @@ export class ConfigStore {
 	async setDefaultAgent(id: string): Promise<void> {
 		const next = id.trim();
 		this.config.defaultAgent = next === "pi" ? "" : next;
+		await this.persist();
+	}
+
+	/** 0 (or anything below 1) goes back to the built-in 30. */
+	async setGoalTurns(n: number): Promise<void> {
+		this.config.goalTurns = Number.isFinite(n) && n >= 1 ? Math.floor(n) : 0;
 		await this.persist();
 	}
 

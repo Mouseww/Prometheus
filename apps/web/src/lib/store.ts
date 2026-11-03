@@ -146,6 +146,8 @@ export interface WorkbenchUi {
 	active: string | null;
 	/** The panel takes most of the width (the browser asks for it). */
 	wide?: boolean;
+	/** The panel is folded away but its tabs (and the browser or shell behind them) stay as they are. */
+	collapsed?: boolean;
 }
 
 /** The right-hand subagent panel: a list on top and the selected agent's process below, each closable on its own. */
@@ -1182,7 +1184,7 @@ export function openFile(path: string, cwd: string, line?: number): void {
 		const old = s.workbench.tabs.find((t) => t.id === id);
 		const tab: WorkbenchTab = { id, kind: "file", path, cwd, line };
 		const tabs = old ? s.workbench.tabs.map((t) => (t.id === id ? tab : t)) : [...s.workbench.tabs, tab];
-		return { workbench: { tabs, active: id } };
+		return { workbench: { ...s.workbench, tabs, active: id, collapsed: false } };
 	});
 }
 
@@ -1191,17 +1193,22 @@ export const terminalIds = new Map<string, string>();
 
 /** Open a terminal in the given folder (the current session's), or focus the one already open. */
 export function openTerminalTab(cwd: string): void {
-	set((s) => ({ workbench: { tabs: s.workbench.tabs.some((t) => t.kind === "terminal") ? s.workbench.tabs : [...s.workbench.tabs, { id: "terminal", kind: "terminal", cwd }], active: "terminal" } }));
+	set((s) => {
+		const old = s.workbench.tabs.find((t) => t.kind === "terminal");
+		// One id per conversation: the shell behind a tab is looked up by it.
+		const id = old?.id ?? `terminal:${wbOwner}`;
+		return { workbench: { ...s.workbench, tabs: old ? s.workbench.tabs : [...s.workbench.tabs, { id, kind: "terminal", cwd }], active: id, collapsed: false } };
+	});
 }
 
 /** Open the folder tree for the current session's folder, or focus the one already open. */
 export function openFolderTab(cwd: string): void {
-	set((s) => ({ workbench: { tabs: s.workbench.tabs.some((t) => t.kind === "folder") ? s.workbench.tabs : [...s.workbench.tabs, { id: "folder", kind: "folder", cwd }], active: "folder" } }));
+	set((s) => ({ workbench: { ...s.workbench, tabs: s.workbench.tabs.some((t) => t.kind === "folder") ? s.workbench.tabs : [...s.workbench.tabs, { id: "folder", kind: "folder", cwd }], active: "folder", collapsed: false } }));
 }
 
 /** Open the built-in browser in the side panel, or focus it. */
 export function openBrowserTab(): void {
-	set((s) => ({ workbench: { ...s.workbench, tabs: s.workbench.tabs.some((t) => t.kind === "browser") ? s.workbench.tabs : [...s.workbench.tabs, { id: "browser", kind: "browser" }], active: "browser" } }));
+	set((s) => ({ workbench: { ...s.workbench, tabs: s.workbench.tabs.some((t) => t.kind === "browser") ? s.workbench.tabs : [...s.workbench.tabs, { id: "browser", kind: "browser" }], active: "browser", collapsed: false } }));
 }
 
 export function setWorkbenchWide(wide: boolean): void {
@@ -1225,6 +1232,47 @@ export function closeWorkbenchTab(id: string): void {
 export function activateWorkbenchTab(id: string): void {
 	set((s) => ({ workbench: { ...s.workbench, active: id } }));
 }
+
+/** Fold the whole side panel away, or bring it back, without closing any tab. */
+export function toggleWorkbenchPanel(): void {
+	set((s) => (s.workbench.tabs.length ? { workbench: { ...s.workbench, collapsed: !s.workbench.collapsed } } : s));
+}
+
+/**
+ * The title-bar buttons of the terminal, folder and browser: open the tab if it is not there, show it if the panel is folded
+ * or another tab is in front, and fold the panel if it is already in front. (Closing is the x on the tab.)
+ */
+export function toggleWorkbenchKind(kind: "terminal" | "folder" | "browser", cwd: string): void {
+	const wb = get().workbench;
+	const tab = wb.tabs.find((t) => t.kind === kind);
+	if (!tab) {
+		if (kind === "terminal") openTerminalTab(cwd);
+		else if (kind === "folder") openFolderTab(cwd);
+		else openBrowserTab();
+		return;
+	}
+	if (wb.collapsed || wb.active !== tab.id) set({ workbench: { ...wb, active: tab.id, collapsed: false } });
+	else toggleWorkbenchPanel();
+}
+
+// The side panel belongs to the conversation: each one keeps its own tabs, so switching shows that conversation's files,
+// shell and browser page instead of one shared set.
+const NO_WORKBENCH: WorkbenchUi = { tabs: [], active: null };
+const workbenches = new Map<string, WorkbenchUi>();
+let wbOwner = "draft";
+useStore.subscribe((s) => {
+	// While another conversation is on its way there is no session; keep what is shown until it lands.
+	const key = s.session?.id ?? (s.opening ? undefined : "draft");
+	if (key === undefined || key === wbOwner) return;
+	const prev = wbOwner;
+	wbOwner = key;
+	workbenches.set(prev, s.workbench);
+	// A new chat that just got its first message keeps what the user opened beside it.
+	const next = workbenches.get(key) ?? (prev === "draft" ? s.workbench : NO_WORKBENCH);
+	if (next !== s.workbench) useStore.setState({ workbench: next });
+	// The browser is shared, so bring forward the page this conversation was working on.
+	if (key !== "draft" && next.tabs.some((t) => t.kind === "browser")) void get().client?.rpc("plugin.call", { plugin: "browser", method: "session.focus", params: { sessionId: key } }).catch(() => undefined);
+});
 
 /** Browser tools that put something on screen bring the browser panel up, so the user can watch. */
 const BROWSER_VISIBLE_TOOLS = new Set(["browser_navigate", "browser_act", "browser_keys", "browser_tabs"]);

@@ -125,7 +125,7 @@ describe("goal text conventions", () => {
 		expect(parseGoalCommand("/goal stop")).toEqual({ action: "clear" });
 		expect(parseGoalCommand("/goal  ship v2\nwith docs")).toEqual({ action: "set", objective: "ship v2\nwith docs" });
 		expect(parseGoalCommand("/goal --max 5 fix it")).toEqual({ action: "set", objective: "fix it", maxTurns: 5 });
-		expect(parseGoalCommand("/goal --max=9999 fix it")).toEqual({ action: "set", objective: "fix it", maxTurns: 200 });
+		expect(parseGoalCommand("/goal --max=9999 fix it")).toEqual({ action: "set", objective: "fix it", maxTurns: 1000 });
 	});
 
 	it("reads the last status tag and strips them for display", () => {

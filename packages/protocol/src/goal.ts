@@ -24,7 +24,7 @@ export interface GoalState {
 }
 
 export const GOAL_DEFAULT_TURNS = 30;
-export const GOAL_MAX_TURNS = 200;
+export const GOAL_MAX_TURNS = 1000;
 
 /** Opens every turn the host sends for a goal; the UI shows such a message as a compact goal marker instead of the text. */
 export const GOAL_DIRECTIVE_TAG = "goal_directive";

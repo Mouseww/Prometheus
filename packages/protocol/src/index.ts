@@ -376,6 +376,8 @@ export interface HostSettings {
 	defaultAgent?: string;
 	/** Permission mode new chats start in; "default" when unset. Older servers omit it. */
 	defaultPermission?: PermissionMode;
+	/** Turns a /goal may run when the user gives no limit; 30 when unset. Older servers omit it. */
+	goalTurns?: number;
 }
 
 // ---------- Subagents ----------

@@ -22,6 +22,15 @@ const INITIAL_TURNS = 8;
 const ANCHORING = typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports("overflow-anchor", "auto");
 const MORE_TURNS = 10;
 
+/** The element that actually scrolls the conversation (not just the parent: a wrapper sits in between). */
+function scrollParent(el: HTMLElement | null): HTMLElement | null {
+	for (let e = el?.parentElement ?? null; e; e = e.parentElement) {
+		const y = getComputedStyle(e).overflowY;
+		if (y === "auto" || y === "scroll") return e;
+	}
+	return null;
+}
+
 const M = defineMessages({
 	zh: {
 		thinkingLive: "思考中…",
@@ -553,29 +562,56 @@ export function MessageList({
 	// Only where the browser keeps the reading position when skipped messages take their real height (scroll anchoring); elsewhere the estimate would make the page jump.
 	const far = (i: number) => ANCHORING && i < lastIndex - 12;
 
-	// Earlier turns appear above what the user is reading: keep that in place by adding the height they brought.
+	// Earlier turns appear above what the user is reading: keep that in place. Adding "the height they brought" is not enough,
+	// because messages the browser skipped only have estimated heights that settle later. Instead the first message in view is
+	// remembered with its offset from the top of the viewport and put back there after every layout change, until the user scrolls again.
 	const first = start + offset;
-	// Native scroll anchoring stays on for everything else (it absorbs the size changes of skipped messages) and is switched off
-	// only while earlier turns are inserted, when the compensation below does the same job.
-	const last = useRef({ first, height: 0 });
 	const releaseTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+	const pin = useRef<{ el: Element; off: number; expect: number; until: number } | null>(null);
 	const holdAnchoring = useCallback(() => {
-		const scroller = root.current?.parentElement;
+		const scroller = scrollParent(root.current);
 		if (!scroller) return;
 		scroller.style.overflowAnchor = "none";
 		clearTimeout(releaseTimer.current);
-		// If nothing ends up being inserted, give anchoring back anyway.
-		releaseTimer.current = setTimeout(() => (scroller.style.overflowAnchor = ""), 1500);
-	}, []);
-	useLayoutEffect(() => {
-		const scroller = root.current?.parentElement;
-		if (scroller && first < last.current.first && last.current.height > 0) {
-			scroller.scrollTop += scroller.scrollHeight - last.current.height;
-			clearTimeout(releaseTimer.current);
+		// Give native anchoring back once the content has settled (or if nothing ends up being inserted).
+		releaseTimer.current = setTimeout(() => {
 			scroller.style.overflowAnchor = "";
+			pin.current = null;
+		}, 1500);
+		const top = scroller.getBoundingClientRect().top;
+		for (const child of Array.from(root.current?.children ?? [])) {
+			if (child === sentinel.current) continue;
+			const r = child.getBoundingClientRect();
+			if (r.bottom > top + 1) {
+				pin.current = { el: child, off: r.top - top, expect: scroller.scrollTop, until: Date.now() + 1500 };
+				break;
+			}
 		}
-		last.current = { first, height: scroller?.scrollHeight ?? 0 };
-	});
+	}, []);
+	const restorePin = useCallback(() => {
+		const p = pin.current;
+		const scroller = scrollParent(root.current);
+		if (!p || !scroller) return;
+		// The user moved the view (or time is up, or the message is gone): leave it alone from here on.
+		if (Date.now() > p.until || !p.el.isConnected || Math.abs(scroller.scrollTop - p.expect) > 3) {
+			pin.current = null;
+			return;
+		}
+		const delta = p.el.getBoundingClientRect().top - scroller.getBoundingClientRect().top - p.off;
+		if (Math.abs(delta) > 1) scroller.scrollTop += delta;
+		p.expect = scroller.scrollTop;
+	}, []);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: runs after every commit that changes what is shown above the view
+	useLayoutEffect(() => {
+		restorePin();
+	}, [first, restorePin, messages.length]);
+	useEffect(() => {
+		const el = root.current;
+		if (!el || typeof ResizeObserver === "undefined") return;
+		const ro = new ResizeObserver(restorePin);
+		ro.observe(el);
+		return () => ro.disconnect();
+	}, [restorePin]);
 	useEffect(() => () => clearTimeout(releaseTimer.current), []);
 
 	// Set while earlier turns are fetched: the absolute index of the first message that was shown. Once they arrive,
@@ -615,29 +651,64 @@ export function MessageList({
 		}
 	}, [start, messages, offset, onLoadEarlier, holdAnchoring]);
 	const sentinel = useRef<HTMLDivElement>(null);
-	// Earlier turns load lazily: only once the user has scrolled up themselves. Opening a conversation starts at the top for a moment
-	// before it jumps to the end, and that must not pull history in (it made the view jump around).
-	const interacted = useRef(false);
+	// Earlier turns load only because of something the user does: scrolling up, paging up, dragging the scrollbar or touching.
+	// Layout drift (skipped messages taking their real height, content arriving, a message being sent) must never count, or the
+	// sentinel keeps coming into range on its own and the whole history is pulled in while the view crawls upwards.
+	const showMoreRef = useRef(showMore);
+	showMoreRef.current = showMore;
 	useEffect(() => {
 		const el = sentinel.current;
-		const scroller = root.current?.parentElement;
-		if (!el || !scroller || typeof IntersectionObserver === "undefined") return;
-		const near = () => el.getBoundingClientRect().bottom > scroller.getBoundingClientRect().top - 400;
-		const io = new IntersectionObserver((entries) => interacted.current && entries.some((e) => e.isIntersecting) && void showMore(), { root: scroller, rootMargin: "400px 0px 0px 0px" });
-		io.observe(el);
-		// The observer only reports changes, so a sentinel that is already in range needs a check when the user acts.
-		const onInput = (e: Event) => {
-			if (e instanceof WheelEvent && e.deltaY > 0) return;
-			interacted.current = true;
-			if (near()) void showMore();
+		const scroller = scrollParent(root.current);
+		if (!el || !scroller) return;
+		const COOLDOWN = 600;
+		let lastGesture = 0;
+		let held = false;
+		let lastTop = scroller.scrollTop;
+		let lastLoad = 0;
+		const near = () => el.getBoundingClientRect().bottom > scroller.getBoundingClientRect().top - 300;
+		const load = () => {
+			const now = Date.now();
+			if (now - lastLoad < COOLDOWN || !near()) return;
+			lastLoad = now;
+			void showMoreRef.current();
 		};
-		const events = ["wheel", "touchmove", "pointerdown", "keydown"] as const;
-		for (const n of events) scroller.addEventListener(n, onInput, { passive: true });
+		const gesture = () => {
+			lastGesture = Date.now();
+			load();
+		};
+		const onWheel = (e: WheelEvent) => e.deltaY < 0 && gesture();
+		const onTouch = () => gesture();
+		const onKey = (e: KeyboardEvent) => ["PageUp", "Home", "ArrowUp"].includes(e.key) && gesture();
+		const onDown = () => {
+			held = true;
+		};
+		const onUp = () => {
+			held = false;
+		};
+		// Dragging the scrollbar or a finger fires scroll events without wheel events: those count while the gesture lasts, going up only.
+		const onScroll = () => {
+			const top = scroller.scrollTop;
+			const up = top <= lastTop;
+			lastTop = top;
+			if (up && (held || Date.now() - lastGesture < 400)) load();
+		};
+		scroller.addEventListener("wheel", onWheel, { passive: true });
+		scroller.addEventListener("touchmove", onTouch, { passive: true });
+		scroller.addEventListener("keydown", onKey, { passive: true });
+		scroller.addEventListener("pointerdown", onDown, { passive: true });
+		scroller.addEventListener("scroll", onScroll, { passive: true });
+		window.addEventListener("pointerup", onUp);
+		window.addEventListener("pointercancel", onUp);
 		return () => {
-			io.disconnect();
-			for (const n of events) scroller.removeEventListener(n, onInput);
+			scroller.removeEventListener("wheel", onWheel);
+			scroller.removeEventListener("touchmove", onTouch);
+			scroller.removeEventListener("keydown", onKey);
+			scroller.removeEventListener("pointerdown", onDown);
+			scroller.removeEventListener("scroll", onScroll);
+			window.removeEventListener("pointerup", onUp);
+			window.removeEventListener("pointercancel", onUp);
 		};
-	}, [more, showMore]);
+	}, [more]);
 
 	return (
 		<div ref={root} className="chat-col mx-auto w-full space-y-5 px-3 py-5 md:px-5 md:py-8">

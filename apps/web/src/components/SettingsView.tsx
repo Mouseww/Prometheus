@@ -70,6 +70,8 @@ const M = defineMessages({
 		workspaceRoot: "默认根目录",
 		workspaceRootHint: "选择工作区时从这里开始，并可以直接在它下面新建文件夹作为新工作区。留空则使用服务端主目录。",
 		workspaceRootEmpty: "未设置（使用主目录）",
+		goalTurns: "目标（/goal）默认轮数",
+		goalTurnsHint: "用 /goal 设定目标时，没有写 --turns 的话最多自动跑多少轮（1–1000）。到上限后可点「再给 N 轮」继续。",
 		defaultPermission: "默认权限模式",
 		defaultPermissionHint: "新对话一开始使用的权限模式，对话里仍可随时用输入框下方的选择器或 Shift+Tab 切换。选择「完全放行」或 Auto 后，新对话不再询问就会执行所有操作，请谨慎。",
 		perm_default: "默认：编辑文件、执行命令前先询问",
@@ -159,6 +161,8 @@ const M = defineMessages({
 		workspaceRoot: "Default root folder",
 		workspaceRootHint: "The workspace picker starts here and you can create new folders under it right from the dialog. Leave empty to use the server's home directory.",
 		workspaceRootEmpty: "Not set (home directory)",
+		goalTurns: "Default /goal turns",
+		goalTurnsHint: "How many turns a /goal may run on its own when you do not pass a limit (1-1000). At the limit you can give it more turns and carry on.",
 		defaultPermission: "Default permission mode",
 		defaultPermissionHint: "The permission mode a new chat starts in. You can still change it any time from the picker under the input box or with Shift+Tab. With Bypass or Auto, new chats run everything without asking, so be careful.",
 		perm_default: "Default: ask before editing files or running commands",
@@ -323,6 +327,33 @@ function WorkspaceRootRow() {
 				/>
 			)}
 		</>
+	);
+}
+
+function GoalTurnsRow() {
+	const t = useT(M);
+	const host = useStore((s) => s.hostSettings);
+	const [text, setText] = useState<string | null>(null);
+	const commit = () => {
+		const n = Math.round(Number(text));
+		setText(null);
+		if (Number.isFinite(n) && n >= 1 && n !== host?.goalTurns) void updateHostSettings({ goalTurns: Math.min(1000, n) });
+	};
+	return (
+		<Row label={t("goalTurns")} hint={t("goalTurnsHint")}>
+			<input
+				type="number"
+				min={1}
+				max={1000}
+				disabled={!host}
+				value={text ?? String(host?.goalTurns ?? 30)}
+				onChange={(e) => setText(e.target.value)}
+				onBlur={commit}
+				onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+				aria-label={t("goalTurns")}
+				className="w-24 rounded-lg border border-ink-700 bg-ink-900 px-2.5 py-1.5 font-mono text-sm text-ink-100 outline-none focus:border-ember-500"
+			/>
+		</Row>
 	);
 }
 
@@ -503,6 +534,7 @@ function GeneralSettings() {
 					<Section title={t("workspace")}>
 						<WorkspaceRootRow />
 						<DefaultPermissionRow />
+						<GoalTurnsRow />
 					</Section>
 
 					{isDesktopShell() && (

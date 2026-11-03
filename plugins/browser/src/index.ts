@@ -109,6 +109,7 @@ export default definePlugin({
 		});
 		rpc("tab.close", (p) => browser.closeTab(tabOf(p).id));
 		rpc("tab.activate", (p) => browser.activate(tabOf(p).id));
+		rpc("session.focus", (p) => ({ focused: str(p.sessionId) ? browser.focusSession(str(p.sessionId)) : false }));
 		rpc("navigate", async (p) => {
 			await browser.ensure();
 			return { url: await browser.navigate(tabOf(p), str(p.url)) };

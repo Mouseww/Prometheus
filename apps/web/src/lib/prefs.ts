@@ -33,12 +33,16 @@ interface Prefs {
 	splash: boolean;
 	/** Desktop: download and install updates by itself while no agent is running. */
 	idleUpdate: boolean;
+	/** Display names the user gave models, keyed by `provider/id`. Only changes what is shown. */
+	modelAliases: Record<string, string>;
 }
+
+export const aliasKey = (provider: string, id: string) => `${provider}/${id}`;
 
 const KEY = "prometheus.prefs";
 
 function load(): Prefs {
-	const fallback: Prefs = { theme: "dark", skin: "ember", lang: navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en", closeToTray: true, sendMode: "followUp", chatWidth: null, notifyOnDone: false, notifyBackgroundOnly: true, motion: true, splash: true, idleUpdate: true };
+	const fallback: Prefs = { theme: "dark", skin: "ember", lang: navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en", closeToTray: true, sendMode: "followUp", chatWidth: null, notifyOnDone: false, notifyBackgroundOnly: true, motion: true, splash: true, idleUpdate: true, modelAliases: {} };
 	try {
 		return { ...fallback, ...(JSON.parse(localStorage.getItem(KEY) ?? "{}") as Partial<Prefs>) };
 	} catch {

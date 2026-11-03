@@ -81,7 +81,7 @@ export function GoalBar() {
 				)}
 				{!done && goal.status !== "active" && (
 					<button type="button" onClick={() => void controlGoal("resume")} className={clsx(btn, "text-ember-300 hover:bg-ember-500/10")}>
-						<Play className="size-3.5" /> {goal.status === "limit" ? t("resumeMore", { n: Math.min(goal.maxTurns, 30) }) : t("resume")}
+						<Play className="size-3.5" /> {goal.status === "limit" ? t("resumeMore", { n: Math.min(goal.maxTurns, useStore.getState().hostSettings?.goalTurns ?? 30) }) : t("resume")}
 					</button>
 				)}
 				<button type="button" onClick={() => void controlGoal("clear")} title={done ? t("dismiss") : t("clear")} aria-label={done ? t("dismiss") : t("clear")} className={clsx(btn, "px-1.5 text-ink-500 hover:bg-ink-800 hover:text-rose-400")}>
