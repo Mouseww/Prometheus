@@ -133,6 +133,8 @@
         if (s) { st.setProperty("--sp-a", s[0]); st.setProperty("--sp-b", s[1]); st.setProperty("--sp-c", s[2]); st.setProperty("--sp-d", s[3]); st.setProperty("--sp-glow", s[4]); }
         var light = p.theme === "light" || (p.theme === "system" && matchMedia("(prefers-color-scheme: light)").matches);
         if (light) { st.setProperty("--sp-bg", "#faf8f5"); st.setProperty("--sp-fg", "#1a1613"); document.documentElement.style.background = "#faf8f5"; }
+        // Android: the status bar follows the app theme, not the phone's system theme (the two can differ).
+        try { if (window.PrometheusHost && window.PrometheusHost.theme) window.PrometheusHost.theme(!light); } catch (e) {}
         reveal();
         // Only the in-app switches stop it: Windows with "animation effects" off reports reduced motion on many machines.
         if (p.motion === false || p.splash === false) return el.classList.add("sp-still");

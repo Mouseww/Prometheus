@@ -345,8 +345,15 @@ try {
 			);
 		}
 		if (!activity.includes("startPrometheusService()") || !activity.includes("private fun startPrometheusService")) throw new Error("could not patch MainActivity.kt (template changed?)");
-		writeFileSync(activityPath, activity);
 	}
+	// The system bars are a second, independent patch: projects generated before it existed get it too.
+	if (!activity.includes("SystemBarBridge")) {
+		activity = activity.replace(/\n\}\s*$/, () => `\n${systemBarSource()}}\n`);
+		// Start dark, matching the default theme; the page corrects this as soon as the splash script runs.
+		if (/startPrometheusService\(\)\n/.test(activity)) activity = activity.replace(/startPrometheusService\(\)\n/, "startPrometheusService()\n    applySystemBarTheme(true)\n");
+		if (!activity.includes("applySystemBarTheme")) throw new Error("could not patch MainActivity.kt (template changed?)");
+	}
+	writeFileSync(activityPath, activity);
 	console.log("patched MainActivity.kt");
 } finally {
 	rmSync(work, { recursive: true, force: true });
@@ -484,6 +491,56 @@ function activityHelpersSource(): string {
       } catch (_: Exception) {
       }
     }
+  }
+`;
+}
+
+/**
+ * System bar appearance, driven by the page through the `PrometheusHost` bridge. Android picks the bar icon colour
+ * from the phone's theme, but the app theme is a user preference and the two often disagree (a dark app on a light
+ * phone got invisible icons). Calling `theme(true)` means a dark app theme, so the icons go light.
+ */
+function systemBarSource(): string {
+	return `
+  // The page reports its own theme (Settings > Appearance), which may differ from the phone's dark mode.
+  override fun onWebViewCreate(webView: android.webkit.WebView) {
+    super.onWebViewCreate(webView)
+    try {
+      webView.addJavascriptInterface(SystemBarBridge(), "PrometheusHost")
+    } catch (_: Throwable) {
+    }
+  }
+
+  inner class SystemBarBridge {
+    @android.webkit.JavascriptInterface
+    fun theme(dark: Boolean) {
+      runOnUiThread { applySystemBarTheme(dark) }
+    }
+  }
+
+  @Suppress("DEPRECATION")
+  private fun applySystemBarTheme(dark: Boolean) {
+    val w = window
+    if (android.os.Build.VERSION.SDK_INT < 35) {
+      w.statusBarColor = android.graphics.Color.TRANSPARENT
+      w.navigationBarColor = android.graphics.Color.TRANSPARENT
+    }
+    if (android.os.Build.VERSION.SDK_INT >= 29) {
+      w.isStatusBarContrastEnforced = false
+      w.isNavigationBarContrastEnforced = false
+    }
+    if (android.os.Build.VERSION.SDK_INT >= 30) {
+      val controller = w.insetsController ?: return
+      val lightBars = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+      // A dark app theme keeps light icons: clear the LIGHT_* appearance bits.
+      controller.setSystemBarsAppearance(if (dark) 0 else lightBars, lightBars)
+    } else {
+      var flags = w.decorView.systemUiVisibility
+      flags = if (dark) flags and android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv() else flags or android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+      w.decorView.systemUiVisibility = flags
+    }
+    // Behind the transparent bars: the app's own background, so no white strip appears in dark mode.
+    w.setBackgroundDrawableResource(if (dark) android.R.color.black else android.R.color.white)
   }
 `;
 }

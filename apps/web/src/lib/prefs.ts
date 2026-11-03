@@ -53,6 +53,7 @@ function load(): Prefs {
 export const usePrefs = create<Prefs>(load);
 
 import { onMediaChange } from "./media.ts";
+import { syncNativeTheme } from "./native.ts";
 const media = window.matchMedia("(prefers-color-scheme: light)");
 
 function apply(p: Prefs): void {
@@ -63,6 +64,8 @@ function apply(p: Prefs): void {
 	root.dataset.motion = p.motion ? "on" : "off";
 	root.lang = p.lang === "zh" ? ["zh", "CN"].join("-") : "en";
 	root.style.colorScheme = light ? "light" : "dark";
+	// Android: the status bar icons follow the app theme, not the phone's (the two can differ).
+	syncNativeTheme(!light);
 	// Keep the Android status bar in step with the resolved theme (a fixed dark value made light mode unreadable).
 	let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
 	if (!meta) {
