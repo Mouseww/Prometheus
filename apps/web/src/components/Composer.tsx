@@ -9,6 +9,8 @@ import { fileToImage, ImageError, imageSrc, MAX_IMAGES } from "../lib/images.ts"
 import { inputAt, rememberInput } from "../lib/inputHistory.ts";
 import { aliasKey, type SendMode, setPrefs, usePrefs } from "../lib/prefs.ts";
 import { abortRun, openSettings, pluginCall, sendPrompt, setModel, setPermissionMode, setThinking, toast, unqueue, useSpace, useStore } from "../lib/store.ts";
+import { BACK_LAYER, useBackLayer } from "../lib/back.ts";
+import { useVisualViewport } from "../lib/viewport.ts";
 import { ContextMeter } from "./ContextMeter.tsx";
 import { ModePicker } from "./ModePicker.tsx";
 import { RuntimeMenu } from "./RuntimeMenu.tsx";
@@ -560,6 +562,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 	const streaming = session?.isStreaming ?? false;
 	// ArrowUp history: position in the sent messages (-1: not browsing) and what was typed before browsing.
 	const history = useRef({ at: -1, draft: "" });
+	const view = useStore((s) => s.view);
 	const [expanded, setExpanded] = useState(false);
 	const expandedRef = useRef<HTMLTextAreaElement>(null);
 	/** The textarea being typed into: the expanded sheet covers the inline one. */
@@ -568,13 +571,21 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 		setExpanded(false);
 		requestAnimationFrame(() => ref.current?.focus());
 	};
+	const sheet = useVisualViewport();
+
+	// A view (settings, git, ...) is drawn under the sheet's portal: step aside rather than hide it.
+	useEffect(() => {
+		if (view !== "chat") setExpanded(false);
+	}, [view]);
+	// Esc and the button close the sheet on a desktop; on a phone the back gesture has to as well.
+	useBackLayer(BACK_LAYER.sheet, expanded, collapse);
 
 	useEffect(() => {
 		if (editorText) {
 			const { text: next, images: attached, append } = editorText;
 			setText(append && textRef.current.trim() ? `${next}\n${textRef.current}` : next);
 			if (attached?.length) setImages((cur) => [...cur, ...attached].slice(0, MAX_IMAGES));
-			ref.current?.focus();
+			activeInput()?.focus();
 		}
 	}, [editorText]);
 
@@ -627,7 +638,11 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 			clearTimeout(timer);
 		};
 	}, [mentionQuery, cwd]);
-	const showMention = mentionQuery !== undefined && mentionItems.length > 0;
+	// A view (settings, git, ...) is drawn in a modal that these popups out-rank, so they step aside instead of
+	// floating over it. The sheet is a portal above both and closes with the view, so it keeps its own copies.
+	const suggesting = view === "chat";
+	const showMention = suggesting && mentionQuery !== undefined && mentionItems.length > 0;
+	const showCommands = suggesting && !showMention && matches.length > 0;
 
 	const pickMention = (item: { path: string; dir: boolean }) => {
 		if (!mention) return;
@@ -762,7 +777,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 				return;
 			}
 		}
-		if (matches.length) {
+		if (showCommands) {
 			if (e.key === "ArrowDown" || e.key === "ArrowUp") {
 				e.preventDefault();
 				setCursor((c) => (c + (e.key === "ArrowDown" ? 1 : matches.length - 1)) % matches.length);
@@ -827,7 +842,8 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 	// While speaking, drafts replace one another between `before` and `after`, captured when the take began.
 	const dictation = useRef<{ before: string; after: string } | null>(null);
 	const insertDictation = (spoken: string, final: boolean) => {
-		const el = ref.current;
+		// Whichever box is on screen: with the sheet open this used to read the inline one and land at its caret.
+		const el = activeInput();
 		if (!dictation.current) {
 			if (!spoken) return;
 			const current = textRef.current;
@@ -867,7 +883,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 				</div>
 			)}
 
-			{matches.length > 0 && !showMention && (
+			{showCommands && (
 				<div className="absolute right-3 bottom-full left-3 z-30 mb-2 overflow-hidden rounded-xl border border-ink-700 bg-ink-900/95 shadow-2xl shadow-black/40 backdrop-blur md:right-5 md:left-5">
 					<SlashCommands items={matches} cursor={cursor} onPick={pickSlash} />
 				</div>
@@ -1014,10 +1030,14 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 			</div>
 
 			{/* Full-screen sheet for long input, mostly on phones where the box above is cramped. Everything it needs is
-			    rendered inside it: the suggestions and the attachment thumbnails would otherwise sit behind this panel. */}
+			    rendered inside it: the suggestions and the attachment thumbnails would otherwise sit behind this panel.
+			    It follows the visual viewport so the keyboard cannot cover the suggestions at its bottom. */}
 			{expanded &&
 				createPortal(
-					<div className="fixed inset-0 z-[55] flex flex-col bg-ink-950" style={{ paddingTop: "env(safe-area-inset-top, 0px)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
+					<div
+						className="fixed right-0 left-0 z-[55] flex flex-col overflow-hidden bg-ink-950"
+						style={{ top: sheet.top, height: sheet.height, paddingTop: "env(safe-area-inset-top, 0px)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+					>
 						<div className="flex items-center gap-2 border-b border-ink-800 px-3 py-2">
 							<span className="min-w-0 flex-1 truncate text-sm font-medium text-ink-200">{t("expand")}</span>
 							<button
@@ -1062,7 +1082,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 									<Mentions items={mentionItems} cursor={mentionCursor} onPick={pickMention} onHover={setMentionCursor} />
 								</div>
 							)}
-							{matches.length > 0 && !showMention && (
+							{showCommands && (
 								<div className="max-h-56 shrink-0 overflow-y-auto border-t border-ink-800">
 									<SlashCommands items={matches} cursor={cursor} onPick={pickSlash} />
 								</div>

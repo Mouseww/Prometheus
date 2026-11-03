@@ -11,6 +11,11 @@ interface AndroidHost {
 declare global {
 	interface Window {
 		PrometheusHost?: AndroidHost;
+		/**
+		 * The other direction: the shell asks the page what a back gesture should close (lib/back.ts answers, and
+		 * `false` means the shell backgrounds the app).
+		 */
+		PrometheusBack?: () => boolean;
 	}
 }
 

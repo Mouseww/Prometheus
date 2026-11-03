@@ -353,6 +353,14 @@ try {
 		if (/startPrometheusService\(\)\n/.test(activity)) activity = activity.replace(/startPrometheusService\(\)\n/, "startPrometheusService()\n    applySystemBarTheme(true)\n");
 		if (!activity.includes("applySystemBarTheme")) throw new Error("could not patch MainActivity.kt (template changed?)");
 	}
+	// The back gesture is a third one: the page decides what it closes, so it has to be patched in even on projects
+	// that already carry the other two.
+	if (!activity.includes("PrometheusBack")) {
+		activity = activity.replace(/\n\}\s*$/, () => `\n${backSource()}}\n`);
+		if (/applySystemBarTheme\(true\)\n/.test(activity)) activity = activity.replace(/applySystemBarTheme\(true\)\n/, "applySystemBarTheme(true)\n    installBackBridge()\n");
+		else if (/startPrometheusService\(\)\n/.test(activity)) activity = activity.replace(/startPrometheusService\(\)\n/, "startPrometheusService()\n    installBackBridge()\n");
+		if (!/\n\s+installBackBridge\(\)\n/.test(activity)) throw new Error("could not patch MainActivity.kt (template changed?)");
+	}
 	writeFileSync(activityPath, activity);
 	console.log("patched MainActivity.kt");
 } finally {
@@ -491,6 +499,56 @@ function activityHelpersSource(): string {
       } catch (_: Exception) {
       }
     }
+  }
+`;
+}
+
+/**
+ * The system back gesture, handed to the page instead of finishing the activity from wherever the user was.
+ *
+ * The page exposes `window.PrometheusBack` (apps/web/src/lib/back.ts): it closes the topmost thing that can be closed
+ * — the full-screen composer, a view, the drawer — and answers false when nothing wanted the gesture, which is when
+ * the app goes to the background. The local server keeps running as a foreground service either way.
+ */
+function backSource(): string {
+	return `
+  // Both paths, because predictive back (API 33+) routes around onBackPressed when the app opts in. Only one of them
+  // is live per system configuration; the timestamp keeps a doubled event from closing two layers.
+  private var prometheusBackAt = 0L
+
+  private fun installBackBridge() {
+    if (android.os.Build.VERSION.SDK_INT < 33) return
+    try {
+      onBackInvokedDispatcher.registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT) { prometheusHandleBack() }
+    } catch (_: Throwable) {
+    }
+  }
+
+  @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+  override fun onBackPressed() {
+    if (!prometheusHandleBack()) super.onBackPressed()
+  }
+
+  /** True when the page took the gesture; false lets the caller fall back to the shell's own behaviour. */
+  private fun prometheusHandleBack(): Boolean {
+    val page = findPrometheusWebView(window.decorView) ?: return false
+    val now = android.os.SystemClock.elapsedRealtime()
+    if (now - prometheusBackAt < 300) return true
+    prometheusBackAt = now
+    page.evaluateJavascript("window.PrometheusBack ? (window.PrometheusBack() === true) : false") { answer ->
+      if (answer?.trim('"') != "true") moveTaskToBack(true)
+    }
+    return true
+  }
+
+  private fun findPrometheusWebView(view: android.view.View): android.webkit.WebView? {
+    if (view is android.webkit.WebView) return view
+    if (view is android.view.ViewGroup) {
+      for (i in 0 until view.childCount) {
+        findPrometheusWebView(view.getChildAt(i))?.let { return it }
+      }
+    }
+    return null
   }
 `;
 }
