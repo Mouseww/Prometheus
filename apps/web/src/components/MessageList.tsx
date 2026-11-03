@@ -8,6 +8,8 @@ import { type AssistantMessage, type ChatMessage, type ImageContent, parseGoalDi
 import { FileText } from "lucide-react";
 import { DownloadButton } from "./FileDownloadButton.tsx";
 import { formatSize } from "../lib/attachments.ts";
+import { cacheRate, fmtPercent, fmtTokens } from "../lib/format.ts";
+import { speedTracker } from "../lib/speed.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { imagesOf } from "../lib/images.ts";
 import { deleteMessage, editMessage, fetchToolResult, forkMessage, openFile, pluginActive, retryMessage, type ToolRun, toast, useStore } from "../lib/store.ts";
@@ -34,6 +36,11 @@ function scrollParent(el: HTMLElement | null): HTMLElement | null {
 const M = defineMessages({
 	zh: {
 		thinkingLive: "思考中…",
+		statIn: "输入 {n}",
+		statOut: "输出 {n}",
+		statCache: "缓存命中 {r}",
+		statTtft: "首字 {v}",
+		statTitle: "这一轮回答的用量（含工具调用产生的多次模型请求）；速度从第一个字出来开始计，只统计流式输出",
 		thinking: "思考过程",
 		stepsDone: "已完成 {n} 个步骤",
 		chars: "{n} 字",
@@ -57,6 +64,11 @@ const M = defineMessages({
 	},
 	en: {
 		thinkingLive: "Thinking…",
+		statIn: "in {n}",
+		statOut: "out {n}",
+		statCache: "cache hit {r}",
+		statTtft: "first token {v}",
+		statTitle: "Usage of this answer (all model calls it made, tool rounds included). Speed is timed from the first token and only for streamed replies",
 		thinking: "Thoughts",
 		stepsDone: "{n} steps completed",
 		chars: "{n} chars",
@@ -391,6 +403,48 @@ async function removeAll(indices: number[]): Promise<void> {
 	for (const i of [...indices].reverse()) await deleteMessage(i);
 }
 
+/** Tokens, cache hit rate and speed of one answer (all its model calls), small and quiet under it. */
+function TurnStats({ group, sessionId }: { group: { message: AssistantMessage; index: number }[]; sessionId: string }) {
+	const t = useT(M);
+	let input = 0;
+	let output = 0;
+	let cacheRead = 0;
+	let cacheWrite = 0;
+	let tokens = 0;
+	let ms = 0;
+	let ttft: number | null = null;
+	for (const { message } of group) {
+		const u = message.usage;
+		if (!u) continue;
+		input += u.input ?? 0;
+		output += u.output ?? 0;
+		cacheRead += u.cacheRead ?? 0;
+		cacheWrite += u.cacheWrite ?? 0;
+		const sp = speedTracker.of(sessionId, message.timestamp);
+		if (sp) {
+			tokens += sp.outputTokens;
+			ms += (sp.outputTokens / sp.tps) * 1000;
+			ttft ??= sp.ttftMs;
+		}
+	}
+	if (input + output + cacheRead + cacheWrite === 0) return null;
+	const hit = cacheRate({ input, cacheRead, cacheWrite });
+	const parts = [
+		t("statIn", { n: fmtTokens(input + cacheRead + cacheWrite) }),
+		t("statOut", { n: fmtTokens(output) }),
+		...(hit != null && cacheRead + cacheWrite > 0 ? [t("statCache", { r: fmtPercent(hit) })] : []),
+		...(ms > 0 ? [`${(tokens / (ms / 1000)).toFixed(tokens / (ms / 1000) >= 100 ? 0 : 1)} t/s`] : []),
+		...(ttft != null ? [t("statTtft", { v: ttft < 1000 ? `${Math.round(ttft)} ms` : `${(ttft / 1000).toFixed(1)} s` })] : []),
+	];
+	return (
+		<div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[10.5px] text-ink-500" title={t("statTitle")}>
+			{parts.map((p) => (
+				<span key={p}>{p}</span>
+			))}
+		</div>
+	);
+}
+
 function Actions({ index, indices, text, canRetry, align, onEdit }: { index: number; indices?: number[]; text: string; canRetry: boolean; align: "start" | "end"; onEdit?: () => void }) {
 	const t = useT(M);
 	const [copied, setCopied] = useState(false);
@@ -532,6 +586,7 @@ export function MessageList({
 }) {
 	const t = useT(M);
 	const [editingAt, setEditingAt] = useState<number | null>(null);
+	const sessionId = useStore((s) => s.session?.id ?? "");
 	// Absolute index (in the whole conversation) of the first message shown; null until the first render picks the latest turns.
 	const [shownFrom, setShownFrom] = useState<number | null>(null);
 	const root = useRef<HTMLDivElement>(null);
@@ -753,6 +808,7 @@ export function MessageList({
 							<Avatar />
 							<div className="min-w-0 flex-1">
 								<TurnBody group={group} live={live} awaitingNext={awaitingNext} streaming={streaming} lastIndex={lastIndex} tools={tools} results={results} />
+								{!live && <TurnStats group={group} sessionId={sessionId} />}
 								{!live && (
 									<Actions
 										index={lastInGroup}

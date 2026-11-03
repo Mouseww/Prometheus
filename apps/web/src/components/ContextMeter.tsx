@@ -91,20 +91,6 @@ function useSpeed() {
 const fmtRate = (v: number) => (v >= 100 ? String(Math.round(v)) : v.toFixed(1));
 const fmtMs = (ms: number) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`);
 
-/** Footer figure: tokens per second of the reply being written, or of the last one. Details are in the usage popover. */
-export function SpeedChip() {
-	const t = useT(M);
-	const { summary, live } = useSpeed();
-	const rate = live?.tps ?? null;
-	const value = rate ?? (live ? null : (summary.last?.tps ?? null));
-	if (value === null) return null;
-	return (
-		<span className={clsx("shrink-0 whitespace-nowrap px-1 font-mono text-[11px] @max-[24rem]:hidden", rate !== null ? "text-ember-300" : "text-ink-500")} title={t("speed")}>
-			{rate !== null ? "~" : ""}{fmtRate(value)} t/s
-		</span>
-	);
-}
-
 function Ring({ percent }: { percent: number | null }) {
 	const p = Math.min(Math.max(percent ?? 0, 0), 100);
 	const r = 8;

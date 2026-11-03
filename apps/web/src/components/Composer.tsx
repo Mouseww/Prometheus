@@ -7,7 +7,7 @@ import { type Attachment, AttachmentError, fileToAttachment, formatSize, isPictu
 import { fileToImage, ImageError, imageSrc, MAX_IMAGES } from "../lib/images.ts";
 import { aliasKey, type SendMode, setPrefs, usePrefs } from "../lib/prefs.ts";
 import { abortRun, openSettings, pluginCall, sendPrompt, setModel, setPermissionMode, setThinking, toast, unqueue, useSpace, useStore } from "../lib/store.ts";
-import { ContextMeter, SpeedChip } from "./ContextMeter.tsx";
+import { ContextMeter } from "./ContextMeter.tsx";
 import { ModePicker } from "./ModePicker.tsx";
 import { RuntimeMenu } from "./RuntimeMenu.tsx";
 import { GoalBar } from "./GoalBar.tsx";
@@ -886,7 +886,6 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 					<PermissionPicker />
 					<ModePicker />
 					<div className="flex-1" />
-					<SpeedChip />
 					<ContextMeter />
 				</div>
 			</div>

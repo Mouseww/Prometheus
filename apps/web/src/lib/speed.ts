@@ -45,6 +45,8 @@ export function estimateTokens(text: string): number {
 export class SpeedTracker {
 	private readonly running = new Map<string, Running>();
 	private readonly summaries = new Map<string, SpeedSummary>();
+	/** Speed of each timed reply, by `sessionId:timestamp` of its final message. */
+	private readonly byMessage = new Map<string, ReplySpeed>();
 	private readonly totals = new Map<string, { tokens: number; ms: number }>();
 	private readonly listeners = new Set<() => void>();
 
@@ -52,6 +54,11 @@ export class SpeedTracker {
 		this.listeners.add(fn);
 		return () => this.listeners.delete(fn);
 	};
+
+	/** The measured speed of one assistant message, or undefined (loaded from history, not streamed, too quick). */
+	of(sessionId: string, timestamp: number): ReplySpeed | undefined {
+		return this.byMessage.get(`${sessionId}:${timestamp}`);
+	}
 
 	summary(sessionId: string): SpeedSummary {
 		return this.summaries.get(sessionId) ?? EMPTY;
@@ -89,6 +96,7 @@ export class SpeedTracker {
 			const ms = now - r.first;
 			if (ms < MIN_MS) return;
 			const last: ReplySpeed = { tps: out / (ms / 1000), ttftMs: r.first - r.start, outputTokens: out, ...(m.provider && m.model ? { model: `${m.provider}/${m.model}` } : {}) };
+			this.byMessage.set(`${sessionId}:${(e.message as { timestamp?: number }).timestamp ?? 0}`, last);
 			const t = this.totals.get(sessionId) ?? { tokens: 0, ms: 0 };
 			t.tokens += out;
 			t.ms += ms;
