@@ -35,6 +35,7 @@ const M = defineMessages({
 		canDoHint: "点一张卡片，这句话会填进对话框，你可以先改再发",
 		hello: "普罗，我帮你",
 		helloHint: "说一句要做什么，它自己想办法：查资料、做文件、写报告，把成品交给你",
+		composerHint: "今天想做点什么？或者点上面一个技能试试",
 		tryIt: "试一下",
 		cat_office: "办公",
 		cat_creative: "创作",
@@ -67,6 +68,7 @@ const M = defineMessages({
 		canDoHint: "Tap a card and the request lands in the chat, ready for you to edit",
 		hello: "Hi, I'm 普罗",
 		helloHint: "Say what you need done and it works it out: research, files, reports, ready-made results",
+		composerHint: "What shall we get done? Or pick a skill above",
 		tryIt: "Try it",
 		cat_office: "Office",
 		cat_creative: "Creative",
@@ -160,78 +162,37 @@ function QuestionRow({ q, project, title }: { q: PendingQuestion; project: strin
 
 const Empty = ({ text }: { text: string }) => <p className="text-xs text-ink-500">{text}</p>;
 
-const CATEGORY_TITLE = { office: "cat_office", creative: "cat_creative", utility: "cat_utility" } as const;
-const CATEGORIES = ["office", "creative", "utility"] as const;
-
 /**
- * "普罗能做什么": the shipped skills, laid out the way WorkBuddy's home page does it — a quiet headline, one row of
- * pill tabs to switch category, and a light grid of cards underneath. Clicking a card opens the assistant's chat with
- * that request in the composer, so the user sees exactly what is about to be asked and can still edit it.
+ * The skill rail above the input: one compact pill per shipped skill, the way an agent workbench offers capabilities.
+ * No heading and no grid — a returning user wants to start working, not read a feature list.
  */
-function Capabilities({ cards }: { cards: SkillCard[] }) {
+function SkillRail({ cards }: { cards: SkillCard[] }) {
 	const t = useT(M);
-	const groups = useMemo(() => CATEGORIES.map((cat) => ({ cat, items: cards.filter((c) => c.category === cat) })).filter((g) => g.items.length > 0), [cards]);
-	const [active, setActive] = useState<SkillCard["category"] | null>(null);
-	// A category can disappear (its skills switched off in Settings); fall back to the first one that still has cards.
-	const shown = groups.find((g) => g.cat === active) ?? groups[0];
-	if (!shown) return null;
-	const start = async (text: string) => {
+	const start = async (c: SkillCard) => {
 		await openAssistantMain();
 		// Same channel as "edit message": the composer takes the text in and focuses, so one send is all it takes.
-		useStore.setState({ editorText: { text, nonce: Date.now() } });
+		useStore.setState({ editorText: { text: c.examples[0] ?? c.title, nonce: Date.now() } });
 	};
+	if (cards.length === 0) return null;
 	return (
-		<section className="mx-auto w-full max-w-4xl">
-			<div className="text-center">
-				<h2 className="font-display text-xl font-semibold tracking-tight text-ink-100 @3xl:text-2xl">{t("canDo")}</h2>
-				<p className="mt-1.5 text-[13px] text-ink-500">{t("canDoHint")}</p>
-			</div>
-			<div className="mt-4 flex flex-wrap items-center justify-center gap-2" role="tablist" aria-label={t("canDo")}>
-				{groups.map((g) => {
-					const on = g.cat === shown.cat;
-					return (
-						<button
-							key={g.cat}
-							type="button"
-							role="tab"
-							aria-selected={on}
-							onClick={() => setActive(g.cat)}
-							className={clsx(
-								"h-8 rounded-full px-3.5 text-[13px] transition-colors",
-								"focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ember-400",
-								// The active tab wears the brand accent, the way selected controls do elsewhere in the app.
-								on ? "bg-ember-500 font-medium text-ink-950 shadow-[0_4px_14px_-6px_rgb(var(--glow)/0.7)]" : "text-ink-400 hover:bg-ember-500/10 hover:text-ember-200",
-							)}
-						>
-							{t(CATEGORY_TITLE[g.cat])}
-						</button>
-					);
-				})}
-			</div>
-			<div className="mt-4 grid gap-3 @lg:grid-cols-2 @4xl:grid-cols-3">
-				{shown.items.map((c) => (
-					<button
-						key={c.name}
-						type="button"
-						onClick={() => void start(c.examples[0] ?? c.title)}
-						title={c.examples[0]}
-						className={clsx(
-							"suggest-card group flex flex-col rounded-xl border border-ink-800 bg-ink-900/70 p-3 text-left",
-							"focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ember-400",
-						)}
-					>
-						<span className="flex items-center gap-2 text-[13.5px] font-medium text-ink-100">
-							<span className="grid size-7 shrink-0 place-items-center rounded-lg bg-ember-500/10 text-ember-400 transition-colors group-hover:bg-ember-500/20 group-hover:text-ember-300">
-								{CARD_ICON[c.name] ?? <Sparkles className="size-4" />}
-							</span>
-							{c.title}
-						</span>
-						<span className="mt-1.5 line-clamp-1 text-[11.5px] text-ink-500">{c.tagline}</span>
-						{c.examples[0] && <span className="mt-2 line-clamp-2 text-[11.5px] leading-snug text-ink-400 group-hover:text-ink-200">{c.examples[0]}</span>}
-					</button>
-				))}
-			</div>
-		</section>
+		<div className="rail-x -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1" role="group" aria-label={t("canDo")}>
+			{cards.map((c) => (
+				<button
+					key={c.name}
+					type="button"
+					onClick={() => void start(c)}
+					title={c.examples[0] ?? c.tagline}
+					className={clsx(
+						"flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-ink-800 bg-ink-900/70 px-3 text-[12.5px] text-ink-300 transition-colors",
+						"hover:border-ember-500/50 hover:bg-ember-500/10 hover:text-ember-200",
+						"focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ember-400",
+					)}
+				>
+					<span className="text-ember-400">{CARD_ICON[c.name] ?? <Sparkles className="size-3.5" />}</span>
+					{c.title}
+				</button>
+			))}
+		</div>
 	);
 }
 
@@ -298,20 +259,26 @@ export function PersonalHome() {
 							</ul>
 						</Card>
 					)}
-					{/* The centre of the page, as on WorkBuddy's own home: what it is for, then how to start. */}
-					<div className="pt-2 text-center @3xl:pt-6">
-						<h2 className="font-display text-2xl font-semibold tracking-tight text-ink-100 @3xl:text-[28px]">{t("hello")}</h2>
-						<p className="mx-auto mt-2 max-w-md text-[13px] leading-relaxed text-ink-500">{t("helloHint")}</p>
+					{/* The workbench centre: the way in is the input, not a pitch. A short heading, the skill rail that fills it,
+					    then one button that opens the composer ready to type. */}
+					<div className="mx-auto w-full max-w-2xl pt-2 @3xl:pt-8">
+						<h2 className="text-center font-display text-lg font-semibold tracking-tight text-ink-100">{t("hello")}</h2>
+						<p className="mt-1.5 text-center text-[12.5px] leading-relaxed text-ink-500">{t("helloHint")}</p>
+						<div className="mt-4">
+							<SkillRail cards={cards} />
+						</div>
+						{/* Looks like the composer it opens: same shape, same placeholder, same accent send button. */}
 						<button
 							type="button"
 							onClick={() => void openAssistantMain()}
-							className="btn-glow mt-5 inline-flex h-10 items-center gap-2 rounded-full bg-ember-500 px-5 text-[13px] font-medium text-ink-950 transition-transform hover:scale-[1.02] active:scale-[0.99]"
+							className="mt-2.5 flex w-full items-end gap-3 rounded-2xl border border-ink-800 bg-ink-900/85 px-4 py-3.5 text-left shadow-[0_10px_40px_-12px_rgb(0_0_0/0.45)] backdrop-blur transition-colors hover:border-ember-500/40"
 						>
-							<MessageCircle className="size-4" />
-							{t("chat")}
+							<span className="min-w-0 flex-1 text-[14px] text-ink-500">{t("composerHint")}</span>
+							<span className="btn-glow grid size-8 shrink-0 place-items-center rounded-full bg-ember-500 text-ink-950">
+								<ChevronRight className="size-4" />
+							</span>
 						</button>
 					</div>
-					<Capabilities cards={cards} />
 					{/* What already happened: quieter, and only shown when there is something to say. */}
 					<div className="grid gap-3 @2xl:grid-cols-2">
 						<Card icon={<Flame className="size-4 text-ember-300" />} title={t("briefing")} hint={overview ? (overview.settings.enabled ? t("briefingOn", { time: overview.settings.time }) : t("briefingOff")) : undefined}>

@@ -212,6 +212,11 @@ body { margin: 0; overflow: hidden; overscroll-behavior: none; }
 
 * { scrollbar-width: thin; scrollbar-color: var(--color-ink-600) transparent; }
 
+/* A single-line rail that scrolls sideways without showing a scrollbar (the cut-off pill is the affordance).
+   Needs !important: the `*` rule above is the same specificity and would win on source order. */
+.rail-x { scrollbar-width: none !important; }
+.rail-x::-webkit-scrollbar { display: none; }
+
 /* Markdown */
 .prose-forge { line-height: 1.7; font-size: 0.95rem; overflow-wrap: anywhere; }
 .prose-forge > * + * { margin-top: 0.75em; }
