@@ -160,10 +160,24 @@ Server 侧与 TUI 一致地加载 PI 的内置扩展（MCP 客户端、codemode�
 | 插件 | 接入 PI 的方式 | RPC | UI |
 |------|---------------|-----|----|
 | `mcp` | `pi.registerMcpServer()` 交给 PI 内置 MCP 扩展连接（OAuth、exposure、codemode 均复用 PI）；另只读展示 PI 自己的 `mcp.json` | list / save / toggle / delete / probe（用 pi-mcp 客户端即时连接并列出工具） | MCP 页：stdio/HTTP、env/headers（密钥脱敏回显）、测试连接 |
-| `skills` | `resources_discover` 返回启用技能的目录，与 PI 自带的 `~/.pi/agent/skills`、`.pi/skills` 合并 | list / get / create / save / toggle / delete | 技能页：按来源分组，SKILL.md 编辑器 |
+| `skills` | `resources_discover` 返回启用技能的目录，与 PI 自带的 `~/.pi/agent/skills`、`.pi/skills` 合并 | list / get / create / save / toggle / delete / catalog | 技能页：按来源分组，SKILL.md 编辑器；个人空间主页的“普罗能做什么”卡片 |
 | `memory` | 工具 `memory_save` / `memory_search` / `memory_forget`；`before_agent_start` 按相关度注入置顶 + 命中记忆（≤ 8 条 / 3000 字） | list / add / update / delete / settings | 记忆页：全局/项目作用域、置顶、标签、批量删除、自动注入开关 |
 
 记忆检索为零依赖的词项匹配（拉丁词 + CJK 二元组），足够应对数千条规模；需要语义召回时可以用插件替换为向量实现。注入段落明确标注“视为上下文而非指令”，降低被污染记忆影响。
+
+### 4.3.1 内置技能
+
+`plugins/skills/src/builtin-skills.ts` 在每次启动时把技能写到 `plugin-data/skills/builtin/`（覆盖写，保证文本与版本一致）。除 `prometheus`（软件自身说明）外，内置了一批办公与生产力技能，放在 `builtin/office.ts` 与 `builtin/creative.ts`：
+
+| 技能 | 做什么 |
+|------|--------|
+| `office-pptx` / `office-docx` / `office-xlsx` | 用 python-pptx / python-docx / openpyxl 产出真正可编辑的演示文稿、文档、表格 |
+| `diagram-chart` | 数据图表（选型、零基线、中文中文字体）与流程图/架构图（Mermaid、draw.io、SVG） |
+| `work-report` / `meeting-minutes` / `email-writing` | 汇报（结论先行、带风险与下一步）、纪要（待办必带负责人与截止）、邮件公文 |
+| `novel-writing` / `make-video` / `make-poster` | 小说分阶段创作与去 AI 味、ffmpeg/Remotion 剪视频、海报封面排版 |
+| `web-research` / `pc-maintenance` | 用内置浏览器查证并给出处、电脑体检与排障（只读优先、破坏性动作需确认） |
+
+设计取向：**正文按需读取，卡片常驻可见**。技能正文只在模型需要那门技能时读入，平时不占上下文；描述（每轮进 system prompt）合计约 1.5k token。带 `offered` 标记的技能由 `catalog` RPC 提供给个人空间主页，点示例即把请求填进助理对话的输入框（不代发）；助理插件同时把这份能力清单注入自己的系统提示，避免回答“我做不到”。
 
 > **安全**：插件与 PI 扩展都是受信代码，运行在宿主进程内，拥有宿主进程的全部权限。只安装可信来源的插件。
 

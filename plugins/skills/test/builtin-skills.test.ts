@@ -41,3 +41,33 @@ describe("built-in skills", () => {
 		}
 	});
 });
+
+describe("productivity skills", () => {
+	it("ships every card with the text the home page needs", () => {
+		const cards = BUILTIN_SKILLS.filter((s) => s.offered);
+		expect(cards.length).toBeGreaterThanOrEqual(10);
+		for (const s of cards) {
+			expect(s.title, s.name).toBeTruthy();
+			expect(s.tagline, s.name).toBeTruthy();
+			expect(s.examples?.length, s.name).toBeGreaterThan(0);
+			// A card is one click to a real request: short enough to read, specific enough to act on.
+			for (const e of s.examples ?? []) expect(e.length, `${s.name}: ${e}`).toBeGreaterThan(6);
+			expect(["office", "creative", "utility"]).toContain(s.category);
+		}
+	});
+
+	it("uses the skill naming rules and keeps names unique", () => {
+		const names = BUILTIN_SKILLS.map((s) => s.name);
+		expect(new Set(names).size).toBe(names.length);
+		for (const s of BUILTIN_SKILLS) expect(s.name).toMatch(/^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,63}$/);
+	});
+
+	it("names the capability other skills depend on, so the model knows what is available", () => {
+		const meta = (name: string) => BUILTIN_SKILLS.find((s) => s.name === name);
+		// The report and video skills point at siblings; a rename there would break the cross-links.
+		expect(meta("work-report")?.files["SKILL.md"]).toContain("office-docx");
+		expect(meta("meeting-minutes")?.files["SKILL.md"]).toContain("audio-transcribe");
+		expect(meta("office-docx")?.files["SKILL.md"]).toContain("office-pptx");
+		expect(meta("diagram-chart")?.files["SKILL.md"]).toContain("chart");
+	});
+});

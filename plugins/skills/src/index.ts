@@ -11,6 +11,15 @@ interface State {
 	disabled: string[];
 }
 
+/** One card the personal home page shows: what this capability is and how to ask for it. */
+export interface SkillCard {
+	name: string;
+	title: string;
+	tagline: string;
+	category: "office" | "creative" | "utility";
+	examples: string[];
+}
+
 export default definePlugin({
 	name: "skills",
 	version: "0.1.0",
@@ -21,6 +30,7 @@ export default definePlugin({
 		const builtinDir = join(ctx.dataDir, "builtin");
 		await installBuiltinSkills(builtinDir).catch((err: unknown) => ctx.log.warn(`内置技能写入失败：${err instanceof Error ? err.message : err}`));
 		const builtinNames = new Set(BUILTIN_SKILLS.map((s) => s.name));
+		const builtinMeta = new Map(BUILTIN_SKILLS.map((s) => [s.name, s]));
 		const state = createJsonStore<State>(join(ctx.dataDir, "state.json"), () => ({ disabled: [] }));
 
 		const ownSkills = (): Skill[] => loadSkillsFromDir({ dir: library }).skills.filter((s) => !builtinNames.has(s.name));
@@ -56,6 +66,7 @@ export default definePlugin({
 			const toInfo = (s: Skill, scope: SkillInfo["scope"]): SkillInfo => ({
 				name: s.name,
 				description: s.description,
+				title: builtinMeta.get(s.name)?.title,
 				path: s.filePath,
 				scope,
 				enabled: scope !== "prometheus" && scope !== "builtin" ? true : !disabled.has(s.name),
@@ -68,6 +79,19 @@ export default definePlugin({
 				...loadSkillsFromDir({ dir: join(ctx.agentDir, "skills") }).skills.map((s) => toInfo(s, "user")),
 				...loadSkillsFromDir({ dir: resolve(ctx.cwd, ".pi", "skills") }).skills.map((s) => toInfo(s, "project")),
 			];
+		});
+
+		// What the personal home page offers: the shipped capabilities a newcomer would never guess are there.
+		// Only the cards' own text; the SKILL.md bodies stay on disk until the model actually needs one.
+		ctx.rpc("catalog", async (): Promise<SkillCard[]> => {
+			const disabled = new Set((await state.read()).disabled);
+			return BUILTIN_SKILLS.filter((s) => s.offered && s.category && !disabled.has(s.name)).map((s) => ({
+				name: s.name,
+				title: s.title ?? s.name,
+				tagline: s.tagline ?? "",
+				category: s.category as SkillCard["category"],
+				examples: s.examples ?? [],
+			}));
 		});
 
 		ctx.rpc("get", async (params): Promise<SkillDocument> => {

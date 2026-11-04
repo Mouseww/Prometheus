@@ -1,4 +1,4 @@
-import { ChevronRight, CircleHelp, Clock, Flame, MessageCircle, Share2 } from "lucide-react";
+import { BarChart3, ChevronRight, CircleHelp, Clock, FileSpreadsheet, FileText, Flame, Mail, MessageCircle, PenLine, Presentation, Share2, Sparkles, Video, Wrench } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AutomationTask } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
@@ -30,6 +30,12 @@ const M = defineMessages({
 		answerPlaceholder: "或者直接写答案…",
 		send: "回答",
 		gone: "这个问题已经不需要回答了（运行已结束）",
+		canDo: "普罗能做什么",
+		canDoHint: "点一个，直接用这句话开始",
+		tryIt: "试一下",
+		cat_office: "办公",
+		cat_creative: "创作",
+		cat_utility: "工具",
 	},
 	en: {
 		title: "Home",
@@ -54,6 +60,12 @@ const M = defineMessages({
 		answerPlaceholder: "Or type an answer…",
 		send: "Answer",
 		gone: "This question is no longer open (the run ended)",
+		canDo: "What I can do for you",
+		canDoHint: "Pick one to start with that sentence",
+		tryIt: "Try it",
+		cat_office: "Office",
+		cat_creative: "Creative",
+		cat_utility: "Tools",
 	},
 });
 
@@ -61,6 +73,30 @@ interface Overview {
 	briefing: { name: string; text: string } | null;
 	settings: { enabled: boolean; time: string };
 }
+
+/** Mirrors the skills plugin's `catalog` rpc: a shipped capability the user can ask for by name. */
+interface SkillCard {
+	name: string;
+	title: string;
+	tagline: string;
+	category: "office" | "creative" | "utility";
+	examples: string[];
+}
+
+const CARD_ICON: Record<string, React.ReactNode> = {
+	"office-pptx": <Presentation className="size-4" />,
+	"office-docx": <FileText className="size-4" />,
+	"office-xlsx": <FileSpreadsheet className="size-4" />,
+	"diagram-chart": <BarChart3 className="size-4" />,
+	"work-report": <PenLine className="size-4" />,
+	"meeting-minutes": <MessageCircle className="size-4" />,
+	"email-writing": <Mail className="size-4" />,
+	"novel-writing": <Sparkles className="size-4" />,
+	"make-video": <Video className="size-4" />,
+	"make-poster": <Flame className="size-4" />,
+	"web-research": <CircleHelp className="size-4" />,
+	"pc-maintenance": <Wrench className="size-4" />,
+};
 
 function Card({ icon, title, hint, children }: { icon: React.ReactNode; title: string; hint?: string; children: React.ReactNode }) {
 	return (
@@ -119,6 +155,54 @@ function QuestionRow({ q, project, title }: { q: PendingQuestion; project: strin
 
 const Empty = ({ text }: { text: string }) => <p className="text-xs text-ink-500">{text}</p>;
 
+const CATEGORY_TITLE = { office: "cat_office", creative: "cat_creative", utility: "cat_utility" } as const;
+
+/**
+ * "What can you do?": the shipped skills as cards. Clicking an example opens the assistant's chat with that request
+ * as a draft, so the user sees exactly what is about to be asked (and can edit it) instead of the app sending blind.
+ */
+function Capabilities({ cards }: { cards: SkillCard[] }) {
+	const t = useT(M);
+	const groups = useMemo(() => {
+		const order: SkillCard["category"][] = ["office", "creative", "utility"];
+		return order.map((cat) => ({ cat, items: cards.filter((c) => c.category === cat) })).filter((g) => g.items.length > 0);
+	}, [cards]);
+	if (cards.length === 0) return null;
+	const start = async (text: string) => {
+		await openAssistantMain();
+		// Same channel as "edit message": the composer takes the text in and focuses, so one send is all it takes.
+		useStore.setState({ editorText: { text, nonce: Date.now() } });
+	};
+	return (
+		<Card icon={<Sparkles className="size-4 text-ember-300" />} title={t("canDo")} hint={t("canDoHint")}>
+			<div className="space-y-3">
+				{groups.map((g) => (
+					<div key={g.cat}>
+						<div className="px-1 pb-1.5 font-mono text-[10.5px] tracking-[0.18em] text-ink-500 uppercase">{t(CATEGORY_TITLE[g.cat])}</div>
+						<div className="grid gap-2 @xl:grid-cols-2">
+							{g.items.map((c) => (
+								<div key={c.name} className="rounded-lg border border-ink-800 bg-ink-950/40 p-2.5 transition-colors hover:border-ember-500/40">
+									<div className="flex items-center gap-1.5 text-[13px] font-medium text-ink-100">
+										<span className="text-ember-300">{CARD_ICON[c.name] ?? <Sparkles className="size-4" />}</span>
+										{c.title}
+									</div>
+									<p className="mt-0.5 line-clamp-1 text-[11.5px] text-ink-500">{c.tagline}</p>
+									{c.examples.length > 0 && (
+										<button type="button" onClick={() => void start(c.examples[0]!)} title={c.examples[0]} className="mt-2 flex w-full items-start gap-1 rounded-md bg-ink-900 px-2 py-1.5 text-left text-[11.5px] leading-snug text-ink-300 hover:bg-ink-800 hover:text-ink-100">
+											<span className="line-clamp-2 min-w-0 flex-1">{c.examples[0]}</span>
+											<span className="shrink-0 pt-px text-ember-300/80">{t("tryIt")}</span>
+										</button>
+									)}
+								</div>
+							))}
+						</div>
+					</div>
+				))}
+			</div>
+		</Card>
+	);
+}
+
 /** The personal space's home page: what the assistant did and is doing, at a glance. */
 export function PersonalHome() {
 	const t = useT(M);
@@ -128,19 +212,28 @@ export function PersonalHome() {
 	const pending = useStore((s) => s.assistant?.pending);
 	const [overview, setOverview] = useState<Overview | null>(null);
 	const [tasks, setTasks] = useState<AutomationTask[]>([]);
+	const [cards, setCards] = useState<SkillCard[]>([]);
 
 	const load = useCallback(async () => {
-		const [o, a] = await Promise.all([pluginCall<Overview>("assistant", "overview"), pluginCall<{ tasks: AutomationTask[] }>("automations", "list")]);
+		const [o, a, s] = await Promise.all([
+			pluginCall<Overview>("assistant", "overview"),
+			pluginCall<{ tasks: AutomationTask[] }>("automations", "list"),
+			pluginCall<SkillCard[]>("skills", "catalog"),
+		]);
 		if (o) setOverview(o);
 		if (a) setTasks(a.tasks);
+		if (s) setCards(s);
 	}, []);
 	useEffect(() => {
 		void load();
 		const offA = onPluginChange("assistant", () => void load());
 		const offB = onPluginChange("automations", () => void load());
+		// Skills are added and switched off in Settings: the cards follow.
+		const offC = onPluginChange("skills", () => void load());
 		return () => {
 			offA();
 			offB();
+			offC();
 		};
 	}, [load]);
 
@@ -181,6 +274,9 @@ export function PersonalHome() {
 					</span>
 					<ChevronRight className="size-4 shrink-0 text-ink-600" />
 				</button>
+				<div className="@3xl:col-span-2">
+					<Capabilities cards={cards} />
+				</div>
 				<Card icon={<Flame className="size-4 text-ember-300" />} title={t("briefing")} hint={overview ? (overview.settings.enabled ? t("briefingOn", { time: overview.settings.time }) : t("briefingOff")) : undefined}>
 					{overview?.briefing ? <pre className="max-h-64 overflow-y-auto font-sans text-[13px] leading-relaxed whitespace-pre-wrap text-ink-200">{overview.briefing.text}</pre> : <Empty text={t("noBriefing")} />}
 				</Card>

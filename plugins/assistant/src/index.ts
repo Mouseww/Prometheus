@@ -7,6 +7,7 @@ import { type BriefingSettings, createBriefing, DEFAULT_BRIEFING, localDate, val
 import { createAsk } from "./ask.ts";
 import { createInbound, MAX_BODY } from "./inbound.ts";
 import { ensureHome, listNotes, notesIndex, readPersona, sameDir } from "./home.ts";
+import { type Capability, capabilityPrompt } from "./capabilities.ts";
 import { mainThread } from "./main-thread.ts";
 
 const NAME = "assistant";
@@ -50,6 +51,16 @@ export default definePlugin({
 		});
 
 		const briefStore = createJsonStore<BriefingSettings>(join(ctx.dataDir, "briefing.json"), () => ({ ...DEFAULT_BRIEFING }));
+
+		// The skills plugin owns the capability cards; asking it keeps one list instead of two that drift apart. An older
+		// or switched-off skills plugin simply means the assistant is told nothing extra.
+		const capabilities = async (): Promise<string> => {
+			try {
+				return capabilityPrompt(((await ctx.callPlugin("skills", "catalog")) as Capability[]) ?? []);
+			} catch {
+				return "";
+			}
+		};
 
 		// The personal home page: the newest briefing note (if any) and the briefing's settings.
 		ctx.rpc("overview", async () => {
@@ -285,8 +296,9 @@ ${text}
 			if (!sameDir(req.cwd, home.dir)) return undefined;
 			const persona = readPersona(home);
 			const index = notesIndex(listNotes(home));
+			const caps = await capabilities();
 			return {
-				...(persona ? { static: { sections: { personal_assistant: persona } } } : {}),
+				...(persona || caps ? { static: { sections: { personal_assistant: [persona, caps].filter(Boolean).join("\n\n") } } } : {}),
 				...(index ? { turn: index } : {}),
 			};
 		});

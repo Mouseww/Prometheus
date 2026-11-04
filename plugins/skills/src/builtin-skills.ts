@@ -1,5 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { CREATIVE_SKILLS } from "./builtin/creative.ts";
+import { OFFICE_SKILLS } from "./builtin/office.ts";
 import { renderSkill } from "./skill-file.ts";
 
 /**
@@ -13,7 +15,22 @@ export interface BuiltinSkill {
 	description: string;
 	/** Relative path → content. SKILL.md frontmatter is generated from name/description. */
 	files: Record<string, string>;
+	/** What the card says in Settings and on the personal home page (Chinese; most users read that). */
+	title?: string;
+	/** One line under the title: what it makes for whom. */
+	tagline?: string;
+	category?: BuiltinSkillCategory;
+	/**
+	 * Listed as a card on the personal home page: a job a user would ask for. Skills about the software itself are not,
+	 * since nobody goes looking for them on a "what can you do" list.
+	 */
+	offered?: boolean;
+	/** Ready-made requests offered on the personal home page, one click to brief the assistant with it. */
+	examples?: string[];
 }
+
+/** Sections of the personal home page's "what 普罗 can do" list. */
+export type BuiltinSkillCategory = "office" | "creative" | "utility";
 
 const OVERVIEW = `# Prometheus
 
@@ -193,8 +210,22 @@ export const BUILTIN_SKILLS: BuiltinSkill[] = [
 		name: "prometheus",
 		description:
 			"You are running inside Prometheus, a GUI/Web/TUI host built on the PI agent SDK, not the plain PI CLI. Load this when the user asks about Prometheus itself or its features: AI gateways and models, knowledge bases, memory, MCP servers, skills, the PI marketplace (PI packages), Prometheus plugins, settings, sessions and workspaces, context compaction, where its data and config files live, deployment, or how to extend it. Also load before editing Prometheus or PI configuration files.",
+		title: "关于普罗米修斯",
+		tagline: "这个软件本身怎么用、怎么扩展",
+		category: "utility",
 		files: { "SKILL.md": OVERVIEW, "plugin-development.md": PLUGIN_DEV },
 	},
+	// Productivity skills, offered as cards on the personal home page: on demand, never in the prompt up front.
+	...[...OFFICE_SKILLS, ...CREATIVE_SKILLS].map((s) => ({
+		name: s.name,
+		description: s.description,
+		title: s.title,
+		tagline: s.tagline,
+		category: s.category as BuiltinSkillCategory,
+		offered: true,
+		examples: s.examples,
+		files: { "SKILL.md": s.body },
+	})),
 ];
 
 /** Skill documents as written to disk; SKILL.md gets generated frontmatter. */

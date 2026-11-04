@@ -676,6 +676,8 @@ export interface McpProbeResult {
 export interface SkillInfo {
 	name: string;
 	description: string;
+	/** Shipped skills add a short human title; a user's own skill is shown by its folder name. */
+	title?: string;
 	path: string;
 	scope: "builtin" | "prometheus" | "user" | "project";
 	enabled: boolean;

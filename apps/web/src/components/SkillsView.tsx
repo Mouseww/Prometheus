@@ -153,6 +153,7 @@ export function SkillsView() {
 										className={clsx("w-full rounded-lg px-3 py-2.5 text-left transition-colors", keyOf(s) === selected && !creating ? "bg-ink-850" : "hover:bg-ink-900")}
 									>
 										<div className={clsx("truncate font-mono text-sm", s.enabled ? "text-ink-100" : "text-ink-500")}>{s.name}</div>
+									{s.title && <div className={clsx("truncate text-sm", s.enabled ? "text-ink-200" : "text-ink-500")}>{s.title}</div>}
 										{s.description && <div className="mt-0.5 line-clamp-2 text-xs text-ink-500">{s.description}</div>}
 										{(!s.enabled || !s.modelInvocation) && (
 											<div className="mt-1.5 flex flex-wrap gap-1">
@@ -209,6 +210,7 @@ function ReadOnlySkill({ skill, onChanged }: { skill: SkillInfo; onChanged: () =
 		<div className="mx-auto max-w-2xl animate-rise space-y-5 p-4 @3xl:p-8">
 			<div className="flex items-center gap-2">
 				<h2 className="font-mono text-xl font-semibold">{skill.name}</h2>
+				{skill.title && <span className="text-base text-ink-300">{skill.title}</span>}
 				<Badge tone="sky">{skill.scope === "builtin" ? t("builtin") : skill.scope === "user" ? t("user") : t("project")}</Badge>
 				{!skill.enabled && <Badge tone="rose">{t("disabled")}</Badge>}
 				{!skill.modelInvocation && <Badge>{t("manualOnly")}</Badge>}
@@ -265,6 +267,7 @@ function SkillEditor({ skill, onChanged }: { skill: SkillInfo; onChanged: () => 
 		<div className="mx-auto max-w-4xl animate-rise space-y-4 p-6">
 			<div className="flex items-center gap-2">
 				<h2 className="font-mono text-xl font-semibold">{skill.name}</h2>
+				{skill.title && <span className="text-base text-ink-300">{skill.title}</span>}
 				{!skill.enabled && <Badge tone="rose">{t("disabled")}</Badge>}
 				{!skill.modelInvocation && <Badge>{t("manualOnly")}</Badge>}
 				<span className="ml-auto truncate font-mono text-[11px] text-ink-500" title={skill.path}>
