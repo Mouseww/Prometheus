@@ -23,6 +23,8 @@ import {
 	type PermissionMode,
 	PROTOCOL_VERSION,
 	PERMISSION_MODES,
+	THINKING_LEVELS,
+	type ThinkingLevel,
 	type PromptDisposition,
 	type RpcMethod,
 	type RpcParams,
@@ -945,13 +947,19 @@ export class PrometheusHost {
 	}
 
 	private hostSettings(): HostSettings {
-		return { autoCompaction: this.pi?.autoCompaction() ?? true, workspaceRoot: this.workspaceRoot(), defaultAgent: this.defaultAgent(), defaultPermission: this.defaultPermission(), goalTurns: this.runtime.config.get().goalTurns || GOAL_DEFAULT_TURNS };
+		return { autoCompaction: this.pi?.autoCompaction() ?? true, workspaceRoot: this.workspaceRoot(), defaultAgent: this.defaultAgent(), defaultPermission: this.defaultPermission(), defaultThinking: this.defaultThinking(), goalTurns: this.runtime.config.get().goalTurns || GOAL_DEFAULT_TURNS };
 	}
 
 	/** The permission mode new chats start in; unknown values (a hand-edited config) fall back to asking first. */
 	private defaultPermission(): PermissionMode {
 		const mode = this.runtime.config.get().defaultPermission?.trim();
 		return PERMISSION_MODES.find((m) => m === mode) ?? "default";
+	}
+
+	/** Thinking level new chats start in; unset or unknown leaves the choice to the model. */
+	private defaultThinking(): ThinkingLevel | undefined {
+		const level = this.runtime.config.get().defaultThinking?.trim();
+		return THINKING_LEVELS.find((l) => l === level);
 	}
 
 	/** The agent new chats start with; falls back to PI when the configured one was deleted or hidden. */
@@ -1003,6 +1011,9 @@ export class PrometheusHost {
 			await this.workspaces.add(dir);
 			const live = kind && kind !== "pi" ? await this.createExternal(kind, agent, dir, this.gatewayFromModel(model, gateway)) : await this.attach((init) => this.needPi.create({ ...init, cwd: normalizeDir(dir) }));
 			if (name?.trim()) live.session.setName(name.trim());
+			// The configured starting level, if this model offers it; otherwise keep the model's own default.
+			const wanted = this.defaultThinking();
+			if (wanted && live.session.snapshotState().availableThinkingLevels.includes(wanted)) await live.session.setThinking(wanted);
 			this.listener.sessionsChanged();
 			return this.snapshot(live);
 		},
@@ -1151,7 +1162,7 @@ export class PrometheusHost {
 		"fs.mkdir": ({ parent, name }) => this.createDir(parent, name),
 
 		"settings.get": () => this.hostSettings(),
-		"settings.set": async ({ autoCompaction, workspaceRoot, defaultAgent, defaultPermission, goalTurns }) => {
+		"settings.set": async ({ autoCompaction, workspaceRoot, defaultAgent, defaultPermission, defaultThinking, goalTurns }) => {
 			if (typeof autoCompaction === "boolean") {
 				await this.pi?.setAutoCompaction(autoCompaction);
 				// Live sessions cache their own SettingsManager.
@@ -1170,6 +1181,12 @@ export class PrometheusHost {
 			if (typeof defaultPermission === "string") {
 				if (!PERMISSION_MODES.includes(defaultPermission)) throw new AppError("unknownPermissionMode", { mode: String(defaultPermission) });
 				await this.runtime.config.setDefaultPermission(defaultPermission);
+			}
+			if (typeof defaultThinking === "string") {
+				// An empty string clears it: new chats then keep whatever level their model starts at.
+				const next = defaultThinking.trim();
+				if (next && !THINKING_LEVELS.includes(next as ThinkingLevel)) throw new AppError("generic");
+				await this.runtime.config.setDefaultThinking(next);
 			}
 			if (typeof goalTurns === "number") await this.runtime.config.setGoalTurns(Math.min(GOAL_MAX_TURNS, goalTurns));
 			return this.hostSettings();

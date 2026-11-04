@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { BarChart3, Blocks, Bug, Boxes, Bot, Info, Cable, Check, FolderOpen, Globe, Laptop, Layers, Mic, Moon, Network, Package, Palette, MessagesSquare, Plug, Server, Shield, Sparkles, Sun, SlidersHorizontal, Terminal } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { isAndroid, isDesktopShell, isTauri, loadMode } from "../lib/backend.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { requestNotifyPermission } from "../lib/notify.ts";
@@ -27,7 +27,7 @@ import { SubagentsView } from "./SubagentsView.tsx";
 import { LogsView } from "./LogsView.tsx";
 import { VeilView } from "./VeilView.tsx";
 import { SkillsView } from "./SkillsView.tsx";
-import { PERMISSION_MODES, type PermissionMode } from "@prometheus/protocol";
+import { PERMISSION_MODES, type PermissionMode, THINKING_LEVELS, type ThinkingLevel } from "@prometheus/protocol";
 import { Button, PageHeader, Select } from "./ui.tsx";
 import { UsageView } from "./UsageView.tsx";
 import { VoiceSettings } from "./VoiceSettings.tsx";
@@ -82,6 +82,16 @@ const M = defineMessages({
 		perm_acceptEdits: "自动编辑：项目内的文件编辑自动通过",
 		perm_plan: "计划模式：只读调研，批准计划后才修改",
 		perm_bypassPermissions: "完全放行：不再询问（有风险）",
+		defaultThinking: "默认思考力度",
+		defaultThinkingHint: "新对话一开始使用的思考力度。档位因模型而异，选了某档但模型不支持时，会沿用模型自己的默认值。对话里仍可随时切换。",
+		thinkingModelDefault: "跟随模型默认",
+		thinking_off: "关闭：不思考",
+		thinking_minimal: "极少",
+		thinking_low: "较少",
+		thinking_medium: "中等",
+		thinking_high: "较高",
+		thinking_xhigh: "很高",
+		thinking_max: "最高",
 		perm_auto: "Auto：全部放行，选择题由 AI 自己决定（有风险）",
 		chooseRoot: "选择…",
 		clearRoot: "清除",
@@ -180,6 +190,16 @@ const M = defineMessages({
 		perm_acceptEdits: "Accept edits: edits inside the project pass",
 		perm_plan: "Plan mode: read-only until you approve the plan",
 		perm_bypassPermissions: "Bypass permissions: never ask (risky)",
+		defaultThinking: "Default thinking effort",
+		defaultThinkingHint: "The thinking effort a new chat starts in. Levels differ per model: if the chosen level is unavailable, the model keeps its own default. You can still change it any time in the chat.",
+		thinkingModelDefault: "Model default",
+		thinking_off: "Off: no thinking",
+		thinking_minimal: "Minimal",
+		thinking_low: "Low",
+		thinking_medium: "Medium",
+		thinking_high: "High",
+		thinking_xhigh: "Very high",
+		thinking_max: "Max",
 		perm_auto: "Auto: everything allowed, the AI decides on its own (risky)",
 		chooseRoot: "Choose…",
 		clearRoot: "Clear",
@@ -392,6 +412,32 @@ function DefaultPermissionRow() {
 	);
 }
 
+/**
+ * The thinking level new chats start at. Levels are per model, so the list is the union of what the available models
+ * offer; a chat whose model lacks the configured level keeps that model's own default (decided on the server).
+ */
+function DefaultThinkingRow() {
+	const t = useT(M);
+	const host = useStore((s) => s.hostSettings);
+	const models = useStore((s) => s.models);
+	const levels = useMemo(() => THINKING_LEVELS.filter((l) => models.some((m) => m.thinkingLevels?.includes(l))), [models]);
+	// Nothing to choose from until the model list arrives; the row would otherwise offer a level no model has.
+	if (!levels.length && !host?.defaultThinking) return null;
+	const options = levels.length ? levels : THINKING_LEVELS;
+	return (
+		<Row label={t("defaultThinking")} hint={t("defaultThinkingHint")}>
+			<Select className="max-w-80" value={host?.defaultThinking ?? ""} disabled={!host} onChange={(e) => void updateHostSettings({ defaultThinking: e.target.value as ThinkingLevel })}>
+				<option value="">{t("thinkingModelDefault")}</option>
+				{options.map((l) => (
+					<option key={l} value={l}>
+						{t(`thinking_${l}`)}
+					</option>
+				))}
+			</Select>
+		</Row>
+	);
+}
+
 function GeneralSettings() {
 	const t = useT(M);
 	const prefs = usePrefs();
@@ -407,7 +453,6 @@ function GeneralSettings() {
 				<div className="max-w-3xl space-y-8 p-4 md:p-8">
 					<Section title={t("workspace")}>
 						<WorkspaceRootRow />
-						<DefaultPermissionRow />
 						<GoalTurnsRow />
 					</Section>
 
@@ -556,6 +601,8 @@ function ChatSettings() {
 						<Row label={t("enterToSend")} hint={t("enterToSendHint")}>
 							<Toggle checked={prefs.enterToSend} onChange={(enterToSend) => setPrefs({ enterToSend })} />
 						</Row>
+						<DefaultPermissionRow />
+						<DefaultThinkingRow />
 					</Section>
 
 					<Section title={t("notifications")}>

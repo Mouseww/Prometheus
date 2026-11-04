@@ -10,6 +10,8 @@ import type { GoalState } from "./goal.ts";
 export const PROTOCOL_VERSION = 1;
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+/** Every level, in increasing order of effort. A model offers a subset; the default is unchecked against this list. */
+export const THINKING_LEVELS: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 export type GatewayFormat = "openai-completions" | "openai-responses" | "anthropic-messages" | "google-generative-ai";
 export const GATEWAY_FORMATS: readonly GatewayFormat[] = [
 	"openai-completions",
@@ -377,6 +379,8 @@ export interface HostSettings {
 	defaultAgent?: string;
 	/** Permission mode new chats start in; "default" when unset. Older servers omit it. */
 	defaultPermission?: PermissionMode;
+	/** Thinking level new chats start in; empty means the model's own default. Older servers omit it. */
+	defaultThinking?: ThinkingLevel | "";
 	/** Turns a /goal may run when the user gives no limit; 30 when unset. Older servers omit it. */
 	goalTurns?: number;
 }

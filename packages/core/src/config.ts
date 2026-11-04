@@ -34,6 +34,8 @@ export interface PrometheusConfig {
 	defaultAgent: string;
 	/** Permission mode new chats start in; empty means "default" (ask first). */
 	defaultPermission: string;
+	/** Thinking level new chats start in; empty means whatever the model defaults to. */
+	defaultThinking: string;
 	/** Default turn budget of a /goal; 0 means the built-in 30. */
 	goalTurns: number;
 }
@@ -53,7 +55,7 @@ export function defaultDataDir(): string {
 	return process.env.PROMETHEUS_HOME || join(homedir(), ".prometheus");
 }
 
-const EMPTY: PrometheusConfig = { gateways: [], agents: [], plugins: [], disabledPlugins: [], pluginSettings: {}, network: normalizeNetwork(undefined), workspaceRoot: "", defaultAgent: "", defaultPermission: "", goalTurns: 0 };
+const EMPTY: PrometheusConfig = { gateways: [], agents: [], plugins: [], disabledPlugins: [], pluginSettings: {}, network: normalizeNetwork(undefined), workspaceRoot: "", defaultAgent: "", defaultPermission: "", defaultThinking: "", goalTurns: 0 };
 
 /** config.json holds API keys, so it is always written owner-only. */
 export class ConfigStore {
@@ -81,6 +83,7 @@ export class ConfigStore {
 				workspaceRoot: typeof raw.workspaceRoot === "string" ? raw.workspaceRoot : "",
 				defaultAgent: typeof raw.defaultAgent === "string" ? raw.defaultAgent : "",
 				defaultPermission: typeof raw.defaultPermission === "string" ? raw.defaultPermission : "",
+				defaultThinking: typeof raw.defaultThinking === "string" ? raw.defaultThinking : "",
 				goalTurns: typeof raw.goalTurns === "number" && raw.goalTurns >= 1 ? Math.floor(raw.goalTurns) : 0,
 			};
 		} catch (err) {
@@ -122,6 +125,12 @@ export class ConfigStore {
 	/** 0 (or anything below 1) goes back to the built-in 30. */
 	async setGoalTurns(n: number): Promise<void> {
 		this.config.goalTurns = Number.isFinite(n) && n >= 1 ? Math.floor(n) : 0;
+		await this.persist();
+	}
+
+	/** Empty string goes back to the model's own default level. */
+	async setDefaultThinking(level: string): Promise<void> {
+		this.config.defaultThinking = level.trim();
 		await this.persist();
 	}
 

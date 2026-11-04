@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import type { SessionEvent } from "@prometheus/protocol";
+import { type SessionEvent, THINKING_LEVELS } from "@prometheus/protocol";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { OPEN_TURNS, PAGE_TURNS, PrometheusHost, tailPage, turnStart } from "../src/host.ts";
 
@@ -116,6 +116,29 @@ describe("PrometheusHost RPC (characterization)", () => {
 		expect(snap.subagents).toEqual([]);
 		expect(Array.isArray(snap.availableThinkingLevels)).toBe(true);
 		expect(sessionsChanged).toBeGreaterThan(before);
+	});
+
+	it("session.create applies the configured thinking effort, or leaves the model alone", async () => {
+		// The stub model reports its own levels; whatever it offers is what the session may start at.
+		const plain = await host.call("session.create", { cwd, name: "thinking-plain" });
+		const levels = plain.availableThinkingLevels;
+		const offered = levels.includes("low") ? "low" : levels.includes("off") ? "off" : undefined;
+
+		if (offered) {
+			await host.call("settings.set", { defaultThinking: offered });
+			const snap = await host.call("session.create", { cwd, name: "thinking" });
+			expect(snap.thinkingLevel).toBe(offered);
+		}
+
+		// A level this model does not offer is dropped rather than forced on it.
+		const missing = THINKING_LEVELS.find((l) => !levels.includes(l));
+		if (missing) {
+			await host.call("settings.set", { defaultThinking: missing });
+			const next = await host.call("session.create", { cwd, name: "thinking-unsupported" });
+			expect(next.thinkingLevel).not.toBe(missing);
+			expect(next.thinkingLevel).toBe(plain.thinkingLevel);
+		}
+		await host.call("settings.set", { defaultThinking: "" });
 	});
 
 	it("session.create rejects a missing working directory", async () => {
@@ -252,6 +275,15 @@ describe("PrometheusHost RPC (characterization)", () => {
 		expect((await host.call("settings.get", {})).defaultPermission).toBe("plan");
 		await expect(host.call("settings.set", { defaultPermission: "yolo" as never })).rejects.toMatchObject({ code: "unknownPermissionMode" });
 		expect((await host.call("settings.set", { defaultPermission: "default" })).defaultPermission).toBe("default");
+	});
+
+	it("settings.set stores the default thinking effort of new chats and rejects unknown ones", async () => {
+		expect((await host.call("settings.get", {})).defaultThinking).toBeUndefined();
+		expect((await host.call("settings.set", { defaultThinking: "high" })).defaultThinking).toBe("high");
+		expect((await host.call("settings.get", {})).defaultThinking).toBe("high");
+		await expect(host.call("settings.set", { defaultThinking: "turbo" as never })).rejects.toMatchObject({ code: "generic" });
+		// Empty means "let the model decide", which is the unset state again.
+		expect((await host.call("settings.set", { defaultThinking: "" })).defaultThinking).toBeUndefined();
 	});
 
 	it("session.delete removes a saved session and its file", async () => {
