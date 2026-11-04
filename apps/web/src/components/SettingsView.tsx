@@ -1,6 +1,5 @@
-import { copyToClipboard } from "../lib/clipboard.ts";
 import clsx from "clsx";
-import { BarChart3, Blocks, Bug, Boxes, Bot, Info, Cable, Check, Copy, FolderOpen, Globe, Laptop, Layers, Mic, Moon, Network, Package, Plug, Server, Shield, Sparkles, Sun, SlidersHorizontal, Terminal } from "lucide-react";
+import { BarChart3, Blocks, Bug, Boxes, Bot, Info, Cable, Check, FolderOpen, Globe, Laptop, Layers, Mic, Moon, Network, Package, Palette, MessagesSquare, Plug, Server, Shield, Sparkles, Sun, SlidersHorizontal, Terminal } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { isAndroid, isDesktopShell, isTauri, loadMode } from "../lib/backend.ts";
@@ -9,7 +8,7 @@ import { requestNotifyPermission } from "../lib/notify.ts";
 import { switchLook } from "../lib/look.ts";
 import { initRuntimes } from "../lib/runtimes.ts";
 import { type Lang, SKINS, type SendMode, type Skin, setPrefs, type ThemeMode, usePrefs } from "../lib/prefs.ts";
-import { openSettings, pluginActive, type SettingsTab, toast, updateHostSettings, useStore } from "../lib/store.ts";
+import { openSettings, pluginActive, type SettingsTab, updateHostSettings, useStore } from "../lib/store.ts";
 import { checkForUpdate, showUpdate, updaterSupported, useUpdater } from "../lib/updater.ts";
 import { GatewaysView } from "./GatewaysView.tsx";
 import { FolderPicker } from "./FolderPicker.tsx";
@@ -54,8 +53,12 @@ const M = defineMessages({
 		ssh: "SSH",
 		usage: "用量统计",
 		title: "通用设置",
-		subtitle: "外观、语言与会话行为",
+		subtitle: "工作区、窗口与更新",
 		appearance: "外观",
+		appearanceTitle: "外观",
+		appearanceSubtitle: "语言、主题、配色与动效",
+		chatTitle: "对话",
+		chatSubtitle: "会话行为、发送方式与提醒",
 		theme: "主题",
 		dark: "深色",
 		light: "浅色",
@@ -119,6 +122,7 @@ const M = defineMessages({
 		updateHint: "桌面版的本机服务端随应用一同更新。",
 		updateHintAndroid: "安卓版从 GitHub Release 下载新安装包，由系统安装。",
 		updateFailed: "检查失败：{e}",
+		chat: "对话",
 		about: "关于",
 		appVersion: "客户端版本",
 		serverVersion: "服务端版本",
@@ -147,8 +151,12 @@ const M = defineMessages({
 		ssh: "SSH",
 		usage: "Usage",
 		title: "General",
-		subtitle: "Appearance, language and session behaviour",
+		subtitle: "Workspace, window and updates",
 		appearance: "Appearance",
+		appearanceTitle: "Appearance",
+		appearanceSubtitle: "Language, theme, colours and motion",
+		chatTitle: "Chat",
+		chatSubtitle: "Session behaviour, sending and notifications",
 		theme: "Theme",
 		dark: "Dark",
 		light: "Light",
@@ -212,6 +220,7 @@ const M = defineMessages({
 		updateHint: "The desktop app's local server is updated together with the app.",
 		updateHintAndroid: "The Android app downloads the new package from the GitHub release and the system installs it.",
 		updateFailed: "Check failed: {e}",
+		chat: "Chat",
 		about: "About",
 		appVersion: "Client version",
 		serverVersion: "Server version",
@@ -386,17 +395,7 @@ function DefaultPermissionRow() {
 function GeneralSettings() {
 	const t = useT(M);
 	const prefs = usePrefs();
-	const host = useStore((s) => s.hostSettings);
 	const [canUpdate, setCanUpdate] = useState(false);
-	const [notifyMsg, setNotifyMsg] = useState<string | null>(null);
-	const toggleNotify = async (on: boolean) => {
-		setNotifyMsg(null);
-		if (!on) return setPrefs({ notifyOnDone: false });
-		const perm = await requestNotifyPermission();
-		if (perm === "granted") return setPrefs({ notifyOnDone: true });
-		setPrefs({ notifyOnDone: false });
-		setNotifyMsg(perm === "unsupported" ? t("notifyUnsupported") : t("notifyDenied"));
-	};
 	useEffect(() => {
 		void updaterSupported().then(setCanUpdate);
 	}, []);
@@ -404,6 +403,47 @@ function GeneralSettings() {
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
 			<PageHeader title={t("title")} subtitle={t("subtitle")} />
+			<div className="min-h-0 flex-1 overflow-y-auto">
+				<div className="max-w-3xl space-y-8 p-4 md:p-8">
+					<Section title={t("workspace")}>
+						<WorkspaceRootRow />
+						<DefaultPermissionRow />
+						<GoalTurnsRow />
+					</Section>
+
+					{isDesktopShell() && (
+						<Section title={t("window")}>
+							<Row label={t("idleUpdate")} hint={t("idleUpdateHint")}>
+								<Toggle checked={prefs.idleUpdate} onChange={(idleUpdate) => setPrefs({ idleUpdate })} />
+							</Row>
+							<Row label={t("closeToTray")} hint={t("closeToTrayHint")}>
+								<Toggle checked={prefs.closeToTray} onChange={(closeToTray) => setPrefs({ closeToTray })} />
+							</Row>
+						</Section>
+					)}
+
+					{canUpdate && (
+						<Section title={t("updates")}>
+							<UpdateRow />
+						</Section>
+					)}
+
+
+				</div>
+			</div>
+		</div>
+	);
+}
+
+
+
+/** Settings → Appearance: how the app looks. Nothing here changes what the agent does. */
+function AppearanceSettings() {
+	const t = useT(M);
+	const prefs = usePrefs();
+	return (
+		<div className="flex min-h-0 flex-1 flex-col">
+			<PageHeader title={t("appearanceTitle")} subtitle={t("appearanceSubtitle")} />
 			<div className="min-h-0 flex-1 overflow-y-auto">
 				<div className="max-w-3xl space-y-8 p-4 md:p-8">
 					<Section title={t("appearance")}>
@@ -474,6 +514,31 @@ function GeneralSettings() {
 						</Row>
 					</Section>
 
+				</div>
+			</div>
+		</div>
+	);
+}
+
+/** Settings → Chat: how a conversation behaves — compaction, what Enter does, when to notify. */
+function ChatSettings() {
+	const t = useT(M);
+	const prefs = usePrefs();
+	const host = useStore((s) => s.hostSettings);
+	const [notifyMsg, setNotifyMsg] = useState<string | null>(null);
+	const toggleNotify = async (on: boolean) => {
+		setNotifyMsg(null);
+		if (!on) return setPrefs({ notifyOnDone: false });
+		const perm = await requestNotifyPermission();
+		if (perm === "granted") return setPrefs({ notifyOnDone: true });
+		setPrefs({ notifyOnDone: false });
+		setNotifyMsg(perm === "unsupported" ? t("notifyUnsupported") : t("notifyDenied"));
+	};
+	return (
+		<div className="flex min-h-0 flex-1 flex-col">
+			<PageHeader title={t("chatTitle")} subtitle={t("chatSubtitle")} />
+			<div className="min-h-0 flex-1 overflow-y-auto">
+				<div className="max-w-3xl space-y-8 p-4 md:p-8">
 					<Section title={t("session")}>
 						<Row label={t("autoCompact")} hint={t("autoCompactHint")}>
 							<Toggle checked={host?.autoCompaction ?? false} disabled={!host} onChange={(v) => void updateHostSettings({ autoCompaction: v })} />
@@ -504,35 +569,11 @@ function GeneralSettings() {
 						)}
 					</Section>
 
-					<Section title={t("workspace")}>
-						<WorkspaceRootRow />
-						<DefaultPermissionRow />
-						<GoalTurnsRow />
-					</Section>
-
-					{isDesktopShell() && (
-						<Section title={t("window")}>
-							<Row label={t("idleUpdate")} hint={t("idleUpdateHint")}>
-								<Toggle checked={prefs.idleUpdate} onChange={(idleUpdate) => setPrefs({ idleUpdate })} />
-							</Row>
-							<Row label={t("closeToTray")} hint={t("closeToTrayHint")}>
-								<Toggle checked={prefs.closeToTray} onChange={(closeToTray) => setPrefs({ closeToTray })} />
-							</Row>
-						</Section>
-					)}
-
-					{canUpdate && (
-						<Section title={t("updates")}>
-							<UpdateRow />
-						</Section>
-					)}
-
 				</div>
 			</div>
 		</div>
 	);
 }
-
 /**
  * Tabs in groups, each separated by a rule: the basics, then everything that shapes the agent
  * (what it says, who it delegates to, what it can reach), then extensions, then network and privacy,
@@ -542,6 +583,8 @@ function GeneralSettings() {
 const TAB_GROUPS: { id: SettingsTab; icon: typeof Network; plugin?: string; local?: boolean }[][] = [
 	[
 		{ id: "general", icon: SlidersHorizontal },
+		{ id: "appearance", icon: Palette },
+		{ id: "chat", icon: MessagesSquare },
 		{ id: "agents", icon: Bot },
 		{ id: "gateways", icon: Network },
 		{ id: "voice", icon: Mic, plugin: "voice" },
@@ -605,6 +648,8 @@ export function SettingsView() {
 			</nav>
 			<div className="@container flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
 				{tab === "general" && <GeneralSettings />}
+				{tab === "appearance" && <AppearanceSettings />}
+				{tab === "chat" && <ChatSettings />}
 				{tab === "agents" && <AgentsSettings />}
 				{tab === "gateways" && <GatewaysView />}
 				{tab === "mcp" && <McpView />}
