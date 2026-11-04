@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { BarChart3, Blocks, Bug, Boxes, Bot, Info, Cable, Check, FolderOpen, Globe, Laptop, Layers, Mic, Moon, Network, Package, Palette, MessagesSquare, Plug, Server, Shield, Sparkles, Sun, SlidersHorizontal, Terminal } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { isAndroid, isDesktopShell, isTauri, loadMode } from "../lib/backend.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { requestNotifyPermission } from "../lib/notify.ts";
@@ -113,6 +113,7 @@ const M = defineMessages({
 		compactPercent: "压缩阈值",
 		reset: "恢复默认",
 		compactPercentHint: "上下文填到这个比例时开始压缩。越低越早压缩、越省上下文，但也更早丢掉细节。",
+		compactPercentOff: "自动压缩已关闭，此处不生效；重新开启后按此比例压缩。",
 		chatWidth: "对话宽度",
 		chatWidthHint: "也可以在对话页面里拖动内容两侧的边缘调整，双击边缘恢复自适应。",
 		motion: "界面动效",
@@ -224,6 +225,7 @@ const M = defineMessages({
 		compactPercent: "Compaction threshold",
 		reset: "Reset",
 		compactPercentHint: "Compact once the context is this full. Lower keeps the window roomier but drops detail sooner.",
+		compactPercentOff: "Auto-compaction is off, so this has no effect until you turn it back on.",
 		chatWidth: "Chat width",
 		chatWidthHint: "You can also drag the edges beside the chat column; double-click an edge to go back to automatic.",
 		motion: "Interface motion",
@@ -426,34 +428,46 @@ function DefaultPermissionRow() {
 function CompactPercentRow() {
 	const t = useT(M);
 	const host = useStore((s) => s.hostSettings);
-	const value = host?.compactPercent ?? DEFAULT_COMPACT_PERCENT;
-	// Sliding fires many changes; only the settled value is sent.
-	const [dragging, setDragging] = useState<number | null>(null);
-	const send = (n: number) => void updateHostSettings({ compactPercent: n });
+	const saved = host?.compactPercent ?? DEFAULT_COMPACT_PERCENT;
+	// The slider follows the pointer locally and writes once it settles: dragging fires dozens of changes.
+	const [shown, setShown] = useState<number | null>(null);
+	const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const value = shown ?? saved;
+	const on = host?.autoCompaction ?? false;
+	const commit = (n: number) => {
+		if (timer.current) clearTimeout(timer.current);
+		timer.current = setTimeout(() => void updateHostSettings({ compactPercent: n }), 350);
+	};
+	// A threshold changed while auto-compaction is off still saves; it takes effect when the toggle comes back on.
+	useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
 	return (
-		<Row label={t("compactPercent")} hint={t("compactPercentHint")}>
-			<div className="flex items-center gap-3">
+		<Row label={t("compactPercent")} hint={on ? t("compactPercentHint") : t("compactPercentOff")}>
+			<div className={clsx("flex items-center gap-3", !on && "opacity-50")}>
 				<input
 					type="range"
 					min={MIN_COMPACT_PERCENT}
 					max={MAX_COMPACT_PERCENT}
 					step={5}
-					value={dragging ?? value}
+					value={value}
 					disabled={!host}
-					onChange={(e) => setDragging(Number(e.target.value))}
-					onPointerUp={() => {
-						if (dragging !== null) send(dragging);
-						setDragging(null);
-					}}
-					onKeyUp={() => {
-						if (dragging !== null) send(dragging);
-						setDragging(null);
+					onChange={(e) => {
+						const n = Number(e.target.value);
+						setShown(n);
+						commit(n);
 					}}
 					className="w-40 accent-ember-500"
 					aria-label={t("compactPercent")}
 				/>
-				<span className="w-10 font-mono text-xs text-ink-300">{dragging ?? value}%</span>
-				<button type="button" disabled={value === DEFAULT_COMPACT_PERCENT} onClick={() => send(DEFAULT_COMPACT_PERCENT)} className="text-xs text-ember-300 hover:underline disabled:opacity-40">
+				<span className="w-10 font-mono text-xs text-ink-300">{value}%</span>
+				<button
+					type="button"
+					disabled={saved === DEFAULT_COMPACT_PERCENT && shown === null}
+					onClick={() => {
+						setShown(null);
+						void updateHostSettings({ compactPercent: DEFAULT_COMPACT_PERCENT });
+					}}
+					className="text-xs text-ember-300 hover:underline disabled:opacity-40"
+				>
 					{t("reset")}
 				</button>
 			</div>
@@ -637,7 +651,7 @@ function ChatSettings() {
 						<Row label={t("autoCompact")} hint={t("autoCompactHint")}>
 							<Toggle checked={host?.autoCompaction ?? false} disabled={!host} onChange={(v) => void updateHostSettings({ autoCompaction: v })} />
 						</Row>
-						{(host?.autoCompaction ?? false) && <CompactPercentRow />}
+						<CompactPercentRow />
 						<Row label={t("sendMode")} hint={t("sendModeHint")}>
 							<Segmented<SendMode>
 								value={prefs.sendMode}
