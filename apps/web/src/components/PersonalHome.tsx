@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { BarChart3, ChevronRight, CircleHelp, Clock, FileSpreadsheet, FileText, Flame, Mail, MessageCircle, PenLine, Presentation, Share2, Sparkles, Video, Wrench } from "lucide-react";
+import { ArrowUp, BarChart3, ChevronRight, CircleHelp, Clock, FileSpreadsheet, FileText, Flame, Mail, MessageCircle, PenLine, Plus, Presentation, Share2, Sparkles, Video, Wrench } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AutomationTask } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
@@ -35,7 +35,8 @@ const M = defineMessages({
 		canDoHint: "点一张卡片，这句话会填进对话框，你可以先改再发",
 		hello: "普罗，我帮你",
 		helloHint: "说一句要做什么，它自己想办法：查资料、做文件、写报告，把成品交给你",
-		composerHint: "今天想做点什么？或者点上面一个技能试试",
+		composerHint: "今天想做点什么？",
+		composerTools: "@ 引用文件，/ 调用技能",
 		tryIt: "试一下",
 		cat_office: "办公",
 		cat_creative: "创作",
@@ -68,7 +69,8 @@ const M = defineMessages({
 		canDoHint: "Tap a card and the request lands in the chat, ready for you to edit",
 		hello: "Hi, I'm 普罗",
 		helloHint: "Say what you need done and it works it out: research, files, reports, ready-made results",
-		composerHint: "What shall we get done? Or pick a skill above",
+		composerHint: "What shall we get done?",
+		composerTools: "@ files, / skills",
 		tryIt: "Try it",
 		cat_office: "Office",
 		cat_creative: "Creative",
@@ -259,23 +261,31 @@ export function PersonalHome() {
 							</ul>
 						</Card>
 					)}
-					{/* The workbench centre: the way in is the input, not a pitch. A short heading, the skill rail that fills it,
-					    then one button that opens the composer ready to type. */}
-					<div className="mx-auto w-full max-w-2xl pt-2 @3xl:pt-8">
-						<h2 className="text-center font-display text-lg font-semibold tracking-tight text-ink-100">{t("hello")}</h2>
-						<p className="mt-1.5 text-center text-[12.5px] leading-relaxed text-ink-500">{t("helloHint")}</p>
-						<div className="mt-4">
+					{/* The workbench centre: the way in is the input, not a pitch. The panel below is the page's main object —
+					    wide and tall like a real composer, with the skill rail on top of it and its own toolbar at the bottom. */}
+					<div className="mx-auto w-full max-w-3xl pt-2 @3xl:pt-6">
+						<h2 className="text-center font-display text-[17px] font-semibold tracking-tight text-ink-100">{t("hello")}</h2>
+						<p className="mt-1 text-center text-[12px] leading-relaxed text-ink-500">{t("helloHint")}</p>
+						<div className="mt-3.5">
 							<SkillRail cards={cards} />
 						</div>
-						{/* Looks like the composer it opens: same shape, same placeholder, same accent send button. */}
+						{/* Shaped exactly like the composer it opens: same panel, same placeholder, same accent send button —
+						    so the click does what it looks like it will do. */}
 						<button
 							type="button"
 							onClick={() => void openAssistantMain()}
-							className="mt-2.5 flex w-full items-end gap-3 rounded-2xl border border-ink-800 bg-ink-900/85 px-4 py-3.5 text-left shadow-[0_10px_40px_-12px_rgb(0_0_0/0.45)] backdrop-blur transition-colors hover:border-ember-500/40"
+							className="mt-2 flex min-h-[clamp(9rem,26vh,13rem)] w-full flex-col rounded-2xl border border-ink-800 bg-ink-900/85 p-4 text-left shadow-[0_10px_40px_-12px_rgb(0_0_0/0.45)] backdrop-blur transition-colors hover:border-ember-500/40"
 						>
-							<span className="min-w-0 flex-1 text-[14px] text-ink-500">{t("composerHint")}</span>
-							<span className="btn-glow grid size-8 shrink-0 place-items-center rounded-full bg-ember-500 text-ink-950">
-								<ChevronRight className="size-4" />
+							<span className="text-[14.5px] text-ink-500">{t("composerHint")}</span>
+							{/* The composer's own bottom bar: what can be attached, then send. Inert here — the real one is a click away. */}
+							<span className="mt-auto flex items-center gap-2 pt-6">
+								<span className="grid size-8 place-items-center rounded-full border border-ink-800 text-ink-400">
+									<Plus className="size-4" />
+								</span>
+								<span className="text-[11.5px] text-ink-600">{t("composerTools")}</span>
+								<span className="btn-glow ml-auto grid size-8 shrink-0 place-items-center rounded-full bg-ember-500 text-ink-950">
+									<ArrowUp className="size-4" />
+								</span>
 							</span>
 						</button>
 					</div>
