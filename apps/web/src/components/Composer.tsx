@@ -557,17 +557,21 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 	textRef.current = text;
 	const [images, setImages] = useState<ImageContent[]>(() => loadDraft(draftKey).images);
 	const [docs, setDocs] = useState<Attachment[]>(() => loadDraft(draftKey).docs);
+	// ArrowUp history: position in the sent messages (-1: not browsing) and what was typed before browsing; per conversation too.
+	const history = useRef(loadDraft(draftKey).history ?? { at: -1, draft: "" });
 	const [shownKey, setShownKey] = useState(draftKey);
 	if (shownKey !== draftKey) {
 		// Another conversation while this component stays: keep what was typed with the one left, show the other's.
-		saveDraft(shownKey, { text, images, docs });
+		saveDraft(shownKey, { text, images, docs, history: history.current });
 		const next = loadDraft(draftKey);
+		history.current = next.history ?? { at: -1, draft: "" };
 		setShownKey(draftKey);
 		setText(next.text);
 		setImages(next.images);
 		setDocs(next.docs);
 	}
-	useEffect(() => saveDraft(shownKey, { text, images, docs }), [shownKey, text, images, docs]);
+	// ArrowUp changes the text together with the history position, so saving on text changes keeps both.
+	useEffect(() => saveDraft(shownKey, { text, images, docs, history: history.current }), [shownKey, text, images, docs]);
 	const [reading, setReading] = useState(0);
 	const [dragging, setDragging] = useState(false);
 	const files = useRef<HTMLInputElement>(null);
@@ -578,8 +582,6 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 	const [cursor, setCursor] = useState(0);
 	const ref = useRef<HTMLTextAreaElement>(null);
 	const streaming = session?.isStreaming ?? false;
-	// ArrowUp history: position in the sent messages (-1: not browsing) and what was typed before browsing.
-	const history = useRef({ at: -1, draft: "" });
 	const view = useStore((s) => s.view);
 	const [expanded, setExpanded] = useState(false);
 	const expandedRef = useRef<HTMLTextAreaElement>(null);

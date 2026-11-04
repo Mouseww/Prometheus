@@ -9,6 +9,8 @@ export interface Draft {
 	text: string;
 	images: ImageContent[];
 	docs: Attachment[];
+	/** ArrowUp browsing of sent messages: position (-1: not browsing) and what was typed before; this page only. */
+	history?: { at: number; draft: string };
 }
 
 /** Key of the new-chat page: its session id changes while it is set up (workspace or agent picked), the draft must not. */
@@ -51,7 +53,7 @@ export function loadDraft(key: string): Draft {
 }
 
 export function saveDraft(key: string, draft: Draft): void {
-	const empty = !draft.text && !draft.images.length && !draft.docs.length;
+	const empty = !draft.text && !draft.images.length && !draft.docs.length && !(draft.history && (draft.history.at >= 0 || draft.history.draft));
 	if (empty) memory.delete(key);
 	else memory.set(key, draft);
 	const all = storage();
