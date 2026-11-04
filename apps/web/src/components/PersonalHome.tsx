@@ -1,8 +1,10 @@
 import clsx from "clsx";
-import { ArrowUp, BarChart3, ChevronRight, CircleHelp, Clock, FileSpreadsheet, FileText, Flame, Mail, MessageCircle, PenLine, Plus, Presentation, Share2, Sparkles, Video, Wrench } from "lucide-react";
+import { ArrowUp, BarChart3, ChevronRight, CircleHelp, Clock, FileSpreadsheet, FileText, Flame, LoaderCircle, Mail, MessageCircle, PenLine, Plus, Presentation, Share2, Sparkles, Video, Wrench, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AutomationTask } from "@prometheus/protocol";
+import type { AutomationTask, ImageContent } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
+import { type Attachment, AttachmentError, fileToAttachment, formatSize, isPicture, MAX_FILE_MB, MAX_FILES } from "../lib/attachments.ts";
+import { fileToImage, ImageError, imageSrc, MAX_IMAGES } from "../lib/images.ts";
 import { onPluginChange, openAssistantMain, openSession, type PendingQuestion, pluginCall, sendPrompt, toast, useStore } from "../lib/store.ts";
 import { delegatedRuns, delegationTitle } from "../lib/spaces.ts";
 import { Badge } from "./ui.tsx";
@@ -39,6 +41,18 @@ const M = defineMessages({
 		composerTools: "@ 引用文件，/ 调用技能",
 		submit: "发送",
 		sendFailed: "没能打开对话，请再试一次",
+		sendBusy: "对话正忙，稍后会把它留在输入框里",
+		attach: "添加文件或图片",
+		remove: "移除",
+		reading: "读取中…",
+		tooManyImages: "最多 {n} 张图片",
+		tooManyFiles: "最多 {n} 个文件",
+		badImageType: "不支持这种图片格式",
+		imageTooBig: "图片太大了",
+		badImage: "这张图片读不了",
+		fileTooBig: "{name} 超过 {n} MB",
+		filesTotal: "附件总大小超过 {n} MB",
+		fileRead: "读不了 {name}",
 		attachHint: "打开对话，可以带文件进去",
 		tryIt: "试一下",
 		cat_office: "办公",
@@ -76,6 +90,18 @@ const M = defineMessages({
 		composerTools: "@ files, / skills",
 		submit: "Send",
 		sendFailed: "Could not open the chat. Please try again.",
+		sendBusy: "The chat is busy; your message was kept",
+		attach: "Add files or images",
+		remove: "Remove",
+		reading: "Reading…",
+		tooManyImages: "At most {n} images",
+		tooManyFiles: "At most {n} files",
+		badImageType: "That image type is not supported",
+		imageTooBig: "That image is too large",
+		badImage: "That image cannot be read",
+		fileTooBig: "{name} is over {n} MB",
+		filesTotal: "Attachments total over {n} MB",
+		fileRead: "Cannot read {name}",
 		attachHint: "Open the chat, where you can attach files",
 		tryIt: "Try it",
 		cat_office: "Office",
@@ -240,23 +266,84 @@ export function PersonalHome() {
 	// the user types once and the work starts, with no bounce through an empty conversation.
 	const [draft, setDraft] = useState("");
 	const [sending, setSending] = useState(false);
+	const [pictures, setPictures] = useState<ImageContent[]>([]);
+	const [docs, setDocs] = useState<Attachment[]>([]);
+	const [reading, setReading] = useState(0);
 	const input = useRef<HTMLTextAreaElement>(null);
+	const files = useRef<HTMLInputElement>(null);
+
+	/** Same split the composer makes: pictures go to the vision model, everything else goes as bytes. */
+	const addFiles = useCallback(
+		async (list: File[]) => {
+			if (!list.length) return;
+			const pics = list.filter(isPicture);
+			const rest = list.filter((f) => !isPicture(f));
+			const room = MAX_IMAGES - pictures.length;
+			if (pics.length > Math.max(room, 0)) toast(t("tooManyImages", { n: MAX_IMAGES }), "warning");
+			const docRoom = MAX_FILES - docs.length;
+			if (rest.length > Math.max(docRoom, 0)) toast(t("tooManyFiles", { n: MAX_FILES }), "warning");
+			const takePics = pics.slice(0, Math.max(room, 0));
+			const takeDocs = rest.slice(0, Math.max(docRoom, 0));
+			if (!takePics.length && !takeDocs.length) return;
+
+			setReading((n) => n + takePics.length + takeDocs.length);
+			for (const file of takePics) {
+				try {
+					const image = await fileToImage(file);
+					setPictures((cur) => (cur.length < MAX_IMAGES ? [...cur, image] : cur));
+				} catch (err) {
+					const reason = err instanceof ImageError ? err.reason : "decode";
+					toast(t(reason === "type" ? "badImageType" : reason === "size" ? "imageTooBig" : "badImage"), "error");
+				} finally {
+					setReading((n) => n - 1);
+				}
+			}
+			let bytes = docs.reduce((sum, d) => sum + d.size, 0);
+			for (const file of takeDocs) {
+				try {
+					const doc = await fileToAttachment(file, bytes);
+					bytes += doc.size;
+					setDocs((cur) => (cur.length < MAX_FILES ? [...cur, doc] : cur));
+				} catch (err) {
+					const reason = err instanceof AttachmentError ? err.reason : "read";
+					toast(t(reason === "size" ? "fileTooBig" : reason === "total" ? "filesTotal" : "fileRead", { name: file.name, n: MAX_FILE_MB }), "error");
+				} finally {
+					setReading((n) => n - 1);
+				}
+			}
+		},
+		[docs, pictures.length, t],
+	);
+
 	const ask = useCallback(
 		async (text = draft) => {
 			const said = text.trim();
-			if (!said || sending) return;
+			// A picture or a file on its own is a complete request; text is not required.
+			const hasPayload = Boolean(said) || pictures.length > 0 || docs.length > 0;
+			if (!hasPayload || sending || reading > 0) return;
 			setSending(true);
 			try {
 				await openAssistantMain();
-				setDraft("");
 				// openAssistantMain resolves once the chat is on screen; without a session there is nothing to prompt.
-				if (useStore.getState().session) await sendPrompt(said);
-				else toast(t("sendFailed"), "error");
+				if (!useStore.getState().session) {
+					toast(t("sendFailed"), "error");
+					return;
+				}
+				setDraft("");
+				const sent = await sendPrompt(said, undefined, pictures.length ? pictures : undefined, docs.length ? docs : undefined);
+				if (!sent) {
+					// The chat was already busy with another run: keep what was typed so it is not lost.
+					setDraft(said);
+					toast(t("sendBusy"), "warning");
+					return;
+				}
+				setPictures([]);
+				setDocs([]);
 			} finally {
 				setSending(false);
 			}
 		},
-		[draft, sending],
+		[draft, docs, pictures, reading, sending, t],
 	);
 	const projectOf = (workspaceId: string) => workspaces.find((w) => w.id === workspaceId)?.name ?? "";
 	const row = (s: (typeof runs.running)[number], live: boolean) => (
@@ -323,25 +410,75 @@ export function PersonalHome() {
 										void ask();
 									}
 								}}
+								onPaste={(e) => {
+									const pasted = [...e.clipboardData.files];
+									if (!pasted.length) return;
+									// A screenshot arrives as a file with no text; leave ordinary text pastes alone.
+									e.preventDefault();
+									void addFiles(pasted);
+								}}
+								onDragOver={(e) => e.preventDefault()}
+								onDrop={(e) => {
+									e.preventDefault();
+									void addFiles([...e.dataTransfer.files]);
+								}}
 								placeholder={t("composerHint")}
 								rows={2}
 								aria-label={t("composerHint")}
 								className="w-full resize-none bg-transparent text-[14.5px] leading-relaxed text-ink-100 outline-none placeholder:text-ink-500"
 							/>
+							{/* What is attached so far: the same chips the chat shows, each removable before sending. */}
+							{(pictures.length > 0 || docs.length > 0 || reading > 0) && (
+								<div className="mt-2 flex flex-wrap gap-1.5">
+									{pictures.map((p, i) => (
+										<span key={`img-${i}`} className="group relative">
+											<img src={imageSrc(p)} alt="" className="size-11 rounded-lg border border-ink-800 object-cover" />
+											<button
+												type="button"
+												title={t("remove")}
+												aria-label={t("remove")}
+												onClick={() => setPictures((cur) => cur.filter((_, j) => j !== i))}
+												className="absolute -top-1 -right-1 grid size-4 place-items-center rounded-full bg-ink-100 text-ink-950 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+											>
+												<X className="size-3" />
+											</button>
+										</span>
+									))}
+									{docs.map((d, i) => (
+										<span key={`doc-${i}`} className="flex h-7 max-w-52 items-center gap-1.5 rounded-full border border-ink-800 bg-ink-950/50 px-2 text-[11.5px] text-ink-300">
+											<FileText className="size-3.5 shrink-0 text-ember-400" />
+											<span className="truncate">{d.name}</span>
+											<span className="shrink-0 text-ink-600">{formatSize(d.size)}</span>
+											<button type="button" title={t("remove")} aria-label={t("remove")} onClick={() => setDocs((cur) => cur.filter((_, j) => j !== i))} className="shrink-0 text-ink-500 hover:text-ink-100">
+												<X className="size-3" />
+											</button>
+										</span>
+									))}
+									{reading > 0 && <span className="flex h-7 items-center gap-1.5 rounded-full border border-ink-800 px-2 text-[11.5px] text-ink-500"><LoaderCircle className="size-3.5 animate-spin" />{t("reading")}</span>}
+								</div>
+							)}
 							{/* The composer's own bottom bar: attach, the shortcut hint, then send. */}
 							<div className="mt-auto flex items-center gap-2 pt-4">
-								<button type="button" onClick={() => void openAssistantMain()} title={t("attachHint")} className="grid size-8 place-items-center rounded-full border border-ink-800 text-ink-400 transition-colors hover:border-ember-500/40 hover:text-ember-300">
+								<input ref={files} type="file" multiple className="hidden" onChange={(e) => { void addFiles([...(e.target.files ?? [])]); e.target.value = ""; }} />
+								<button
+									type="button"
+									onClick={() => files.current?.click()}
+									disabled={pictures.length >= MAX_IMAGES && docs.length >= MAX_FILES}
+									title={t("attach")}
+									aria-label={t("attach")}
+									className="grid size-8 place-items-center rounded-full border border-ink-800 text-ink-400 transition-colors hover:border-ember-500/40 hover:text-ember-300 disabled:opacity-40"
+								>
 									<Plus className="size-4" />
 								</button>
 								<span className="text-[11.5px] text-ink-600">{t("composerTools")}</span>
 								<button
 									type="submit"
-									disabled={!draft.trim() || sending}
+									disabled={(!draft.trim() && !pictures.length && !docs.length) || sending || reading > 0}
 									title={t("submit")}
 									aria-label={t("submit")}
 									className="btn-glow ml-auto grid size-8 shrink-0 place-items-center rounded-full bg-ember-500 text-ink-950 transition-opacity disabled:opacity-40"
 								>
-									<ArrowUp className="size-4" />
+									{sending ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
 								</button>
 							</div>
 						</form>
