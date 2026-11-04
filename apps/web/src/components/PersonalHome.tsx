@@ -199,7 +199,8 @@ function Capabilities({ cards }: { cards: SkillCard[] }) {
 							className={clsx(
 								"h-8 rounded-full px-3.5 text-[13px] transition-colors",
 								"focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ember-400",
-								on ? "bg-ink-100 font-medium text-ink-950" : "text-ink-400 hover:bg-ink-850 hover:text-ink-100",
+								// The active tab wears the brand accent, the way selected controls do elsewhere in the app.
+								on ? "bg-ember-500 font-medium text-ink-950 shadow-[0_4px_14px_-6px_rgb(var(--glow)/0.7)]" : "text-ink-400 hover:bg-ember-500/10 hover:text-ember-200",
 							)}
 						>
 							{t(CATEGORY_TITLE[g.cat])}
@@ -207,7 +208,7 @@ function Capabilities({ cards }: { cards: SkillCard[] }) {
 					);
 				})}
 			</div>
-			<div className="mt-5 grid gap-3 @lg:grid-cols-2 @4xl:grid-cols-3">
+			<div className="mt-4 grid gap-3 @lg:grid-cols-2 @4xl:grid-cols-3">
 				{shown.items.map((c) => (
 					<button
 						key={c.name}
@@ -215,19 +216,18 @@ function Capabilities({ cards }: { cards: SkillCard[] }) {
 						onClick={() => void start(c.examples[0] ?? c.title)}
 						title={c.examples[0]}
 						className={clsx(
-							"group flex flex-col rounded-xl border border-ink-800 bg-ink-900/70 p-3 text-left transition-all",
-							"hover:-translate-y-px hover:border-ink-700 hover:bg-ink-900 hover:shadow-lg hover:shadow-black/10",
+							"suggest-card group flex flex-col rounded-xl border border-ink-800 bg-ink-900/70 p-3 text-left",
 							"focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ember-400",
 						)}
 					>
 						<span className="flex items-center gap-2 text-[13.5px] font-medium text-ink-100">
-							<span className="grid size-7 shrink-0 place-items-center rounded-lg bg-ink-850 text-ink-300 transition-colors group-hover:bg-ember-500/10 group-hover:text-ember-300">
+							<span className="grid size-7 shrink-0 place-items-center rounded-lg bg-ember-500/10 text-ember-400 transition-colors group-hover:bg-ember-500/20 group-hover:text-ember-300">
 								{CARD_ICON[c.name] ?? <Sparkles className="size-4" />}
 							</span>
 							{c.title}
 						</span>
 						<span className="mt-1.5 line-clamp-1 text-[11.5px] text-ink-500">{c.tagline}</span>
-						{c.examples[0] && <span className="mt-2 line-clamp-2 text-[11.5px] leading-snug text-ink-400 group-hover:text-ink-300">{c.examples[0]}</span>}
+						{c.examples[0] && <span className="mt-2 line-clamp-2 text-[11.5px] leading-snug text-ink-400 group-hover:text-ink-200">{c.examples[0]}</span>}
 					</button>
 				))}
 			</div>
@@ -305,7 +305,7 @@ export function PersonalHome() {
 						<button
 							type="button"
 							onClick={() => void openAssistantMain()}
-							className="mt-5 inline-flex h-10 items-center gap-2 rounded-full bg-ink-100 px-5 text-[13px] font-medium text-ink-950 transition-transform hover:scale-[1.02] active:scale-[0.99]"
+							className="btn-glow mt-5 inline-flex h-10 items-center gap-2 rounded-full bg-ember-500 px-5 text-[13px] font-medium text-ink-950 transition-transform hover:scale-[1.02] active:scale-[0.99]"
 						>
 							<MessageCircle className="size-4" />
 							{t("chat")}
