@@ -6,6 +6,7 @@ import { defineMessages, useT } from "../lib/i18n.ts";
 import { type Attachment, AttachmentError, fileToAttachment, formatSize, isPicture, MAX_FILE_MB, MAX_FILES } from "../lib/attachments.ts";
 import { fileToImage, ImageError, imageSrc, MAX_IMAGES } from "../lib/images.ts";
 import { inputAt, rememberInput } from "../lib/inputHistory.ts";
+import { loadDraft, NEW_CHAT_DRAFT, saveDraft } from "../lib/drafts.ts";
 import { aliasKey, type SendMode, setPrefs, usePrefs } from "../lib/prefs.ts";
 import { abortRun, openSettings, pluginCall, sendPrompt, setModel, setPermissionMode, setThinking, toast, unqueue, useSpace, useStore } from "../lib/store.ts";
 import { BACK_LAYER, useBackLayer } from "../lib/back.ts";
@@ -539,17 +540,34 @@ function EffortPicker() {
 	);
 }
 
+/** Nonce of the last `editorText` a composer took in. */
+let appliedEditorNonce = 0;
+
 export function Composer({ newChat = false }: { newChat?: boolean }) {
 	const t = useT(M);
 	const personalSpace = useSpace() === "personal";
 	const session = useStore((s) => s.session);
 	const commands = useStore((s) => s.commands);
 	const editorText = useStore((s) => s.editorText);
-	const [text, setText] = useState("");
+	// The unsent text, pictures and files belong to the conversation on screen, not to this component (which is
+	// rebuilt on some switches and kept on others): they are loaded from and saved to that conversation's draft.
+	const draftKey = newChat || !session ? NEW_CHAT_DRAFT : session.id;
+	const [text, setText] = useState(() => loadDraft(draftKey).text);
 	const textRef = useRef(text);
 	textRef.current = text;
-	const [images, setImages] = useState<ImageContent[]>([]);
-	const [docs, setDocs] = useState<Attachment[]>([]);
+	const [images, setImages] = useState<ImageContent[]>(() => loadDraft(draftKey).images);
+	const [docs, setDocs] = useState<Attachment[]>(() => loadDraft(draftKey).docs);
+	const [shownKey, setShownKey] = useState(draftKey);
+	if (shownKey !== draftKey) {
+		// Another conversation while this component stays: keep what was typed with the one left, show the other's.
+		saveDraft(shownKey, { text, images, docs });
+		const next = loadDraft(draftKey);
+		setShownKey(draftKey);
+		setText(next.text);
+		setImages(next.images);
+		setDocs(next.docs);
+	}
+	useEffect(() => saveDraft(shownKey, { text, images, docs }), [shownKey, text, images, docs]);
 	const [reading, setReading] = useState(0);
 	const [dragging, setDragging] = useState(false);
 	const files = useRef<HTMLInputElement>(null);
@@ -582,7 +600,9 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 	useBackLayer(BACK_LAYER.sheet, expanded, collapse);
 
 	useEffect(() => {
-		if (editorText) {
+		// Each request fills one composer once; a composer built later (another conversation) must not apply it again.
+		if (editorText && editorText.nonce > appliedEditorNonce) {
+			appliedEditorNonce = editorText.nonce;
 			const { text: next, images: attached, append } = editorText;
 			setText(append && textRef.current.trim() ? `${next}\n${textRef.current}` : next);
 			if (attached?.length) setImages((cur) => [...cur, ...attached].slice(0, MAX_IMAGES));
@@ -688,6 +708,8 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 		const mode = session?.capabilities && !session.capabilities.steering ? "followUp" : sendMode;
 		const ok = await sendPrompt(value, streaming ? mode : undefined, attached, attachedDocs);
 		if (!ok) {
+			// This composer may be gone by now (the pending echo swaps the new-chat page for the chat): keep it as the draft too.
+			saveDraft(shownKey, { text: value, images: attached, docs: attachedDocs });
 			setText(value);
 			setImages(attached);
 			setDocs(attachedDocs);
