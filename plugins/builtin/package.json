@@ -17,6 +17,7 @@
     "@prometheus/plugin-browser": "workspace:*",
     "@prometheus/plugin-computer-use": "workspace:*",
     "@prometheus/plugin-connectors": "workspace:*",
+    "@prometheus/plugin-flows": "workspace:*",
     "@prometheus/plugin-folder": "workspace:*",
     "@prometheus/plugin-git": "workspace:*",
     "@prometheus/plugin-mcp": "workspace:*",

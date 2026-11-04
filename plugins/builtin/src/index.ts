@@ -4,6 +4,7 @@ import automations from "@prometheus/plugin-automations";
 import browser from "@prometheus/plugin-browser";
 import computerUse from "@prometheus/plugin-computer-use";
 import connectors from "@prometheus/plugin-connectors";
+import flows from "@prometheus/plugin-flows";
 import folder from "@prometheus/plugin-folder";
 import git from "@prometheus/plugin-git";
 import logs from "@prometheus/plugin-logs";
@@ -51,6 +52,7 @@ export const builtinPlugins: PrometheusPlugin[] = [
 	// Workspace tools
 	git,
 	automations,
+	flows,
 	terminal,
 	folder,
 	workbench,

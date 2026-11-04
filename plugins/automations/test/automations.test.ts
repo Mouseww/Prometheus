@@ -72,6 +72,7 @@ function harness(initial: AutomationState = { tasks: [], runs: [] }, workspaces 
 	const calls: { cwd: string; access: string; prompt: string }[] = [];
 	let outcome: () => Promise<{ sessionId: string; status: "success" | "error" | "aborted"; access?: "readonly" | "edits" | "full"; text: string; error?: string }> = async () => ({ sessionId: "s1", status: "success", access: "readonly", text: "all done" });
 	let changes = 0;
+	const flowCalls: { flowId: string; text: string }[] = [];
 	const engine = new AutomationEngine({
 		load: async () => structuredClone(saved),
 		save: async (s) => void (saved = structuredClone(s)),
@@ -80,11 +81,15 @@ function harness(initial: AutomationState = { tasks: [], runs: [] }, workspaces 
 			calls.push({ cwd: o.cwd, access: o.access, prompt: o.prompt });
 			return { access: o.access, ...(await outcome()) };
 		},
+		runFlow: async (flowId, text) => {
+			flowCalls.push({ flowId, text });
+			return { status: "success", text: "flow output" };
+		},
 		now: () => now,
 		changed: () => void changes++,
 		log: () => {},
 	});
-	return { engine, calls, saved: () => saved, setNow: (d: Date) => (now = d), setOutcome: (f: typeof outcome) => (outcome = f), changes: () => changes };
+	return { engine, calls, flowCalls, saved: () => saved, setNow: (d: Date) => (now = d), setOutcome: (f: typeof outcome) => (outcome = f), changes: () => changes };
 }
 
 const input = (over: Partial<AutomationInput> = {}): AutomationInput => ({
@@ -224,6 +229,19 @@ describe("AutomationEngine", () => {
 		await h.engine.remove(id);
 		expect(h.saved().tasks).toEqual([]);
 		await expect(h.engine.setEnabled(id, true)).rejects.toThrow(/不存在/);
+		await h.engine.stop();
+	});
+});
+
+describe("automation that runs a flow", () => {
+	it("needs no prompt, runs the flow instead of the agent and keeps its output as the summary", async () => {
+		const h = harness();
+		await h.engine.start();
+		const task = await h.engine.create(input({ prompt: "", flowId: "f1", flowInput: "hello" }));
+		await h.engine.runNow(task.id);
+		expect(h.flowCalls).toEqual([{ flowId: "f1", text: "hello" }]);
+		expect(h.calls).toHaveLength(0);
+		expect(h.engine.snapshot().runs[0]).toMatchObject({ status: "success", summary: "flow output" });
 		await h.engine.stop();
 	});
 });

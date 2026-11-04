@@ -14,6 +14,8 @@ export interface EngineDeps {
 	save(state: AutomationState): Promise<void>;
 	workspaces(): Promise<WorkspaceRef[]>;
 	runAgent(options: AgentRunOptions): Promise<AgentRunResult>;
+	/** Runs a saved flow to completion (Flows plugin). Absent when that plugin is off. */
+	runFlow?(flowId: string, input: string, signal: AbortSignal): Promise<{ status: "success" | "error" | "aborted"; text: string; error?: string }>;
 	now(): Date;
 	/** Called after a run starts or ends, so clients can refresh. */
 	changed(): void;
@@ -28,7 +30,7 @@ const SUMMARY_CHARS = 600;
 export function validateInput(input: AutomationInput): string[] {
 	const errors: string[] = [];
 	if (!input.name?.trim()) errors.push("名称不能为空");
-	if (!input.prompt?.trim()) errors.push("任务内容不能为空");
+	if (!input.prompt?.trim() && !input.flowId) errors.push("任务内容不能为空");
 	if (!input.workspaceId) errors.push("请选择工作区");
 	if (!["readonly", "edits", "full"].includes(input.access)) errors.push("权限级别不合法");
 	errors.push(...validateSchedule(input.schedule));
@@ -116,6 +118,8 @@ export class AutomationEngine {
 		const errors = validateInput(input);
 		if (errors.length) throw new Error(errors.join("；"));
 		await this.requireWorkspace(input.workspaceId);
+		delete task.flowId;
+		delete task.flowInput;
 		Object.assign(task, clean(input));
 		if (!task.model) delete task.model;
 		this.schedule(task, this.deps.now());
@@ -206,6 +210,12 @@ export class AutomationEngine {
 			if (!workspace) {
 				run.status = "skipped";
 				run.error = "工作区已被移除";
+			} else if (task.flowId) {
+				if (!this.deps.runFlow) throw new Error("流程编排插件未启用");
+				const result = await this.deps.runFlow(task.flowId, task.flowInput ?? "", ctl.signal);
+				run.status = result.status === "success" ? "success" : "error";
+				run.summary = result.text.slice(0, SUMMARY_CHARS) || undefined;
+				if (result.status !== "success") run.error = result.error ?? (result.status === "aborted" ? "已取消" : "运行失败");
 			} else {
 				const result = await this.deps.runAgent({
 					cwd: workspace.path,
@@ -237,6 +247,7 @@ function clean(input: AutomationInput): AutomationInput {
 	return {
 		name: input.name.trim().slice(0, 80),
 		prompt: input.prompt.trim().slice(0, 8000),
+		...(input.flowId ? { flowId: input.flowId, flowInput: (input.flowInput ?? "").slice(0, 8000) } : {}),
 		workspaceId: input.workspaceId,
 		schedule: input.schedule,
 		access: input.access,

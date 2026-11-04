@@ -474,3 +474,31 @@ html[data-entering] #root { animation: app-in 0.7s cubic-bezier(0.2, 0.8, 0.2, 1
 }
 
 :root[data-motion="off"] .toast-spark::before, :root[data-motion="off"] .toast-spark::after { display: none; }
+
+/* Flows: a running node glows, and the line feeding it marches toward it. */
+@keyframes flow-dash {
+	to {
+		stroke-dashoffset: -28;
+	}
+}
+.flow-edge-live {
+	animation: flow-dash 0.8s linear infinite;
+}
+@keyframes flow-glow {
+	0%,
+	100% {
+		box-shadow: 0 0 0 2px rgba(255, 122, 47, 0.14), 0 0 14px rgba(255, 122, 47, 0.18);
+	}
+	50% {
+		box-shadow: 0 0 0 4px rgba(255, 122, 47, 0.28), 0 0 26px rgba(255, 122, 47, 0.38);
+	}
+}
+.flow-node-running {
+	animation: flow-glow 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+	.flow-edge-live,
+	.flow-node-running {
+		animation: none;
+	}
+}

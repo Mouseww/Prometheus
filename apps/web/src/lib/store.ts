@@ -183,7 +183,7 @@ export interface PendingQuestion {
 	at: number;
 }
 
-export type View = "chat" | "home" | "knowledge" | "memory" | "automations" | "git" | "settings" | { panel: string };
+export type View = "chat" | "home" | "knowledge" | "memory" | "automations" | "flows" | "git" | "settings" | { panel: string };
 
 interface State {
 	client: PrometheusClient | null;

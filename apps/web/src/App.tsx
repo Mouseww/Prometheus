@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { AutomationsView } from "./components/AutomationsView.tsx";
+import { FlowsView } from "./components/FlowsView.tsx";
 import { ChatView } from "./components/ChatView.tsx";
 import { ConnectScreen } from "./components/ConnectScreen.tsx";
 import { AgentSetup } from "./components/AgentSetup.tsx";
@@ -77,6 +78,7 @@ export function App() {
 		if (!plugins.length) return;
 		if (
 			(view === "automations" && !pluginActive(plugins, "automations")) ||
+			(view === "flows" && !pluginActive(plugins, "flows")) ||
 			(view === "git" && !pluginActive(plugins, "git"))
 		)
 			setView("chat");
@@ -272,6 +274,7 @@ export function App() {
 							{view === "knowledge" && <KnowledgeView />}
 							{view === "memory" && <MemoryView />}
 							{view === "automations" && <AutomationsView />}
+							{view === "flows" && <FlowsView />}
 							{view === "git" && <GitView />}
 							{view === "settings" && <SettingsView />}
 							{typeof view === "object" && <PanelFrame target={target} url={view.panel} />}

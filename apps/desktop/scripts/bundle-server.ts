@@ -42,6 +42,7 @@ const sources = [
 	"plugins/todos",
 	"plugins/git",
 	"plugins/automations",
+	"plugins/flows",
 	"plugins/connectors",
 	"plugins/voice",
 ];

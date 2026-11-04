@@ -4,6 +4,7 @@
 export * from "./binary.ts";
 export * from "./errors.ts";
 export * from "./goal.ts";
+export * from "./flow.ts";
 import type { GoalState } from "./goal.ts";
 
 export const PROTOCOL_VERSION = 1;
@@ -964,12 +965,15 @@ export interface AutomationTask {
 	access: RunAccess;
 	enabled: boolean;
 	model?: ModelRef;
+	/** Run this flow instead of a prompt (its steps use their own permissions); `flowInput` is its {{input}}. */
+	flowId?: string;
+	flowInput?: string;
 	createdAt: string;
 	nextRunAt?: string;
 	lastRunAt?: string;
 }
 
-export type AutomationInput = Pick<AutomationTask, "name" | "prompt" | "workspaceId" | "schedule" | "access" | "enabled" | "model">;
+export type AutomationInput = Pick<AutomationTask, "name" | "prompt" | "workspaceId" | "schedule" | "access" | "enabled" | "model" | "flowId" | "flowInput">;
 
 export interface AutomationRun {
 	id: string;
@@ -980,6 +984,92 @@ export interface AutomationRun {
 	status: "running" | "success" | "error" | "skipped";
 	sessionId?: string;
 	summary?: string;
+	error?: string;
+}
+
+// ---------- Flows plugin (agent orchestration / custom SOPs) ----------
+
+export type FlowNodeKind = "start" | "agent" | "condition" | "end" | "subflow";
+
+/** How a condition node picks a branch: text checks on the upstream output, or a yes/no question put to the agent. */
+export type FlowConditionMode = "contains" | "regex" | "ai";
+
+export interface FlowNode {
+	id: string;
+	kind: FlowNodeKind;
+	/** Canvas position in px. */
+	x: number;
+	y: number;
+	title: string;
+	/** agent: the instruction. condition (mode ai): the question. Supports {{input}}, {{prev}} and {{<nodeId>}}. */
+	prompt?: string;
+	/** agent: what the step may do (default readonly). */
+	access?: RunAccess;
+	/** agent: model override. */
+	model?: ModelRef;
+	/** subflow: the flow to run in this step. Its final output becomes this node's output; `prompt` is the input template (default {{prev}}). */
+	flowId?: string;
+	/** condition only. */
+	mode?: FlowConditionMode;
+	/** condition (contains/regex): the text or pattern to look for in the upstream output. */
+	match?: string;
+}
+
+export interface FlowEdge {
+	id: string;
+	from: string;
+	to: string;
+	/** Edges leaving a condition node say which answer takes them. */
+	branch?: "true" | "false";
+}
+
+export interface Flow {
+	id: string;
+	name: string;
+	description: string;
+	workspaceId: string;
+	nodes: FlowNode[];
+	edges: FlowEdge[];
+	/** Run it automatically on this schedule (same shapes as automations). */
+	schedule?: AutomationSchedule;
+	/** Text handed to the flow as {{input}} on a scheduled run. */
+	scheduleInput?: string;
+	scheduleEnabled?: boolean;
+	nextRunAt?: string;
+	createdAt: string;
+	updatedAt: string;
+	lastRunAt?: string;
+}
+
+export type FlowInput = Pick<Flow, "name" | "description" | "workspaceId" | "nodes" | "edges" | "schedule" | "scheduleInput" | "scheduleEnabled">;
+
+export type FlowNodeStatus = "pending" | "running" | "success" | "error" | "skipped";
+
+export interface FlowNodeRun {
+	status: FlowNodeStatus;
+	startedAt?: string;
+	finishedAt?: string;
+	sessionId?: string;
+	/** subflow: the run of the called flow (listed in the run history under `parentRunId`). */
+	childRunId?: string;
+	output?: string;
+	error?: string;
+}
+
+export interface FlowRun {
+	id: string;
+	flowId: string;
+	flowName: string;
+	input: string;
+	startedAt: string;
+	finishedAt?: string;
+	status: "running" | "success" | "error" | "cancelled";
+	/** Who started it. */
+	trigger?: "manual" | "schedule" | "agent" | "automation" | "subflow";
+	/** Set on a run started by a subflow node of another run. */
+	parentRunId?: string;
+	nodes: Record<string, FlowNodeRun>;
+	output?: string;
 	error?: string;
 }
 

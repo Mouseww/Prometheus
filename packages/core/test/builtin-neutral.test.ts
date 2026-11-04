@@ -10,6 +10,7 @@ import type { PluginTool, PluginToolContext, PrometheusPlugin } from "@prometheu
 import { OPEN_FILE_TOOL, TODO_TOOL } from "@prometheus/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import automations from "../../../plugins/automations/src/index.ts";
+import flows from "../../../plugins/flows/src/index.ts";
 import connectors from "../../../plugins/connectors/src/index.ts";
 import { openVault } from "../../../plugins/connectors/src/vault.ts";
 import memory from "../../../plugins/memory/src/index.ts";
@@ -370,6 +371,23 @@ describe("automations", () => {
 	it("stays inert in the TUI, as before", async () => {
 		const host = makeHost(await makeDir(), "tui");
 		await host.load(automations, "builtin");
+		expect(host.tools).toEqual([]);
+	});
+});
+
+describe("flows", () => {
+	it("loads on the server host, registers its tools and answers RPCs", async () => {
+		const host = makeHost(await makeDir());
+		await host.load(flows, "builtin");
+		expect(host.list()[0]).toMatchObject({ name: "flows", status: "loaded" });
+		expect(host.tools.map((t) => t.tool.name)).toEqual(["flow_list", "flow_run", "flow_create", "flow_delete"]);
+		expect(textOf(await toolOf(host, "flow_list").execute("1", {}, undefined, undefined, toolCtx("/w")))).toBe("No flows.");
+		expect(await host.rpcs.get("flows/list")!({})).toEqual({ flows: [], runs: [] });
+	});
+
+	it("stays inert on the terminal host", async () => {
+		const host = makeHost(await makeDir(), "tui");
+		await host.load(flows, "builtin");
 		expect(host.tools).toEqual([]);
 	});
 });

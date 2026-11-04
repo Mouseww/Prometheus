@@ -5,6 +5,7 @@ import {
 	Archive,
 	ArchiveRestore,
 	AlarmClock,
+	Workflow,
 	BookOpen,
 	Brain,
 	ChevronDown,
@@ -62,6 +63,7 @@ const M = defineMessages({
 		knowledge: "知识库",
 		memory: "记忆",
 		automations: "自动化",
+		flows: "流程编排",
 		git: "Git",
 		settings: "设置",
 		workspaces: "工作区",
@@ -104,6 +106,7 @@ const M = defineMessages({
 		knowledge: "Knowledge",
 		memory: "Memory",
 		automations: "Automations",
+		flows: "Flows",
 		git: "Git",
 		settings: "Settings",
 		workspaces: "Workspaces",
@@ -579,6 +582,7 @@ export function Sidebar({ target, onDisconnect }: { target: BackendTarget; onDis
 	const tools = [
 		...(space === "personal" ? [{ view: "home" as const, label: t("home"), icon: Home }] : []),
 		...(pluginActive(plugins, "automations") ? [{ view: "automations" as const, label: t("automations"), icon: AlarmClock }] : []),
+		...(pluginActive(plugins, "flows") ? [{ view: "flows" as const, label: t("flows"), icon: Workflow }] : []),
 		...(space === "work" && pluginActive(plugins, "git") ? [{ view: "git" as const, label: t("git"), icon: GitBranch }] : []),
 	];
 

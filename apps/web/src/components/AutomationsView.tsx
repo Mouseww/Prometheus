@@ -2,10 +2,10 @@ import clsx from "clsx";
 import { confirmDialog } from "../lib/dialogs.ts";
 import { AlarmClock, CircleAlert, CircleCheck, Clock, LoaderCircle, MessageSquare, Pencil, Play, Plus, Square, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import type { AutomationInput, AutomationRun, AutomationSchedule, AutomationTask, RunAccess } from "@prometheus/protocol";
+import type { AutomationInput, AutomationRun, AutomationSchedule, AutomationTask, Flow, RunAccess } from "@prometheus/protocol";
 import { defineMessages, relativeTime, useT } from "../lib/i18n.ts";
 import { usePrefs } from "../lib/prefs.ts";
-import { onPluginChange, openSession, pluginCall, toast, useStore } from "../lib/store.ts";
+import { onPluginChange, openSession, pluginActive, pluginCall, toast, useStore } from "../lib/store.ts";
 import { Badge, Button, Dialog, Empty, Field, Input, PageHeader, Select, Textarea } from "./ui.tsx";
 
 const M = defineMessages({
@@ -66,6 +66,16 @@ const M = defineMessages({
 		offline: "仅在应用运行期间执行。应用关闭时错过的任务，每日/单次任务会在下次启动时补跑（一天内），固定间隔任务会直接跳过。",
 		unattended: "无人值守：任何超出所选权限的操作都会被直接拒绝，不会弹出确认。",
 		needFields: "请填写名称、内容并选择工作区",
+		runKind: "运行内容",
+		kindPrompt: "一段指令",
+		kindFlow: "一条流程",
+		flow: "流程",
+		flowPick: "选择一条流程…",
+		flowInput: "流程输入",
+		flowInputHint: "作为 {{input}} 传给流程。可留空。",
+		flowNote: "流程里每个步骤使用自己设置的权限，在流程编排里修改。",
+		needFlow: "请选择一条流程",
+		viaFlow: "流程：{name}",
 		saved: "已保存",
 	},
 	en: {
@@ -125,6 +135,16 @@ const M = defineMessages({
 		offline: "Runs only while the app is open. A daily or one-off task missed while closed runs once on the next start (within a day); interval tasks are simply skipped.",
 		unattended: "Unattended: anything beyond the chosen access is refused outright, never asked about.",
 		needFields: "Fill in the name and task, and choose a workspace",
+		runKind: "What to run",
+		kindPrompt: "A prompt",
+		kindFlow: "A flow",
+		flow: "Flow",
+		flowPick: "Choose a flow…",
+		flowInput: "Flow input",
+		flowInputHint: "Passed to the flow as {{input}}. May be empty.",
+		flowNote: "Each step in the flow uses the permission set on that step; change it in Flows.",
+		needFlow: "Choose a flow",
+		viaFlow: "Flow: {name}",
 		saved: "Saved",
 	},
 });
@@ -147,6 +167,13 @@ function TaskDialog({ initial, onClose, onSaved }: { initial: (AutomationInput &
 	const models = useStore((s) => s.models);
 	const [draft, setDraft] = useState<AutomationInput & { id?: string }>(initial ?? blank(workspaces[0]?.id ?? ""));
 	const [busy, setBusy] = useState(false);
+	const plugins = useStore((s) => s.plugins);
+	const flowsOn = pluginActive(plugins, "flows");
+	const [flows, setFlows] = useState<Flow[]>([]);
+	const [asFlow, setAsFlow] = useState(initial?.flowId !== undefined);
+	useEffect(() => {
+		if (flowsOn) void pluginCall<{ flows: Flow[] }>("flows", "list").then((r) => r && setFlows(r.flows));
+	}, [flowsOn]);
 	const sch = draft.schedule;
 	const set = (patch: Partial<AutomationInput>) => setDraft((d) => ({ ...d, ...patch }));
 	const dayNames = t("dayNames").split(",");
@@ -158,9 +185,12 @@ function TaskDialog({ initial, onClose, onSaved }: { initial: (AutomationInput &
 		});
 
 	const save = async () => {
-		if (!draft.name.trim() || !draft.prompt.trim() || !draft.workspaceId) return toast(t("needFields"), "warning");
+		const flow = asFlow ? flows.find((f) => f.id === draft.flowId) : undefined;
+		if (asFlow && !flow) return toast(t("needFlow"), "warning");
+		if (!draft.name.trim() || (!asFlow && !draft.prompt.trim()) || !draft.workspaceId) return toast(t("needFields"), "warning");
 		setBusy(true);
-		const res = await pluginCall<unknown>("automations", draft.id ? "update" : "create", { ...draft });
+		const body = asFlow ? { ...draft, prompt: "", workspaceId: flow!.workspaceId, access: "readonly" as RunAccess, flowId: flow!.id, flowInput: draft.flowInput ?? "" } : (() => { const { flowId: _f, flowInput: _i, ...rest } = draft; return rest; })();
+		const res = await pluginCall<unknown>("automations", draft.id ? "update" : "create", { ...body });
 		setBusy(false);
 		if (res === undefined) return;
 		toast(t("saved"));
@@ -174,18 +204,50 @@ function TaskDialog({ initial, onClose, onSaved }: { initial: (AutomationInput &
 				<Field label={t("name")}>
 					<Input value={draft.name} onChange={(e) => set({ name: e.target.value })} placeholder={t("namePh")} maxLength={80} autoFocus />
 				</Field>
-				<Field label={t("prompt")}>
-					<Textarea rows={4} value={draft.prompt} onChange={(e) => set({ prompt: e.target.value })} placeholder={t("promptPh")} />
-				</Field>
-				<Field label={t("workspace")}>
-					<Select value={draft.workspaceId} onChange={(e) => set({ workspaceId: e.target.value })}>
-						{workspaces.map((w) => (
-							<option key={w.id} value={w.id}>
-								{w.name}
-							</option>
-						))}
-					</Select>
-				</Field>
+				{flowsOn && flows.length > 0 && (
+					<Field label={t("runKind")}>
+						<div className="flex gap-2">
+							{([false, true] as const).map((v) => (
+								<button key={String(v)} type="button" onClick={() => setAsFlow(v)} className={clsx("rounded-lg border px-3 py-1.5 text-sm transition-colors", asFlow === v ? "border-ember-500/60 bg-ember-500/10 text-ember-200" : "border-ink-700 text-ink-400 hover:border-ink-500")}>
+									{t(v ? "kindFlow" : "kindPrompt")}
+								</button>
+							))}
+						</div>
+					</Field>
+				)}
+				{asFlow ? (
+					<>
+						<Field label={t("flow")}>
+							<Select value={draft.flowId ?? ""} onChange={(e) => set({ flowId: e.target.value })}>
+								<option value="">{t("flowPick")}</option>
+								{flows.map((f) => (
+									<option key={f.id} value={f.id}>
+										{f.name}
+									</option>
+								))}
+							</Select>
+						</Field>
+						<Field label={t("flowInput")} hint={t("flowInputHint")}>
+							<Textarea rows={3} value={draft.flowInput ?? ""} onChange={(e) => set({ flowInput: e.target.value })} />
+						</Field>
+						<p className="text-[11px] text-ink-500">{t("flowNote")}</p>
+					</>
+				) : (
+					<>
+					<Field label={t("prompt")}>
+						<Textarea rows={4} value={draft.prompt} onChange={(e) => set({ prompt: e.target.value })} placeholder={t("promptPh")} />
+					</Field>
+					<Field label={t("workspace")}>
+						<Select value={draft.workspaceId} onChange={(e) => set({ workspaceId: e.target.value })}>
+							{workspaces.map((w) => (
+								<option key={w.id} value={w.id}>
+									{w.name}
+								</option>
+							))}
+						</Select>
+					</Field>
+					</>
+				)}
 
 				<div className="space-y-2">
 					<span className="text-xs font-medium tracking-wide text-ink-300">{t("schedule")}</span>
@@ -228,6 +290,8 @@ function TaskDialog({ initial, onClose, onSaved }: { initial: (AutomationInput &
 					)}
 				</div>
 
+				{!asFlow && (
+					<>
 				<div className="space-y-2">
 					<span className="text-xs font-medium tracking-wide text-ink-300">{t("access")}</span>
 					<div className="grid gap-2 sm:grid-cols-3">
@@ -265,6 +329,8 @@ function TaskDialog({ initial, onClose, onSaved }: { initial: (AutomationInput &
 						))}
 					</Select>
 				</Field>
+					</>
+				)}
 			</div>
 			<div className="flex justify-end gap-2 pt-1">
 				<Button variant="ghost" onClick={onClose}>
@@ -330,6 +396,11 @@ export function AutomationsView() {
 	const running = new Set((data?.runs ?? []).filter((r) => r.status === "running").map((r) => r.taskId));
 	const when = (iso?: string) => (iso ? relativeTime(iso, lang) : "");
 	const wsName = (id: string) => workspaces.find((w) => w.id === id)?.name ?? "?";
+	const [flowNames, setFlowNames] = useState<Record<string, string>>({});
+	const flowsOn = pluginActive(useStore((st) => st.plugins), "flows");
+	useEffect(() => {
+		if (flowsOn) void pluginCall<{ flows: Flow[] }>("flows", "list").then((r) => r && setFlowNames(Object.fromEntries(r.flows.map((f) => [f.id, f.name]))));
+	}, [flowsOn, data]);
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
@@ -375,14 +446,14 @@ export function AutomationsView() {
 											<Button variant="ghost" onClick={() => void call("setEnabled", { id: task.id, enabled: !task.enabled })}>
 												{task.enabled ? t("disable") : t("enable")}
 											</Button>
-											<Button variant="ghost" aria-label={t("edit")} onClick={() => setEditing({ id: task.id, name: task.name, prompt: task.prompt, workspaceId: task.workspaceId, schedule: task.schedule, access: task.access, enabled: task.enabled, model: task.model })}>
+											<Button variant="ghost" aria-label={t("edit")} onClick={() => setEditing({ id: task.id, name: task.name, prompt: task.prompt, ...(task.flowId !== undefined ? { flowId: task.flowId, flowInput: task.flowInput } : {}), workspaceId: task.workspaceId, schedule: task.schedule, access: task.access, enabled: task.enabled, model: task.model })}>
 												<Pencil className="size-4" />
 											</Button>
 											<Button variant="danger" aria-label={t("delete")} onClick={() => void confirmDialog(t("confirmDelete", { name: task.name })).then((ok) => { if (ok) void call("remove", { id: task.id }); })}>
 												<Trash2 className="size-4" />
 											</Button>
 										</div>
-										<p className="mt-2 line-clamp-2 text-sm text-ink-400">{task.prompt}</p>
+										<p className="mt-2 line-clamp-2 text-sm text-ink-400">{task.flowId ? t("viaFlow", { name: flowNames[task.flowId] ?? task.flowId }) : task.prompt}</p>
 										<div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-500">
 											<span className="flex items-center gap-1">
 												<Clock className="size-3.5" /> {task.scheduleText}

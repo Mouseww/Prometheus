@@ -12,6 +12,7 @@ function toInput(p: Record<string, unknown>): AutomationInput {
 	return {
 		name: str(p.name),
 		prompt: str(p.prompt),
+		...(str(p.flowId) ? { flowId: str(p.flowId), flowInput: str(p.flowInput) } : {}),
 		workspaceId: str(p.workspaceId),
 		schedule: p.schedule as AutomationInput["schedule"],
 		access: str(p.access) as AutomationInput["access"],
@@ -37,6 +38,23 @@ export default definePlugin({
 			save: async (state) => void (await store.update(() => state)),
 			workspaces: () => ctx.workspaces(),
 			runAgent: (options) => ctx.runAgent(options),
+			runFlow: async (flowId, input, signal) => {
+				const started = (await ctx.callPlugin("flows", "run", { id: flowId, input, trigger: "automation" })) as { runId: string };
+				const stop = () => void ctx.callPlugin("flows", "cancel", { runId: started.runId }).catch(() => {});
+				signal.addEventListener("abort", stop, { once: true });
+				try {
+					// The flow keeps running on its own; follow its record until it settles.
+					for (;;) {
+						await new Promise((r) => setTimeout(r, 2000));
+						const rec = (await ctx.callPlugin("flows", "get", { runId: started.runId })) as { status: string; output?: string; error?: string } | null;
+						if (!rec) return { status: "error", text: "", error: "运行记录已丢失" };
+						if (rec.status === "running") continue;
+						return { status: rec.status === "success" ? "success" : rec.status === "cancelled" ? "aborted" : "error", text: rec.output ?? "", ...(rec.error ? { error: rec.error } : {}) };
+					}
+				} finally {
+					signal.removeEventListener("abort", stop);
+				}
+			},
 			now: () => new Date(),
 			changed: () => ctx.notifyChanged(),
 			log: (m) => ctx.log.warn(m),
