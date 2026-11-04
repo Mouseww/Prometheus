@@ -82,6 +82,8 @@ const M = defineMessages({
 		readonly: "只读",
 		edits: "可编辑",
 		full: "完全",
+		accessReadonly: "只能读取和检索；不能改文件，也不能执行命令。",
+		accessEdits: "可改文件，但不能执行命令；要跑测试、脚本或构建，选「完全」。",
 		model: "模型",
 		modelDefault: "默认模型",
 		condMode: "判断方式",
@@ -178,6 +180,8 @@ const M = defineMessages({
 		readonly: "Read-only",
 		edits: "Edits",
 		full: "Full",
+		accessReadonly: "Read and search only: no file changes, no commands.",
+		accessEdits: "Can edit files, cannot run commands; choose Full to run tests, scripts or builds.",
 		model: "Model",
 		modelDefault: "Default model",
 		condMode: "How to decide",
@@ -963,7 +967,7 @@ export function FlowEditor({ initial, runs, flows, onClose, onSaved, onOpenFlow 
 										<Field label={t("prompt")}>
 											<Textarea rows={7} value={selNode.prompt ?? ""} onChange={(e) => patchNode(selNode.id, { prompt: e.target.value }, "prompt")} placeholder={t("promptPh")} />
 										</Field>
-										<Field label={t("access")}>
+										<Field label={t("access")} hint={(selNode.access ?? "readonly") === "full" ? undefined : t((selNode.access ?? "readonly") === "edits" ? "accessEdits" : "accessReadonly")}>
 											<Select value={selNode.access ?? "readonly"} onChange={(e) => patchNode(selNode.id, { access: e.target.value as RunAccess })}>
 												<option value="readonly">{t("readonly")}</option>
 												<option value="edits">{t("edits")}</option>

@@ -1,6 +1,6 @@
 import { AlarmClock, Bug, CircleAlert, CircleCheck, Copy, FileText, GitPullRequest, LayoutTemplate, LoaderCircle, MessageSquare, Newspaper, Pencil, Play, Plus, Rocket, Sparkles, Trash2, Workflow } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Flow, FlowInput, FlowRun } from "@prometheus/protocol";
+import type { Flow, FlowInput, FlowRun, RunAccess } from "@prometheus/protocol";
 import { confirmDialog } from "../lib/dialogs.ts";
 import { defineMessages, relativeTime, useT } from "../lib/i18n.ts";
 import { usePrefs } from "../lib/prefs.ts";
@@ -54,10 +54,17 @@ const M = defineMessages({
 		success: "成功",
 		error: "失败",
 		cancelled: "已取消",
+		blockedShort: "有步骤因权限不足被拒",
 		openEditor: "打开查看进度",
 		generated: "已生成，请检查后保存",
 		input: "运行输入",
 		inputHint: "启动时传给流程的内容，步骤里用 {{input}} 引用。可留空。",
+		perm: "步骤权限",
+		permFlow: "按每个步骤自己的设置",
+		permFull: "所有步骤用「完全」（可执行命令）",
+		permEdits: "所有步骤用「可编辑」（可改文件，不能执行命令）",
+		permReadonly: "所有步骤用「只读」",
+		permHint: "步骤是无人值守运行，不能中途问人：权限没覆盖的调用会被拒绝。要跑测试或脚本的步骤必须用「完全」。",
 		start: "开始运行",
 		started: "已开始运行",
 	},
@@ -102,10 +109,17 @@ const M = defineMessages({
 		success: "Done",
 		error: "Failed",
 		cancelled: "Cancelled",
+		blockedShort: "Steps blocked by permissions",
 		openEditor: "Open to watch",
 		generated: "Generated; review it, then save",
 		input: "Run input",
 		inputHint: "Passed to the flow at start; steps reference it as {{input}}. May be empty.",
+		perm: "Step permissions",
+		permFlow: "As designed for each step",
+		permFull: "Full for every step (may run commands)",
+		permEdits: "Edits for every step (writes files, no commands)",
+		permReadonly: "Read-only for every step",
+		permHint: "Steps run unattended and cannot ask: what their permission does not cover is refused. A step that runs tests or scripts needs Full.",
 		start: "Start run",
 		started: "Run started",
 	},
@@ -381,6 +395,12 @@ export function FlowsView() {
 												<span className="text-xs text-ink-500">{when(r.startedAt)}</span>
 												{r.location && <Badge>{placeLabel(lang2, r.location)}</Badge>}
 												{r.error && <span className="min-w-0 flex-1 truncate text-xs text-rose-400">{r.error}</span>}
+												{r.warning && !r.error && (
+													<span className="flex min-w-0 flex-1 items-center gap-1 truncate text-xs text-amber-400" title={r.warning}>
+														<CircleAlert className="size-3 shrink-0" />
+														{t("blockedShort")}
+													</span>
+												)}
 												<span className="ml-auto flex items-center gap-2">
 													{sessions.length > 0 && (
 														<button type="button" className="flex items-center gap-1 text-xs text-ember-300 hover:underline" onClick={() => void openSession(sessions[sessions.length - 1]!.sessionId!)}>
@@ -431,8 +451,8 @@ export function FlowsView() {
 				<RunInputDialog
 					flow={runFor}
 					onClose={() => setRunFor(null)}
-					onStart={async (input, where) => {
-						const res = await pluginCall<{ runId: string }>("flows", "run", { id: runFor.id, input, workspaceId: where });
+					onStart={async (input, where, access) => {
+						const res = await pluginCall<{ runId: string }>("flows", "run", { id: runFor.id, input, workspaceId: where, ...(access ? { access } : {}) });
 						setRunFor(null);
 						if (res) {
 							toast(t("started"));
@@ -445,10 +465,11 @@ export function FlowsView() {
 	);
 }
 
-function RunInputDialog({ flow, onClose, onStart }: { flow: Flow; onClose: () => void; onStart: (input: string, where: string) => Promise<void> }) {
+function RunInputDialog({ flow, onClose, onStart }: { flow: Flow; onClose: () => void; onStart: (input: string, where: string, access: RunAccess | "") => Promise<void> }) {
 	const t = useT(M);
 	const [input, setInput] = useState("");
 	const [where, setWhere] = useState(useDefaultLocation());
+	const [access, setAccess] = useState<RunAccess | "">("");
 	const [busy, setBusy] = useState(false);
 	return (
 		<Dialog title={`${t("run")} · ${flow.name}`} onClose={onClose}>
@@ -457,6 +478,14 @@ function RunInputDialog({ flow, onClose, onStart }: { flow: Flow; onClose: () =>
 					<Textarea rows={5} value={input} onChange={(e) => setInput(e.target.value)} autoFocus />
 				</Field>
 				<LocationField flow={flow} value={where} onChange={setWhere} />
+				<Field label={t("perm")} hint={t("permHint")}>
+					<Select value={access} onChange={(e) => setAccess(e.target.value as RunAccess | "")}>
+						<option value="">{t("permFlow")}</option>
+						<option value="readonly">{t("permReadonly")}</option>
+						<option value="edits">{t("permEdits")}</option>
+						<option value="full">{t("permFull")}</option>
+					</Select>
+				</Field>
 				<div className="flex justify-end gap-2">
 					<Button variant="ghost" onClick={onClose}>
 						{t("cancel")}
@@ -466,7 +495,7 @@ function RunInputDialog({ flow, onClose, onStart }: { flow: Flow; onClose: () =>
 						disabled={busy}
 						onClick={() => {
 							setBusy(true);
-							void onStart(input, where).finally(() => setBusy(false));
+							void onStart(input, where, access).finally(() => setBusy(false));
 						}}
 					>
 						<Play className="size-4" /> {t("start")}

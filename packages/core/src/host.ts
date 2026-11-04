@@ -829,6 +829,7 @@ export class PrometheusHost {
 		const before = { unattended: gate.unattended, headless: bridge.headless };
 		gate.unattended = access;
 		bridge.headless = true;
+		gate.takeBlocked(); // refusals are reported per run
 		if (!resumed && options.name?.trim()) session.setName(options.name.trim());
 		try {
 			options.onStart?.(id);
@@ -848,11 +849,14 @@ export class PrometheusHost {
 			const fresh = messages.slice(seen);
 			const aborted = options.signal?.aborted || fresh.some((m) => (m as unknown as { stopReason?: string }).stopReason === "aborted");
 			const last = messages[messages.length - 1] as unknown as { stopReason?: string; errorMessage?: string } | undefined;
-			if (aborted) return { sessionId: id, status: "aborted", access, text: session.lastReply(), error: encodeError(new AppError("aborted")) };
-			if (last?.stopReason === "error") return { sessionId: id, status: "error", access, text: session.lastReply(), error: last.errorMessage ?? encodeError(new AppError("generic")) };
-			return { sessionId: id, status: "success", access, text: session.lastReply() };
+			const blocked = gate.takeBlocked();
+			const refused = blocked.length ? { blocked } : {};
+			if (aborted) return { sessionId: id, status: "aborted", access, text: session.lastReply(), error: encodeError(new AppError("aborted")), ...refused };
+			if (last?.stopReason === "error") return { sessionId: id, status: "error", access, text: session.lastReply(), error: last.errorMessage ?? encodeError(new AppError("generic")), ...refused };
+			return { sessionId: id, status: "success", access, text: session.lastReply(), ...refused };
 		} catch (err) {
-			return { sessionId: id, status: "error", access, text: session.lastReply(), error: err instanceof Error ? err.message : String(err) };
+			const blocked = gate.takeBlocked();
+			return { sessionId: id, status: "error", access, text: session.lastReply(), error: err instanceof Error ? err.message : String(err), ...(blocked.length ? { blocked } : {}) };
 		} finally {
 			clearTimeout(timeout);
 			options.signal?.removeEventListener("abort", stop);

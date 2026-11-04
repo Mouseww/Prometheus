@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
-import type { GatewayConfig, ModelRef, PermissionMode, RunAccess } from "@prometheus/protocol";
+import type { BlockedCall, GatewayConfig, ModelRef, PermissionMode, RunAccess } from "@prometheus/protocol";
 
 export type { ExtensionAPI, ExtensionFactory, ToolDefinition } from "@earendil-works/pi-coding-agent";
 export { createJsonStore, type JsonStore } from "./json-store.ts";
@@ -120,6 +120,8 @@ export interface AgentRunResult {
 	/** The agent's final reply. */
 	text: string;
 	error?: string;
+	/** Calls refused because `access` did not cover them; callers should show these instead of letting the run look clean. */
+	blocked?: BlockedCall[];
 }
 
 // ---------- Runtime-neutral tools and context ----------

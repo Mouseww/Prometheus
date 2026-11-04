@@ -81,14 +81,15 @@ export default definePlugin({
 				signal?.addEventListener("abort", () => engine.cancel(runId), { once: true });
 				const run = await done;
 				const steps = flow.nodes.filter((n) => n.kind === "agent").map((n) => `- ${n.title}: ${run.nodes[n.id]?.status}`);
-				return text(`${run.status === "success" ? "Flow finished." : `Flow ${run.status}: ${run.error ?? ""}`}\n${steps.join("\n")}\n\n${run.output ?? ""}`);
+				const warning = run.warning ? `\n\n${run.warning}` : "";
+				return text(`${run.status === "success" ? "Flow finished." : `Flow ${run.status}: ${run.error ?? ""}`}\n${steps.join("\n")}${warning}\n\n${run.output ?? ""}`);
 			},
 		});
 		ctx.tools.register({
 			name: "flow_create",
 			label: "创建流程",
 			description:
-				"Save a flow (a DAG of agent steps). Provide `flow` as a JSON string: {name,description,nodes:[{id,kind:start|agent|condition|end,title,prompt?,access?,mode?,match?}],edges:[{from,to,branch?}]}. Exactly one start node. Prompts may use {{input}}, {{prev}}, {{nodeId}}. Step access is capped at this chat's permission.",
+				"Save a flow (a DAG of agent steps). Provide `flow` as a JSON string: {name,description,nodes:[{id,kind:start|agent|condition|end,title,prompt?,access?,mode?,match?}],edges:[{from,to,branch?}]}. Exactly one start node. Prompts may use {{input}}, {{prev}}, {{nodeId}}. Step access is capped at this chat's permission: readonly reads only, edits writes files but cannot run commands, full also runs commands (a step that runs tests or scripts needs full).",
 			promptSnippet: "flow_create: save a multi-step agent flow (custom SOP)",
 			parameters: Type.Object({ flow: Type.String({ description: "Flow as a JSON object string" }) }),
 			async execute(_id, params, _signal, _update, toolCtx) {
@@ -121,7 +122,16 @@ export default definePlugin({
 		ctx.rpc("generate", async (p): Promise<FlowInput> => engine.generate(str(p.description), str(p.workspaceId)));
 		// Returns at once: the UI follows the run through the run list.
 		ctx.rpc("run", async (p): Promise<{ runId: string }> => {
-			const { runId, done } = await engine.startRun(str(p.id), str(p.input), undefined, p.trigger === "automation" ? "automation" : "manual", typeof p.workspaceId === "string" ? { workspaceId: p.workspaceId } : undefined);
+			// `access` is the level the user picked for this run; without it every step keeps its own.
+			const asked = p.access === "readonly" || p.access === "edits" || p.access === "full" ? (p.access as RunAccess) : undefined;
+			const { runId, done } = await engine.startRun(
+				str(p.id),
+				str(p.input),
+				undefined,
+				p.trigger === "automation" ? "automation" : "manual",
+				typeof p.workspaceId === "string" ? { workspaceId: p.workspaceId } : undefined,
+				asked,
+			);
 			void done.catch((err: unknown) => ctx.log.warn(`流程运行失败：${err instanceof Error ? err.message : err}`));
 			return { runId };
 		});

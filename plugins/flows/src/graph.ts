@@ -121,7 +121,7 @@ export const GENERATE_GUIDE = `你是流程编排设计师。把用户描述的�
 {"name":"流程名","description":"一句话说明","nodes":[...],"edges":[...]}
 节点 kind：
 - start：入口，有且仅有一个，id 用 "start"。用户启动时输入的内容可在提示词里用 {{input}} 引用。
-- agent：一个由 Agent 执行的步骤。字段 id,title,prompt(完整、自包含的指令),access("readonly"只读|"edits"可改文件|"full"可执行命令；默认 readonly，非必要不要给高权限)。
+- agent：一个由 Agent 执行的步骤。字段 id,title,prompt(完整、自包含的指令),access("readonly"只读|"edits"可改文件但**不能执行命令**|"full"可改文件也可执行命令；默认 readonly)。步骤要跑构建/测试/脚本或任何命令行时，必须给 "full"，否则命令会被拒绝；只读调研才用 "readonly"，不要无谓给高权限。
 - condition：分支判断。字段 id,title,mode("ai"用 prompt 写是/否问题|"contains"|"regex"),prompt 或 match。它的每条出线必须带 branch:"true" 或 "false"。
 - end：可选出口，汇总最终结果。
 提示词里可用变量：{{input}} 启动输入，{{prev}} 直接上游步骤的输出，{{节点id}} 指定节点的输出。

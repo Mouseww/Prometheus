@@ -167,6 +167,37 @@ describe("runFlow", () => {
 		expect(r.nodes.b?.status).toBe("skipped");
 	});
 
+	it("records refused calls on the step and warns on the run", async () => {
+		const calls: AgentRunOptions[] = [];
+		const blocked = [{ tool: "bash", reason: 'Blocked by permissions: running commands is not covered by "edits" access: this step needs "full".' }];
+		const runAgent = async (o: AgentRunOptions): Promise<AgentRunResult> => {
+			calls.push(o);
+			return { sessionId: "s1", status: "success", access: o.access, text: "done", blocked };
+		};
+		const flow = flowOf([node("start", "start"), node("a", "agent", { access: "edits" })], [edge("start", "a")]);
+		const r = await runFlow(flow, "", "r1", { runAgent, now: () => new Date(0), update: () => {}, cwd: "/proj" }, new AbortController().signal);
+		expect(r.status).toBe("success");
+		expect(calls[0]!.access).toBe("edits");
+		expect(r.nodes.a?.blocked?.[0]?.tool).toBe("bash");
+		expect(r.warning).toContain("权限不足");
+		expect(r.warning).toContain("a");
+	});
+
+	it("a clean run has no warning", async () => {
+		const a = agent(() => "ok");
+		const flow = flowOf([node("start", "start"), node("a", "agent")], [edge("start", "a")]);
+		const r = await run(flow, "", a);
+		expect(r.warning).toBeUndefined();
+	});
+
+	it("a run-wide access override replaces each step's own access", async () => {
+		const a = agent(() => "ok");
+		const flow = flowOf([node("start", "start"), node("a", "agent", { access: "readonly" })], [edge("start", "a")]);
+		const r = await runFlow(flow, "", "r1", { runAgent: a.runAgent, now: () => new Date(0), update: () => {}, cwd: "/proj", accessOverride: "full" }, new AbortController().signal);
+		expect(r.status).toBe("success");
+		expect(a.calls[0]!.access).toBe("full");
+	});
+
 	it("cancels", async () => {
 		const ctl = new AbortController();
 		const a = agent(async () => {
@@ -181,6 +212,16 @@ describe("runFlow", () => {
 });
 
 describe("FlowEngine", () => {
+	it("runs every step at the access the user picked for the run", async () => {
+		const { engine, a } = harness();
+		await engine.create({ name: "demo", description: "", workspaceId: "w1", nodes: [node("start", "start"), node("a", "agent")], edges: [edge("start", "a")] });
+		const id = engine.snapshot().flows[0]!.id;
+		const started = await engine.startRun(id, "", undefined, "manual", undefined, "full");
+		const r = await started.done;
+		expect(r.status).toBe("success");
+		expect(a.calls[0]!.access).toBe("full");
+	});
+
 	function harness(reply: (o: AgentRunOptions) => string = () => "out", initial: FlowState = { flows: [], runs: [] }) {
 		let saved: FlowState = initial;
 		const a = agent(reply);
@@ -243,6 +284,12 @@ describe("flowIssues", () => {
 });
 
 describe("templates", () => {
+	it("a step whose prompt runs commands is given full access", () => {
+		for (const lang of ["zh", "en"] as const)
+			for (const step of FLOW_TEMPLATES.find((x) => x.id === "bug")!.build(lang).nodes)
+				if (step.kind === "agent" && /测试|tests/.test(step.prompt ?? "")) expect(step.access, `${lang}/${step.title}`).toBe("full");
+	});
+
 	for (const tpl of FLOW_TEMPLATES)
 		for (const lang of ["zh", "en"] as const)
 			it(`${tpl.id} (${lang}) is a valid, runnable flow`, async () => {

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AgentRunOptions, AgentRunResult, WorkspaceRef } from "@prometheus/plugin-sdk";
-import { type Flow, type FlowInput, type FlowRefContext, type FlowRun, type FlowRunLocation, MAX_SUBFLOW_DEPTH } from "@prometheus/protocol";
+import { type Flow, type FlowInput, type FlowRefContext, type FlowRun, type FlowRunLocation, MAX_SUBFLOW_DEPTH, type RunAccess } from "@prometheus/protocol";
 import { ensureStart, extractJson, GENERATE_GUIDE, normalizeFlow, validateFlow } from "./graph.ts";
 import { runFlow } from "./runner.ts";
 import { catchUpDue, nextRun, validateSchedule } from "./schedule.ts";
@@ -189,11 +189,19 @@ export class FlowEngine {
 	 * `where` says where a general flow works: a workspace id (empty: the personal space) or a folder path (a chat's cwd).
 	 * A project-bound flow always works in its project, and refuses to be called from anywhere else.
 	 */
-	async startRun(flowId: string, input: string, parentSessionId?: string, trigger: FlowRun["trigger"] = parentSessionId ? "agent" : "manual", where?: RunWhere): Promise<{ runId: string; done: Promise<FlowRun> }> {
+	async startRun(
+		flowId: string,
+		input: string,
+		parentSessionId?: string,
+		trigger: FlowRun["trigger"] = parentSessionId ? "agent" : "manual",
+		where?: RunWhere,
+		/** One access level for every step (the user chose it for this run); by default each step uses its own. */
+		accessOverride?: RunAccess,
+	): Promise<{ runId: string; done: Promise<FlowRun> }> {
 		if (this.state.runs.some((r) => r.flowId === flowId && r.status === "running" && !r.parentRunId)) throw new Error("该流程正在运行");
 		const flow = this.get(flowId);
 		const location = await this.locate(flow, where, undefined);
-		return this.launch(flowId, input, { parentSessionId, trigger, depth: 0, location });
+		return this.launch(flowId, input, { parentSessionId, trigger, depth: 0, location, accessOverride });
 	}
 
 	/** Resolves where a flow runs. Throws when a project-bound flow is asked to run somewhere else. */
@@ -227,7 +235,16 @@ export class FlowEngine {
 	private async launch(
 		flowId: string,
 		input: string,
-		o: { parentSessionId?: string; trigger: FlowRun["trigger"]; depth: number; location: FlowRunLocation; parentRunId?: string; parentSignal?: AbortSignal; onStart?: (runId: string) => void },
+		o: {
+			parentSessionId?: string;
+			trigger: FlowRun["trigger"];
+			depth: number;
+			location: FlowRunLocation;
+			accessOverride?: RunAccess;
+			parentRunId?: string;
+			parentSignal?: AbortSignal;
+			onStart?: (runId: string) => void;
+		},
 	): Promise<{ runId: string; done: Promise<FlowRun> }> {
 		if (o.depth > MAX_SUBFLOW_DEPTH) throw new Error(`子流程嵌套超过 ${MAX_SUBFLOW_DEPTH} 层`);
 		const flow = structuredClone(this.get(flowId));
@@ -253,11 +270,12 @@ export class FlowEngine {
 				cwd: o.location.path,
 				location: o.location,
 				trigger: o.trigger,
+				...(o.accessOverride ? { accessOverride: o.accessOverride } : {}),
 				...(o.parentRunId ? { parentRunId: o.parentRunId } : {}),
 				runChild: async (childFlowId, childInput, onStart) => {
 					// A general child works where its parent does; a project-bound child keeps to its own project.
 					const location = await this.locate(this.get(childFlowId), undefined, o.location);
-					const child = await this.launch(childFlowId, childInput, { parentSessionId: o.parentSessionId, trigger: "subflow", depth: o.depth + 1, location, parentRunId: runId, parentSignal: ctl.signal });
+					const child = await this.launch(childFlowId, childInput, { parentSessionId: o.parentSessionId, trigger: "subflow", depth: o.depth + 1, location, parentRunId: runId, parentSignal: ctl.signal, ...(o.accessOverride ? { accessOverride: o.accessOverride } : {}) });
 					onStart(child.runId);
 					return child.done;
 				},

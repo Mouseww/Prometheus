@@ -1,5 +1,5 @@
 import type { AgentRunOptions, AgentRunResult } from "@prometheus/plugin-sdk";
-import type { Flow, FlowEdge, FlowNode, FlowNodeRun, FlowRun } from "@prometheus/protocol";
+import type { Flow, FlowEdge, FlowNode, FlowNodeRun, FlowRun, RunAccess } from "@prometheus/protocol";
 
 export interface RunnerDeps {
 	runAgent(options: AgentRunOptions): Promise<AgentRunResult>;
@@ -11,6 +11,8 @@ export interface RunnerDeps {
 	trigger?: FlowRun["trigger"];
 	parentRunId?: string;
 	location?: FlowRun["location"];
+	/** Set when the user asked for one access level for the whole run; it replaces each step's own access. */
+	accessOverride?: RunAccess;
 	/** Runs another flow to completion for a subflow node. `onStart` gets the child run id as soon as it exists. */
 	runChild?(flowId: string, input: string, onStart: (childRunId: string) => void): Promise<FlowRun>;
 }
@@ -102,7 +104,7 @@ export async function runFlow(flow: Flow, input: string, runId: string, deps: Ru
 					cwd: deps.cwd,
 					prompt,
 					name: `⛓ ${flow.name} · ${node.title}`,
-					access: node.access ?? "readonly",
+					access: deps.accessOverride ?? node.access ?? "readonly",
 					model: node.model,
 					signal,
 					onStart: (sessionId) => {
@@ -111,6 +113,7 @@ export async function runFlow(flow: Flow, input: string, runId: string, deps: Ru
 					},
 				});
 				state.sessionId = res.sessionId;
+				if (res.blocked?.length) state.blocked = res.blocked;
 				if (res.status !== "success") throw new Error(res.error ?? (res.status === "aborted" ? "已取消" : "运行失败"));
 				state.output = res.text.slice(0, OUTPUT_CHARS);
 			} else {
@@ -130,6 +133,7 @@ export async function runFlow(flow: Flow, input: string, runId: string, deps: Ru
 					});
 					if (res.status !== "success") throw new Error(res.error ?? "判断失败");
 					state.sessionId = res.sessionId;
+					if (res.blocked?.length) state.blocked = res.blocked;
 					answer = /^\W*(yes|是|true|对)/i.test(res.text.trim());
 				} else answer = checkText(mode, node.match ?? "", prev);
 				taken.set(node.id, answer);
@@ -196,6 +200,8 @@ export async function runFlow(flow: Flow, input: string, runId: string, deps: Ru
 		const finals = ends.length ? ends : sinks.filter((n) => n.kind !== "start");
 		run.output = finals.map((n) => outputOf(n.id)).filter(Boolean).join("\n\n---\n\n") || undefined;
 	}
+	const refused = flow.nodes.filter((n) => run.nodes[n.id]?.blocked?.length);
+	if (refused.length) run.warning = `以下步骤有调用因权限不足被拒绝：${refused.map((n) => `${n.title}（${run.nodes[n.id]!.blocked!.length} 次）`).join("、")}。在这些步骤里把权限调高后重试。`;
 	emit();
 	return run;
 }

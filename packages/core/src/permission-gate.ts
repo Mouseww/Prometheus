@@ -2,7 +2,7 @@ import { Type } from "typebox";
 import type { InlineExtension } from "@earendil-works/pi-coding-agent";
 import type { PluginTool } from "@prometheus/plugin-sdk";
 import type { PermissionMode, PermissionPrompt, RunAccess } from "@prometheus/protocol";
-import { decide, EXIT_PLAN_MODE, INSTALL_PLUGIN_TOOL, ruleKey, toolKind } from "./permissions.ts";
+import { decide, EXIT_PLAN_MODE, INSTALL_PLUGIN_TOOL, isProjectPath, ruleKey, toolKind } from "./permissions.ts";
 
 const PLAN_PROMPT = `# Plan mode
 Plan mode is active. Do not change anything: only read-only tools (read, grep, find, ls and non-mutating commands) will run, everything else is refused.
@@ -40,7 +40,7 @@ function describe(toolName: string, input: Record<string, unknown>): Pick<Extrac
 }
 
 const UNATTENDED_PROMPT = `# Unattended run
-Nobody is watching this run and nobody can answer questions. Do not ask for confirmation or clarification: decide, do the work, and finish with a short report of what you did and anything you could not do. Actions that are not permitted are refused automatically; carry on without them.`;
+Nobody is watching this run and nobody can answer questions. Do not ask for confirmation or clarification: decide, do the work, and finish with a short report of what you did and anything you could not do. Actions that are not permitted are refused automatically; carry on without them. A refusal is recorded and shown to the owner as a permission problem of this step, so say plainly which action was refused.`;
 
 const UNATTENDED_GUIDELINES = [
 	"Nobody is watching this run: do not ask questions. Decide, do the work, and finish with a short report. Refused actions are skipped automatically.",
@@ -78,6 +78,15 @@ export function applyPermissionPrompt(
 
 const ACCESS_MODE: Record<RunAccess, PermissionMode> = { readonly: "plan", edits: "acceptEdits", full: "bypassPermissions" };
 
+/** Calls an unattended run was refused because its access level did not cover them. Reported back with the run. */
+export interface BlockedCall {
+	tool: string;
+	reason: string;
+}
+
+/** Enough to see what is missing without keeping an unbounded log for a long run. */
+const MAX_BLOCKED = 20;
+
 /**
  * Per-session permission state plus the PI extension that enforces it. The loader is per session,
  * so the extension can close over this object; the host wires `ask` and `onModeChange` after the
@@ -87,6 +96,8 @@ export class PermissionGate {
 	mode: PermissionMode = "default";
 	/** Set for runs without a user: nothing is ever asked, whatever `access` does not cover is refused. */
 	unattended: RunAccess | undefined;
+	/** Refusals of an unattended run, in order; the owner sees them as a permission problem of that run. */
+	blocked: BlockedCall[] = [];
 	/** Rules the user answered "always allow" for during this session. */
 	readonly allowed = new Set<string>();
 	ask: ((prompt: PermissionPrompt, signal?: AbortSignal) => Promise<string | undefined>) | undefined;
@@ -96,6 +107,23 @@ export class PermissionGate {
 		if (mode === this.mode) return;
 		this.mode = mode;
 		this.onModeChange?.(mode);
+	}
+
+	/** Hands over the refusals collected so far and starts a new list. */
+	takeBlocked(): BlockedCall[] {
+		const list = this.blocked;
+		this.blocked = [];
+		return list;
+	}
+
+	/** Why an unattended call was refused, in terms of the access level that would allow it. */
+	private refusal(toolName: string, input: Record<string, unknown>, cwd: string): string {
+		const access = `"${this.unattended}" access`;
+		if (toolName === INSTALL_PLUGIN_TOOL) return "installing a plugin runs with the app's own rights and is never done unattended";
+		const kind = toolKind(toolName);
+		if (kind === "exec") return `running commands is not covered by ${access}: this step needs "full"`;
+		if (kind === "edit") return isProjectPath(str(input.path), cwd) ? `${access} does not cover edits` : `writing outside the working folder is not covered by ${access}: this step needs "full"`;
+		return `this tool is not covered by ${access}: this step needs "full"`;
 	}
 
 	/**
@@ -108,7 +136,9 @@ export class PermissionGate {
 		if (this.unattended) {
 			const v = decide(ACCESS_MODE[this.unattended], { toolName, input, readOnly }, { cwd: call.cwd, allowed: this.allowed });
 			if (v.type === "allow" && toolName !== INSTALL_PLUGIN_TOOL) return;
-			return { block: true, reason: `This is an unattended run with ${this.unattended} access and this action is not permitted. Skip it and mention it in your report.` };
+			const reason = `Blocked by permissions: ${this.refusal(toolName, input, call.cwd)}. Skip it and mention it in your report.`;
+			if (this.blocked.length < MAX_BLOCKED) this.blocked.push({ tool: toolName, reason });
+			return { block: true, reason };
 		}
 		const verdict = decide(this.mode, { toolName, input, readOnly }, { cwd: call.cwd, allowed: this.allowed });
 		if (verdict.type === "allow") return;

@@ -810,6 +810,12 @@ export interface MemoryEntry {
 /** What an unattended run (automation) may do; anything beyond it is refused rather than asked. */
 export type RunAccess = "readonly" | "edits" | "full";
 
+/** A tool call an unattended run was refused because its access level did not cover it. */
+export interface BlockedCall {
+	tool: string;
+	reason: string;
+}
+
 export interface PluginFile {
 	/** Relative path inside the plugin folder, forward slashes. */
 	path: string;
@@ -1071,6 +1077,8 @@ export interface FlowNodeRun {
 	childRunId?: string;
 	output?: string;
 	error?: string;
+	/** Calls this step was refused for lack of permission: the step's access is too low for what its prompt asks. */
+	blocked?: BlockedCall[];
 }
 
 export interface FlowRunLocation {
@@ -1098,6 +1106,8 @@ export interface FlowRun {
 	nodes: Record<string, FlowNodeRun>;
 	output?: string;
 	error?: string;
+	/** The run finished, but some steps were refused actions for lack of permission: they did less than their prompt asked. */
+	warning?: string;
 }
 
 // ---------- Voice plugin ----------

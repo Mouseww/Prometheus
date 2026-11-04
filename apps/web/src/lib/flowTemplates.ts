@@ -60,7 +60,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
 				{ id: "start", kind: "start", zh: "开始", en: "Start" },
 				{ id: "locate", kind: "agent", zh: "复现并定位", en: "Reproduce & locate", pz: "缺陷描述：{{input}}\n尝试复现并定位根因。明确写出：根因是什么、在哪个文件、证据是什么；找不到就写明已排除了什么。", pe: "Bug report: {{input}}\nTry to reproduce and locate the root cause. State what it is, in which file, and the evidence; if you cannot find it, say what you ruled out." },
 				{ id: "found", kind: "condition", zh: "找到根因了？", en: "Root cause found?", mode: "ai", pz: "上面的调查是否已经明确找到了根因（有具体文件和证据）？", pe: "Does the investigation above clearly identify the root cause (a specific file and evidence)?" },
-				{ id: "fix", kind: "agent", zh: "修复并验证", en: "Fix & verify", access: "edits", pz: "根据下面的根因做最小修复，并运行相关测试验证，最后说明改了什么。\n\n{{locate}}", pe: "Make the smallest fix for the root cause below and run the related tests, then say what you changed.\n\n{{locate}}" },
+				{ id: "fix", kind: "agent", zh: "修复并验证", en: "Fix & verify", access: "full", pz: "根据下面的根因做最小修复，并运行相关测试验证，最后说明改了什么。\n\n{{locate}}", pe: "Make the smallest fix for the root cause below and run the related tests, then say what you changed.\n\n{{locate}}" },
 				{ id: "report", kind: "agent", zh: "调查报告", en: "Investigation report", pz: "整理一份调查报告：已验证的事实、已排除的原因、建议下一步怎么查。\n\n{{locate}}", pe: "Write an investigation report: verified facts, ruled-out causes and suggested next steps.\n\n{{locate}}" },
 				{ id: "end", kind: "end", zh: "结束", en: "End" },
 			],
