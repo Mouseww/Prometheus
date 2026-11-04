@@ -1,10 +1,11 @@
+import clsx from "clsx";
 import { BarChart3, ChevronRight, CircleHelp, Clock, FileSpreadsheet, FileText, Flame, Mail, MessageCircle, PenLine, Presentation, Share2, Sparkles, Video, Wrench } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AutomationTask } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { onPluginChange, openAssistantMain, openSession, type PendingQuestion, pluginCall, toast, useStore } from "../lib/store.ts";
 import { delegatedRuns, delegationTitle } from "../lib/spaces.ts";
-import { Badge, PageHeader } from "./ui.tsx";
+import { Badge } from "./ui.tsx";
 
 const M = defineMessages({
 	zh: {
@@ -31,7 +32,9 @@ const M = defineMessages({
 		send: "回答",
 		gone: "这个问题已经不需要回答了（运行已结束）",
 		canDo: "普罗能做什么",
-		canDoHint: "点一个，直接用这句话开始",
+		canDoHint: "点一张卡片，这句话会填进对话框，你可以先改再发",
+		hello: "普罗，我帮你",
+		helloHint: "说一句要做什么，它自己想办法：查资料、做文件、写报告，把成品交给你",
 		tryIt: "试一下",
 		cat_office: "办公",
 		cat_creative: "创作",
@@ -61,7 +64,9 @@ const M = defineMessages({
 		send: "Answer",
 		gone: "This question is no longer open (the run ended)",
 		canDo: "What I can do for you",
-		canDoHint: "Pick one to start with that sentence",
+		canDoHint: "Tap a card and the request lands in the chat, ready for you to edit",
+		hello: "Hi, I'm 普罗",
+		helloHint: "Say what you need done and it works it out: research, files, reports, ready-made results",
 		tryIt: "Try it",
 		cat_office: "Office",
 		cat_creative: "Creative",
@@ -156,50 +161,77 @@ function QuestionRow({ q, project, title }: { q: PendingQuestion; project: strin
 const Empty = ({ text }: { text: string }) => <p className="text-xs text-ink-500">{text}</p>;
 
 const CATEGORY_TITLE = { office: "cat_office", creative: "cat_creative", utility: "cat_utility" } as const;
+const CATEGORIES = ["office", "creative", "utility"] as const;
 
 /**
- * "What can you do?": the shipped skills as cards. Clicking an example opens the assistant's chat with that request
- * as a draft, so the user sees exactly what is about to be asked (and can edit it) instead of the app sending blind.
+ * "普罗能做什么": the shipped skills, laid out the way WorkBuddy's home page does it — a quiet headline, one row of
+ * pill tabs to switch category, and a light grid of cards underneath. Clicking a card opens the assistant's chat with
+ * that request in the composer, so the user sees exactly what is about to be asked and can still edit it.
  */
 function Capabilities({ cards }: { cards: SkillCard[] }) {
 	const t = useT(M);
-	const groups = useMemo(() => {
-		const order: SkillCard["category"][] = ["office", "creative", "utility"];
-		return order.map((cat) => ({ cat, items: cards.filter((c) => c.category === cat) })).filter((g) => g.items.length > 0);
-	}, [cards]);
-	if (cards.length === 0) return null;
+	const groups = useMemo(() => CATEGORIES.map((cat) => ({ cat, items: cards.filter((c) => c.category === cat) })).filter((g) => g.items.length > 0), [cards]);
+	const [active, setActive] = useState<SkillCard["category"] | null>(null);
+	// A category can disappear (its skills switched off in Settings); fall back to the first one that still has cards.
+	const shown = groups.find((g) => g.cat === active) ?? groups[0];
+	if (!shown) return null;
 	const start = async (text: string) => {
 		await openAssistantMain();
 		// Same channel as "edit message": the composer takes the text in and focuses, so one send is all it takes.
 		useStore.setState({ editorText: { text, nonce: Date.now() } });
 	};
 	return (
-		<Card icon={<Sparkles className="size-4 text-ember-300" />} title={t("canDo")} hint={t("canDoHint")}>
-			<div className="space-y-3">
-				{groups.map((g) => (
-					<div key={g.cat}>
-						<div className="px-1 pb-1.5 font-mono text-[10.5px] tracking-[0.18em] text-ink-500 uppercase">{t(CATEGORY_TITLE[g.cat])}</div>
-						<div className="grid gap-2 @xl:grid-cols-2">
-							{g.items.map((c) => (
-								<div key={c.name} className="rounded-lg border border-ink-800 bg-ink-950/40 p-2.5 transition-colors hover:border-ember-500/40">
-									<div className="flex items-center gap-1.5 text-[13px] font-medium text-ink-100">
-										<span className="text-ember-300">{CARD_ICON[c.name] ?? <Sparkles className="size-4" />}</span>
-										{c.title}
-									</div>
-									<p className="mt-0.5 line-clamp-1 text-[11.5px] text-ink-500">{c.tagline}</p>
-									{c.examples.length > 0 && (
-										<button type="button" onClick={() => void start(c.examples[0]!)} title={c.examples[0]} className="mt-2 flex w-full items-start gap-1 rounded-md bg-ink-900 px-2 py-1.5 text-left text-[11.5px] leading-snug text-ink-300 hover:bg-ink-800 hover:text-ink-100">
-											<span className="line-clamp-2 min-w-0 flex-1">{c.examples[0]}</span>
-											<span className="shrink-0 pt-px text-ember-300/80">{t("tryIt")}</span>
-										</button>
-									)}
-								</div>
-							))}
-						</div>
-					</div>
+		<section className="mx-auto w-full max-w-4xl">
+			<div className="text-center">
+				<h2 className="font-display text-xl font-semibold tracking-tight text-ink-100 @3xl:text-2xl">{t("canDo")}</h2>
+				<p className="mt-1.5 text-[13px] text-ink-500">{t("canDoHint")}</p>
+			</div>
+			<div className="mt-4 flex flex-wrap items-center justify-center gap-2" role="tablist" aria-label={t("canDo")}>
+				{groups.map((g) => {
+					const on = g.cat === shown.cat;
+					return (
+						<button
+							key={g.cat}
+							type="button"
+							role="tab"
+							aria-selected={on}
+							onClick={() => setActive(g.cat)}
+							className={clsx(
+								"h-8 rounded-full px-3.5 text-[13px] transition-colors",
+								"focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ember-400",
+								on ? "bg-ink-100 font-medium text-ink-950" : "text-ink-400 hover:bg-ink-850 hover:text-ink-100",
+							)}
+						>
+							{t(CATEGORY_TITLE[g.cat])}
+						</button>
+					);
+				})}
+			</div>
+			<div className="mt-5 grid gap-3 @lg:grid-cols-2 @4xl:grid-cols-3">
+				{shown.items.map((c) => (
+					<button
+						key={c.name}
+						type="button"
+						onClick={() => void start(c.examples[0] ?? c.title)}
+						title={c.examples[0]}
+						className={clsx(
+							"group flex flex-col rounded-xl border border-ink-800 bg-ink-900/70 p-3 text-left transition-all",
+							"hover:-translate-y-px hover:border-ink-700 hover:bg-ink-900 hover:shadow-lg hover:shadow-black/10",
+							"focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ember-400",
+						)}
+					>
+						<span className="flex items-center gap-2 text-[13.5px] font-medium text-ink-100">
+							<span className="grid size-7 shrink-0 place-items-center rounded-lg bg-ink-850 text-ink-300 transition-colors group-hover:bg-ember-500/10 group-hover:text-ember-300">
+								{CARD_ICON[c.name] ?? <Sparkles className="size-4" />}
+							</span>
+							{c.title}
+						</span>
+						<span className="mt-1.5 line-clamp-1 text-[11.5px] text-ink-500">{c.tagline}</span>
+						{c.examples[0] && <span className="mt-2 line-clamp-2 text-[11.5px] leading-snug text-ink-400 group-hover:text-ink-300">{c.examples[0]}</span>}
+					</button>
 				))}
 			</div>
-		</Card>
+		</section>
 	);
 }
 
@@ -252,10 +284,11 @@ export function PersonalHome() {
 
 	return (
 		<div className="flex h-full min-h-0 flex-col">
-			<PageHeader title={t("title")} subtitle={t("subtitle")} />
-			<div className="grid min-h-0 flex-1 content-start gap-4 overflow-y-auto p-4 @3xl:grid-cols-2 @3xl:p-8">
-				{pending && pending.length > 0 && (
-					<div className="@3xl:col-span-2">
+			{/* No page title above the greeting: the greeting is the title, the way WorkBuddy's own home reads. */}
+			<div className="@container min-h-0 flex-1 overflow-y-auto px-4 py-6 @3xl:px-8 @3xl:py-10">
+				<div className="mx-auto flex w-full max-w-4xl flex-col gap-8">
+					{/* Above everything else: a run is blocked until the user answers. */}
+					{pending && pending.length > 0 && (
 						<Card icon={<CircleHelp className="size-4 text-amber-400" />} title={t("needsYou")}>
 							<ul className="space-y-2">
 								{pending.map((q) => {
@@ -264,23 +297,27 @@ export function PersonalHome() {
 								})}
 							</ul>
 						</Card>
+					)}
+					{/* The centre of the page, as on WorkBuddy's own home: what it is for, then how to start. */}
+					<div className="pt-2 text-center @3xl:pt-6">
+						<h2 className="font-display text-2xl font-semibold tracking-tight text-ink-100 @3xl:text-[28px]">{t("hello")}</h2>
+						<p className="mx-auto mt-2 max-w-md text-[13px] leading-relaxed text-ink-500">{t("helloHint")}</p>
+						<button
+							type="button"
+							onClick={() => void openAssistantMain()}
+							className="mt-5 inline-flex h-10 items-center gap-2 rounded-full bg-ink-100 px-5 text-[13px] font-medium text-ink-950 transition-transform hover:scale-[1.02] active:scale-[0.99]"
+						>
+							<MessageCircle className="size-4" />
+							{t("chat")}
+						</button>
 					</div>
-				)}
-				<button type="button" onClick={() => void openAssistantMain()} className="flex items-center gap-3 rounded-xl border border-ember-500/20 bg-ember-500/[0.05] px-4 py-3 text-left transition-colors hover:bg-ember-500/10 @3xl:col-span-2">
-					<MessageCircle className="size-5 shrink-0 text-ember-300" />
-					<span className="min-w-0 flex-1">
-						<span className="block text-sm font-medium text-ink-100">{t("chat")}</span>
-						<span className="block truncate text-xs text-ink-500">{t("chatHint")}</span>
-					</span>
-					<ChevronRight className="size-4 shrink-0 text-ink-600" />
-				</button>
-				<div className="@3xl:col-span-2">
 					<Capabilities cards={cards} />
-				</div>
-				<Card icon={<Flame className="size-4 text-ember-300" />} title={t("briefing")} hint={overview ? (overview.settings.enabled ? t("briefingOn", { time: overview.settings.time }) : t("briefingOff")) : undefined}>
-					{overview?.briefing ? <pre className="max-h-64 overflow-y-auto font-sans text-[13px] leading-relaxed whitespace-pre-wrap text-ink-200">{overview.briefing.text}</pre> : <Empty text={t("noBriefing")} />}
-				</Card>
-				<Card icon={<Share2 className="size-4 text-ember-300" />} title={t("delegations")} hint={t("delegationsHint")}>
+					{/* What already happened: quieter, and only shown when there is something to say. */}
+					<div className="grid gap-3 @2xl:grid-cols-2">
+						<Card icon={<Flame className="size-4 text-ember-300" />} title={t("briefing")} hint={overview ? (overview.settings.enabled ? t("briefingOn", { time: overview.settings.time }) : t("briefingOff")) : undefined}>
+							{overview?.briefing ? <pre className="max-h-64 overflow-y-auto font-sans text-[13px] leading-relaxed whitespace-pre-wrap text-ink-200">{overview.briefing.text}</pre> : <Empty text={t("noBriefing")} />}
+						</Card>
+						<Card icon={<Share2 className="size-4 text-ember-300" />} title={t("delegations")} hint={t("delegationsHint")}>
 					{runs.running.length + runs.done.length === 0 ? (
 						<Empty text={t("noDelegations")} />
 					) : (
@@ -314,6 +351,8 @@ export function PersonalHome() {
 						</ul>
 					)}
 				</Card>
+				</div>
+				</div>
 			</div>
 		</div>
 	);
