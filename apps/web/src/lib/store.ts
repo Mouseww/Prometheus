@@ -39,6 +39,7 @@ import { OfflineError, type ConnState, type PrometheusClient } from "./client.ts
 import { localizeError } from "./errors.ts";
 import { defineMessages, tr } from "./i18n.ts";
 import { noteToolResult } from "./runtimes.ts";
+import { noteUse } from "./star.ts";
 import { effectiveSpace, samePath, type Space, spaceOf } from "./spaces.ts";
 
 const M = defineMessages({
@@ -173,7 +174,7 @@ function savedSort(): SubagentSort {
 	return v === "started" || v === "ended" ? v : "status";
 }
 
-export type SettingsTab = "general" | "agents" | "gateways" | "mcp" | "connectors" | "skills" | "modes" | "subagents" | "market" | "veil" | "logs" | "plugins" | "voice" | "network" | "runtimes" | "platforms" | "ssh" | "usage";
+export type SettingsTab = "general" | "agents" | "gateways" | "mcp" | "connectors" | "skills" | "modes" | "subagents" | "market" | "veil" | "logs" | "plugins" | "voice" | "network" | "runtimes" | "platforms" | "ssh" | "usage" | "about";
 /** A question a delegated run asked and is waiting on (plugins/assistant/src/ask.ts). */
 export interface PendingQuestion {
 	id: string;
@@ -489,6 +490,9 @@ export function handleFrame(frame: ServerFrame): void {
 			}
 			if (frame.event.type === "message_end" && frame.event.message.role === "assistant" && (frame.event.message as AssistantMessage).stopReason === "error") erroredRuns.add(frame.sessionId);
 			if (frame.event.type === "agent_settled" && !frame.event.aborted) notifyTurnDone(get().sessions.find((x) => x.id === frame.sessionId)?.name ?? active?.name ?? "");
+			// A turn that ran to completion without being aborted is what counts as "the app did something for you";
+			// the star card may only consider showing after a few of those. See lib/star.ts.
+			if (frame.event.type === "agent_settled" && !frame.event.aborted) noteUse();
 			speedTracker.feed(frame.sessionId, frame.event, Date.now());
 			if (frame.sessionId === active?.id) enqueue(frame.event);
 			return;

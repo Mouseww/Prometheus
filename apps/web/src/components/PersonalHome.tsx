@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { ArrowUp, BarChart3, ChevronRight, CircleHelp, Clock, FileSpreadsheet, FileText, Flame, LoaderCircle, Mail, MessageCircle, PenLine, Plus, Presentation, Share2, Sparkles, Video, Wrench, X } from "lucide-react";
+import { ArrowUp, BarChart3, Star, ChevronRight, CircleHelp, Clock, FileSpreadsheet, FileText, Flame, LoaderCircle, Mail, MessageCircle, PenLine, Plus, Presentation, Share2, Sparkles, Video, Wrench, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AutomationTask, ImageContent } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
@@ -7,7 +7,9 @@ import { type Attachment, AttachmentError, fileToAttachment, formatSize, isPictu
 import { fileToImage, ImageError, imageSrc, MAX_IMAGES } from "../lib/images.ts";
 import { onPluginChange, openAssistantMain, openSession, type PendingQuestion, pluginCall, sendPrompt, toast, useStore } from "../lib/store.ts";
 import { delegatedRuns, delegationTitle } from "../lib/spaces.ts";
-import { Badge } from "./ui.tsx";
+import { answerStar, REPO_URL, useStar } from "../lib/star.ts";
+import { openExternal } from "../lib/links.ts";
+import { Badge, Button } from "./ui.tsx";
 
 const M = defineMessages({
 	zh: {
@@ -42,6 +44,10 @@ const M = defineMessages({
 		submit: "发送",
 		sendFailed: "没能打开对话，请再试一次",
 		sendBusy: "对话正忙，稍后会把它留在输入框里",
+		starTitle: "帮到你了的话，给一颗 Star 吧",
+		starBody: "Prometheus 是开源的，Star 能让还在找这类工具的人看到它。不想点也没关系，以后不再打扰。",
+		starYes: "去点 Star",
+		starLater: "以后再说",
 		attach: "添加文件或图片",
 		remove: "移除",
 		reading: "读取中…",
@@ -91,6 +97,10 @@ const M = defineMessages({
 		submit: "Send",
 		sendFailed: "Could not open the chat. Please try again.",
 		sendBusy: "The chat is busy; your message was kept",
+		starTitle: "If this helped, a star means a lot",
+		starBody: "Prometheus is open source, and stars help the next person find it. No thanks is fine too — this will not ask again.",
+		starYes: "Star it",
+		starLater: "Not now",
 		attach: "Add files or images",
 		remove: "Remove",
 		reading: "Reading…",
@@ -197,6 +207,44 @@ function QuestionRow({ q, project, title }: { q: PendingQuestion; project: strin
 const Empty = ({ text }: { text: string }) => <p className="text-xs text-ink-500">{text}</p>;
 
 /**
+ * The one-time star card. Deliberately quiet: no image, no exclamation marks, two small buttons and an X. It is not a
+ * gate and not a modal — the page works exactly the same without touching it.
+ */
+function StarCard({ onAnswer }: { onAnswer: (starred: boolean) => void }) {
+	const t = useT(M);
+	return (
+		<section className="relative rounded-xl border border-ember-500/25 bg-ember-500/[0.05] p-4">
+			<button type="button" onClick={() => onAnswer(false)} title={t("starLater")} aria-label={t("starLater")} className="absolute top-2.5 right-2.5 grid size-6 place-items-center rounded-md text-ink-500 transition-colors hover:bg-ink-800 hover:text-ink-200">
+				<X className="size-3.5" />
+			</button>
+			<div className="flex items-start gap-3 pr-6">
+				<span className="grid size-9 shrink-0 place-items-center rounded-lg bg-ember-500/12 text-ember-300">
+					<Star className="size-4" />
+				</span>
+				<div className="min-w-0 flex-1">
+					<h2 className="text-sm font-medium text-ink-100">{t("starTitle")}</h2>
+					<p className="mt-1 text-[12.5px] leading-relaxed text-ink-400">{t("starBody")}</p>
+					<div className="mt-3 flex flex-wrap items-center gap-2">
+						<Button
+							variant="primary"
+							onClick={() => {
+								onAnswer(true);
+								void openExternal(REPO_URL);
+							}}
+						>
+							<Star className="size-4" /> {t("starYes")}
+						</Button>
+						<Button variant="ghost" onClick={() => onAnswer(false)}>
+							{t("starLater")}
+						</Button>
+					</div>
+				</div>
+			</div>
+		</section>
+	);
+}
+
+/**
  * The skill rail above the input: one compact pill per shipped skill, the way an agent workbench offers capabilities.
  * No heading and no grid — a returning user wants to start working, not read a feature list. Clicking one puts its
  * example request in the input so the user can adjust it before sending, rather than sending blind.
@@ -236,6 +284,7 @@ export function PersonalHome() {
 	const [overview, setOverview] = useState<Overview | null>(null);
 	const [tasks, setTasks] = useState<AutomationTask[]>([]);
 	const [cards, setCards] = useState<SkillCard[]>([]);
+	const asking = useStar((s) => s.asking);
 
 	const load = useCallback(async () => {
 		const [o, a, s] = await Promise.all([
@@ -483,6 +532,10 @@ export function PersonalHome() {
 							</div>
 						</form>
 					</div>
+					{/* The one and only ask for a star: shown at most once per machine, only after runs have actually
+					    finished on a couple of different days, and never while a run is going. Answering it — either way —
+					    silences it forever. See lib/star.ts. */}
+					{asking && <StarCard onAnswer={answerStar} />}
 					{/* What already happened: quieter, and only shown when there is something to say. */}
 					<div className="grid gap-3 @2xl:grid-cols-2">
 						<Card icon={<Flame className="size-4 text-ember-300" />} title={t("briefing")} hint={overview ? (overview.settings.enabled ? t("briefingOn", { time: overview.settings.time }) : t("briefingOff")) : undefined}>

@@ -1,6 +1,6 @@
 import { copyToClipboard } from "../lib/clipboard.ts";
 import clsx from "clsx";
-import { BarChart3, Blocks, Bug, Boxes, Bot, Cable, Check, Copy, FolderOpen, Globe, Laptop, Layers, Mic, Moon, Network, Package, Plug, Server, Shield, Sparkles, Sun, SlidersHorizontal, Terminal } from "lucide-react";
+import { BarChart3, Blocks, Bug, Boxes, Bot, Info, Cable, Check, Copy, FolderOpen, Globe, Laptop, Layers, Mic, Moon, Network, Package, Plug, Server, Shield, Sparkles, Sun, SlidersHorizontal, Terminal } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { isAndroid, isDesktopShell, isTauri, loadMode } from "../lib/backend.ts";
@@ -18,6 +18,7 @@ import { ConnectorsView } from "./ConnectorsView.tsx";
 import { McpView } from "./McpView.tsx";
 import { NetworkSettings } from "./NetworkSettings.tsx";
 import { AgentsSettings } from "./AgentsSettings.tsx";
+import { AboutView } from "./AboutView.tsx";
 import { RuntimesSettings } from "./RuntimesSettings.tsx";
 import { PlatformsView } from "./PlatformsView.tsx";
 import { SshView } from "./SshView.tsx";
@@ -382,41 +383,6 @@ function DefaultPermissionRow() {
 	);
 }
 
-function AboutRow() {
-	const t = useT(M);
-	const info = useStore((s) => s.hostInfo);
-	const client = __APP_VERSION__;
-	const server = info?.version;
-	const differs = Boolean(server) && server !== client;
-	const summary = `Prometheus ${client}${server ? ` (server ${server}, PI ${info?.piVersion})` : ""} · ${info?.platform ?? navigator.platform}`;
-	return (
-		<>
-			<Row label={t("appVersion")}>
-				<span className="font-mono text-sm text-ink-200">v{client}</span>
-			</Row>
-			<Row label={t("serverVersion")} hint={differs ? t("mismatch") : undefined}>
-				<span className={clsx("font-mono text-sm", differs ? "text-ember-300" : "text-ink-200")}>{server ? `v${server}` : "—"}</span>
-			</Row>
-			<Row label={t("piVersion")}>
-				<span className="font-mono text-sm text-ink-200">{info?.piVersion ? `v${info.piVersion}` : "—"}</span>
-			</Row>
-			<Row label={t("copyVersion")}>
-				<Button
-					variant="outline"
-					onClick={() =>
-						void copyToClipboard(summary).then(
-							() => toast(t("copied")),
-							() => toast(summary),
-						)
-					}
-				>
-					<Copy className="size-4" /> {t("copyVersion")}
-				</Button>
-			</Row>
-		</>
-	);
-}
-
 function GeneralSettings() {
 	const t = useT(M);
 	const prefs = usePrefs();
@@ -560,10 +526,7 @@ function GeneralSettings() {
 							<UpdateRow />
 						</Section>
 					)}
-
-					<Section title={t("about")}>
-						<AboutRow />
-					</Section>
+
 				</div>
 			</div>
 		</div>
@@ -604,6 +567,7 @@ const TAB_GROUPS: { id: SettingsTab; icon: typeof Network; plugin?: string; loca
 	[
 		{ id: "usage", icon: BarChart3 },
 		{ id: "logs", icon: Bug, plugin: "logs" },
+		{ id: "about", icon: Info },
 	],
 ];
 
@@ -658,6 +622,7 @@ export function SettingsView() {
 				{tab === "plugins" && <PluginsView />}
 				{tab === "usage" && <UsageView />}
 				{tab === "logs" && <LogsView />}
+				{tab === "about" && <AboutView />}
 			</div>
 		</div>
 	);
