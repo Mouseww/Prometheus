@@ -1,9 +1,9 @@
 import clsx from "clsx";
 import { ArrowUp, BarChart3, ChevronRight, CircleHelp, Clock, FileSpreadsheet, FileText, Flame, Mail, MessageCircle, PenLine, Plus, Presentation, Share2, Sparkles, Video, Wrench } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AutomationTask } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { onPluginChange, openAssistantMain, openSession, type PendingQuestion, pluginCall, toast, useStore } from "../lib/store.ts";
+import { onPluginChange, openAssistantMain, openSession, type PendingQuestion, pluginCall, sendPrompt, toast, useStore } from "../lib/store.ts";
 import { delegatedRuns, delegationTitle } from "../lib/spaces.ts";
 import { Badge } from "./ui.tsx";
 
@@ -37,6 +37,9 @@ const M = defineMessages({
 		helloHint: "说一句就好，剩下的交给我：查资料、做文件、写报告",
 		composerHint: "有什么要我做的吗？",
 		composerTools: "@ 引用文件，/ 调用技能",
+		submit: "发送",
+		sendFailed: "没能打开对话，请再试一次",
+		attachHint: "打开对话，可以带文件进去",
 		tryIt: "试一下",
 		cat_office: "办公",
 		cat_creative: "创作",
@@ -71,6 +74,9 @@ const M = defineMessages({
 		helloHint: "Just say it — research, files and reports are my job",
 		composerHint: "What can I do for you?",
 		composerTools: "@ files, / skills",
+		submit: "Send",
+		sendFailed: "Could not open the chat. Please try again.",
+		attachHint: "Open the chat, where you can attach files",
 		tryIt: "Try it",
 		cat_office: "Office",
 		cat_creative: "Creative",
@@ -166,15 +172,11 @@ const Empty = ({ text }: { text: string }) => <p className="text-xs text-ink-500
 
 /**
  * The skill rail above the input: one compact pill per shipped skill, the way an agent workbench offers capabilities.
- * No heading and no grid — a returning user wants to start working, not read a feature list.
+ * No heading and no grid — a returning user wants to start working, not read a feature list. Clicking one puts its
+ * example request in the input so the user can adjust it before sending, rather than sending blind.
  */
-function SkillRail({ cards }: { cards: SkillCard[] }) {
+function SkillRail({ cards, onPick }: { cards: SkillCard[]; onPick: (text: string) => void }) {
 	const t = useT(M);
-	const start = async (c: SkillCard) => {
-		await openAssistantMain();
-		// Same channel as "edit message": the composer takes the text in and focuses, so one send is all it takes.
-		useStore.setState({ editorText: { text: c.examples[0] ?? c.title, nonce: Date.now() } });
-	};
 	if (cards.length === 0) return null;
 	return (
 		<div className="rail-x -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1" role="group" aria-label={t("canDo")}>
@@ -182,7 +184,7 @@ function SkillRail({ cards }: { cards: SkillCard[] }) {
 				<button
 					key={c.name}
 					type="button"
-					onClick={() => void start(c)}
+					onClick={() => onPick(c.examples[0] ?? c.title)}
 					title={c.examples[0] ?? c.tagline}
 					className={clsx(
 						"flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-ink-800 bg-ink-900/70 px-3 text-[12.5px] text-ink-300 transition-colors",
@@ -233,6 +235,29 @@ export function PersonalHome() {
 	}, [load]);
 
 	const runs = useMemo(() => delegatedRuns(sessions, delegated ?? new Set()), [sessions, delegated]);
+
+	// The home page's own input. Sending opens the assistant's long-running chat and delivers the message there:
+	// the user types once and the work starts, with no bounce through an empty conversation.
+	const [draft, setDraft] = useState("");
+	const [sending, setSending] = useState(false);
+	const input = useRef<HTMLTextAreaElement>(null);
+	const ask = useCallback(
+		async (text = draft) => {
+			const said = text.trim();
+			if (!said || sending) return;
+			setSending(true);
+			try {
+				await openAssistantMain();
+				setDraft("");
+				// openAssistantMain resolves once the chat is on screen; without a session there is nothing to prompt.
+				if (useStore.getState().session) await sendPrompt(said);
+				else toast(t("sendFailed"), "error");
+			} finally {
+				setSending(false);
+			}
+		},
+		[draft, sending],
+	);
 	const projectOf = (workspaceId: string) => workspaces.find((w) => w.id === workspaceId)?.name ?? "";
 	const row = (s: (typeof runs.running)[number], live: boolean) => (
 		<li key={s.id}>
@@ -267,27 +292,59 @@ export function PersonalHome() {
 						<h2 className="text-center font-display text-[17px] font-semibold tracking-tight text-ink-100">{t("hello")}</h2>
 						<p className="mt-1 text-center text-[12px] leading-relaxed text-ink-500">{t("helloHint")}</p>
 						<div className="mt-3.5">
-							<SkillRail cards={cards} />
+							<SkillRail
+							cards={cards}
+							onPick={(text) => {
+								setDraft(text);
+								input.current?.focus();
+							}}
+						/>
 						</div>
-						{/* Shaped exactly like the composer it opens: same panel, same placeholder, same accent send button —
-						    so the click does what it looks like it will do. */}
-						<button
-							type="button"
-							onClick={() => void openAssistantMain()}
-							className="mt-2 flex min-h-[clamp(9rem,26vh,13rem)] w-full flex-col rounded-2xl border border-ink-800 bg-ink-900/85 p-4 text-left shadow-[0_10px_40px_-12px_rgb(0_0_0/0.45)] backdrop-blur transition-colors hover:border-ember-500/40"
+						{/* A real input, not a picture of one: typing here and pressing Enter opens the assistant's chat with
+						    the message already sent. Clicking anywhere in the panel puts the caret in it. */}
+						<form
+							onSubmit={(e) => {
+								e.preventDefault();
+								void ask();
+							}}
+							className="mt-2 flex min-h-[clamp(9rem,26vh,13rem)] w-full cursor-text flex-col rounded-2xl border border-ink-800 bg-ink-900/85 p-4 text-left shadow-[0_10px_40px_-12px_rgb(0_0_0/0.45)] backdrop-blur transition-colors focus-within:border-ember-500/50 hover:border-ember-500/40"
+							onClick={(e) => {
+								// Clicking the panel's padding should focus the field, as in a real composer.
+								if (e.target === e.currentTarget) input.current?.focus();
+							}}
 						>
-							<span className="text-[14.5px] text-ink-500">{t("composerHint")}</span>
-							{/* The composer's own bottom bar: what can be attached, then send. Inert here — the real one is a click away. */}
-							<span className="mt-auto flex items-center gap-2 pt-6">
-								<span className="grid size-8 place-items-center rounded-full border border-ink-800 text-ink-400">
+							<textarea
+								ref={input}
+								value={draft}
+								onChange={(e) => setDraft(e.target.value)}
+								onKeyDown={(e) => {
+									if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+										e.preventDefault();
+										void ask();
+									}
+								}}
+								placeholder={t("composerHint")}
+								rows={2}
+								aria-label={t("composerHint")}
+								className="w-full resize-none bg-transparent text-[14.5px] leading-relaxed text-ink-100 outline-none placeholder:text-ink-500"
+							/>
+							{/* The composer's own bottom bar: attach, the shortcut hint, then send. */}
+							<div className="mt-auto flex items-center gap-2 pt-4">
+								<button type="button" onClick={() => void openAssistantMain()} title={t("attachHint")} className="grid size-8 place-items-center rounded-full border border-ink-800 text-ink-400 transition-colors hover:border-ember-500/40 hover:text-ember-300">
 									<Plus className="size-4" />
-								</span>
+								</button>
 								<span className="text-[11.5px] text-ink-600">{t("composerTools")}</span>
-								<span className="btn-glow ml-auto grid size-8 shrink-0 place-items-center rounded-full bg-ember-500 text-ink-950">
+								<button
+									type="submit"
+									disabled={!draft.trim() || sending}
+									title={t("submit")}
+									aria-label={t("submit")}
+									className="btn-glow ml-auto grid size-8 shrink-0 place-items-center rounded-full bg-ember-500 text-ink-950 transition-opacity disabled:opacity-40"
+								>
 									<ArrowUp className="size-4" />
-								</span>
-							</span>
-						</button>
+								</button>
+							</div>
+						</form>
 					</div>
 					{/* What already happened: quieter, and only shown when there is something to say. */}
 					<div className="grid gap-3 @2xl:grid-cols-2">
