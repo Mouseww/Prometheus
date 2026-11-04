@@ -8,6 +8,7 @@ import { onPluginChange, openSession, pluginCall, toast, useStore } from "../lib
 import { runProgress } from "../lib/flowLayout.ts";
 import { FLOW_TEMPLATES, type FlowTemplate } from "../lib/flowTemplates.ts";
 import { blankFlow, FlowEditor } from "./FlowEditor.tsx";
+import { LocationField, placeLabel, useDefaultLocation } from "./FlowLocation.tsx";
 import { describeSchedule } from "./FlowSchedule.tsx";
 import { Badge, Button, Dialog, Field, PageHeader, Select, Textarea } from "./ui.tsx";
 
@@ -24,6 +25,7 @@ const M = defineMessages({
 		generate: "生成",
 		cancel: "取消",
 		workspace: "工作区",
+		noProject: "不绑定项目（在个人目录运行）",
 		emptyTitle: "还没有流程",
 		emptyBody: "从下面的模板开始，或者新建一条空白流程，也可以让 AI 帮你生成。",
 		templates: "从模板新建",
@@ -43,6 +45,9 @@ const M = defineMessages({
 		delete: "删除",
 		confirmDelete: "删除流程「{name}」？",
 		runs: "运行记录",
+		project: "项目专属 · {name}",
+		general: "通用流程",
+		allPlaces: "全部位置",
 		noRuns: "还没有运行记录",
 		clear: "清空记录",
 		running: "运行中",
@@ -68,6 +73,7 @@ const M = defineMessages({
 		generate: "Generate",
 		cancel: "Cancel",
 		workspace: "Workspace",
+		noProject: "No project (runs in a personal folder)",
 		emptyTitle: "No flows yet",
 		emptyBody: "Start from a template below, create a blank flow, or let AI generate one.",
 		templates: "From template",
@@ -87,6 +93,9 @@ const M = defineMessages({
 		delete: "Delete",
 		confirmDelete: 'Delete flow "{name}"?',
 		runs: "Run history",
+		project: "Project · {name}",
+		general: "General flow",
+		allPlaces: "All places",
 		noRuns: "No runs yet",
 		clear: "Clear history",
 		running: "Running",
@@ -187,11 +196,13 @@ export function FlowsView() {
 	const t = useT(M);
 	const lang = usePrefs((p) => p.lang);
 	const workspaces = useStore((s) => s.workspaces);
+	const lang2 = lang === "zh" ? "zh" : "en";
 	const [data, setData] = useState<{ flows: Flow[]; runs: FlowRun[] } | null>(null);
 	const [editing, setEditing] = useState<Editing>(null);
 	const [aiOpen, setAiOpen] = useState(false);
 	const [runFor, setRunFor] = useState<Flow | null>(null);
 	const [tplOpen, setTplOpen] = useState(false);
+	const [place, setPlace] = useState("");
 
 	const load = useCallback(async () => {
 		const res = await pluginCall<{ flows: Flow[]; runs: FlowRun[] }>("flows", "list");
@@ -210,10 +221,9 @@ export function FlowsView() {
 		}
 	};
 
-	const lang2 = lang === "zh" ? "zh" : "en";
 	const fromTemplate = (tpl: FlowTemplate) => {
 		setTplOpen(false);
-		setEditing({ ...tpl.build(lang2), workspaceId: workspaces[0]?.id ?? "" });
+		setEditing({ ...tpl.build(lang2), workspaceId: "" });
 	};
 
 	if (editing)
@@ -234,8 +244,9 @@ export function FlowsView() {
 
 	const topRuns = (data?.runs ?? []).filter((r) => !r.parentRunId);
 	const running = new Set(topRuns.filter((r) => r.status === "running").map((r) => r.flowId));
+	const places = [...new Map(topRuns.filter((r) => r.location).map((r) => [r.location!.path, r.location!])).values()];
+	const shownRuns = place ? topRuns.filter((r) => r.location?.path === place) : topRuns;
 	const when = (iso?: string) => (iso ? relativeTime(iso, lang) : "");
-	const noWs = workspaces.length === 0;
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
@@ -244,13 +255,13 @@ export function FlowsView() {
 				subtitle={t("subtitle")}
 				actions={
 					<>
-						<Button variant="outline" disabled={noWs} onClick={() => setTplOpen(true)} title={noWs ? t("noWorkspace") : undefined}>
+						<Button variant="outline" onClick={() => setTplOpen(true)}>
 							<LayoutTemplate className="size-4" /> {t("templates")}
 						</Button>
-						<Button variant="outline" disabled={noWs} onClick={() => setAiOpen(true)} title={noWs ? t("noWorkspace") : undefined}>
+						<Button variant="outline" onClick={() => setAiOpen(true)}>
 							<Sparkles className="size-4" /> {t("ai")}
 						</Button>
-						<Button variant="primary" disabled={noWs} onClick={() => setEditing(blankFlow(workspaces[0]?.id ?? ""))} title={noWs ? t("noWorkspace") : undefined}>
+						<Button variant="primary" onClick={() => setEditing(blankFlow(""))}>
 							<Plus className="size-4" /> {t("add")}
 						</Button>
 					</>
@@ -269,9 +280,9 @@ export function FlowsView() {
 									<Workflow className="size-5" />
 								</div>
 								<h3 className="font-display text-lg font-semibold">{t("emptyTitle")}</h3>
-								<p className="max-w-md text-sm text-ink-400">{noWs ? t("noWorkspace") : t("emptyBody")}</p>
+								<p className="max-w-md text-sm text-ink-400">{t("emptyBody")}</p>
 							</div>
-							{!noWs && <TemplateGrid onPick={fromTemplate} onBlank={() => setEditing(blankFlow(workspaces[0]?.id ?? ""))} />}
+							{<TemplateGrid onPick={fromTemplate} onBlank={() => setEditing(blankFlow(""))} />}
 						</div>
 					) : (
 						<ul className="grid gap-3 md:grid-cols-2">
@@ -287,6 +298,7 @@ export function FlowsView() {
 												</Badge>
 											)}
 										</div>
+										<p className="mt-1 text-xs text-ink-500">{f.workspaceId ? t("project", { name: workspaces.find((w) => w.id === f.workspaceId)?.name ?? "?" }) : t("general")}</p>
 										{f.description && <p className="mt-1 line-clamp-2 text-sm text-ink-400">{f.description}</p>}
 										<Progress flow={f} run={topRuns.find((r) => r.flowId === f.id && r.status === "running")} />
 										<p className="mt-1 text-xs text-ink-500">
@@ -337,6 +349,18 @@ export function FlowsView() {
 						<section className="space-y-2">
 							<div className="flex items-center justify-between">
 								<h2 className="text-sm font-medium text-ink-300">{t("runs")}</h2>
+								{places.length > 1 && (
+									<div className="ml-3 w-40">
+										<Select value={place} onChange={(e) => setPlace(e.target.value)} aria-label={t("allPlaces")}>
+											<option value="">{t("allPlaces")}</option>
+											{places.map((p) => (
+												<option key={p.path} value={p.path}>
+													{placeLabel(lang2, p)}
+												</option>
+											))}
+										</Select>
+									</div>
+								)}
 								{topRuns.length > 0 && (
 									<Button variant="ghost" onClick={() => void call("clearRuns", {})}>
 										{t("clear")}
@@ -347,7 +371,7 @@ export function FlowsView() {
 								<p className="text-sm text-ink-500">{t("noRuns")}</p>
 							) : (
 								<ul className="divide-y divide-ink-800 rounded-xl border border-ink-700">
-									{topRuns.map((r) => {
+									{shownRuns.map((r) => {
 										const flow = data.flows.find((f) => f.id === r.flowId);
 										const sessions = Object.values(r.nodes).filter((n) => n.sessionId);
 										return (
@@ -355,6 +379,7 @@ export function FlowsView() {
 												<RunBadge status={r.status} />
 												<span className="font-medium text-ink-200">{r.flowName}</span>
 												<span className="text-xs text-ink-500">{when(r.startedAt)}</span>
+												{r.location && <Badge>{placeLabel(lang2, r.location)}</Badge>}
 												{r.error && <span className="min-w-0 flex-1 truncate text-xs text-rose-400">{r.error}</span>}
 												<span className="ml-auto flex items-center gap-2">
 													{sessions.length > 0 && (
@@ -386,7 +411,7 @@ export function FlowsView() {
 							onPick={fromTemplate}
 							onBlank={() => {
 								setTplOpen(false);
-								setEditing(blankFlow(workspaces[0]?.id ?? ""));
+								setEditing(blankFlow(""));
 							}}
 						/>
 					</div>
@@ -406,8 +431,8 @@ export function FlowsView() {
 				<RunInputDialog
 					flow={runFor}
 					onClose={() => setRunFor(null)}
-					onStart={async (input) => {
-						const res = await pluginCall<{ runId: string }>("flows", "run", { id: runFor.id, input });
+					onStart={async (input, where) => {
+						const res = await pluginCall<{ runId: string }>("flows", "run", { id: runFor.id, input, workspaceId: where });
 						setRunFor(null);
 						if (res) {
 							toast(t("started"));
@@ -420,9 +445,10 @@ export function FlowsView() {
 	);
 }
 
-function RunInputDialog({ flow, onClose, onStart }: { flow: Flow; onClose: () => void; onStart: (input: string) => Promise<void> }) {
+function RunInputDialog({ flow, onClose, onStart }: { flow: Flow; onClose: () => void; onStart: (input: string, where: string) => Promise<void> }) {
 	const t = useT(M);
 	const [input, setInput] = useState("");
+	const [where, setWhere] = useState(useDefaultLocation());
 	const [busy, setBusy] = useState(false);
 	return (
 		<Dialog title={`${t("run")} · ${flow.name}`} onClose={onClose}>
@@ -430,6 +456,7 @@ function RunInputDialog({ flow, onClose, onStart }: { flow: Flow; onClose: () =>
 				<Field label={t("input")} hint={t("inputHint")}>
 					<Textarea rows={5} value={input} onChange={(e) => setInput(e.target.value)} autoFocus />
 				</Field>
+				<LocationField flow={flow} value={where} onChange={setWhere} />
 				<div className="flex justify-end gap-2">
 					<Button variant="ghost" onClick={onClose}>
 						{t("cancel")}
@@ -439,7 +466,7 @@ function RunInputDialog({ flow, onClose, onStart }: { flow: Flow; onClose: () =>
 						disabled={busy}
 						onClick={() => {
 							setBusy(true);
-							void onStart(input).finally(() => setBusy(false));
+							void onStart(input, where).finally(() => setBusy(false));
 						}}
 					>
 						<Play className="size-4" /> {t("start")}
@@ -454,7 +481,7 @@ function AiDialog({ onClose, onDraft }: { onClose: () => void; onDraft: (draft: 
 	const t = useT(M);
 	const workspaces = useStore((s) => s.workspaces);
 	const [text, setText] = useState("");
-	const [ws, setWs] = useState(workspaces[0]?.id ?? "");
+	const [ws, setWs] = useState("");
 	const [busy, setBusy] = useState(false);
 
 	const token = useRef(0);
@@ -474,6 +501,7 @@ function AiDialog({ onClose, onDraft }: { onClose: () => void; onDraft: (draft: 
 				<Textarea rows={6} value={text} onChange={(e) => setText(e.target.value)} placeholder={t("aiPh")} autoFocus disabled={busy} />
 				<Field label={t("workspace")} hint={t("aiHint")}>
 					<Select value={ws} onChange={(e) => setWs(e.target.value)} disabled={busy}>
+						<option value="">{t("noProject")}</option>
 						{workspaces.map((w) => (
 							<option key={w.id} value={w.id}>
 								{w.name}
@@ -490,7 +518,7 @@ function AiDialog({ onClose, onDraft }: { onClose: () => void; onDraft: (draft: 
 					<Button variant="ghost" onClick={close}>
 						{t("cancel")}
 					</Button>
-					<Button variant="primary" onClick={() => void go()} disabled={busy || !text.trim() || !ws}>
+					<Button variant="primary" onClick={() => void go()} disabled={busy || !text.trim()}>
 						<Sparkles className="size-4" /> {t("generate")}
 					</Button>
 				</div>

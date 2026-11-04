@@ -188,6 +188,7 @@ describe("FlowEngine", () => {
 			load: async () => structuredClone(saved),
 			save: async (s) => void (saved = s),
 			workspaces: async () => [{ id: "w1", name: "p", path: "/proj" }],
+			defaultCwd: async () => "/default",
 			runAgent: a.runAgent,
 			now: () => new Date(0),
 			changed: () => {},
@@ -263,6 +264,7 @@ describe("scheduled flows", () => {
 			load: async () => structuredClone(saved),
 			save: async (s) => void (saved = s),
 			workspaces: async () => [{ id: "w1", name: "p", path: "/proj" }],
+			defaultCwd: async () => "/default",
 			runAgent: a.runAgent,
 			now: () => clock,
 			changed: () => {},
@@ -288,7 +290,8 @@ describe("scheduled flows", () => {
 	});
 	it("rejects a bad schedule", async () => {
 		const h = { name: "x", description: "", workspaceId: "w1", nodes: [node("start", "start"), node("a", "agent")], edges: [edge("start", "a")], schedule: { type: "interval" as const, minutes: 1 }, scheduleEnabled: true };
-		const engine = new FlowEngine({ load: async () => ({ flows: [], runs: [] }), save: async () => {}, workspaces: async () => [{ id: "w1", name: "p", path: "/p" }], runAgent: agent(() => "x").runAgent, now: () => new Date(), changed: () => {}, log: () => {} });
+		const engine = new FlowEngine({ load: async () => ({ flows: [], runs: [] }), save: async () => {}, workspaces: async () => [{ id: "w1", name: "p", path: "/p" }],
+		defaultCwd: async () => "/default", runAgent: agent(() => "x").runAgent, now: () => new Date(), changed: () => {}, log: () => {} });
 		await engine.start();
 		await expect(engine.create(h)).rejects.toThrow(/间隔/);
 		await engine.stop();
@@ -303,6 +306,7 @@ describe("subflows", () => {
 			load: async () => structuredClone(saved),
 			save: async (s) => void (saved = s),
 			workspaces: async () => [{ id: "w1", name: "p", path: "/proj" }],
+			defaultCwd: async () => "/default",
 			runAgent: a.runAgent,
 			now: () => new Date(0),
 			changed: () => {},
@@ -367,6 +371,7 @@ describe("subflows", () => {
 			load: async () => ({ flows: [], runs: [] }),
 			save: async () => {},
 			workspaces: async () => [{ id: "w1", name: "p", path: "/proj" }],
+			defaultCwd: async () => "/default",
 			runAgent: async (o) => {
 				if (o.prompt.startsWith("inner")) {
 					await new Promise<void>((res) => (o.signal?.addEventListener("abort", () => res()), void gate.then(res)));
@@ -398,3 +403,91 @@ describe("subflows", () => {
 		expect(flowIssues({ ...f, nodes: [node("start", "start"), node("s", "subflow", { flowId: "q" })] }, { selfId: "me", flows: [] }).map((i) => i.message).join("|")).toMatch(/已被删除/);
 	});
 });
+
+describe("flows without a project", () => {
+	it("can be saved and run with no workspace, in the default folder", async () => {
+		const a = agent(() => "ok");
+		const engine = new FlowEngine({ load: async () => ({ flows: [], runs: [] }), save: async () => {}, workspaces: async () => [], defaultCwd: async () => "/default", runAgent: a.runAgent, now: () => new Date(0), changed: () => {}, log: () => {} });
+		await engine.start();
+		const f = await engine.create({ name: "free", description: "", workspaceId: "", nodes: [node("start", "start"), node("a", "agent")], edges: [edge("start", "a")] });
+		const r = await (await engine.startRun(f.id, "")).done;
+		expect(r.status).toBe("success");
+		expect(a.calls[0]!.cwd).toBe("/default");
+		await engine.stop();
+	});
+});
+
+describe("where flows run", () => {
+	function setup() {
+		const a = agent(() => "ok");
+		const spaces = [{ id: "wa", name: "A", path: "/a" }, { id: "wb", name: "B", path: "/b" }];
+		const engine = new FlowEngine({ load: async () => ({ flows: [], runs: [] }), save: async () => {}, workspaces: async () => spaces, defaultCwd: async () => "/home", runAgent: a.runAgent, now: () => new Date(0), changed: () => {}, log: () => {} });
+		return { a, engine };
+	}
+	const body = (workspaceId: string) => ({ name: "f" + workspaceId, description: "", workspaceId, nodes: [node("start", "start"), node("x", "agent")], edges: [edge("start", "x")] });
+
+	it("a general flow works wherever it is called from, and the run says where", async () => {
+		const { a, engine } = setup();
+		await engine.start();
+		const f = await engine.create(body(""));
+		const r1 = await (await engine.startRun(f.id, "", undefined, "manual", { workspaceId: "wb" })).done;
+		expect(a.calls.at(-1)!.cwd).toBe("/b");
+		expect(r1.location).toMatchObject({ name: "B", workspaceId: "wb" });
+		const r2 = await (await engine.startRun(f.id, "", "s1", "agent", { cwd: "/a" })).done;
+		expect(a.calls.at(-1)!.cwd).toBe("/a");
+		expect(r2.location?.name).toBe("A");
+		const r3 = await (await engine.startRun(f.id, "", undefined, "manual", { workspaceId: "" })).done;
+		expect(a.calls.at(-1)!.cwd).toBe("/home");
+		expect(r3.location).toMatchObject({ personal: true });
+		const r4 = await (await engine.startRun(f.id, "")).done;
+		expect(r4.location?.personal).toBe(true);
+		await engine.stop();
+	});
+
+	it("a project flow only runs in its project and refuses other places", async () => {
+		const { a, engine } = setup();
+		await engine.start();
+		const f = await engine.create(body("wa"));
+		await (await engine.startRun(f.id, "", undefined, "manual")).done;
+		expect(a.calls.at(-1)!.cwd).toBe("/a");
+		await (await engine.startRun(f.id, "", "s", "agent", { cwd: "/a" })).done;
+		await expect(engine.startRun(f.id, "", "s", "agent", { cwd: "/b" })).rejects.toThrow(/专属/);
+		await expect(engine.startRun(f.id, "", undefined, "manual", { workspaceId: "" })).rejects.toThrow(/专属/);
+		await engine.stop();
+	});
+
+	it("a general subflow follows its parent; a project subflow keeps to its project", async () => {
+		const { a, engine } = setup();
+		await engine.start();
+		const general = await engine.create(body(""));
+		const bound = await engine.create({ ...body("wa"), name: "bound" });
+		const parent = await engine.create({
+			name: "parent",
+			description: "",
+			workspaceId: "",
+			nodes: [node("start", "start"), node("g", "subflow", { flowId: general.id }), node("p", "subflow", { flowId: bound.id })],
+			edges: [edge("start", "g"), edge("g", "p")],
+		});
+		const r = await (await engine.startRun(parent.id, "", undefined, "manual", { workspaceId: "wb" })).done;
+		expect(r.status).toBe("success");
+		const cwds = a.calls.map((c) => c.cwd);
+		expect(cwds).toEqual(["/b", "/a"]);
+		const runs = engine.snapshot().runs;
+		expect(runs.find((x) => x.flowId === general.id)?.location?.name).toBe("B");
+		expect(runs.find((x) => x.flowId === bound.id)?.location?.name).toBe("A");
+		await engine.stop();
+	});
+
+	it("schedules a general flow in the chosen place", async () => {
+		const { a, engine } = setup();
+		let clock = new Date(2026, 0, 1, 8, 59);
+		void clock;
+		await engine.start();
+		const f = await engine.create({ ...body(""), schedule: { type: "interval", minutes: 5 }, scheduleEnabled: true, scheduleWorkspaceId: "wb" });
+		expect(f.scheduleWorkspaceId).toBe("wb");
+		await expect(engine.create({ ...body(""), scheduleWorkspaceId: "zzz", schedule: { type: "interval", minutes: 5 }, scheduleEnabled: true })).rejects.toThrow(/定时运行位置/);
+		void a;
+		await engine.stop();
+	});
+});
+

@@ -2,6 +2,8 @@ import clsx from "clsx";
 import { useState } from "react";
 import type { AutomationSchedule } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
+import type { Flow } from "@prometheus/protocol";
+import { LocationField } from "./FlowLocation.tsx";
 import { Button, Dialog, Field, Input, Select, Textarea } from "./ui.tsx";
 
 const M = defineMessages({
@@ -17,6 +19,7 @@ const M = defineMessages({
 		time: "时间",
 		at: "执行时间",
 		dayNames: "日,一,二,三,四,五,六",
+		where: "定时运行的位置",
 		input: "定时运行时的输入",
 		inputHint: "作为 {{input}} 传给流程。可留空。",
 		next: "下次运行：{when}",
@@ -38,6 +41,7 @@ const M = defineMessages({
 		time: "Time",
 		at: "Run at",
 		dayNames: "Sun,Mon,Tue,Wed,Thu,Fri,Sat",
+		where: "Where scheduled runs work",
 		input: "Input for scheduled runs",
 		inputHint: "Passed to the flow as {{input}}. May be empty.",
 		next: "Next run: {when}",
@@ -53,6 +57,7 @@ export interface ScheduleValue {
 	schedule?: AutomationSchedule;
 	scheduleEnabled?: boolean;
 	scheduleInput?: string;
+	scheduleWorkspaceId?: string;
 }
 
 const toLocalInput = (iso: string) => {
@@ -70,7 +75,7 @@ export function describeSchedule(s: AutomationSchedule | undefined, lang: "zh" |
 	return `${days} ${s.time}`;
 }
 
-export function ScheduleDialog({ value, nextRunAt, lang, onClose, onApply }: { value: ScheduleValue; nextRunAt?: string; lang: "zh" | "en"; onClose: () => void; onApply: (v: ScheduleValue) => void }) {
+export function ScheduleDialog({ flow, value, nextRunAt, lang, onClose, onApply }: { flow: Pick<Flow, "workspaceId">; value: ScheduleValue; nextRunAt?: string; lang: "zh" | "en"; onClose: () => void; onApply: (v: ScheduleValue) => void }) {
 	const t = useT(M);
 	const [v, setV] = useState<ScheduleValue>({ ...value, schedule: value.schedule ?? { type: "daily", time: "09:00" } });
 	const sch = v.schedule!;
@@ -134,6 +139,7 @@ export function ScheduleDialog({ value, nextRunAt, lang, onClose, onApply }: { v
 					{sch.type === "once" && (
 						<Input type="datetime-local" value={toLocalInput(sch.at)} onChange={(e) => e.target.value && set({ schedule: { type: "once", at: new Date(e.target.value).toISOString() } })} aria-label={t("at")} />
 					)}
+					<LocationField flow={flow} value={v.scheduleWorkspaceId ?? ""} onChange={(x) => set({ scheduleWorkspaceId: x })} label={t("where")} />
 					<Field label={t("input")} hint={t("inputHint")}>
 						<Textarea rows={3} value={v.scheduleInput ?? ""} onChange={(e) => set({ scheduleInput: e.target.value })} />
 					</Field>

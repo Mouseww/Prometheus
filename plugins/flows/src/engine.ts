@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AgentRunOptions, AgentRunResult, WorkspaceRef } from "@prometheus/plugin-sdk";
-import { type Flow, type FlowInput, type FlowRefContext, type FlowRun, MAX_SUBFLOW_DEPTH } from "@prometheus/protocol";
+import { type Flow, type FlowInput, type FlowRefContext, type FlowRun, type FlowRunLocation, MAX_SUBFLOW_DEPTH } from "@prometheus/protocol";
 import { ensureStart, extractJson, GENERATE_GUIDE, normalizeFlow, validateFlow } from "./graph.ts";
 import { runFlow } from "./runner.ts";
 import { catchUpDue, nextRun, validateSchedule } from "./schedule.ts";
@@ -15,10 +15,18 @@ export interface FlowDeps {
 	load(): Promise<FlowState>;
 	save(state: FlowState): Promise<void>;
 	workspaces(): Promise<WorkspaceRef[]>;
+	/** Where steps run when a flow is not bound to a project. */
+	defaultCwd(): Promise<string>;
 	runAgent(options: AgentRunOptions): Promise<AgentRunResult>;
 	now(): Date;
 	changed(): void;
 	log(message: string): void;
+}
+
+/** Where a general flow should work: a workspace id (empty: personal space), or a folder path. */
+export interface RunWhere {
+	workspaceId?: string;
+	cwd?: string;
 }
 
 const MAX_FLOWS = 100;
@@ -78,7 +86,7 @@ export class FlowEngine {
 				if (this.state.runs.some((r) => r.flowId === flow.id && r.status === "running")) continue;
 				this.reschedule(flow, now);
 				try {
-					const { done } = await this.startRun(flow.id, flow.scheduleInput ?? "", undefined, "schedule");
+					const { done } = await this.startRun(flow.id, flow.scheduleInput ?? "", undefined, "schedule", flow.workspaceId ? undefined : { workspaceId: flow.scheduleWorkspaceId ?? "" });
 					void done.catch((err: unknown) => this.deps.log(`定时流程失败：${err instanceof Error ? err.message : err}`));
 				} catch (err) {
 					this.deps.log(`定时流程无法启动：${err instanceof Error ? err.message : err}`);
@@ -102,6 +110,11 @@ export class FlowEngine {
 		return structuredClone(this.state);
 	}
 
+	/** The personal folder, so callers can tell a project from it. */
+	homeDir(): Promise<string> {
+		return this.deps.defaultCwd();
+	}
+
 	get(id: string): Flow {
 		const flow = this.state.flows.find((f) => f.id === id);
 		if (!flow) throw new Error("流程不存在");
@@ -118,7 +131,9 @@ export class FlowEngine {
 		const errors = validateFlow(input, this.refs(selfId));
 		if (input.schedule) errors.push(...validateSchedule(input.schedule));
 		if (errors.length) throw new Error(errors.join("；"));
-		if (!(await this.deps.workspaces()).some((w) => w.id === input.workspaceId)) throw new Error("工作区不存在，请先在侧栏添加");
+		const known = await this.deps.workspaces();
+		if (input.workspaceId && !known.some((w) => w.id === input.workspaceId)) throw new Error("工作区不存在，请先在侧栏添加");
+		if (input.scheduleWorkspaceId && !known.some((w) => w.id === input.scheduleWorkspaceId)) throw new Error("定时运行位置对应的工作区不存在");
 	}
 
 	async create(input: FlowInput): Promise<Flow> {
@@ -136,7 +151,7 @@ export class FlowEngine {
 	async update(id: string, input: FlowInput): Promise<Flow> {
 		const flow = this.get(id);
 		await this.check(input, id);
-		for (const key of ["schedule", "scheduleInput", "scheduleEnabled"] as const) delete flow[key];
+		for (const key of ["schedule", "scheduleInput", "scheduleEnabled", "scheduleWorkspaceId"] as const) delete flow[key];
 		Object.assign(flow, input, { updatedAt: this.deps.now().toISOString() });
 		this.reschedule(flow, this.deps.now());
 		await this.persist();
@@ -169,23 +184,55 @@ export class FlowEngine {
 
 	// ---------- running ----------
 
-	/** Starts a run and returns its id at once; the record fills in as steps finish. */
-	async startRun(flowId: string, input: string, parentSessionId?: string, trigger: FlowRun["trigger"] = parentSessionId ? "agent" : "manual"): Promise<{ runId: string; done: Promise<FlowRun> }> {
+	/**
+	 * Starts a run and returns its id at once; the record fills in as steps finish.
+	 * `where` says where a general flow works: a workspace id (empty: the personal space) or a folder path (a chat's cwd).
+	 * A project-bound flow always works in its project, and refuses to be called from anywhere else.
+	 */
+	async startRun(flowId: string, input: string, parentSessionId?: string, trigger: FlowRun["trigger"] = parentSessionId ? "agent" : "manual", where?: RunWhere): Promise<{ runId: string; done: Promise<FlowRun> }> {
 		if (this.state.runs.some((r) => r.flowId === flowId && r.status === "running" && !r.parentRunId)) throw new Error("该流程正在运行");
-		return this.launch(flowId, input, { parentSessionId, trigger, depth: 0 });
+		const flow = this.get(flowId);
+		const location = await this.locate(flow, where, undefined);
+		return this.launch(flowId, input, { parentSessionId, trigger, depth: 0, location });
+	}
+
+	/** Resolves where a flow runs. Throws when a project-bound flow is asked to run somewhere else. */
+	private async locate(flow: Flow, where: RunWhere | undefined, inherited: FlowRunLocation | undefined): Promise<FlowRunLocation> {
+		const spaces = await this.deps.workspaces();
+		const home = await this.deps.defaultCwd();
+		const norm = (p: string) => p.replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
+		const asLocation = (ws: WorkspaceRef | undefined, path: string): FlowRunLocation =>
+			ws ? { name: ws.name, path: ws.path, workspaceId: ws.id } : norm(path) === norm(home) ? { name: "个人空间", path: home, personal: true } : { name: path.split(/[\\/]/).filter(Boolean).pop() ?? path, path };
+		if (flow.workspaceId) {
+			const ws = spaces.find((w) => w.id === flow.workspaceId);
+			if (!ws) throw new Error("这条流程绑定的项目已被移除");
+			const elsewhere = (where?.workspaceId !== undefined && where.workspaceId !== ws.id) || (where?.cwd !== undefined && norm(where.cwd) !== norm(ws.path));
+			if (elsewhere) throw new Error(`这条流程是项目「${ws.name}」的专属流程，不能在其他位置运行`);
+			return asLocation(ws, ws.path);
+		}
+		if (where?.workspaceId !== undefined) {
+			if (!where.workspaceId) return asLocation(undefined, home);
+			const ws = spaces.find((w) => w.id === where.workspaceId);
+			if (!ws) throw new Error("运行位置对应的工作区不存在");
+			return asLocation(ws, ws.path);
+		}
+		if (where?.cwd) {
+			const cwd = where.cwd;
+			return asLocation(spaces.find((w) => norm(w.path) === norm(cwd)), cwd);
+		}
+		if (inherited) return inherited;
+		return asLocation(undefined, home);
 	}
 
 	private async launch(
 		flowId: string,
 		input: string,
-		o: { parentSessionId?: string; trigger: FlowRun["trigger"]; depth: number; parentRunId?: string; parentSignal?: AbortSignal; onStart?: (runId: string) => void },
+		o: { parentSessionId?: string; trigger: FlowRun["trigger"]; depth: number; location: FlowRunLocation; parentRunId?: string; parentSignal?: AbortSignal; onStart?: (runId: string) => void },
 	): Promise<{ runId: string; done: Promise<FlowRun> }> {
 		if (o.depth > MAX_SUBFLOW_DEPTH) throw new Error(`子流程嵌套超过 ${MAX_SUBFLOW_DEPTH} 层`);
 		const flow = structuredClone(this.get(flowId));
 		const errors = validateFlow(flow, this.refs(flow.id));
 		if (errors.length) throw new Error(errors.join("；"));
-		const workspace = (await this.deps.workspaces()).find((w) => w.id === flow.workspaceId);
-		if (!workspace) throw new Error("工作区已被移除");
 		const runId = randomUUID().slice(0, 8);
 		const ctl = new AbortController();
 		// A parent that is stopped stops everything it started.
@@ -203,11 +250,14 @@ export class FlowEngine {
 			{
 				runAgent: (opts) => this.deps.runAgent(o.parentSessionId ? { ...opts, parentSessionId: o.parentSessionId } : opts),
 				now: () => this.deps.now(),
-				cwd: workspace.path,
+				cwd: o.location.path,
+				location: o.location,
 				trigger: o.trigger,
 				...(o.parentRunId ? { parentRunId: o.parentRunId } : {}),
 				runChild: async (childFlowId, childInput, onStart) => {
-					const child = await this.launch(childFlowId, childInput, { parentSessionId: o.parentSessionId, trigger: "subflow", depth: o.depth + 1, parentRunId: runId, parentSignal: ctl.signal });
+					// A general child works where its parent does; a project-bound child keeps to its own project.
+					const location = await this.locate(this.get(childFlowId), undefined, o.location);
+					const child = await this.launch(childFlowId, childInput, { parentSessionId: o.parentSessionId, trigger: "subflow", depth: o.depth + 1, location, parentRunId: runId, parentSignal: ctl.signal });
 					onStart(child.runId);
 					return child.done;
 				},
@@ -257,9 +307,9 @@ export class FlowEngine {
 	async generate(description: string, workspaceId: string, signal?: AbortSignal): Promise<FlowInput> {
 		if (!description.trim()) throw new Error("请描述想要的流程");
 		const workspace = (await this.deps.workspaces()).find((w) => w.id === workspaceId);
-		if (!workspace) throw new Error("工作区不存在，请先在侧栏添加");
+		const cwd = workspace?.path ?? (await this.deps.defaultCwd());
 		const res = await this.deps.runAgent({
-			cwd: workspace.path,
+			cwd,
 			prompt: `${GENERATE_GUIDE}${this.subflowCatalog()}\n\n用户描述：\n${description.trim()}`,
 			name: "✨ 生成流程",
 			access: "readonly",

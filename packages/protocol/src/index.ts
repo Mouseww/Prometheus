@@ -1027,6 +1027,7 @@ export interface Flow {
 	id: string;
 	name: string;
 	description: string;
+	/** The project this flow belongs to; empty for a general flow that runs wherever it is called from. */
 	workspaceId: string;
 	nodes: FlowNode[];
 	edges: FlowEdge[];
@@ -1035,13 +1036,15 @@ export interface Flow {
 	/** Text handed to the flow as {{input}} on a scheduled run. */
 	scheduleInput?: string;
 	scheduleEnabled?: boolean;
+	/** Where a scheduled run of a general flow works: a workspace id, empty for the personal space. */
+	scheduleWorkspaceId?: string;
 	nextRunAt?: string;
 	createdAt: string;
 	updatedAt: string;
 	lastRunAt?: string;
 }
 
-export type FlowInput = Pick<Flow, "name" | "description" | "workspaceId" | "nodes" | "edges" | "schedule" | "scheduleInput" | "scheduleEnabled">;
+export type FlowInput = Pick<Flow, "name" | "description" | "workspaceId" | "nodes" | "edges" | "schedule" | "scheduleInput" | "scheduleEnabled" | "scheduleWorkspaceId">;
 
 export type FlowNodeStatus = "pending" | "running" | "success" | "error" | "skipped";
 
@@ -1056,6 +1059,14 @@ export interface FlowNodeRun {
 	error?: string;
 }
 
+export interface FlowRunLocation {
+	name: string;
+	path: string;
+	/** Absent for the personal space. */
+	workspaceId?: string;
+	personal?: boolean;
+}
+
 export interface FlowRun {
 	id: string;
 	flowId: string;
@@ -1066,6 +1077,8 @@ export interface FlowRun {
 	status: "running" | "success" | "error" | "cancelled";
 	/** Who started it. */
 	trigger?: "manual" | "schedule" | "agent" | "automation" | "subflow";
+	/** Where the run worked (its steps' chats live there). */
+	location?: FlowRunLocation;
 	/** Set on a run started by a subflow node of another run. */
 	parentRunId?: string;
 	nodes: Record<string, FlowNodeRun>;

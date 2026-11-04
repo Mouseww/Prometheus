@@ -38,8 +38,8 @@ export default definePlugin({
 			save: async (state) => void (await store.update(() => state)),
 			workspaces: () => ctx.workspaces(),
 			runAgent: (options) => ctx.runAgent(options),
-			runFlow: async (flowId, input, signal) => {
-				const started = (await ctx.callPlugin("flows", "run", { id: flowId, input, trigger: "automation" })) as { runId: string };
+			runFlow: async (flowId, input, signal, workspaceId) => {
+				const started = (await ctx.callPlugin("flows", "run", { id: flowId, input, trigger: "automation", workspaceId })) as { runId: string };
 				const stop = () => void ctx.callPlugin("flows", "cancel", { runId: started.runId }).catch(() => {});
 				signal.addEventListener("abort", stop, { once: true });
 				try {

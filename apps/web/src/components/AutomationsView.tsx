@@ -6,6 +6,7 @@ import type { AutomationInput, AutomationRun, AutomationSchedule, AutomationTask
 import { defineMessages, relativeTime, useT } from "../lib/i18n.ts";
 import { usePrefs } from "../lib/prefs.ts";
 import { onPluginChange, openSession, pluginActive, pluginCall, toast, useStore } from "../lib/store.ts";
+import { LocationField } from "./FlowLocation.tsx";
 import { Badge, Button, Dialog, Empty, Field, Input, PageHeader, Select, Textarea } from "./ui.tsx";
 
 const M = defineMessages({
@@ -73,6 +74,7 @@ const M = defineMessages({
 		flowPick: "选择一条流程…",
 		flowInput: "流程输入",
 		flowInputHint: "作为 {{input}} 传给流程。可留空。",
+		personalSpace: "个人空间",
 		flowNote: "流程里每个步骤使用自己设置的权限，在流程编排里修改。",
 		needFlow: "请选择一条流程",
 		viaFlow: "流程：{name}",
@@ -142,6 +144,7 @@ const M = defineMessages({
 		flowPick: "Choose a flow…",
 		flowInput: "Flow input",
 		flowInputHint: "Passed to the flow as {{input}}. May be empty.",
+		personalSpace: "Personal space",
 		flowNote: "Each step in the flow uses the permission set on that step; change it in Flows.",
 		needFlow: "Choose a flow",
 		viaFlow: "Flow: {name}",
@@ -189,7 +192,7 @@ function TaskDialog({ initial, onClose, onSaved }: { initial: (AutomationInput &
 		if (asFlow && !flow) return toast(t("needFlow"), "warning");
 		if (!draft.name.trim() || (!asFlow && !draft.prompt.trim()) || !draft.workspaceId) return toast(t("needFields"), "warning");
 		setBusy(true);
-		const body = asFlow ? { ...draft, prompt: "", workspaceId: flow!.workspaceId, access: "readonly" as RunAccess, flowId: flow!.id, flowInput: draft.flowInput ?? "" } : (() => { const { flowId: _f, flowInput: _i, ...rest } = draft; return rest; })();
+		const body = asFlow ? { ...draft, prompt: "", workspaceId: flow!.workspaceId || draft.workspaceId, access: "readonly" as RunAccess, flowId: flow!.id, flowInput: draft.flowInput ?? "" } : (() => { const { flowId: _f, flowInput: _i, ...rest } = draft; return rest; })();
 		const res = await pluginCall<unknown>("automations", draft.id ? "update" : "create", { ...body });
 		setBusy(false);
 		if (res === undefined) return;
@@ -227,6 +230,10 @@ function TaskDialog({ initial, onClose, onSaved }: { initial: (AutomationInput &
 								))}
 							</Select>
 						</Field>
+						{(() => {
+							const f = flows.find((x) => x.id === draft.flowId);
+							return f ? <LocationField flow={f} value={f.workspaceId || draft.workspaceId} onChange={(v) => set({ workspaceId: v })} /> : null;
+						})()}
 						<Field label={t("flowInput")} hint={t("flowInputHint")}>
 							<Textarea rows={3} value={draft.flowInput ?? ""} onChange={(e) => set({ flowInput: e.target.value })} />
 						</Field>
@@ -408,7 +415,7 @@ export function AutomationsView() {
 				title={t("title")}
 				subtitle={t("subtitle")}
 				actions={
-					<Button variant="primary" disabled={workspaces.length === 0} onClick={() => setEditing("new")} title={workspaces.length === 0 ? t("noWorkspace") : undefined}>
+					<Button variant="primary" onClick={() => setEditing("new")}>
 						<Plus className="size-4" /> {t("add")}
 					</Button>
 				}
@@ -458,7 +465,7 @@ export function AutomationsView() {
 											<span className="flex items-center gap-1">
 												<Clock className="size-3.5" /> {task.scheduleText}
 											</span>
-											<span>{wsName(task.workspaceId)}</span>
+											<span>{task.flowId && !task.workspaceId ? t("personalSpace") : wsName(task.workspaceId)}</span>
 											{task.enabled && task.nextRunAt && <span>{t("next", { when: when(task.nextRunAt) })}</span>}
 											<span>{task.lastRunAt ? t("last", { when: when(task.lastRunAt) }) : t("never")}</span>
 										</div>

@@ -30,6 +30,7 @@ import { layoutFlow, NODE_H, NODE_W, runProgress } from "../lib/flowLayout.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { usePrefs } from "../lib/prefs.ts";
 import { openSession, pluginCall, toast, useStore } from "../lib/store.ts";
+import { LocationField, placeLabel, useDefaultLocation } from "./FlowLocation.tsx";
 import { describeSchedule, ScheduleDialog } from "./FlowSchedule.tsx";
 import { Badge, Button, Dialog, Field, Input, Select, Textarea } from "./ui.tsx";
 
@@ -39,6 +40,9 @@ const M = defineMessages({
 		name: "流程名称",
 		desc: "说明（这条 SOP 解决什么问题）",
 		workspace: "工作区",
+		general: "通用流程（不绑定项目）",
+		bindHint: "绑定到项目后只能在该项目里运行；通用流程可在任何项目或个人空间运行",
+		ranIn: "位置：{place}",
 		save: "保存",
 		saved: "已保存",
 		run: "运行",
@@ -132,6 +136,9 @@ const M = defineMessages({
 		name: "Flow name",
 		desc: "Description (what this SOP is for)",
 		workspace: "Workspace",
+		general: "General (no project)",
+		bindHint: "Bound to a project, the flow only runs there; a general flow runs in any project or the personal space",
+		ranIn: "In: {place}",
 		save: "Save",
 		saved: "Saved",
 		run: "Run",
@@ -630,11 +637,12 @@ export function FlowEditor({ initial, runs, flows, onClose, onSaved, onOpenFlow 
 		onSaved(flow);
 		return flow;
 	};
-	const startRun = async (input: string) => {
+	const defaultWhere = useDefaultLocation();
+	const startRun = async (input: string, where: string) => {
 		setDialog(null);
 		const flow = dirty || !draftRef.current.id ? await save() : ({ id: draftRef.current.id } as Flow);
 		if (!flow) return;
-		await pluginCall("flows", "run", { id: flow.id, input });
+		await pluginCall("flows", "run", { id: flow.id, input, workspaceId: where });
 	};
 	const leave = async () => {
 		if (dirty && !(await confirmDialog(t("confirmLeave")))) return;
@@ -704,7 +712,8 @@ export function FlowEditor({ initial, runs, flows, onClose, onSaved, onOpenFlow 
 					<Input value={draft.description} onChange={(e) => edit((d) => ({ ...d, description: e.target.value }), "desc")} placeholder={t("desc")} maxLength={500} />
 				</div>
 				<div className="w-32 max-sm:w-full">
-					<Select value={draft.workspaceId} onChange={(e) => edit((d) => ({ ...d, workspaceId: e.target.value }))} aria-label={t("workspace")}>
+					<Select value={draft.workspaceId} onChange={(e) => edit((d) => ({ ...d, workspaceId: e.target.value }))} aria-label={t("workspace")} title={t("bindHint")}>
+						<option value="">{t("general")}</option>
 						{workspaces.map((w) => (
 							<option key={w.id} value={w.id}>
 								{w.name}
@@ -750,6 +759,7 @@ export function FlowEditor({ initial, runs, flows, onClose, onSaved, onOpenFlow 
 					</div>
 					{running && currentNames.length > 0 && <span className="text-ember-200">{t("current", { name: currentNames.join("、") })}</span>}
 					<span className="text-ink-500">{t("took", { t: fmtDur(runMs) })}</span>
+					{paint.location && <span className="text-ink-400">· {t("ranIn", { place: placeLabel(lang === "zh" ? "zh" : "en", paint.location) })}</span>}
 					{paint.trigger === "schedule" && <span className="text-ink-500">· {t("viaSchedule")}</span>}
 					{paint.trigger === "agent" && <span className="text-ink-500">· {t("viaAgent")}</span>}
 					{paint.error && <span className="min-w-0 flex-1 truncate text-rose-400">{paint.error}</span>}
@@ -1090,7 +1100,7 @@ export function FlowEditor({ initial, runs, flows, onClose, onSaved, onOpenFlow 
 				)}
 			</div>
 
-			{dialog === "run" && <RunDialog onClose={() => setDialog(null)} onStart={(input) => void startRun(input)} />}
+			{dialog === "run" && <RunDialog flow={draft} defaultWhere={defaultWhere} onClose={() => setDialog(null)} onStart={(input, where) => void startRun(input, where)} />}
 			{dialog === "ai" && (
 				<AiDialog
 					busy={busy}
@@ -1104,15 +1114,17 @@ export function FlowEditor({ initial, runs, flows, onClose, onSaved, onOpenFlow 
 			)}
 			{dialog === "schedule" && (
 				<ScheduleDialog
+					flow={draft}
 					lang={lang}
-					value={{ schedule: draft.schedule, scheduleEnabled: draft.scheduleEnabled, scheduleInput: draft.scheduleInput }}
+					value={{ schedule: draft.schedule, scheduleEnabled: draft.scheduleEnabled, scheduleInput: draft.scheduleInput, scheduleWorkspaceId: draft.scheduleWorkspaceId }}
 					nextRunAt={meta.nextRunAt}
 					onClose={() => setDialog(null)}
 					onApply={(v) => {
 						setDialog(null);
 						edit((d) => {
-							const { schedule: _s, scheduleEnabled: _e, scheduleInput: _i, ...rest } = d;
-							return v.scheduleEnabled ? { ...rest, schedule: v.schedule, scheduleEnabled: true, scheduleInput: v.scheduleInput ?? "" } : { ...rest, ...(v.schedule ? { schedule: v.schedule, scheduleEnabled: false, scheduleInput: v.scheduleInput ?? "" } : {}) };
+							const { schedule: _s, scheduleEnabled: _e, scheduleInput: _i, scheduleWorkspaceId: _w, ...rest } = d;
+							const where = { scheduleWorkspaceId: v.scheduleWorkspaceId ?? "" };
+							return v.scheduleEnabled ? { ...rest, ...where, schedule: v.schedule, scheduleEnabled: true, scheduleInput: v.scheduleInput ?? "" } : { ...rest, ...(v.schedule ? { ...where, schedule: v.schedule, scheduleEnabled: false, scheduleInput: v.scheduleInput ?? "" } : {}) };
 						});
 					}}
 				/>
@@ -1136,20 +1148,22 @@ function Handle({ top, label, tone, onDown }: { top: string; label?: string; ton
 	);
 }
 
-function RunDialog({ onClose, onStart }: { onClose: () => void; onStart: (input: string) => void }) {
+function RunDialog({ flow, defaultWhere, onClose, onStart }: { flow: Draft; defaultWhere: string; onClose: () => void; onStart: (input: string, where: string) => void }) {
 	const t = useT(M);
 	const [input, setInput] = useState("");
+	const [where, setWhere] = useState(defaultWhere);
 	return (
 		<Dialog title={t("runInput")} onClose={onClose}>
 			<div className="space-y-3">
 				<Field label={t("runInput")} hint={t("runInputHint")}>
 					<Textarea rows={5} value={input} onChange={(e) => setInput(e.target.value)} autoFocus />
 				</Field>
+				<LocationField flow={flow} value={where} onChange={setWhere} />
 				<div className="flex justify-end gap-2">
 					<Button variant="ghost" onClick={onClose}>
 						{t("cancel")}
 					</Button>
-					<Button variant="primary" onClick={() => onStart(input)}>
+					<Button variant="primary" onClick={() => onStart(input, where)}>
 						<Play className="size-4" /> {t("start")}
 					</Button>
 				</div>

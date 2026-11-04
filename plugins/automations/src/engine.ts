@@ -15,7 +15,7 @@ export interface EngineDeps {
 	workspaces(): Promise<WorkspaceRef[]>;
 	runAgent(options: AgentRunOptions): Promise<AgentRunResult>;
 	/** Runs a saved flow to completion (Flows plugin). Absent when that plugin is off. */
-	runFlow?(flowId: string, input: string, signal: AbortSignal): Promise<{ status: "success" | "error" | "aborted"; text: string; error?: string }>;
+	runFlow?(flowId: string, input: string, signal: AbortSignal, workspaceId: string): Promise<{ status: "success" | "error" | "aborted"; text: string; error?: string }>;
 	now(): Date;
 	/** Called after a run starts or ends, so clients can refresh. */
 	changed(): void;
@@ -31,7 +31,7 @@ export function validateInput(input: AutomationInput): string[] {
 	const errors: string[] = [];
 	if (!input.name?.trim()) errors.push("名称不能为空");
 	if (!input.prompt?.trim() && !input.flowId) errors.push("任务内容不能为空");
-	if (!input.workspaceId) errors.push("请选择工作区");
+	if (!input.workspaceId && !input.flowId) errors.push("请选择工作区");
 	if (!["readonly", "edits", "full"].includes(input.access)) errors.push("权限级别不合法");
 	errors.push(...validateSchedule(input.schedule));
 	return errors;
@@ -104,7 +104,7 @@ export class AutomationEngine {
 		if (this.state.tasks.length >= MAX_TASKS) throw new Error(`自动化任务已达上限 ${MAX_TASKS}`);
 		const errors = validateInput(input);
 		if (errors.length) throw new Error(errors.join("；"));
-		await this.requireWorkspace(input.workspaceId);
+		if (!input.flowId) await this.requireWorkspace(input.workspaceId);
 		const task: AutomationTask = { id: randomUUID().slice(0, 8), ...clean(input), createdAt: this.deps.now().toISOString() };
 		this.schedule(task, this.deps.now());
 		this.state.tasks.push(task);
@@ -117,7 +117,7 @@ export class AutomationEngine {
 		const task = this.require(id);
 		const errors = validateInput(input);
 		if (errors.length) throw new Error(errors.join("；"));
-		await this.requireWorkspace(input.workspaceId);
+		if (!input.flowId) await this.requireWorkspace(input.workspaceId);
 		delete task.flowId;
 		delete task.flowInput;
 		Object.assign(task, clean(input));
@@ -207,18 +207,18 @@ export class AutomationEngine {
 
 		try {
 			const workspace = (await this.deps.workspaces()).find((w) => w.id === task.workspaceId);
-			if (!workspace) {
+			if (!workspace && !task.flowId) {
 				run.status = "skipped";
 				run.error = "工作区已被移除";
 			} else if (task.flowId) {
 				if (!this.deps.runFlow) throw new Error("流程编排插件未启用");
-				const result = await this.deps.runFlow(task.flowId, task.flowInput ?? "", ctl.signal);
+				const result = await this.deps.runFlow(task.flowId, task.flowInput ?? "", ctl.signal, task.workspaceId);
 				run.status = result.status === "success" ? "success" : "error";
 				run.summary = result.text.slice(0, SUMMARY_CHARS) || undefined;
 				if (result.status !== "success") run.error = result.error ?? (result.status === "aborted" ? "已取消" : "运行失败");
 			} else {
 				const result = await this.deps.runAgent({
-					cwd: workspace.path,
+					cwd: workspace!.path,
 					prompt: task.prompt,
 					name: `⏱ ${task.name}`,
 					access: task.access,

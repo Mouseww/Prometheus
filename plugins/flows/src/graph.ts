@@ -84,7 +84,7 @@ export function normalizeFlow(raw: unknown): FlowInput {
 		workspaceId: str(o.workspaceId),
 		nodes: positioned ? nodes : autoLayout(nodes, edges),
 		edges,
-		...(sched ? { schedule: sched, scheduleInput: str(o.scheduleInput).slice(0, 8000), scheduleEnabled: o.scheduleEnabled === true } : {}),
+		...(sched ? { schedule: sched, scheduleInput: str(o.scheduleInput).slice(0, 8000), scheduleEnabled: o.scheduleEnabled === true, scheduleWorkspaceId: str(o.scheduleWorkspaceId) } : {}),
 	};
 }
 

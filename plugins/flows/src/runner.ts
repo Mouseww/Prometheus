@@ -10,6 +10,7 @@ export interface RunnerDeps {
 	cwd: string;
 	trigger?: FlowRun["trigger"];
 	parentRunId?: string;
+	location?: FlowRun["location"];
 	/** Runs another flow to completion for a subflow node. `onStart` gets the child run id as soon as it exists. */
 	runChild?(flowId: string, input: string, onStart: (childRunId: string) => void): Promise<FlowRun>;
 }
@@ -52,6 +53,7 @@ export async function runFlow(flow: Flow, input: string, runId: string, deps: Ru
 		status: "running",
 		...(deps.trigger ? { trigger: deps.trigger } : {}),
 		...(deps.parentRunId ? { parentRunId: deps.parentRunId } : {}),
+		...(deps.location ? { location: deps.location } : {}),
 		nodes: Object.fromEntries(flow.nodes.map((n) => [n.id, { status: "pending" } satisfies FlowNodeRun])),
 	};
 	const taken = new Map<string, boolean>();
