@@ -3,6 +3,7 @@ import { ArrowUp, Brain, Check, ChevronDown, CornerDownRight, Cpu, File as FileI
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CommandInfo, ImageContent, ThinkingLevel } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
+import { Mentions, SlashCommands } from "./suggestions.tsx";
 import { type Attachment, AttachmentError, fileToAttachment, formatSize, isPicture, MAX_FILE_MB, MAX_FILES } from "../lib/attachments.ts";
 import { fileToImage, ImageError, imageSrc, MAX_IMAGES } from "../lib/images.ts";
 import { inputAt, rememberInput } from "../lib/inputHistory.ts";
@@ -136,61 +137,6 @@ const M = defineMessages({
  * The "/command" suggestions. Rendered twice: above the inline composer, and inside the expanded sheet — that one covers
  * the page, so the inline copy would sit behind it and typing "/" there showed nothing.
  */
-function SlashCommands({ items, cursor, onPick }: { items: CommandInfo[]; cursor: number; onPick: (c: CommandInfo) => void }) {
-	return (
-		<>
-			{items.map((c, i) => (
-				<button
-					key={`${c.source}:${c.name}`}
-					type="button"
-					onMouseDown={(e) => {
-						e.preventDefault();
-						onPick(c);
-					}}
-					className={clsx("flex w-full items-baseline gap-3 px-3.5 py-2 text-left", i === cursor ? "bg-ink-800" : "hover:bg-ink-850")}
-				>
-					<span className="font-mono text-sm text-ember-300">/{c.name}</span>
-					<span className="min-w-0 flex-1 truncate text-xs text-ink-400">{c.description}</span>
-					<span className="font-mono text-[10px] text-ink-600 uppercase">{c.source}</span>
-				</button>
-			))}
-		</>
-	);
-}
-
-/** The "@file" suggestions, shared by the inline composer and the expanded sheet for the same reason. */
-function Mentions({ items, cursor, onPick, onHover }: { items: { path: string; dir: boolean }[]; cursor: number; onPick: (item: { path: string; dir: boolean }) => void; onHover: (index: number) => void }) {
-	return (
-		<>
-			{items.map((it, i) => {
-				const slash = it.path.lastIndexOf("/");
-				const name = it.path.slice(slash + 1);
-				const dir = slash >= 0 ? it.path.slice(0, slash) : "";
-				const Icon = it.dir ? FolderIcon : FileIcon;
-				return (
-					<button
-						key={it.path}
-						type="button"
-						onMouseDown={(e) => {
-							e.preventDefault();
-							onPick(it);
-						}}
-						onMouseEnter={() => onHover(i)}
-						className={clsx("flex w-full items-baseline gap-2 px-3.5 py-2 text-left", i === cursor ? "bg-ink-800" : "hover:bg-ink-850")}
-					>
-						<Icon className="size-3.5 shrink-0 self-center text-ink-400" />
-						<span className="font-mono text-sm text-ember-300">
-							{name}
-							{it.dir ? "/" : ""}
-						</span>
-						<span className="min-w-0 flex-1 truncate font-mono text-xs text-ink-500">{dir}</span>
-					</button>
-				);
-			})}
-		</>
-	);
-}
-
 /**
  * Attached pictures and documents, shown above the input. The expanded sheet renders the same strip: attachments are
  * shared state, so without it a file added in the inline composer would be invisible (and unremovable) there.

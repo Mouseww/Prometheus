@@ -809,8 +809,10 @@ async function refreshSessionModels(runtime: RuntimeKind, agent: string | undefi
 	if (models && (!sessionId || get().session?.id === sessionId)) set({ models });
 }
 
-async function refreshCommands(): Promise<void> {
-	const id = get().session?.id;
+export async function refreshCommands(): Promise<void> {
+	// The home page's box sits outside any conversation, but its "/" menu still needs the command list. Ask for the
+	// assistant's main conversation instead: same skills and prompt templates, so the menu is not empty there.
+	const id = get().session?.id ?? get().assistant?.mainId;
 	if (!id) return;
 	const commands = await call((c) => c.rpc("commands.list", { sessionId: id }));
 	if (commands) set({ commands });

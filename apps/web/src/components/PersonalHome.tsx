@@ -5,11 +5,12 @@ import type { AutomationTask, ImageContent } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { type Attachment, AttachmentError, fileToAttachment, formatSize, isPicture, MAX_FILE_MB, MAX_FILES } from "../lib/attachments.ts";
 import { fileToImage, ImageError, imageSrc, MAX_IMAGES } from "../lib/images.ts";
-import { onPluginChange, openAssistantMain, openSession, type PendingQuestion, pluginCall, sendPrompt, toast, useStore } from "../lib/store.ts";
+import { onPluginChange, openAssistantMain, openSession, type PendingQuestion, pluginCall, refreshCommands, sendPrompt, toast, useStore } from "../lib/store.ts";
 import { delegatedRuns, delegationTitle } from "../lib/spaces.ts";
 import { answerStar, REPO_URL, useStar } from "../lib/star.ts";
 import { openExternal } from "../lib/links.ts";
 import { Badge, Button } from "./ui.tsx";
+import { Mentions, SlashCommands, SuggestionPanel } from "./suggestions.tsx";
 
 const M = defineMessages({
 	zh: {
@@ -295,6 +296,8 @@ export function PersonalHome() {
 		if (o) setOverview(o);
 		if (a) setTasks(a.tasks);
 		if (s) setCards(s);
+		// The "/" menu reads the store's command list, which is otherwise filled when a conversation opens.
+		void refreshCommands();
 	}, []);
 	useEffect(() => {
 		void load();
@@ -320,6 +323,85 @@ export function PersonalHome() {
 	const [reading, setReading] = useState(0);
 	const input = useRef<HTMLTextAreaElement>(null);
 	const files = useRef<HTMLInputElement>(null);
+
+	// "/" lists commands (skills among them) and "@" lists files, both read from the caret the way the chat
+	// composer does: the home box is the first thing many people type into, so it should behave like the real one.
+	const commands = useStore((s) => s.commands);
+	const home = useStore((s) => s.assistant?.home);
+	const [caret, setCaret] = useState(0);
+	const [cursor, setCursor] = useState(0);
+	const [mentionItems, setMentionItems] = useState<{ path: string; dir: boolean }[]>([]);
+	const [mentionCursor, setMentionCursor] = useState(0);
+	const [dismissed, setDismissed] = useState<string | null>(null);
+
+	const slashQuery = /^\/(\S*)$/.exec(draft)?.[1];
+	const matches = useMemo(() => {
+		if (slashQuery === undefined) return [];
+		const q = slashQuery.toLowerCase();
+		return commands.filter((c) => c.name.toLowerCase().includes(q)).slice(0, 8);
+	}, [commands, slashQuery]);
+	useEffect(() => setCursor(0), [slashQuery]);
+
+	const mention = useMemo(() => {
+		const m = /(^|\s)@([^\s@]*)$/.exec(draft.slice(0, caret));
+		if (!m) return null;
+		const query = m[2] ?? "";
+		return { query, start: caret - query.length - 1 };
+	}, [draft, caret]);
+	const mentionQuery = mention && dismissed !== `${mention.start}:${mention.query}` ? mention.query : undefined;
+
+	useEffect(() => {
+		if (mentionQuery === undefined || !home) {
+			setMentionItems([]);
+			return;
+		}
+		let stale = false;
+		// Slight debounce so a fast typist does not fire a search per keystroke.
+		const timer = setTimeout(() => {
+			void pluginCall<{ items: { path: string; dir: boolean }[] }>("folder", "search", { query: mentionQuery, cwd: home })
+				.then((res) => {
+					if (stale) return;
+					setMentionItems(res?.items ?? []);
+					setMentionCursor(0);
+				})
+				.catch(() => !stale && setMentionItems([]));
+		}, 80);
+		return () => {
+			stale = true;
+			clearTimeout(timer);
+		};
+	}, [mentionQuery, home]);
+
+	const showMention = mentionQuery !== undefined && mentionItems.length > 0;
+	const showCommands = !showMention && matches.length > 0;
+
+	const pickMention = (item: { path: string; dir: boolean }) => {
+		if (!mention) return;
+		const quoted = /\s/.test(item.path) ? `"${item.path}"` : item.path;
+		const token = `@${quoted}${item.dir ? "/" : " "}`;
+		const next = draft.slice(0, mention.start) + token + draft.slice(caret);
+		const pos = mention.start + token.length;
+		setDraft(next);
+		setCaret(pos);
+		requestAnimationFrame(() => {
+			const el = input.current;
+			if (!el) return;
+			el.focus();
+			el.setSelectionRange(pos, pos);
+		});
+	};
+
+	const pickSlash = (c: { name: string; description?: string }) => {
+		const next = `/${c.name} `;
+		setDraft(next);
+		setCaret(next.length);
+		requestAnimationFrame(() => {
+			const el = input.current;
+			if (!el) return;
+			el.focus();
+			el.setSelectionRange(next.length, next.length);
+		});
+	};
 
 	/** Same split the composer makes: pictures go to the vision model, everything else goes as bytes. */
 	const addFiles = useCallback(
@@ -443,7 +525,7 @@ export function PersonalHome() {
 								e.preventDefault();
 								void ask();
 							}}
-							className="mt-2 flex min-h-[clamp(9rem,26vh,13rem)] w-full cursor-text flex-col rounded-2xl border border-ink-800 bg-ink-900/85 p-4 text-left shadow-[0_10px_40px_-12px_rgb(0_0_0/0.45)] backdrop-blur transition-colors focus-within:border-ember-500/50 hover:border-ember-500/40"
+							className="relative mt-2 flex min-h-[clamp(9rem,26vh,13rem)] w-full cursor-text flex-col rounded-2xl border border-ink-800 bg-ink-900/85 p-4 text-left shadow-[0_10px_40px_-12px_rgb(0_0_0/0.45)] backdrop-blur transition-colors focus-within:border-ember-500/50 hover:border-ember-500/40"
 							onClick={(e) => {
 								// Clicking the panel's padding should focus the field, as in a real composer.
 								if (e.target === e.currentTarget) input.current?.focus();
@@ -453,8 +535,47 @@ export function PersonalHome() {
 								ref={input}
 								value={draft}
 								onChange={(e) => setDraft(e.target.value)}
+								onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
 								onKeyDown={(e) => {
-									if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+									if (!e.nativeEvent.isComposing) {
+										if (showMention) {
+											if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+												e.preventDefault();
+												setMentionCursor((c) => (c + (e.key === "ArrowDown" ? 1 : mentionItems.length - 1)) % mentionItems.length);
+												return;
+										}
+											if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+												const pick = mentionItems[mentionCursor];
+												if (pick) {
+													e.preventDefault();
+													pickMention(pick);
+													return;
+												}
+											}
+											if (e.key === "Escape" && mention) {
+												e.preventDefault();
+												setDismissed(`${mention.start}:${mention.query}`);
+												return;
+											}
+										}
+										if (showCommands) {
+											if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+												e.preventDefault();
+												setCursor((c) => (c + (e.key === "ArrowDown" ? 1 : matches.length - 1)) % matches.length);
+												return;
+											}
+											if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+												const pick = matches[cursor];
+												// A complete command is already what the user meant: let Enter send it.
+												if (pick && `/${pick.name}` !== draft) {
+													e.preventDefault();
+													pickSlash(pick);
+													return;
+												}
+											}
+										}
+									}
+									if (e.key === "Enter" && !e.shiftKey) {
 										e.preventDefault();
 										void ask();
 									}
@@ -476,6 +597,16 @@ export function PersonalHome() {
 								aria-label={t("composerHint")}
 								className="w-full resize-none bg-transparent text-[14.5px] leading-relaxed text-ink-100 outline-none placeholder:text-ink-500"
 							/>
+							{showMention && (
+								<SuggestionPanel>
+									<Mentions items={mentionItems} cursor={mentionCursor} onPick={pickMention} onHover={setMentionCursor} />
+								</SuggestionPanel>
+							)}
+							{showCommands && (
+								<SuggestionPanel>
+									<SlashCommands items={matches} cursor={cursor} onPick={pickSlash} />
+								</SuggestionPanel>
+							)}
 							{/* What is attached so far: the same chips the chat shows, each removable before sending. */}
 							{(pictures.length > 0 || docs.length > 0 || reading > 0) && (
 								<div className="mt-2 flex flex-wrap gap-1.5">
