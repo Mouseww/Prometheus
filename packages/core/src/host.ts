@@ -201,6 +201,7 @@ export class PrometheusHost {
 		view: (id) => this.goalView(id),
 		emit: (id, goal) => this.listener.event(id, { type: "goal_update", goal }),
 		defaultTurns: () => this.runtime.config.get().goalTurns || GOAL_DEFAULT_TURNS,
+		file: () => join(this.runtime.dataDir, "goals.json"),
 	});
 
 	private constructor(runtime: Runtime, pi: PiRuntime | null, options: PrometheusHostOptions) {
@@ -659,6 +660,7 @@ export class PrometheusHost {
 	/** Removes a session for good: its live state, transcript, uploads and list entry. */
 	private async deleteSession(sessionId: string): Promise<void> {
 		void removeSessionUploads(sessionId).catch(() => {});
+		this.goals.erase(sessionId);
 		this.permissions.delete(sessionId);
 		const entry = this.index.get(sessionId);
 		if (entry && entry.runtime !== "pi") {
