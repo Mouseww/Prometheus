@@ -11,6 +11,12 @@ export const PROTOCOL_VERSION = 1;
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 /** Every level, in increasing order of effort. A model offers a subset; the default is unchecked against this list. */
+/** Auto-compaction threshold range, in percent of the context window. */
+export const MIN_COMPACT_PERCENT = 50;
+export const MAX_COMPACT_PERCENT = 95;
+/** The threshold used when the user has not chosen one. */
+export const DEFAULT_COMPACT_PERCENT = 80;
+
 export const THINKING_LEVELS: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 export type GatewayFormat = "openai-completions" | "openai-responses" | "anthropic-messages" | "google-generative-ai";
 export const GATEWAY_FORMATS: readonly GatewayFormat[] = [
@@ -383,6 +389,8 @@ export interface HostSettings {
 	defaultThinking?: ThinkingLevel | "";
 	/** Turns a /goal may run when the user gives no limit; 30 when unset. Older servers omit it. */
 	goalTurns?: number;
+	/** Context fill, in percent, at which a long conversation is compacted; unset means the built-in 80. Older servers omit it. */
+	compactPercent?: number;
 }
 
 // ---------- Subagents ----------

@@ -27,7 +27,7 @@ import { SubagentsView } from "./SubagentsView.tsx";
 import { LogsView } from "./LogsView.tsx";
 import { VeilView } from "./VeilView.tsx";
 import { SkillsView } from "./SkillsView.tsx";
-import { PERMISSION_MODES, type PermissionMode, THINKING_LEVELS, type ThinkingLevel } from "@prometheus/protocol";
+import { DEFAULT_COMPACT_PERCENT, MAX_COMPACT_PERCENT, MIN_COMPACT_PERCENT, PERMISSION_MODES, type PermissionMode, THINKING_LEVELS, type ThinkingLevel } from "@prometheus/protocol";
 import { Button, PageHeader, Select } from "./ui.tsx";
 import { UsageView } from "./UsageView.tsx";
 import { VoiceSettings } from "./VoiceSettings.tsx";
@@ -110,6 +110,9 @@ const M = defineMessages({
 		closeToTrayHint: "关闭窗口后 Prometheus 继续在后台运行，会话不会中断；点击托盘图标查看运行中的会话，右键可显示、隐藏或退出。",
 		autoCompact: "自动压缩上下文",
 		autoCompactHint: "上下文接近模型窗口上限时自动生成摘要并压缩。与 PI TUI 共享此设置。",
+		compactPercent: "压缩阈值",
+		reset: "恢复默认",
+		compactPercentHint: "上下文填到这个比例时开始压缩。越低越早压缩、越省上下文，但也更早丢掉细节。",
 		chatWidth: "对话宽度",
 		chatWidthHint: "也可以在对话页面里拖动内容两侧的边缘调整，双击边缘恢复自适应。",
 		motion: "界面动效",
@@ -218,6 +221,9 @@ const M = defineMessages({
 		closeToTrayHint: "Closing the window keeps Prometheus running in the background so sessions are not interrupted. Click the tray icon to see running sessions; right-click to show, hide or quit.",
 		autoCompact: "Auto-compact context",
 		autoCompactHint: "Summarise and compact automatically when the context nears the model's window. Shared with the PI TUI.",
+		compactPercent: "Compaction threshold",
+		reset: "Reset",
+		compactPercentHint: "Compact once the context is this full. Lower keeps the window roomier but drops detail sooner.",
 		chatWidth: "Chat width",
 		chatWidthHint: "You can also drag the edges beside the chat column; double-click an edge to go back to automatic.",
 		motion: "Interface motion",
@@ -413,6 +419,49 @@ function DefaultPermissionRow() {
 }
 
 /**
+ * When auto-compaction fires, as a share of the context window. The server turns the percentage into the headroom PI
+ * compares against, because that number depends on the model's window; the slider is a percentage so the setting
+ * means the same thing across models with wildly different windows.
+ */
+function CompactPercentRow() {
+	const t = useT(M);
+	const host = useStore((s) => s.hostSettings);
+	const value = host?.compactPercent ?? DEFAULT_COMPACT_PERCENT;
+	// Sliding fires many changes; only the settled value is sent.
+	const [dragging, setDragging] = useState<number | null>(null);
+	const send = (n: number) => void updateHostSettings({ compactPercent: n });
+	return (
+		<Row label={t("compactPercent")} hint={t("compactPercentHint")}>
+			<div className="flex items-center gap-3">
+				<input
+					type="range"
+					min={MIN_COMPACT_PERCENT}
+					max={MAX_COMPACT_PERCENT}
+					step={5}
+					value={dragging ?? value}
+					disabled={!host}
+					onChange={(e) => setDragging(Number(e.target.value))}
+					onPointerUp={() => {
+						if (dragging !== null) send(dragging);
+						setDragging(null);
+					}}
+					onKeyUp={() => {
+						if (dragging !== null) send(dragging);
+						setDragging(null);
+					}}
+					className="w-40 accent-ember-500"
+					aria-label={t("compactPercent")}
+				/>
+				<span className="w-10 font-mono text-xs text-ink-300">{dragging ?? value}%</span>
+				<button type="button" disabled={value === DEFAULT_COMPACT_PERCENT} onClick={() => send(DEFAULT_COMPACT_PERCENT)} className="text-xs text-ember-300 hover:underline disabled:opacity-40">
+					{t("reset")}
+				</button>
+			</div>
+		</Row>
+	);
+}
+
+/**
  * The thinking level new chats start at. Levels are per model, so the list is the union of what the available models
  * offer; a chat whose model lacks the configured level keeps that model's own default (decided on the server).
  */
@@ -588,6 +637,7 @@ function ChatSettings() {
 						<Row label={t("autoCompact")} hint={t("autoCompactHint")}>
 							<Toggle checked={host?.autoCompaction ?? false} disabled={!host} onChange={(v) => void updateHostSettings({ autoCompaction: v })} />
 						</Row>
+						{(host?.autoCompaction ?? false) && <CompactPercentRow />}
 						<Row label={t("sendMode")} hint={t("sendModeHint")}>
 							<Segmented<SendMode>
 								value={prefs.sendMode}

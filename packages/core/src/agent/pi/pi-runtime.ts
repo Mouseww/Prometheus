@@ -25,6 +25,7 @@ import type { Runtime } from "../../runtime.ts";
 import { collectUsage } from "../../usage.ts";
 import type { AgentRuntime, GatewayChoice, NativeSessionInfo, ResumeInit, RuntimeHealth, RuntimeSession, SessionInit, SessionRef } from "../types.ts";
 import { PendingForks } from "./forks.ts";
+import { applyCompactPercent, DEFAULT_COMPACT_PERCENT } from "./compaction.ts";
 import { raiseRetryBudget } from "./retry.ts";
 import { PiRuntimeSession } from "./pi-session.ts";
 
@@ -163,6 +164,12 @@ export class PiRuntime implements AgentRuntime {
 		return this.settings().getCompactionEnabled();
 	}
 
+	/** Compaction threshold in percent of the context window; the built-in default when unset. */
+	compactPercent(): number {
+		const set = this.runtime.config.get().compactPercent;
+		return set >= 1 ? set : DEFAULT_COMPACT_PERCENT;
+	}
+
 	async setAutoCompaction(enabled: boolean): Promise<void> {
 		this.settings().setCompactionEnabled(enabled);
 		await this.settings().flush();
@@ -253,6 +260,8 @@ export class PiRuntime implements AgentRuntime {
 			keepFork: (manager) => this.forks.keep(session.sessionId, manager),
 			onDispose: () => this.forks.dropFrom(session.sessionId),
 		});
+		// The threshold is a share of this model's window, so it is set after the session knows its model.
+		applyCompactPercent(settingsManager, this.compactPercent(), session.model?.contextWindow ?? 0);
 		hooks?.created?.(adapter);
 		subagents?.restore(session.messages);
 		gate.ask = (prompt, signal) => bridge.askPermission(prompt, signal);

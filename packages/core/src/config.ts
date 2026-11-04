@@ -1,3 +1,4 @@
+import { MAX_COMPACT_PERCENT, MIN_COMPACT_PERCENT } from "@prometheus/protocol";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -38,6 +39,8 @@ export interface PrometheusConfig {
 	defaultThinking: string;
 	/** Default turn budget of a /goal; 0 means the built-in 30. */
 	goalTurns: number;
+	/** Context fill, in percent, at which a long conversation is auto-compacted; 0 means the built-in default. */
+	compactPercent: number;
 }
 
 function normalizeNetwork(raw: Partial<NetworkConfig> | undefined): NetworkConfig {
@@ -55,7 +58,7 @@ export function defaultDataDir(): string {
 	return process.env.PROMETHEUS_HOME || join(homedir(), ".prometheus");
 }
 
-const EMPTY: PrometheusConfig = { gateways: [], agents: [], plugins: [], disabledPlugins: [], pluginSettings: {}, network: normalizeNetwork(undefined), workspaceRoot: "", defaultAgent: "", defaultPermission: "", defaultThinking: "", goalTurns: 0 };
+const EMPTY: PrometheusConfig = { gateways: [], agents: [], plugins: [], disabledPlugins: [], pluginSettings: {}, network: normalizeNetwork(undefined), workspaceRoot: "", defaultAgent: "", defaultPermission: "", defaultThinking: "", goalTurns: 0, compactPercent: 0 };
 
 /** config.json holds API keys, so it is always written owner-only. */
 export class ConfigStore {
@@ -85,6 +88,11 @@ export class ConfigStore {
 				defaultPermission: typeof raw.defaultPermission === "string" ? raw.defaultPermission : "",
 				defaultThinking: typeof raw.defaultThinking === "string" ? raw.defaultThinking : "",
 				goalTurns: typeof raw.goalTurns === "number" && raw.goalTurns >= 1 ? Math.floor(raw.goalTurns) : 0,
+				// Out-of-range values are dropped rather than clamped: the caller falls back to the default.
+				compactPercent:
+					typeof raw.compactPercent === "number" && Number.isFinite(raw.compactPercent) && raw.compactPercent >= MIN_COMPACT_PERCENT && raw.compactPercent <= MAX_COMPACT_PERCENT
+						? Math.round(raw.compactPercent)
+						: 0,
 			};
 		} catch (err) {
 			if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
@@ -125,6 +133,12 @@ export class ConfigStore {
 	/** 0 (or anything below 1) goes back to the built-in 30. */
 	async setGoalTurns(n: number): Promise<void> {
 		this.config.goalTurns = Number.isFinite(n) && n >= 1 ? Math.floor(n) : 0;
+		await this.persist();
+	}
+
+	/** Compaction threshold in percent; 0 (or anything out of range) restores the built-in default. */
+	async setCompactPercent(percent: number): Promise<void> {
+		this.config.compactPercent = Number.isFinite(percent) && percent >= MIN_COMPACT_PERCENT && percent <= MAX_COMPACT_PERCENT ? Math.round(percent) : 0;
 		await this.persist();
 	}
 

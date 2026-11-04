@@ -78,6 +78,7 @@ import { AgentStore, runClaude, runCodex, SubagentRuntime } from "@prometheus/su
 import { UIBridge } from "./ui-bridge.ts";
 import { ceilingFor, clampAccess } from "./access.ts";
 import { normalizeDir, WorkspaceStore, workspaceId } from "./workspaces.ts";
+import { DEFAULT_COMPACT_PERCENT } from "./agent/pi/compaction.ts";
 import tauriConf from "../../../apps/desktop/src-tauri/tauri.conf.json" with { type: "json" };
 
 // Single source of truth shared with the desktop release (the tag must match it).
@@ -947,13 +948,19 @@ export class PrometheusHost {
 	}
 
 	private hostSettings(): HostSettings {
-		return { autoCompaction: this.pi?.autoCompaction() ?? true, workspaceRoot: this.workspaceRoot(), defaultAgent: this.defaultAgent(), defaultPermission: this.defaultPermission(), defaultThinking: this.defaultThinking(), goalTurns: this.runtime.config.get().goalTurns || GOAL_DEFAULT_TURNS };
+		return { autoCompaction: this.pi?.autoCompaction() ?? true, workspaceRoot: this.workspaceRoot(), defaultAgent: this.defaultAgent(), defaultPermission: this.defaultPermission(), defaultThinking: this.defaultThinking(), goalTurns: this.runtime.config.get().goalTurns || GOAL_DEFAULT_TURNS, compactPercent: this.compactPercent() };
 	}
 
 	/** The permission mode new chats start in; unknown values (a hand-edited config) fall back to asking first. */
 	private defaultPermission(): PermissionMode {
 		const mode = this.runtime.config.get().defaultPermission?.trim();
 		return PERMISSION_MODES.find((m) => m === mode) ?? "default";
+	}
+
+	/** Auto-compaction threshold in percent; the built-in default when the setting is unset. */
+	private compactPercent(): number {
+		const set = this.runtime.config.get().compactPercent;
+		return set >= 1 ? set : DEFAULT_COMPACT_PERCENT;
 	}
 
 	/** Thinking level new chats start in; unset or unknown leaves the choice to the model. */
@@ -1162,7 +1169,7 @@ export class PrometheusHost {
 		"fs.mkdir": ({ parent, name }) => this.createDir(parent, name),
 
 		"settings.get": () => this.hostSettings(),
-		"settings.set": async ({ autoCompaction, workspaceRoot, defaultAgent, defaultPermission, defaultThinking, goalTurns }) => {
+		"settings.set": async ({ autoCompaction, workspaceRoot, defaultAgent, defaultPermission, defaultThinking, goalTurns, compactPercent }) => {
 			if (typeof autoCompaction === "boolean") {
 				await this.pi?.setAutoCompaction(autoCompaction);
 				// Live sessions cache their own SettingsManager.
@@ -1182,6 +1189,7 @@ export class PrometheusHost {
 				if (!PERMISSION_MODES.includes(defaultPermission)) throw new AppError("unknownPermissionMode", { mode: String(defaultPermission) });
 				await this.runtime.config.setDefaultPermission(defaultPermission);
 			}
+			if (typeof compactPercent === "number") await this.runtime.config.setCompactPercent(compactPercent);
 			if (typeof defaultThinking === "string") {
 				// An empty string clears it: new chats then keep whatever level their model starts at.
 				const next = defaultThinking.trim();

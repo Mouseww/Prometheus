@@ -286,6 +286,16 @@ describe("PrometheusHost RPC (characterization)", () => {
 		expect((await host.call("settings.set", { defaultThinking: "" })).defaultThinking).toBeUndefined();
 	});
 
+	it("settings.set stores the auto-compaction threshold and falls back to the default", async () => {
+		expect((await host.call("settings.get", {})).compactPercent).toBe(80);
+		expect((await host.call("settings.set", { compactPercent: 60 })).compactPercent).toBe(60);
+		expect((await host.call("settings.get", {})).compactPercent).toBe(60);
+		// Out of range is not honoured; the server keeps the default rather than clamping to something unintended.
+		expect((await host.call("settings.set", { compactPercent: 5 })).compactPercent).toBe(80);
+		expect((await host.call("settings.set", { compactPercent: 100 })).compactPercent).toBe(80);
+		expect((await host.call("settings.set", { compactPercent: 95 })).compactPercent).toBe(95);
+	});
+
 	it("session.delete removes a saved session and its file", async () => {
 		const seeded = seedSession("delete me");
 		await host.call("session.open", { sessionId: seeded.id });
