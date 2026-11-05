@@ -1056,16 +1056,17 @@ ${extras.map((p) => `- ${p}`).join("
 	/** What each permission gate enforces from the administrator policy. */
 	private gatePolicy(): GatePolicy | undefined {
 		const policy = this.runtime.config.policy();
-		if (!policy) return undefined;
+		const readOutsideProject = this.runtime.config.readOutsideProject();
+		if (!policy?.forbiddenModes && readOutsideProject === "allow") return undefined;
 		return {
-			...(policy.forbiddenModes ? { forbiddenModes: policy.forbiddenModes } : {}),
-			...(policy.readOutsideProject ? { readOutsideProject: policy.readOutsideProject } : {}),
+			...(policy?.forbiddenModes ? { forbiddenModes: policy.forbiddenModes } : {}),
+			...(readOutsideProject === "ask" ? { readOutsideProject } : {}),
 		};
 	}
 
 	private hostSettings(): HostSettings {
 		const policy = this.runtime.config.policy();
-		return { ...(policy ? { policy: publicPolicy(policy) } : {}), autoCompaction: this.pi?.autoCompaction() ?? true, workspaceRoot: this.workspaceRoot(), defaultAgent: this.defaultAgent(), defaultPermission: this.defaultPermission(), defaultThinking: this.defaultThinking(), goalTurns: this.runtime.config.get().goalTurns || GOAL_DEFAULT_TURNS, compactPercent: this.compactPercent(), worktreeMode: this.worktreeMode(), worktreeDefault: this.runtime.config.get().worktreeDefault, worktreeStrategy: this.worktreeStrategy() };
+		return { ...(policy ? { policy: publicPolicy(policy) } : {}), ...(this.runtime.config.readOutsideProject() === "ask" ? { readOutsideProject: "ask" as const } : {}), autoCompaction: this.pi?.autoCompaction() ?? true, workspaceRoot: this.workspaceRoot(), defaultAgent: this.defaultAgent(), defaultPermission: this.defaultPermission(), defaultThinking: this.defaultThinking(), goalTurns: this.runtime.config.get().goalTurns || GOAL_DEFAULT_TURNS, compactPercent: this.compactPercent(), worktreeMode: this.worktreeMode(), worktreeDefault: this.runtime.config.get().worktreeDefault, worktreeStrategy: this.worktreeStrategy() };
 	}
 
 	/** The permission mode new chats start in; unknown values (a hand-edited config) fall back to asking first. */
@@ -1337,7 +1338,7 @@ ${extras.map((p) => `- ${p}`).join("
 		"fs.mkdir": ({ parent, name }) => this.createDir(parent, name),
 
 		"settings.get": () => this.hostSettings(),
-		"settings.set": async ({ autoCompaction, workspaceRoot, defaultAgent, defaultPermission, defaultThinking, goalTurns, compactPercent, worktreeMode, worktreeDefault, worktreeStrategy }) => {
+		"settings.set": async ({ autoCompaction, workspaceRoot, defaultAgent, defaultPermission, defaultThinking, goalTurns, compactPercent, worktreeMode, worktreeDefault, worktreeStrategy, readOutsideProject }) => {
 			if (typeof autoCompaction === "boolean") {
 				await this.pi?.setAutoCompaction(autoCompaction);
 				// Live sessions cache their own SettingsManager.
@@ -1363,6 +1364,11 @@ ${extras.map((p) => `- ${p}`).join("
 				await this.runtime.config.setWorktree({ mode: worktreeMode, default: typeof worktreeDefault === "boolean" ? worktreeDefault : undefined, strategy: worktreeStrategy });
 			}
 			if (typeof compactPercent === "number") await this.runtime.config.setCompactPercent(compactPercent);
+			if (readOutsideProject === "allow" || readOutsideProject === "ask") {
+				await this.runtime.config.setReadOutsideProject(readOutsideProject);
+				// Open chats follow the change at once.
+				for (const live of this.live.values()) live.gate.policy = this.gatePolicy();
+			}
 			if (typeof defaultThinking === "string") {
 				// An empty string clears it: new chats then keep whatever level their model starts at.
 				const next = defaultThinking.trim();

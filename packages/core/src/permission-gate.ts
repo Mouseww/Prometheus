@@ -132,6 +132,7 @@ export class PermissionGate {
 		const access = `"${this.unattended}" access`;
 		if (toolName === INSTALL_PLUGIN_TOOL) return "installing a plugin runs with the app's own rights and is never done unattended";
 		const kind = toolKind(toolName);
+		if (kind === "read" || (kind === "exec" && this.policy?.readOutsideProject === "ask")) return `reading outside the working folder needs the owner's confirmation, which an unattended run cannot get`;
 		if (kind === "exec") return `running commands is not covered by ${access}: this step needs "full"`;
 		if (kind === "edit") return isProjectPath(str(input.path), cwd) ? `${access} does not cover edits` : `writing outside the working folder is not covered by ${access}: this step needs "full"`;
 		return `this tool is not covered by ${access}: this step needs "full"`;
@@ -157,17 +158,18 @@ export class PermissionGate {
 					this.blocked.push({ tool: "policy", reason: `The access level "${this.unattended}" maps to a permission mode the administrator forbids; this run fell back to "default".` });
 				}
 			}
-			const v = decide(mode, { toolName, input, readOnly }, { cwd: call.cwd, allowed: this.allowed });
+			const v = decide(mode, { toolName, input, readOnly }, { cwd: call.cwd, allowed: this.allowed, policy: this.policy });
 			if (v.type === "allow" && toolName !== INSTALL_PLUGIN_TOOL) return;
 			const reason = `Blocked by permissions: ${this.refusal(toolName, input, call.cwd)}. Skip it and mention it in your report.`;
 			if (this.blocked.length < MAX_BLOCKED) this.blocked.push({ tool: toolName, reason });
 			return { block: true, reason };
 		}
-		const verdict = decide(this.mode, { toolName, input, readOnly }, { cwd: call.cwd, allowed: this.allowed });
+		const verdict = decide(this.mode, { toolName, input, readOnly }, { cwd: call.cwd, allowed: this.allowed, policy: this.policy });
 		if (verdict.type === "allow") return;
 		if (verdict.type === "block") return { block: true, reason: verdict.reason };
 
-		const key = ruleKey(toolName, input);
+		// Reading outside the working folder is confirmed every time, never remembered.
+		const key = verdict.noRemember ? undefined : ruleKey(toolName, input);
 		const answer = await this.ask?.({ kind: "tool", toolName, ...describe(toolName, input), alwaysLabel: key?.slice(key.indexOf(":") + 1) }, call.signal);
 		if (answer === "allow") return;
 		if (answer === "always" && key) {

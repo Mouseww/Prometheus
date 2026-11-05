@@ -48,6 +48,8 @@ export interface PrometheusConfig {
 	worktreeDefault: boolean;
 	/** How a merge lands: "squash", "merge" or "apply"; "" means "squash". */
 	worktreeStrategy: string;
+	/** "ask": reading outside a chat's working folder needs confirmation. Absent means "allow". An administrator policy overrides it. */
+	readOutsideProject?: "allow" | "ask";
 }
 
 function normalizeNetwork(raw: Partial<NetworkConfig> | undefined): NetworkConfig {
@@ -102,6 +104,7 @@ export class ConfigStore {
 				worktreeStrategy: typeof raw.worktreeStrategy === "string" ? raw.worktreeStrategy : "",
 				goalTurns: typeof raw.goalTurns === "number" && raw.goalTurns >= 1 ? Math.floor(raw.goalTurns) : 0,
 				// Out-of-range values are dropped rather than clamped: the caller falls back to the default.
+				...(raw.readOutsideProject === "ask" ? { readOutsideProject: "ask" as const } : {}),
 				compactPercent:
 					typeof raw.compactPercent === "number" && Number.isFinite(raw.compactPercent) && raw.compactPercent >= MIN_COMPACT_PERCENT && raw.compactPercent <= MAX_COMPACT_PERCENT
 						? Math.round(raw.compactPercent)
@@ -176,6 +179,18 @@ export class ConfigStore {
 		if (patch.mode !== undefined) this.config.worktreeMode = patch.mode === "ask" ? "" : patch.mode;
 		if (patch.default !== undefined) this.config.worktreeDefault = patch.default;
 		if (patch.strategy !== undefined) this.config.worktreeStrategy = patch.strategy === "squash" ? "" : patch.strategy;
+		await this.persist();
+	}
+
+	/** The effective choice: the administrator's, else the user's, else "allow". */
+	readOutsideProject(): "allow" | "ask" {
+		return this.adminPolicy?.readOutsideProject ?? this.config.readOutsideProject ?? "allow";
+	}
+
+	async setReadOutsideProject(mode: "allow" | "ask"): Promise<void> {
+		if (this.adminPolicy?.readOutsideProject !== undefined) throw new AppError("policyLocked", { field: "readOutsideProject" });
+		if (mode === "ask") this.config.readOutsideProject = "ask";
+		else delete this.config.readOutsideProject;
 		await this.persist();
 	}
 

@@ -496,6 +496,8 @@ export interface HostSettings {
 	worktreeDefault?: boolean;
 	/** How a merge lands in the project folder. `squash` when unset. */
 	worktreeStrategy?: WorktreeStrategy;
+	/** "ask": reading outside a chat's working folder needs confirmation; "allow" when unset. Older servers omit it. */
+	readOutsideProject?: "allow" | "ask";
 	/** Locks the administrator set; absent when nobody manages this install. Older servers omit it. */
 	policy?: PublicAdminPolicy;
 }

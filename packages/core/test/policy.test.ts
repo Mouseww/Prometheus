@@ -143,6 +143,30 @@ describe("PermissionGate under a policy", () => {
 	});
 });
 
+describe("PermissionGate reading outside the project", () => {
+	it("asks every time and asks every time for an outside read", async () => {
+		const gate = new PermissionGate();
+		gate.policy = { readOutsideProject: "ask" };
+		const prompts: string[] = [];
+		gate.ask = async (p) => {
+			prompts.push(p.kind === "tool" ? p.toolName : p.kind);
+			return "allow";
+		};
+		const read = { toolName: "read", input: { path: "/elsewhere/file" }, readOnly: false, cwd: "/w/app" };
+		expect(await gate.evaluate(read)).toBeUndefined();
+		expect(await gate.evaluate(read)).toBeUndefined();
+		expect(prompts).toEqual(["read", "read"]);
+		expect(await gate.evaluate({ ...read, input: { path: "src/a.ts" } })).toBeUndefined();
+		expect(prompts).toHaveLength(2);
+	});
+	it("an unattended run that would read outside is refused", async () => {
+		const gate = new PermissionGate();
+		gate.unattended = "readonly";
+		gate.policy = { readOutsideProject: "ask" };
+		expect(await gate.evaluate({ toolName: "read", input: { path: "/elsewhere" }, readOnly: false, cwd: "/w/app" })).toMatchObject({ block: true });
+	});
+});
+
 describe("plugin allowlist", () => {
 	it("skips plugins off the list and refuses to install or enable them", async () => {
 		const dataDir = await tmp();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decide, isProjectPath, isReadOnlyCommand, ruleKey, simpleCommandKey } from "../src/permissions.ts";
+import { decide, isInside, isProjectPath, isReadOnlyCommand, ruleKey, simpleCommandKey } from "../src/permissions.ts";
 
 const cwd = process.platform === "win32" ? "C:\\work\\app" : "/work/app";
 const env = { cwd, allowed: new Set<string>() };
@@ -118,5 +118,65 @@ describe("ruleKey", () => {
 		expect(ruleKey("bash", { command: "npm i && x" })).toBeUndefined();
 		expect(ruleKey("mcp__a__b", {})).toBe("tool:mcp__a__b");
 		expect(ruleKey("edit", { path: "a" })).toBeUndefined();
+	});
+});
+
+describe("readOutsideProject = ask", () => {
+	const ask = { ...env, policy: { readOutsideProject: "ask" as const } };
+	const inside = process.platform === "win32" ? "C:\\work\\app\\src\\a.ts" : "/work/app/src/a.ts";
+	const outside = process.platform === "win32" ? "C:\\Users\\me\\.ssh\\id" : "/home/me/.ssh/id";
+
+	it("asks for reads outside the folder, never remembered", () => {
+		for (const t of ["read", "grep", "find", "ls"]) {
+			expect(decide("default", call(t, { path: outside }), ask), t).toEqual({ type: "ask", noRemember: true });
+			expect(decide("default", call(t, { path: "../other/x" }), ask), t).toEqual({ type: "ask", noRemember: true });
+		}
+	});
+
+	it("lets reads inside pass, including .git and an omitted path", () => {
+		expect(decide("default", call("read", { path: "src/a.ts" }), ask)).toEqual({ type: "allow" });
+		expect(decide("default", call("read", { path: inside }), ask)).toEqual({ type: "allow" });
+		expect(decide("default", call("read", { path: ".git/config" }), ask)).toEqual({ type: "allow" });
+		expect(decide("default", call("grep", { pattern: "x" }), ask)).toEqual({ type: "allow" });
+		expect(decide("default", call("ls"), ask)).toEqual({ type: "allow" });
+	});
+
+	it("asks in plan mode instead of blocking, and skips bypass and auto", () => {
+		expect(decide("plan", call("read", { path: outside }), ask)).toEqual({ type: "ask", noRemember: true });
+		expect(decide("bypassPermissions", call("read", { path: outside }), ask)).toEqual({ type: "allow" });
+		expect(decide("auto", call("read", { path: outside }), ask)).toEqual({ type: "allow" });
+	});
+
+	it("asks for read-only commands that name an outside path", () => {
+		for (const c of ["cat /etc/passwd", "ls ~", "cat ~/.ssh/id_rsa", "ls ../x", "cat $HOME/x", "cat %USERPROFILE%\\x", "cat C:\\Windows\\win.ini", "rg foo --path=/etc", "ls $env:USERPROFILE"]) {
+			expect(decide("default", call("bash", { command: c }), ask), c).toEqual({ type: "ask", noRemember: true });
+		}
+	});
+
+	it("keeps read-only commands inside the folder allowed", () => {
+		for (const c of ["ls -la", "cat src/a.ts", "git status", "rg foo src", "ls ./sub/../other", `cat ${inside}`, "grep -n foo a.txt | wc -l"]) {
+			expect(decide("default", call("bash", { command: c }), ask), c).toEqual({ type: "allow" });
+		}
+	});
+
+	it("does not look at other tools or non-read-only commands", () => {
+		expect(decide("default", { toolName: "mcp_x", input: { path: outside }, readOnly: true }, ask)).toEqual({ type: "allow" });
+		expect(decide("default", call("bash", { command: "rm /etc/x" }), ask)).toEqual({ type: "ask" });
+	});
+
+	it("is the old behaviour without a policy or with allow", () => {
+		for (const policy of [undefined, {}, { readOutsideProject: "allow" as const }]) {
+			expect(decide("default", call("read", { path: outside }), { ...env, policy })).toEqual({ type: "allow" });
+			expect(decide("default", call("bash", { command: "cat /etc/passwd" }), { ...env, policy })).toEqual({ type: "allow" });
+		}
+	});
+});
+
+describe("isInside", () => {
+	it("is only about the folder, so .git counts", () => {
+		expect(isInside(".git/HEAD", cwd)).toBe(true);
+		expect(isProjectPath(".git/HEAD", cwd)).toBe(false);
+		expect(isInside("..", cwd)).toBe(false);
+		expect(isInside("@src/a.ts", cwd)).toBe(true);
 	});
 });
