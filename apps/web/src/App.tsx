@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { usePanelWidth } from "./lib/panelWidth.ts";
 import { ResizeHandle } from "./components/ResizeHandle.tsx";
 import { AutomationsView } from "./components/AutomationsView.tsx";
@@ -34,6 +34,9 @@ import { usePrefs } from "./lib/prefs.ts";
 import { checkForUpdate, startIdleUpdater } from "./lib/updater.ts";
 import { dismissSplash } from "./lib/splash.ts";
 import { useIsMobile } from "./lib/viewport.ts";
+
+// The team UI is only needed once the team plugin is on and the view is opened.
+const MemberTeamView = lazy(() => import("./team/MemberTeamView.tsx"));
 
 const closeView = () => setView("chat");
 
@@ -82,7 +85,8 @@ export function App() {
 		if (
 			(view === "automations" && !pluginActive(plugins, "automations")) ||
 			(view === "flows" && !pluginActive(plugins, "flows")) ||
-			(view === "git" && !pluginActive(plugins, "git"))
+			(view === "git" && !pluginActive(plugins, "git")) ||
+			(view === "team" && !pluginActive(plugins, "team"))
 		)
 			setView("chat");
 	}, [view, plugins]);
@@ -283,6 +287,11 @@ export function App() {
 							{view === "automations" && <AutomationsView />}
 							{view === "flows" && <FlowsView />}
 							{view === "git" && <GitView />}
+							{view === "team" && (
+								<Suspense fallback={<div className="h-full" />}>
+									<MemberTeamView />
+								</Suspense>
+							)}
 							{view === "settings" && <SettingsView />}
 							{typeof view === "object" && <PanelFrame target={target} url={view.panel} />}
 						</Modal>

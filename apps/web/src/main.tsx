@@ -6,6 +6,7 @@ import { TrayMenuApp } from "./components/TrayMenuApp.tsx";
 import { installBackHandler } from "./lib/back.ts";
 import { installGlobalGuards } from "./lib/links.ts";
 import "./lib/prefs.ts";
+import { detectHubMode } from "./team/hubMode.ts";
 import "./styles.css";
 
 installGlobalGuards();
@@ -21,4 +22,11 @@ if (isTrayMenu) {
 	document.body.style.background = "transparent";
 }
 
-createRoot(document.getElementById("root") as HTMLElement).render(<StrictMode>{isTrayMenu ? <TrayMenuApp /> : isPanel ? <PanelApp /> : <App />}</StrictMode>);
+// A server started with `--role hub` serves this same bundle: /api/health says so, and then the Hub's own team UI
+// replaces the chat app entirely (the chat UI is not even loaded).
+const hub = isPanel || isTrayMenu ? false : await detectHubMode();
+const HubApp = hub ? (await import("./team/HubApp.tsx")).HubApp : null;
+
+createRoot(document.getElementById("root") as HTMLElement).render(
+	<StrictMode>{HubApp ? <HubApp /> : isTrayMenu ? <TrayMenuApp /> : isPanel ? <PanelApp /> : <App />}</StrictMode>,
+);

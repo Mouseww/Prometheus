@@ -15,6 +15,7 @@ import {
 	FolderSearch,
 	FolderPlus,
 	GitBranch,
+	Users,
 	Home,
 	LoaderCircle,
 	LogOut,
@@ -64,6 +65,7 @@ const M = defineMessages({
 		automations: "自动化",
 		flows: "流程编排",
 		git: "Git",
+		team: "团队",
 		settings: "设置",
 		workspaces: "工作区",
 		collapseEvery: "收起全部工作区",
@@ -108,6 +110,7 @@ const M = defineMessages({
 		automations: "Automations",
 		flows: "Flows",
 		git: "Git",
+		team: "Team",
 		settings: "Settings",
 		workspaces: "Workspaces",
 		collapseEvery: "Collapse every workspace",
@@ -598,6 +601,7 @@ export function Sidebar({ target, onDisconnect }: { target: BackendTarget; onDis
 		...(pluginActive(plugins, "automations") ? [{ view: "automations" as const, label: t("automations"), icon: AlarmClock }] : []),
 		...(pluginActive(plugins, "flows") ? [{ view: "flows" as const, label: t("flows"), icon: Workflow }] : []),
 		...(space === "work" && pluginActive(plugins, "git") ? [{ view: "git" as const, label: t("git"), icon: GitBranch }] : []),
+		...(pluginActive(plugins, "team") ? [{ view: "team" as const, label: t("team"), icon: Users }] : []),
 	];
 
 	return (
