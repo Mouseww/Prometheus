@@ -49,12 +49,16 @@ describe("migrations", () => {
 		const db = await migratedDb();
 		const dir = await mkdtemp(join(tmpdir(), "hub-mig-"));
 		await writeFile(join(dir, "003_b.sql"), "CREATE TABLE later_b (id text PRIMARY KEY);");
-		await writeFile(join(dir, "002_a.sql"), "CREATE TABLE later_a (id text PRIMARY KEY); INSERT INTO later_a VALUES ('x');");
+		await writeFile(
+			join(dir, "002_a.sql"),
+			"CREATE TABLE later_a (id text PRIMARY KEY); INSERT INTO later_a VALUES ('x'); ALTER TABLE later_a ENABLE ROW LEVEL SECURITY; CREATE POLICY open ON later_a USING (true);",
+		);
 		const applied = await migrate(db, { appRole: "prometheus_app", dir });
 		expect(applied).toEqual(["002_a", "003_b"]);
-		// The app role is granted on tables created by later migrations without extra GRANTs.
+		// A later table with RLS is granted to the app role without extra GRANTs; one without RLS stays out of its reach.
 		const rows = await db.tx({ userId: "nobody" }, (q) => q.query("SELECT * FROM later_a"));
 		expect(rows).toHaveLength(1);
+		await expect(db.tx({ userId: "nobody" }, (q) => q.query("SELECT * FROM later_b"))).rejects.toThrow(/permission denied/);
 		await db.close();
 	});
 
@@ -110,8 +114,8 @@ describe("row level security", () => {
 		`);
 
 		const teamsA = await db.tx({ userId: uA }, (q) => q.query<{ id: string }>("SELECT id FROM teams ORDER BY id"));
-		// Personal teams (org_id null) pass RLS by design; the service layer filters them by membership.
-		expect(teamsA.map((t) => t.id)).toEqual(["ta", "tp"]);
+		// Personal teams (org_id null) belong to their members: B's personal team is not visible to A.
+		expect(teamsA.map((t) => t.id)).toEqual(["ta"]);
 		expect((await db.tx({ userId: uA }, (q) => q.query("SELECT 1 FROM organizations"))).length).toBe(1);
 		expect((await db.tx({ userId: uA }, (q) => q.query("SELECT 1 FROM org_members"))).length).toBe(1);
 		expect((await db.tx({ userId: uA }, (q) => q.query("SELECT 1 FROM team_members"))).length).toBe(1);

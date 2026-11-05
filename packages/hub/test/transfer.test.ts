@@ -86,8 +86,8 @@ describe("team transfer into an organization", () => {
 	it("request -> accept moves every org_id column and flips RLS visibility", async () => {
 		const { t, owner, mate, outsider, orgId, teamId } = w;
 		for (const table of TEAM_TABLES) {
-			// Personal data (org_id NULL) is visible to anyone under RLS before the transfer.
-			expect(await visibleTo(w, outsider.userId, table), `${table} before`).toBe(table === "team_members" ? 2 : 1);
+			// Personal data (org_id NULL) is visible only to the team members: an outsider sees nothing before the transfer.
+			expect(await visibleTo(w, outsider.userId, table), `${table} before`).toBe(0);
 		}
 		const req = await t.api("POST", `/api/teams/${teamId}/transfer`, { token: owner.token, body: { orgId } });
 		expect(req.status).toBe(201);
@@ -126,7 +126,9 @@ describe("team transfer into an organization", () => {
 		for (const table of TEAM_TABLES) {
 			expect(await visibleTo(w, outsider.userId, table), `${table} outsider after`).toBe(0);
 			const members = table === "team_members" ? 2 : 1;
-			expect(await visibleTo(w, owner.userId, table), `${table} owner after`).toBe(members);
+			// Notifications belong to one user (the mate), not to every member of the organization.
+			const ownerSees = table === "notifications" ? 0 : members;
+			expect(await visibleTo(w, owner.userId, table), `${table} owner after`).toBe(ownerSees);
 			expect(await visibleTo(w, mate.userId, table), `${table} mate after`).toBe(members);
 		}
 		const orgMembers = await t.api("GET", `/api/orgs/${orgId}/members`, { token: owner.token });

@@ -39,7 +39,7 @@ export async function ensureAppRole(db: Db, role: string): Promise<void> {
 	}
 }
 
-/** Applies pending migrations in name order, then (re)grants the app role on every table so later migrations need no GRANT of their own. */
+/** Applies pending migrations in name order, then (re)syncs the app role grants: tables with RLS are granted automatically, all others are revoked (see syncAppRoleGrants). */
 export async function migrate(db: Db, opts: MigrateOptions): Promise<string[]> {
 	const dir = opts.dir ?? defaultMigrationsDir();
 	await ensureAppRole(db, opts.appRole);
@@ -64,7 +64,28 @@ export async function migrate(db: Db, opts: MigrateOptions): Promise<string[]> {
 		}
 	}
 
-	await db.exec(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${opts.appRole}`);
-	await db.exec(`REVOKE ALL ON schema_migrations FROM ${opts.appRole}`);
+	await syncAppRoleGrants(db, opts.appRole);
 	return applied;
+}
+
+const quoteIdent = (name: string): string => `"${name.replaceAll('"', '""')}"`;
+
+/**
+ * The app role may touch a table only when row level security is enabled on it. A table added later without RLS (or one that is
+ * only ever used by system transactions) is therefore unreachable for user scoped transactions until its migration enables RLS and
+ * adds a policy: forgetting a policy fails closed instead of exposing every row. Runs after every migrate, so a table that
+ * lost its RLS also loses its grants.
+ */
+export async function syncAppRoleGrants(db: Db, role: string): Promise<void> {
+	assertRoleName(role);
+	const tables = await db.query<{ name: string; rls: boolean }>(
+		`SELECT c.relname AS name, c.relrowsecurity AS rls FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		 WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') ORDER BY c.relname`,
+	);
+	const statements = tables.map((t) =>
+		t.rls && t.name !== "schema_migrations"
+			? `GRANT SELECT, INSERT, UPDATE, DELETE ON ${quoteIdent(t.name)} TO ${role}`
+			: `REVOKE ALL ON ${quoteIdent(t.name)} FROM ${role}`,
+	);
+	if (statements.length > 0) await db.exec(statements.join(";\n"));
 }
