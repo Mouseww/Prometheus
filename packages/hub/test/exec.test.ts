@@ -46,8 +46,8 @@ const connectSides = async (
 	return { local: side(lc, local), team: side(tc, team), close: async () => void (await lc.close(), await tc.close()) };
 };
 
-const rowOf = async (id: string): Promise<{ exec_location: string; exec_mode: string; tenant_session_id: string | null; local_session_id: string }> =>
-	(await c.t.hub.db.query<any>("SELECT exec_location, exec_mode, tenant_session_id, local_session_id FROM sessions WHERE id = $1", [id]))[0];
+const rowOf = async (id: string): Promise<{ exec_location: string; exec_mode: string; tenant_session_id: string | null; local_session_id: string; server_id: string }> =>
+	(await c.t.hub.db.query<any>("SELECT exec_location, exec_mode, tenant_session_id, local_session_id, server_id FROM sessions WHERE id = $1", [id]))[0];
 
 const setLocation = (id: string, location: string, tenantSessionId: string | null): Promise<unknown> =>
 	c.t.hub.db.query("UPDATE sessions SET exec_location = $2, tenant_session_id = $3 WHERE id = $1", [id, location, tenantSessionId]);
@@ -95,7 +95,7 @@ describe("handoff", () => {
 		const sides = await connectSides(
 			c.alice.userId,
 			c.alice.token,
-			{ "handoff.export": () => ({ ok: true, data: { snapshotCommit: "c".repeat(40) } }) },
+			{ "handoff.export": () => ({ ok: true, data: { snapshotCommit: "c".repeat(40), nextSeq: 7 } }) },
 			{ "handoff.import": () => ({ ok: true, data: { sessionId: "tenant-sess-1" } }) },
 		);
 		// The commands go to the newest local connection, so the event listener must be that same connection.
@@ -107,7 +107,7 @@ describe("handoff", () => {
 		expect(ensured).toBe(1);
 		expect(await rowOf(s.id)).toMatchObject({ exec_location: "team", tenant_session_id: "tenant-sess-1" });
 		expect(sides.local.cmds[0]).toMatchObject({ cmd: "handoff.export", params: { hubSessionId: s.id, sessionId: s.localSessionId, from: "local", to: "team", force: false } });
-		expect(sides.team.cmds[0]).toMatchObject({ cmd: "handoff.import", params: { hubSessionId: s.id, branch: s.branch, snapshotCommit: "c".repeat(40) } });
+		expect(sides.team.cmds[0]).toMatchObject({ cmd: "handoff.import", params: { hubSessionId: s.id, branch: s.branch, snapshotCommit: "c".repeat(40), nextSeq: 7 } });
 		await sleep(80);
 		expect(sides.local.cmds.map((x) => x.cmd)).toEqual(["handoff.export", "handoff.finish"]);
 		expect(sides.local.cmds[1]?.params).toMatchObject({ activeSessionId: "tenant-sess-1", to: "team" });
@@ -121,13 +121,13 @@ describe("handoff", () => {
 		const sides = await connectSides(
 			c.alice.userId,
 			c.alice.token,
-			{ "handoff.import": () => ({ ok: true, data: { sessionId: "local-new-9" } }) },
+			{ "handoff.import": () => ({ ok: true, data: { sessionId: "local-new-9", serverId: "srv-back" } }) },
 			{ "handoff.export": () => ({ ok: true, data: { snapshotCommit: "d".repeat(40) } }) },
 		);
 		const r = await c.t.api("POST", `/api/sessions/${s.id}/handoff`, { token: c.alice.token, body: { to: "local", force: true } });
 		expect(r.status).toBe(200);
 		expect(r.data).toMatchObject({ location: "local", tenantSessionId: "tenant-sess-2" });
-		expect(await rowOf(s.id)).toMatchObject({ exec_location: "local", local_session_id: "local-new-9" });
+		expect(await rowOf(s.id)).toMatchObject({ exec_location: "local", local_session_id: "local-new-9", server_id: "srv-back" });
 		expect(sides.team.cmds[0]).toMatchObject({ cmd: "handoff.export", params: { sessionId: "tenant-sess-2", from: "team", to: "local", force: true } });
 		await sleep(80);
 		expect(sides.team.cmds.map((x) => x.cmd)).toEqual(["handoff.export", "handoff.finish"]);

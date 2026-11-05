@@ -140,21 +140,29 @@ export function createExecService(deps: ExecDeps): ExecService {
 			busy.add(sessionId);
 			try {
 				const from = row.exec_location;
-				const sourceSessionId = from === "local" ? row.local_session_id : row.tenant_session_id;
+				// A session that was started inside the tenant instance is registered with the tenant's own session id as its local id.
+				const sourceSessionId = from === "local" ? row.local_session_id : (row.tenant_session_id ?? row.local_session_id);
 				if (!sourceSessionId) throw conflict(`会话在${sideName(from)}没有对应的本地会话，无法移交`, "noSourceSession");
 				await preflight(actor.userId, to);
 
 				const common = { hubSessionId: row.id, from, to, branch: row.branch, title: row.title };
-				const exported = (await run(actor.userId, kindOf(from), "handoff.export", { ...common, sessionId: sourceSessionId, force: opts.force === true })) as { snapshotCommit?: unknown } | undefined;
+				const exported = (await run(actor.userId, kindOf(from), "handoff.export", { ...common, sessionId: sourceSessionId, force: opts.force === true })) as { snapshotCommit?: unknown; nextSeq?: unknown } | undefined;
 				const snapshotCommit = asString(exported?.snapshotCommit);
-				const imported = (await run(actor.userId, kindOf(to), "handoff.import", { ...common, snapshotCommit })) as { sessionId?: unknown } | undefined;
+				// The target continues the event numbering where the source stopped, or the Hub would drop its first events as duplicates.
+				const nextSeq = typeof exported?.nextSeq === "number" && Number.isInteger(exported.nextSeq) && exported.nextSeq >= 0 ? exported.nextSeq : undefined;
+				const imported = (await run(actor.userId, kindOf(to), "handoff.import", { ...common, snapshotCommit, nextSeq })) as { sessionId?: unknown; serverId?: unknown } | undefined;
 				const targetSessionId = asString(imported?.sessionId);
+				const targetServerId = asString(imported?.serverId) ?? null;
 				if (!targetSessionId) throw new HubError(502, "handoffFailed", `${sideName(to)}没有返回导入后的会话 id`);
 
 				const rows = await deps.db.tx(scopeOf(actor), (q) =>
 					to === "team"
 						? q.query<Row>(`UPDATE sessions SET exec_location = 'team', tenant_session_id = $2, updated_at = now() WHERE id = $1 RETURNING ${COLUMNS}`, [sessionId, targetSessionId])
-						: q.query<Row>(`UPDATE sessions SET exec_location = 'local', local_session_id = $2, updated_at = now() WHERE id = $1 RETURNING ${COLUMNS}`, [sessionId, targetSessionId]),
+						: q.query<Row>(
+								`UPDATE sessions SET exec_location = 'local', tenant_session_id = COALESCE(tenant_session_id, local_session_id), local_session_id = $2, server_id = COALESCE($3, server_id), updated_at = now()
+								 WHERE id = $1 RETURNING ${COLUMNS}`,
+								[sessionId, targetSessionId, targetServerId],
+							),
 				);
 				const updated = rows[0] as Row;
 				const state = toState(updated);
