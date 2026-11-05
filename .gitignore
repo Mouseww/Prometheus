@@ -13,3 +13,4 @@ apps/desktop/src-tauri/gen/
 *.keystore
 .pi/
 .termux-cache/
+.superpowers/
