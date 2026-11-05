@@ -13,7 +13,7 @@ import { speedTracker } from "../lib/speed.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { imagesOf } from "../lib/images.ts";
 import { deleteMessage, editMessage, fetchToolResult, forkMessage, openFile, pluginActive, retryMessage, type ToolRun, toast, useStore } from "../lib/store.ts";
-import { assistantTurnLive } from "../lib/turnLive.ts";
+import { assistantTurnLive, turnPresentation } from "../lib/turnLive.ts";
 import { ImageStrip } from "./ImageStrip.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { DelegationCard, delegationOf } from "./DelegationCard.tsx";
@@ -507,37 +507,25 @@ function TurnBody({
 }) {
 	const t = useT(M);
 	const [open, setOpen] = useState(false);
-	const lastMsg = group[group.length - 1]?.message;
-	let finalAt = -1;
-	if (lastMsg && lastMsg.stopReason !== "error" && lastMsg.stopReason !== "aborted") {
-		for (let i = lastMsg.content.length - 1; i >= 0; i--) {
-			const b = lastMsg.content[i];
-			if (b?.type === "text" && b.text.trim()) finalAt = i;
-			if (b?.type === "text" || !b) continue;
-			break;
-		}
-	}
-	let steps = 0;
-	group.forEach((g) =>
-		g.message.content.forEach((b, i) => {
-			if (!b || (g === group[group.length - 1] && i === finalAt)) return;
-			if (b.type === "toolCall" || (b.type === "thinking" && b.thinking.trim()) || (b.type === "text" && b.text.trim())) steps++;
-		}),
-	);
+	const view = turnPresentation(group.map((g) => g.message), live);
+	const { fold, finalMessage, finalAt, steps } = view;
 	const render = (mode: BlockMode) =>
-		// In "final" mode only the last message holds the reply; the others would be empty boxes that each add a flex gap.
-		(mode === "final" ? group.slice(-1) : group).map((g) => (
-			<AssistantBlock
-				key={`${mode}${g.index}`}
-				message={g.message}
-				live={live && g.index === lastIndex}
-				tools={tools}
-				results={results}
-				mode={mode}
-				finalAt={g === group[group.length - 1] ? finalAt : -1}
-			/>
-		));
-	if (live || finalAt < 0 || steps === 0) {
+		// In "final" mode only the message that holds the answer is shown; the others would be empty boxes that each add a flex gap.
+		(mode === "final" ? group.slice(finalMessage, finalMessage + 1) : group).map((g, gi) => {
+			const groupIndex = mode === "final" ? finalMessage : gi;
+			return (
+				<AssistantBlock
+					key={`${mode}${g.index}`}
+					message={g.message}
+					live={live && g.index === lastIndex}
+					tools={tools}
+					results={results}
+					mode={mode}
+					finalAt={groupIndex === finalMessage ? finalAt : -1}
+				/>
+			);
+		});
+	if (!fold) {
 		return (
 			<div className="flex flex-col gap-3">
 				{render("all")}
@@ -562,7 +550,7 @@ function TurnBody({
 					<div className="flex flex-col gap-3 pt-3">{render("steps")}</div>
 				</Collapse>
 			</div>
-			{render("final")}
+			{finalAt >= 0 && render("final")}
 		</div>
 	);
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assistantTurnLive } from "../src/lib/turnLive.ts";
+import { assistantTurnLive, turnPresentation } from "../src/lib/turnLive.ts";
 
 describe("assistantTurnLive", () => {
 	it("does not treat the previous reply as live the moment a new prompt is sent", () => {
@@ -104,6 +104,66 @@ describe("assistantTurnLive", () => {
 				lastNonResult: 5,
 				stopReason: "stop",
 			}),
+		).toBe(false);
+	});
+});
+
+describe("turnPresentation", () => {
+	it("folds a single reply that ends with a tool call after some text", () => {
+		const view = turnPresentation(
+			[{ stopReason: "toolUse", content: [{ type: "text", text: "Let me read it." }, { type: "toolCall" }] }],
+			false,
+		);
+		expect(view.fold).toBe(true);
+		expect(view.finalMessage).toBe(0);
+		expect(view.finalAt).toBe(0);
+		expect(view.steps).toBe(1);
+	});
+
+	it("folds a finished turn that ends on a tool call, as history pages often do", () => {
+		const view = turnPresentation(
+			[
+				{ stopReason: "toolUse", content: [{ type: "text", text: "Looking." }, { type: "toolCall" }] },
+				{ stopReason: "stop", content: [{ type: "toolCall" }] },
+			],
+			false,
+		);
+		expect(view.fold).toBe(true);
+		expect(view.finalMessage).toBe(0);
+		expect(view.finalAt).toBe(0);
+		expect(view.steps).toBe(2);
+	});
+
+	it("keeps the last text of a multi-round reply as the visible answer", () => {
+		const view = turnPresentation(
+			[
+				{ stopReason: "toolUse", content: [{ type: "thinking", thinking: "hmm" }, { type: "toolCall" }] },
+				{ stopReason: "stop", content: [{ type: "text", text: "Done." }] },
+			],
+			false,
+		);
+		expect(view.fold).toBe(true);
+		expect(view.finalMessage).toBe(1);
+		expect(view.finalAt).toBe(0);
+	});
+
+	it("does not fold a live turn", () => {
+		expect(turnPresentation([{ stopReason: "pending", content: [{ type: "toolCall" }] }], true).fold).toBe(false);
+	});
+
+	it("does not fold a reply that is only the closing answer", () => {
+		expect(turnPresentation([{ stopReason: "stop", content: [{ type: "text", text: "Hi." }] }], false).fold).toBe(false);
+	});
+
+	it("leaves a failed turn open so the error stays visible", () => {
+		expect(
+			turnPresentation(
+				[
+					{ stopReason: "toolUse", content: [{ type: "toolCall" }] },
+					{ stopReason: "error", content: [] },
+				],
+				false,
+			).fold,
 		).toBe(false);
 	});
 });

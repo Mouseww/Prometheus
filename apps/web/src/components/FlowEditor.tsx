@@ -247,8 +247,13 @@ const M = defineMessages({
 	},
 });
 
-const CANVAS_W = 3000;
-const CANVAS_H = 2000;
+const MIN_CANVAS_W = 3000;
+const MIN_CANVAS_H = 2000;
+/** Canvas grows with the nodes so edges (svg) are never clipped behind far-right nodes. */
+const canvasSize = (nodes: { x: number; y: number }[]) => ({
+	w: Math.max(MIN_CANVAS_W, ...nodes.map((n) => n.x + NODE_W + 400)),
+	h: Math.max(MIN_CANVAS_H, ...nodes.map((n) => n.y + NODE_H + 400)),
+});
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 1.6;
 
@@ -413,6 +418,7 @@ export function FlowEditor({ initial, runs, flows, inspectRunId, onClose, onSave
 	const view = inspectingPast && paint?.graph ? paint.graph : { nodes: draft.nodes, edges: draft.edges };
 	const viewNodes = view.nodes;
 	const viewEdges = view.edges;
+	const { w: CANVAS_W, h: CANVAS_H } = useMemo(() => canvasSize(viewNodes), [viewNodes]);
 	const viewById = useMemo(() => new Map(viewNodes.map((n) => [n.id, n])), [viewNodes]);
 	const loopBacks = useMemo(() => flowLoopBackIds(viewNodes, viewEdges), [viewNodes, viewEdges]);
 	useEffect(() => {
@@ -547,8 +553,8 @@ export function FlowEditor({ initial, runs, flows, inspectRunId, onClose, onSave
 		let moved = false;
 		const move = (ev: PointerEvent) => {
 			const p = toCanvas(ev);
-			const x = Math.max(0, Math.min(CANVAS_W - NODE_W, Math.round((origin.x + p.x - start.x) / 10) * 10));
-			const y = Math.max(0, Math.min(CANVAS_H - NODE_H, Math.round((origin.y + p.y - start.y) / 10) * 10));
+			const x = Math.max(0, Math.min(canvasSize(draftRef.current.nodes).w - NODE_W, Math.round((origin.x + p.x - start.x) / 10) * 10));
+			const y = Math.max(0, Math.min(canvasSize(draftRef.current.nodes).h - NODE_H, Math.round((origin.y + p.y - start.y) / 10) * 10));
 			const cur = draftRef.current;
 			const at = cur.nodes.find((m) => m.id === n.id);
 			if (!at || (at.x === x && at.y === y)) return;
