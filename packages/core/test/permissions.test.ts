@@ -141,10 +141,13 @@ describe("readOutsideProject = ask", () => {
 		expect(decide("default", call("ls"), ask)).toEqual({ type: "allow" });
 	});
 
-	it("asks in plan mode instead of blocking, and skips bypass and auto", () => {
+	it("asks in plan mode instead of blocking, and in bypass and auto too", () => {
 		expect(decide("plan", call("read", { path: outside }), ask)).toEqual({ type: "ask", noRemember: true });
-		expect(decide("bypassPermissions", call("read", { path: outside }), ask)).toEqual({ type: "allow" });
-		expect(decide("auto", call("read", { path: outside }), ask)).toEqual({ type: "allow" });
+		expect(decide("bypassPermissions", call("read", { path: outside }), ask)).toEqual({ type: "ask", noRemember: true });
+		expect(decide("auto", call("read", { path: outside }), ask)).toEqual({ type: "ask", noRemember: true });
+		expect(decide("auto", call("bash", { command: "cat /etc/passwd" }), ask)).toEqual({ type: "ask", noRemember: true });
+		expect(decide("bypassPermissions", call("read", { path: "src/a.ts" }), ask)).toEqual({ type: "allow" });
+		expect(decide("bypassPermissions", call("bash", { command: "rm -rf build" }), ask)).toEqual({ type: "allow" });
 	});
 
 	it("asks for read-only commands that name an outside path", () => {
@@ -154,7 +157,7 @@ describe("readOutsideProject = ask", () => {
 	});
 
 	it("keeps read-only commands inside the folder allowed", () => {
-		for (const c of ["ls -la", "cat src/a.ts", "git status", "rg foo src", "ls ./sub/../other", `cat ${inside}`, "grep -n foo a.txt | wc -l"]) {
+		for (const c of ["ls -la", "cat src/a.ts", "git status", "rg foo src", "grep -n foo a.txt | wc -l", "cat 'src/a b.ts'", "rg -n \"foo.*bar\" src"]) {
 			expect(decide("default", call("bash", { command: c }), ask), c).toEqual({ type: "allow" });
 		}
 	});

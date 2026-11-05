@@ -1,5 +1,6 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import { OPEN_FILE_TOOL, type PermissionMode, TODO_TOOL } from "@prometheus/protocol";
+import { commandStaysInside, isInside } from "./path-guard.ts";
 
 export const EXIT_PLAN_MODE = "exit_plan_mode";
 /** Installs code that runs with the app's own permissions, so every use is confirmed and no answer is remembered. */
@@ -79,36 +80,8 @@ export function isProjectPath(path: string, cwd: string): boolean {
 	return !rel.split(/[\\/]/).some((s) => s === ".git" || s === ".pi");
 }
 
-/** Whether `path` lies within `cwd`, with no other restriction (unlike `isProjectPath`, `.git` counts as inside). */
-export function isInside(path: string, cwd: string): boolean {
-	const rel = relative(cwd, resolve(cwd, path.replace(/^@/, "")));
-	return !rel.startsWith("..") && !isAbsolute(rel);
-}
-
-const HOME_REF = /^(~|\$HOME\b|\$\{HOME\}|%USERPROFILE%|\$env:(USERPROFILE|HOME))/i;
-const DRIVE_PATH = /^[A-Za-z]:[\\/]/;
-
-/** Whether one command argument looks like a path that leads out of `cwd`. Flags are looked at only for `--opt=value`. */
-function argLeavesCwd(arg: string, cwd: string): boolean {
-	let word = arg.replace(/^["']|["']$/g, "");
-	if (word.startsWith("-")) {
-		const eq = word.indexOf("=");
-		if (eq < 0) return false;
-		word = word.slice(eq + 1).replace(/^["']|["']$/g, "");
-	}
-	if (!word) return false;
-	if (HOME_REF.test(word)) return true;
-	const hasDotDot = word.split(/[\\/]/).includes("..");
-	if (word.startsWith("/") || word.startsWith("\\") || DRIVE_PATH.test(word) || hasDotDot) return !isInside(word, cwd);
-	return false;
-}
-
-/** Whether any argument of a (read-only) shell command points outside `cwd`. */
-export function commandReachesOutside(command: string, cwd: string): boolean {
-	return command
-		.split(SEPARATORS)
-		.some((segment) => words(segment).slice(1).some((arg) => argLeavesCwd(arg, cwd)));
-}
+// Path resolution for the read-outside-project rule (home, `@`, file URLs, Git-Bash drives, symlinks) lives in path-guard.ts.
+export { commandStaysInside, isInside };
 
 export type Verdict = { type: "allow" } | { type: "block"; reason: string } | { type: "ask"; /** "Always allow" must not be offered or remembered for this question. */ noRemember?: true };
 
@@ -134,12 +107,17 @@ export function decide(
 ): Verdict {
 	// A plugin outlives the chat and runs with the app's own rights, so even "bypass" does not skip this question.
 	if (call.toolName === INSTALL_PLUGIN_TOOL) return mode === "plan" ? { type: "block", reason: PLAN_BLOCK_REASON } : { type: "ask" };
-	if (mode === "bypassPermissions" || mode === "auto") return { type: "allow" };
 	const kind = toolKind(call.toolName);
-	const askOutside = env.policy?.readOutsideProject === "ask";
-	if (kind === "read") return askOutside && !isInside(str(call.input.path) || ".", env.cwd) ? { type: "ask", noRemember: true } : { type: "allow" };
+	// A reading lock the administrator set holds in every mode, "bypass" and "auto" included.
+	if (env.policy?.readOutsideProject === "ask") {
+		if (kind === "read" && !isInside(str(call.input.path) || ".", env.cwd)) return { type: "ask", noRemember: true };
+		const command = str(call.input.command);
+		if (kind === "exec" && isReadOnlyCommand(command) && !commandStaysInside(command, env.cwd)) return { type: "ask", noRemember: true };
+	}
+	if (mode === "bypassPermissions" || mode === "auto") return { type: "allow" };
+	if (kind === "read") return { type: "allow" };
 	if (kind === "safe" || (kind === "other" && call.readOnly)) return { type: "allow" };
-	if (kind === "exec" && isReadOnlyCommand(str(call.input.command))) return askOutside && commandReachesOutside(str(call.input.command), env.cwd) ? { type: "ask", noRemember: true } : { type: "allow" };
+	if (kind === "exec" && isReadOnlyCommand(str(call.input.command))) return { type: "allow" };
 	if (mode === "plan") return { type: "block", reason: PLAN_BLOCK_REASON };
 	const key = ruleKey(call.toolName, call.input);
 	if (key && env.allowed.has(key)) return { type: "allow" };
