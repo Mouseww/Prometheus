@@ -35,7 +35,8 @@ describe("migrations", () => {
 		const db = await migratedDb();
 		expect(await migrate(db, { appRole: "prometheus_app" })).toEqual([]);
 		const rows = await db.query<{ version: string }>("SELECT version FROM schema_migrations");
-		expect(rows.map((r) => r.version)).toEqual(["001_core"]);
+		// Later blocks add 002_git, 003_sessions, 004_models; every one is recorded exactly once, in order.
+		expect(rows.map((r) => r.version).sort()).toEqual(["001_core", "002_git", "003_sessions", "004_models"]);
 		const policy = await db.query<{ scope: string; closed: boolean; require_approval: boolean }>("SELECT * FROM registration_policies");
 		expect(policy).toHaveLength(1);
 		expect(policy[0]).toMatchObject({ scope: "platform", closed: false, require_approval: true });

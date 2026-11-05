@@ -223,10 +223,13 @@ describe("extension seams for blocks 2B and 2C", () => {
 
 	it("the service registry registers once and requires existing names", () => {
 		const reg = t.hub.registry;
-		reg.register("workspaces", { name: "ws" });
+		// Real services (workspaces, sessions, ...) are registered by now; use a name no block owns.
+		reg.register("seam-demo", { name: "ws" });
+		expect(reg.has("seam-demo")).toBe(true);
+		expect(reg.require<{ name: string }>("seam-demo").name).toBe("ws");
+		expect(() => reg.register("seam-demo", {})).toThrow(/已注册/);
 		expect(reg.has("workspaces")).toBe(true);
-		expect(reg.require<{ name: string }>("workspaces").name).toBe("ws");
-		expect(() => reg.register("workspaces", {})).toThrow(/已注册/);
+		expect(reg.has("mergeRequests")).toBe(true);
 		expect(() => reg.require("nope")).toThrow(/未注册/);
 		expect(reg.get("nope")).toBeUndefined();
 	});
