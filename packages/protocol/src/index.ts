@@ -351,6 +351,8 @@ export interface AdminPolicy {
 	pluginAllowlist?: string[];
 	/** Gateways supplied by the administrator; when present, users cannot add, edit or delete gateways. */
 	gateways?: GatewayConfig[];
+	/** Tool names nobody may use; refused in every permission mode and in unattended runs. */
+	disabledTools?: string[];
 	/** Free text shown to users explaining who manages this install. */
 	managedBy?: string;
 }

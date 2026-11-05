@@ -38,6 +38,14 @@ describe("parsePolicy", () => {
 		expect(() => parsePolicy({ pluginAllowlist: [1] })).toThrow();
 		expect(() => parsePolicy({ gateways: [{ id: "" }] })).toThrow();
 		expect(() => parsePolicy({ forbidenModes: [] })).toThrow();
+		expect(() => parsePolicy({ disabledTools: "bash" })).toThrow();
+		expect(() => parsePolicy({ disabledTools: [""] })).toThrow();
+		expect(() => parsePolicy({ disabledTools: [1] })).toThrow();
+	});
+	it("accepts disabledTools and exposes it to clients", () => {
+		const p = parsePolicy({ disabledTools: ["bash", " bash ", "web_fetch"] });
+		expect(p.disabledTools).toEqual(["bash", "web_fetch"]);
+		expect(publicPolicy(p).disabledTools).toEqual(["bash", "web_fetch"]);
 	});
 	it("hides gateway keys from clients", () => {
 		const view = publicPolicy(parsePolicy({ gateways: [gateway("g")] }));
@@ -140,6 +148,34 @@ describe("PermissionGate under a policy", () => {
 		const open = new PermissionGate();
 		open.unattended = "full";
 		expect(await open.evaluate({ toolName: "bash", input: { command: "rm -rf x" }, readOnly: false, cwd: "/w" })).toBeUndefined();
+	});
+});
+
+describe("PermissionGate disabledTools", () => {
+	const run = (gate: PermissionGate, toolName: string) => gate.evaluate({ toolName, input: {}, readOnly: false, cwd: "/w" });
+	it("blocks a disabled tool in every mode and leaves others alone", async () => {
+		for (const mode of ["default", "acceptEdits", "plan", "bypassPermissions", "auto"] as const) {
+			const gate = new PermissionGate();
+			gate.mode = mode;
+			gate.policy = { disabledTools: ["web_fetch"] };
+			expect(await run(gate, "web_fetch"), mode).toEqual({ block: true, reason: "This tool has been disabled by the administrator." });
+		}
+		const gate = new PermissionGate();
+		gate.mode = "bypassPermissions";
+		gate.policy = { disabledTools: ["web_fetch"] };
+		expect(await run(gate, "other_tool")).toBeUndefined();
+	});
+	it("blocks it in an unattended run with full access and records the refusal", async () => {
+		const gate = new PermissionGate();
+		gate.unattended = "full";
+		gate.policy = { disabledTools: ["web_fetch"] };
+		expect(await run(gate, "web_fetch")).toMatchObject({ block: true, reason: "This tool has been disabled by the administrator." });
+		expect(gate.takeBlocked()).toEqual([{ tool: "web_fetch", reason: "This tool has been disabled by the administrator." }]);
+	});
+	it("no policy leaves behavior unchanged", async () => {
+		const gate = new PermissionGate();
+		gate.mode = "bypassPermissions";
+		expect(await run(gate, "web_fetch")).toBeUndefined();
 	});
 });
 

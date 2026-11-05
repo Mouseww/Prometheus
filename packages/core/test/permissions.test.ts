@@ -112,6 +112,23 @@ describe("decide", () => {
 	});
 });
 
+describe("disabledTools policy", () => {
+	const policy = { disabledTools: ["web_fetch"] };
+	it("blocks the tool in every mode", () => {
+		for (const mode of ["default", "acceptEdits", "plan", "bypassPermissions", "auto"] as const) {
+			expect(decide(mode, call("web_fetch"), { ...env, policy }), mode).toEqual({ type: "block", reason: "This tool has been disabled by the administrator." });
+		}
+	});
+	it("leaves other tools unchanged", () => {
+		expect(decide("bypassPermissions", call("bash", { command: "ls" }), { ...env, policy }).type).toBe("allow");
+		expect(decide("default", call("some_mcp_tool"), { ...env, policy }).type).toBe("ask");
+	});
+	it("no policy leaves the tool alone", () => {
+		expect(decide("bypassPermissions", call("web_fetch"), env).type).toBe("allow");
+		expect(decide("default", call("web_fetch"), { ...env, policy: {} }).type).toBe("ask");
+	});
+});
+
 describe("ruleKey", () => {
 	it("offers a rule for commands and foreign tools only", () => {
 		expect(ruleKey("bash", { command: "npm test" })).toBe("exec:npm");

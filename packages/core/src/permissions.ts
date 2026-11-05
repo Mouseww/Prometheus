@@ -100,11 +100,15 @@ export function ruleKey(toolName: string, input: Record<string, unknown>): strin
 	return kind === "other" && toolName !== INSTALL_PLUGIN_TOOL ? `tool:${toolName}` : undefined;
 }
 
+export const TOOL_DISABLED_REASON = "This tool has been disabled by the administrator.";
+
 export function decide(
 	mode: PermissionMode,
 	call: { toolName: string; input: Record<string, unknown>; /** Tool declares itself read-only (MCP annotation). */ readOnly?: boolean },
-	env: { cwd: string; allowed: ReadonlySet<string>; /** Locks from the administrator or the user's own settings. */ policy?: { readOutsideProject?: "allow" | "ask" } },
+	env: { cwd: string; allowed: ReadonlySet<string>; /** Locks from the administrator or the user's own settings. */ policy?: { readOutsideProject?: "allow" | "ask"; disabledTools?: readonly string[] } },
 ): Verdict {
+	// An administrator ban holds in every mode, "bypass" and "auto" included.
+	if (env.policy?.disabledTools?.includes(call.toolName)) return { type: "block", reason: TOOL_DISABLED_REASON };
 	// A plugin outlives the chat and runs with the app's own rights, so even "bypass" does not skip this question.
 	if (call.toolName === INSTALL_PLUGIN_TOOL) return mode === "plan" ? { type: "block", reason: PLAN_BLOCK_REASON } : { type: "ask" };
 	const kind = toolKind(call.toolName);

@@ -4,7 +4,7 @@ import type { PluginTool } from "@prometheus/plugin-sdk";
 import { type AdminPolicy, AppError, type PermissionMode, type PermissionPrompt, type RunAccess } from "@prometheus/protocol";
 import { modeForbidden } from "./policy.ts";
 import { escapesWorktree } from "./worktree.ts";
-import { decide, EXIT_PLAN_MODE, INSTALL_PLUGIN_TOOL, isProjectPath, ruleKey, toolKind } from "./permissions.ts";
+import { decide, EXIT_PLAN_MODE, INSTALL_PLUGIN_TOOL, isProjectPath, ruleKey, TOOL_DISABLED_REASON, toolKind } from "./permissions.ts";
 
 const PLAN_PROMPT = `# Plan mode
 Plan mode is active. Do not change anything: only read-only tools (read, grep, find, ls and non-mutating commands) will run, everything else is refused.
@@ -79,7 +79,7 @@ export function applyPermissionPrompt(
 }
 
 /** The parts of the administrator policy a permission gate enforces. */
-export type GatePolicy = Pick<AdminPolicy, "forbiddenModes" | "readOutsideProject">;
+export type GatePolicy = Pick<AdminPolicy, "forbiddenModes" | "readOutsideProject" | "disabledTools">;
 
 const ACCESS_MODE: Record<RunAccess, PermissionMode> = { readonly: "plan", edits: "acceptEdits", full: "bypassPermissions" };
 
@@ -145,6 +145,10 @@ export class PermissionGate {
 	 */
 	async evaluate(call: { toolName: string; input: Record<string, unknown>; readOnly: boolean; cwd: string; signal?: AbortSignal }): Promise<{ block: true; reason: string } | undefined> {
 		const { toolName, input, readOnly } = call;
+		if (this.policy?.disabledTools?.includes(toolName)) {
+			if (this.unattended && this.blocked.length < MAX_BLOCKED) this.blocked.push({ tool: toolName, reason: TOOL_DISABLED_REASON });
+			return { block: true, reason: TOOL_DISABLED_REASON };
+		}
 		if (this.guard && toolKind(toolName) === "edit" && escapesWorktree(str(input.path), call.cwd, this.guard)) {
 			return { block: true, reason: `Blocked: this chat works in its own git worktree (${this.guard.keep}). Do not write the project folder directly; use a path inside the worktree.` };
 		}

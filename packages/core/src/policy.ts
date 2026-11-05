@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { validateGateway } from "@prometheus/gateway";
 import { type AdminPolicy, AppError, type GatewayConfig, PERMISSION_MODES, type PermissionMode, type PublicAdminPolicy } from "@prometheus/protocol";
 
-const KEYS: ReadonlySet<string> = new Set(["serverOwner", "forbiddenModes", "defaultPermission", "readOutsideProject", "pluginAllowlist", "gateways", "managedBy"]);
+const KEYS: ReadonlySet<string> = new Set(["serverOwner", "forbiddenModes", "defaultPermission", "readOutsideProject", "pluginAllowlist", "gateways", "disabledTools", "managedBy"]);
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const isMode = (v: unknown): v is PermissionMode => PERMISSION_MODES.includes(v as PermissionMode);
@@ -46,6 +46,10 @@ export function parsePolicy(raw: unknown): AdminPolicy {
 			if (errors.length) invalid(`gateway ${String(g.id)}: ${errors.join("; ")}`);
 		}
 		out.gateways = gateways;
+	}
+	if (raw.disabledTools !== undefined) {
+		if (!Array.isArray(raw.disabledTools) || !raw.disabledTools.every((t) => typeof t === "string" && t.trim())) invalid("disabledTools must be a list of non-empty tool names");
+		out.disabledTools = [...new Set((raw.disabledTools as string[]).map((t) => t.trim()))];
 	}
 	if (raw.managedBy !== undefined) {
 		if (typeof raw.managedBy !== "string") invalid("managedBy must be a string");
