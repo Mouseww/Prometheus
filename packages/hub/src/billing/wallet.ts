@@ -142,12 +142,63 @@ export async function issuePeriodGrants(q: Queryable, nowMs: number, only?: Subj
 	return issued;
 }
 
+/** How long an unsettled reservation keeps holding credits before it is treated as orphaned. */
+export const RESERVATION_TTL_MS = 10 * 60 * 1000;
+
+/** Credits held for one in-flight call. */
+export interface Reservation {
+	id: string;
+	subject: Subject;
+	amount: number;
+}
+
+/**
+ * Holds `amount` credits of the subject for a call that is about to start. Concurrent reservations serialize on the subject's grant
+ * rows (the same `FOR UPDATE` lock `consume` takes), and each sees the live reservations of the others, so the sum of what is held
+ * never exceeds the balance. Throws 402 `insufficientCredits` when the unreserved balance cannot cover it.
+ */
+export async function reserveCredits(q: Queryable, subject: Subject, amount: number, nowMs: number, ttlMs: number): Promise<Reservation> {
+	const nowIso = new Date(nowMs).toISOString();
+	const grants = await q.query<{ remaining: string | number }>(
+		`SELECT remaining FROM credit_grants
+		 WHERE subject_type = $1 AND subject_id = $2 AND remaining > 0 AND (expires_at IS NULL OR expires_at > $3::timestamptz)
+		 ORDER BY expires_at ASC NULLS LAST, created_at, id FOR UPDATE`,
+		[subject.type, subject.id, nowIso],
+	);
+	await q.query("DELETE FROM credit_reservations WHERE subject_type = $1 AND subject_id = $2 AND expires_at <= $3::timestamptz", [subject.type, subject.id, nowIso]);
+	const held = await q.query<{ held: string | number | null }>(
+		"SELECT coalesce(sum(amount), 0) AS held FROM credit_reservations WHERE subject_type = $1 AND subject_id = $2",
+		[subject.type, subject.id],
+	);
+	const balance = grants.reduce((sum, g) => sum + Number(g.remaining), 0);
+	if (balance - Number(held[0]?.held ?? 0) < amount) throw new HubError(402, "insufficientCredits", "额度不足，请充值或升级套餐");
+	const id = ulid(nowMs);
+	await q.query("INSERT INTO credit_reservations (id, subject_type, subject_id, amount, expires_at) VALUES ($1,$2,$3,$4,$5::timestamptz)", [
+		id,
+		subject.type,
+		subject.id,
+		amount,
+		new Date(nowMs + ttlMs).toISOString(),
+	]);
+	return { id, subject, amount };
+}
+
 export interface WalletService {
 	/** The price of a model on a gateway: exact match, then the gateway-less price, then the `*` fallback. */
 	priceFor(model: string, gatewayId: string | null): Promise<ModelPrice | undefined>;
 	balance(subject: Subject): Promise<number>;
 	/** Throws 402 `insufficientCredits` unless the subject can cover the estimated cost of this call. */
 	precheck(subject: Subject, price: ModelPrice | undefined, maxOutputTokens: number | undefined): Promise<void>;
+	/**
+	 * Holds `estimatedCost` credits of the subject before an upstream call, so concurrent calls cannot overspend together. Returns
+	 * undefined when there is nothing to hold (zero estimate); throws 402 `insufficientCredits` when the unreserved balance is short.
+	 * Settle the result with `commit` or `release`; a reservation nobody settles stops counting after `ttlMs`.
+	 */
+	reserve(subject: Subject, estimatedCost: number, ttlMs?: number): Promise<Reservation | undefined>;
+	/** Charges the actual cost, books the usage row and drops the reservation, all in one transaction. */
+	commit(reservation: Reservation | undefined, subject: Subject, entry: UsageEntry, price: ModelPrice | undefined): Promise<{ cost: number; overdraft: number }>;
+	/** Gives a reservation back without charging (the call failed or produced no usage). Safe to call twice. */
+	release(reservation: Reservation | undefined): Promise<void>;
 	/** Charges the actual cost and books the usage row in one transaction. */
 	chargeAndRecord(subject: Subject, entry: UsageEntry, price: ModelPrice | undefined): Promise<{ cost: number; overdraft: number }>;
 	/** Issues this subject's periodic grants now (cheap no-op when they exist). */
@@ -167,6 +218,17 @@ export function createWalletService(deps: ServiceDeps, usage: UsageService): Wal
 		if (!force && last !== undefined && at - last < ISSUE_CACHE_MS && at >= last) return;
 		await deps.db.tx({ system: true }, (q) => issuePeriodGrants(q, at, subject));
 		issued.set(key, at);
+	};
+
+	const chargeAndRecord = async (subject: Subject, entry: UsageEntry, price: ModelPrice | undefined, reservation?: Reservation): Promise<{ cost: number; overdraft: number }> => {
+		const cost = price ? computeCost(price, entry.inputTokens, entry.outputTokens) : 0;
+		const overdraft = await deps.db.tx({ system: true }, async (q) => {
+			const result = await consume(q, subject, cost, nowIso());
+			await usage.record({ ...entry, costCredits: cost, subjectType: subject.type, subjectId: subject.id, overdraftCredits: result.overdraft }, q);
+			if (reservation) await q.query("DELETE FROM credit_reservations WHERE id = $1", [reservation.id]);
+			return result.overdraft;
+		});
+		return { cost, overdraft };
 	};
 
 	return {
@@ -192,15 +254,20 @@ export function createWalletService(deps: ServiceDeps, usage: UsageService): Wal
 			if (balance < estimate) throw new HubError(402, "insufficientCredits", "额度不足，请充值或升级套餐");
 		},
 
-		async chargeAndRecord(subject, entry, price) {
-			const cost = price ? computeCost(price, entry.inputTokens, entry.outputTokens) : 0;
-			const overdraft = await deps.db.tx({ system: true }, async (q) => {
-				const result = await consume(q, subject, cost, nowIso());
-				await usage.record({ ...entry, costCredits: cost, subjectType: subject.type, subjectId: subject.id, overdraftCredits: result.overdraft }, q);
-				return result.overdraft;
-			});
-			return { cost, overdraft };
+		async reserve(subject, estimatedCost, ttlMs = RESERVATION_TTL_MS) {
+			const amount = Math.max(0, Math.ceil(estimatedCost));
+			if (amount === 0) return undefined;
+			return deps.db.tx({ system: true }, (q) => reserveCredits(q, subject, amount, deps.now(), ttlMs));
 		},
+
+		commit: (reservation, subject, entry, price) => chargeAndRecord(subject, entry, price, reservation),
+
+		async release(reservation) {
+			if (!reservation) return;
+			await deps.db.tx({ system: true }, (q) => q.query("DELETE FROM credit_reservations WHERE id = $1", [reservation.id]));
+		},
+
+		chargeAndRecord: (subject, entry, price) => chargeAndRecord(subject, entry, price),
 
 		ensureGrants,
 

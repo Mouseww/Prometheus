@@ -12,7 +12,7 @@ import { verifyJwt } from "../jwt.ts";
 import { LOG_PREFIX } from "../log.ts";
 import type { BillingService } from "../billing/index.ts";
 import type { Subject } from "../billing/providers/provider.ts";
-import { computeCost, DEFAULT_MAX_TOKENS, type ModelPrice, requestedMaxTokens } from "../billing/wallet.ts";
+import { computeCost, DEFAULT_MAX_TOKENS, type ModelPrice, requestedMaxTokens, type Reservation } from "../billing/wallet.ts";
 import { pinnedRequest, resolveSafeTarget } from "../net/safe-url.ts";
 import { estimateInputTokens } from "./estimate.ts";
 import { type ByokService, safeUrlPolicyOf } from "../services/byok.ts";
@@ -138,7 +138,11 @@ export function createLlmProxy(deps: HubDeps, quotas: QuotasService, usage: Usag
 			await quotas.check(actor.userId, orgIds);
 
 			// Credits (block 4B): only the operator's own gateways cost credits, and only while billing is on.
-			let charge: { subject: Subject; price: ModelPrice | undefined } | undefined;
+			let charge: { subject: Subject; price: ModelPrice | undefined; reservation: Reservation | undefined } | undefined;
+			const releaseHold = async (): Promise<void> => {
+				if (!billing || !charge?.reservation) return;
+				await billing.wallet.release(charge.reservation).catch((err: unknown) => deps.log.warn(`${LOG_PREFIX} 释放额度预留失败: ${err instanceof Error ? err.message : String(err)}`));
+			};
 			if (billing && gateway.scope === "platform") {
 				const subject: Subject = billingOrg ? { type: "org", id: billingOrg } : { type: "user", id: actor.userId };
 				const price = await billing.wallet.priceFor(model ?? "unknown", gateway.id);
@@ -147,8 +151,9 @@ export function createLlmProxy(deps: HubDeps, quotas: QuotasService, usage: Usag
 				// The estimate counts the prompt as well as the output cap: a huge prompt with a tiny max_tokens used to pass.
 				const estimate = computeCost(price, estimateInputTokens(parsed, raw.length), requestedMaxTokens(parsed) ?? DEFAULT_MAX_TOKENS);
 				await billing.wallet.ensureGrants(subject);
-				if (estimate > 0 && (await billing.wallet.balance(subject)) < estimate) throw new HubError(402, "insufficientCredits", "额度不足，请充值或升级套餐");
-				charge = { subject, price };
+				// Hold the estimate until the call settles: concurrent calls each see the others' holds, so together they cannot overspend.
+				// Throws 402 when the unreserved balance is short.
+				charge = { subject, price, reservation: await billing.wallet.reserve(subject, estimate) };
 			}
 
 			let body: Buffer | undefined = hasBody ? raw : undefined;
@@ -187,6 +192,7 @@ export function createLlmProxy(deps: HubDeps, quotas: QuotasService, usage: Usag
 					upstream = await fetch(upstreamUrl, { method: ctx.method, headers, body, signal: abort.signal, redirect: "manual" });
 				}
 			} catch (err) {
+				await releaseHold();
 				if (abort.signal.aborted) return HANDLED;
 				if (err instanceof HubError) {
 					deps.log.warn(`${LOG_PREFIX} 个人网关 ${gateway.id} 的上游请求被拒绝: ${err.message}`);
@@ -218,6 +224,8 @@ export function createLlmProxy(deps: HubDeps, quotas: QuotasService, usage: Usag
 			}
 
 			const used = extractor?.end();
+			// No usage (upstream error, empty or aborted stream): nothing is charged, so the hold goes back.
+			if (!used) await releaseHold();
 			if (used) {
 				const claimedOrg = billingOrg ?? (claims.org && actor.orgRoles[claims.org] ? claims.org : (orgIds[0] ?? null));
 				const entry: UsageEntry = {
@@ -230,10 +238,11 @@ export function createLlmProxy(deps: HubDeps, quotas: QuotasService, usage: Usag
 					source: gateway.scope === "user" ? "byok" : gateway.scope,
 				};
 				try {
-					if (billing && charge) await billing.wallet.chargeAndRecord(charge.subject, entry, charge.price);
+					if (billing && charge) await billing.wallet.commit(charge.reservation, charge.subject, entry, charge.price);
 					else await usage.record(entry);
 				} catch (err) {
 					deps.log.error(`${LOG_PREFIX} 记录模型用量失败: ${err instanceof Error ? err.message : String(err)}`);
+					await releaseHold();
 				}
 			}
 			return HANDLED;
