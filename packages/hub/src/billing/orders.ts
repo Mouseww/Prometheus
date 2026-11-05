@@ -56,7 +56,15 @@ export interface OrderFilter {
 	limit?: number;
 }
 
-export type WebhookOutcome = "applied" | "duplicate" | "ignored" | "unknownOrder";
+/** `mismatch`: a paid event whose amount or currency differs from the order; acknowledged but nothing is granted. */
+export type WebhookOutcome = "applied" | "duplicate" | "ignored" | "unknownOrder" | "mismatch";
+
+/** Why a paid event cannot be applied to this order, or undefined when it agrees (fields the provider did not send are not compared). */
+export function paymentMismatch(order: Pick<OrderRow, "amount_cents" | "currency">, event: Pick<PaymentEvent, "amountCents" | "currency">): string | undefined {
+	if (event.amountCents !== undefined && event.amountCents !== Number(order.amount_cents)) return `金额不符: 订单 ${Number(order.amount_cents)}，支付 ${event.amountCents}`;
+	if (event.currency !== undefined && event.currency.toLowerCase() !== order.currency.toLowerCase()) return `币种不符: 订单 ${order.currency}，支付 ${event.currency}`;
+	return undefined;
+}
 
 export interface OrdersService {
 	providerIds(): string[];
@@ -187,22 +195,40 @@ export function createOrdersService(
 		});
 	};
 
-	const refund = async (q: Queryable, order: OrderRow): Promise<void> => {
+	/**
+	 * Refunds take back credits in proportion to the refunded amount. Providers report the cumulative refunded amount, so the
+	 * previous cumulative figure (kept as the discriminator of earlier refund events) is subtracted. A refund with no amount
+	 * (manual orders) is a full refund. The order only becomes `refunded` once everything is refunded; a partial refund leaves it `paid`.
+	 */
+	const refund = async (q: Queryable, order: OrderRow, event: PaymentEvent, discriminator: string): Promise<void> => {
 		if (order.status !== "paid") return;
-		await q.query("UPDATE orders SET status = 'refunded', updated_at = now() WHERE id = $1", [order.id]);
+		const paidCents = Math.max(1, event.amountCents ?? Number(order.amount_cents));
+		const refundedCents = Math.min(paidCents, Math.max(0, event.amountRefundedCents ?? paidCents));
+		const full = refundedCents >= paidCents;
+		const credits = Number(order.credits);
+		let revoked = 0;
 		if (order.kind === "topup") {
-			// Whatever of the purchased credits is still unspent goes back.
-			await q.query("UPDATE credit_grants SET remaining = 0 WHERE source = 'topup' AND ref = $1", [order.id]);
-		} else {
+			const earlier = await q.query<{ discriminator: string }>(
+				"SELECT discriminator FROM payment_events WHERE provider = $1 AND provider_ref = $2 AND event_type = 'refunded' AND discriminator <> $3",
+				[order.provider, event.providerRef, discriminator],
+			);
+			const previousCents = earlier.reduce((max, r) => Math.max(max, /^\d+$/.test(r.discriminator) ? Number(r.discriminator) : 0), 0);
+			const previousCredits = Math.ceil((credits * Math.min(previousCents, paidCents)) / paidCents);
+			const targetCredits = full ? credits : Math.ceil((credits * refundedCents) / paidCents);
+			revoked = Math.max(0, targetCredits - previousCredits);
+			// Whatever of that share is still unspent goes back; credits already used stay used.
+			await q.query("UPDATE credit_grants SET remaining = GREATEST(0, remaining - $2) WHERE source = 'topup' AND ref = $1", [order.id, revoked]);
+		} else if (full) {
 			await q.query("UPDATE subscriptions SET status = 'canceled', updated_at = now() WHERE subject_type = $1 AND subject_id = $2", [order.subject_type, order.subject_id]);
 		}
+		if (full) await q.query("UPDATE orders SET status = 'refunded', updated_at = now() WHERE id = $1", [order.id]);
 		await audit.write(q, {
 			actorId: null,
 			orgId: order.subject_type === "org" ? order.subject_id : null,
-			action: "billing.order.refunded",
+			action: full ? "billing.order.refunded" : "billing.order.refunded.partial",
 			targetType: "order",
 			targetId: order.id,
-			detail: { kind: order.kind, provider: order.provider },
+			detail: { kind: order.kind, provider: order.provider, refundedCents, paidCents, creditsRevoked: revoked },
 		});
 	};
 
@@ -220,11 +246,14 @@ export function createOrdersService(
 		return deps.db.tx({ system: true }, async (q): Promise<WebhookOutcome> => {
 			// One row per provider reference and event type; renewals also carry the period so each cycle counts once.
 			// Inserted after the target was found (an unknown reference must stay retryable) and in the same transaction as the effect.
+			// Refunds carry the cumulative refunded amount, so each partial refund of one charge is its own event.
+			const discriminator =
+				event.type === "subscriptionRenewed" ? (event.periodEnd ?? "") : event.type === "refunded" && event.amountRefundedCents !== undefined ? String(event.amountRefundedCents) : "";
 			const firstTime = async (): Promise<boolean> =>
 				(
 					await q.query(
 						"INSERT INTO payment_events (provider, provider_ref, event_type, discriminator) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING provider_ref",
-						[provider, event.providerRef, event.type, event.type === "subscriptionRenewed" ? (event.periodEnd ?? "") : ""],
+						[provider, event.providerRef, event.type, discriminator],
 					)
 				).length > 0;
 
@@ -243,9 +272,24 @@ export function createOrdersService(
 
 			const order = await findOrder(q, provider, event);
 			if (!order) return "unknownOrder";
+			const problem = event.type === "paid" ? paymentMismatch(order, event) : undefined;
+			if (problem) {
+				// Nothing is granted and the order stays pending for an operator to look at. The event is acknowledged (so the provider stops
+				// retrying) but not remembered as handled, so a corrected event for the same session can still apply.
+				deps.log.error(`${LOG_PREFIX} 支付通知与订单不符，已拒绝 (${provider}, 订单 ${order.id}): ${problem}`);
+				await audit.write(q, {
+					actorId: null,
+					orgId: order.subject_type === "org" ? order.subject_id : null,
+					action: "billing.order.mismatch",
+					targetType: "order",
+					targetId: order.id,
+					detail: { provider, problem, expectedCents: Number(order.amount_cents), paidCents: event.amountCents ?? null },
+				});
+				return "mismatch";
+			}
 			if (!(await firstTime())) return "duplicate";
 			if (event.type === "paid") await fulfill(q, order, event);
-			else if (event.type === "refunded") await refund(q, order);
+			else if (event.type === "refunded") await refund(q, order, event, discriminator);
 			else if (order.status === "pending") await q.query("UPDATE orders SET status = 'failed', updated_at = now() WHERE id = $1", [order.id]);
 			return "applied";
 		});

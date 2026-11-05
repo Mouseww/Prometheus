@@ -42,7 +42,12 @@ export interface PaymentEvent {
 	providerRef: string;
 	/** Fallback lookup: the order id the Hub put into the checkout metadata. */
 	orderId?: string;
+	/** What the provider says was paid (paid, renewals) or the amount of the charge (refunds). Compared with the order when present. */
 	amountCents?: number;
+	/** Lower-case ISO currency the provider charged in; compared with the order when present. */
+	currency?: string;
+	/** Refunds: the cumulative amount refunded so far for the charge. Absent means a full refund. */
+	amountRefundedCents?: number;
 	/** ISO timestamp of the end of the paid period (renewals). */
 	periodEnd?: string;
 	/** The provider's subscription id, remembered on activation so later renewals can find the subscription. */

@@ -2,12 +2,15 @@ import type { IncomingMessage } from "node:http";
 import { Type } from "typebox";
 import { type BillingService, createBilling } from "../billing/index.ts";
 import type { HubDeps } from "../deps.ts";
-import { badRequest, HubError } from "../errors.ts";
+import { badRequest, HubError, tooManyRequests } from "../errors.ts";
 import { Reply, type Router } from "../http/router.ts";
 import { sharedUsage } from "./collab-util.ts";
 import { IdSchema, NameSchema } from "./schemas.ts";
 
 const MAX_WEBHOOK_BYTES = 1024 * 1024;
+/** Checkout attempts per user per window. */
+export const CHECKOUT_PER_WINDOW = 30;
+export const CHECKOUT_WINDOW_MS = 10 * 60 * 1000;
 
 const CheckoutBody = Type.Object({
 	kind: Type.Union([Type.Literal("topup"), Type.Literal("subscription")]),
@@ -130,7 +133,11 @@ export function registerBillingRoutes(router: Router, deps: HubDeps): void {
 	});
 	router.post("/api/billing/checkout", async (ctx) => {
 		enabled();
-		return new Reply(201, await billing.orders.checkout(await ctx.actor(), await ctx.json(CheckoutBody)));
+		const actor = await ctx.actor();
+		// Every checkout creates an order row and a provider session; per user so one account cannot flood either.
+		const hit = deps.limiter.hit(`billing:checkout:${actor.userId}`, CHECKOUT_PER_WINDOW, CHECKOUT_WINDOW_MS);
+		if (!hit.allowed) throw tooManyRequests(hit.retryAfterSec);
+		return new Reply(201, await billing.orders.checkout(actor, await ctx.json(CheckoutBody)));
 	});
 	router.post("/api/billing/redeem", async (ctx) => {
 		enabled();

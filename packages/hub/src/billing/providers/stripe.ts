@@ -83,11 +83,13 @@ export function mapStripeEvent(event: unknown): PaymentEvent {
 			if (!paid || !id) return { type: "ignored", providerRef: id ?? "" };
 			const orderId = str(obj.client_reference_id) ?? metadataOrder;
 			const subscriptionRef = str(obj.subscription);
+			const currency = str(obj.currency);
 			return {
 				type: "paid",
 				providerRef: id,
 				...(orderId ? { orderId } : {}),
 				...(typeof obj.amount_total === "number" ? { amountCents: obj.amount_total } : {}),
+				...(currency ? { currency: currency.toLowerCase() } : {}),
 				...(subscriptionRef ? { subscriptionRef } : {}),
 			};
 		}
@@ -117,7 +119,15 @@ export function mapStripeEvent(event: unknown): PaymentEvent {
 		case "charge.refunded": {
 			const ref = str(obj.payment_intent) ?? str(obj.id);
 			if (!ref) return { type: "ignored", providerRef: "" };
-			return { type: "refunded", providerRef: ref, ...(metadataOrder ? { orderId: metadataOrder } : {}) };
+			const currency = str(obj.currency);
+			return {
+				type: "refunded",
+				providerRef: ref,
+				...(metadataOrder ? { orderId: metadataOrder } : {}),
+				...(typeof obj.amount === "number" ? { amountCents: obj.amount } : {}),
+				...(typeof obj.amount_refunded === "number" ? { amountRefundedCents: obj.amount_refunded } : {}),
+				...(currency ? { currency: currency.toLowerCase() } : {}),
+			};
 		}
 		default:
 			return { type: "ignored", providerRef: "" };
