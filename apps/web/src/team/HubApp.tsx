@@ -53,7 +53,8 @@ const M = defineMessages({
 		inviteSignedInTitle: "你已登录",
 		inviteSignedIn: "你当前以 {name}（{email}）登录。",
 		inviteDetail: "这个邀请要加入 {name}（{role}），发给 {to}。",
-		inviteHow: "邀请需要在创建新账号时使用。退出登录后，可以用这个邀请注册另一个账号；也可以继续使用当前账号。",
+		inviteHow: "可以用当前账号接受这个邀请（邀请所指的邮箱须与当前账号一致）；也可以退出登录，用这个邀请注册另一个账号。",
+		inviteAccept: "用此账号接受邀请",
 		inviteSwitch: "退出登录，用其他账号使用邀请",
 		inviteKeep: "继续使用当前账号",
 	},
@@ -92,7 +93,8 @@ const M = defineMessages({
 		inviteSignedInTitle: "You are signed in",
 		inviteSignedIn: "You are signed in as {name} ({email}).",
 		inviteDetail: "This invitation is to join {name} ({role}), addressed to {to}.",
-		inviteHow: "An invitation is used when creating a new account. Sign out to register another account with it, or keep using the current account.",
+		inviteHow: "You can accept this invitation with the current account (the invited email must match it), or sign out and register another account with it.",
+		inviteAccept: "Accept for this account",
 		inviteSwitch: "Sign out and use another account",
 		inviteKeep: "Keep this account",
 	},
@@ -298,10 +300,22 @@ function AuthScreen({ api, meta, inviteToken, startMode, onAuthed, onPending }: 
 	);
 }
 
-/** Shown instead of the app when an /invite/<token> link is opened while signed in. The Hub has no accept-for-current-user endpoint. */
-function InviteWhileSignedIn({ api, inviteToken, onSwitch, onKeep }: { api: HubApi; inviteToken: string; onSwitch: () => void; onKeep: () => void }) {
+/**
+ * Shown instead of the app when an /invite/<token> link is opened while signed in. Accepting joins the current account;
+ * `onAccepted` then leaves the link URL, and the shell that mounts next loads a fresh `me` with the new membership.
+ */
+function InviteWhileSignedIn({ api, inviteToken, onAccepted, onSwitch, onKeep }: { api: HubApi; inviteToken: string; onAccepted: () => void; onSwitch: () => void; onKeep: () => void }) {
 	const t = useT(M);
 	const c = useCommonT();
+	const { busy, error, run } = useAction();
+	const accept = async () => {
+		const joined = await run(async () => {
+			const r = await api.acceptInvitation(inviteToken);
+			await api.me();
+			return r;
+		});
+		if (joined) onAccepted();
+	};
 	const [who, setWho] = useState<{ name: string; email: string } | undefined>(undefined);
 	const [invitation, setInvitation] = useState<InvitationView | "bad" | undefined>(undefined);
 	useEffect(() => {
@@ -326,11 +340,15 @@ function InviteWhileSignedIn({ api, inviteToken, onSwitch, onKeep }: { api: HubA
 				{invitation === "bad" && <Notice kind="error">{t("inviteBad")}</Notice>}
 				{invitation && invitation !== "bad" && <Notice kind="ok">{t("inviteDetail", { name: invitation.scopeName, role: roleLabel(c, invitation.role), to: invitation.email })}</Notice>}
 				<p className="text-sm text-ink-400">{t("inviteHow")}</p>
+				{error && <Notice kind="error">{error}</Notice>}
 				<div className="flex flex-col gap-2">
-					<Button variant="primary" onClick={onSwitch}>
+					<Button variant="primary" onClick={() => void accept()} disabled={busy || invitation === "bad"}>
+						{t("inviteAccept")}
+					</Button>
+					<Button variant="outline" onClick={onSwitch} disabled={busy}>
 						{t("inviteSwitch")}
 					</Button>
-					<Button variant="outline" onClick={onKeep}>
+					<Button variant="outline" onClick={onKeep} disabled={busy}>
 						{t("inviteKeep")}
 					</Button>
 				</div>
@@ -459,6 +477,7 @@ export function HubApp() {
 				<InviteWhileSignedIn
 					api={api}
 					inviteToken={inviteToken}
+					onAccepted={dropInvite}
 					onKeep={dropInvite}
 					onSwitch={() => void api.logout().finally(() => setPhase("anon"))}
 				/>

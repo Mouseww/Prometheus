@@ -243,6 +243,8 @@ export interface HubApi extends TeamApi {
 	register(input: import("./types.ts").RegisterInput): Promise<import("./types.ts").RegisterResult>;
 	/** Public lookup of an invitation link token. */
 	lookupInvitation(token: string): Promise<import("./types.ts").InvitationView>;
+	/** Signed-in user redeems an invitation link for the current account. */
+	acceptInvitation(token: string): Promise<import("./types.ts").AcceptedInvitation>;
 	/** Redeems the token of the mailed link. The token works once. */
 	verifyEmail(token: string): Promise<VerifyEmailResult>;
 	/** Always succeeds (the Hub never reveals whether the account exists). */

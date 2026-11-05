@@ -12,7 +12,7 @@ import {
 	type Unsubscribe,
 	unwrapEnvelope,
 } from "./api.ts";
-import type { InvitationView, MetaInfo, PublicUser, RegisterInput, RegisterResult, TokenPair, VerifyEmailResult } from "./types.ts";
+import type { AcceptedInvitation, InvitationView, MetaInfo, PublicUser, RegisterInput, RegisterResult, TokenPair, VerifyEmailResult } from "./types.ts";
 
 export const ACCESS_KEY = "prometheus.team.access";
 export const REFRESH_KEY = "prometheus.team.refresh";
@@ -283,6 +283,7 @@ export function createHubApi(options: HubApiOptions = {}): HubApi {
 			await request<unknown>("POST", "/api/auth/reset-password", { token, password }, false);
 		},
 		lookupInvitation: (token) => request<InvitationView>("GET", `/api/invitations/${encodeURIComponent(token)}`, undefined, false),
+		acceptInvitation: (token) => request<AcceptedInvitation>("POST", `/api/invitations/${encodeURIComponent(token)}/accept`, {}),
 		async logout(): Promise<void> {
 			const refreshToken = getRefresh();
 			stopSocket();

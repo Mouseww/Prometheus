@@ -253,6 +253,15 @@ export interface InvitationView {
 	expiresAt: string;
 }
 
+/** What `POST /api/invitations/:token/accept` returns: the organization or team that was joined. */
+export interface AcceptedInvitation {
+	scope: InvitationScope;
+	scopeId: string;
+	scopeName: string;
+	role: string;
+	orgId: string | null;
+}
+
 export interface CreatedInvitation {
 	link: string;
 	token: string;

@@ -79,6 +79,18 @@ describe("createHubApi request construction", () => {
 		expect(calls[6]?.body).toEqual({ reason: "no" });
 	});
 
+	it("accepts an invitation with the bearer token and an encoded path", async () => {
+		const joined = { scope: "org", scopeId: "o1", scopeName: "Corp", role: "member", orgId: "o1" };
+		const { api, calls } = setup(() => ok(joined), { [ACCESS_KEY]: "tok" });
+		await expect(api.acceptInvitation("abc/def")).resolves.toEqual(joined);
+		expect(calls[0]).toMatchObject({ url: "/plugins/team/api/invitations/abc%2Fdef/accept", method: "POST", auth: "Bearer tok" });
+	});
+
+	it("surfaces the accept error code", async () => {
+		const { api } = setup(() => fail(400, "inviteEmailMismatch"), { [ACCESS_KEY]: "tok" });
+		await expect(api.acceptInvitation("t")).rejects.toMatchObject({ name: "TeamApiError", status: 400, code: "inviteEmailMismatch" });
+	});
+
 	it("does not send a token for public endpoints", async () => {
 		const { api, calls } = setup(() => ok({ needsSetup: true }), { [ACCESS_KEY]: "tok" });
 		await api.meta();
