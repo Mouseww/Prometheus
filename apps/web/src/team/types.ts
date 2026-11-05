@@ -19,6 +19,14 @@ export interface MetaInfo {
 	publicKey: string;
 	needsSetup: boolean;
 	registration: { open: boolean; domains: string[]; approval: boolean; invite: boolean };
+	/** Block 4A. Absent on a Hub that predates it, so every reader goes through ./logic/publicMode.ts. */
+	mode?: "private" | "public";
+	mailConfigured?: boolean;
+	turnstileSiteKey?: string | null;
+	turnstileRequired?: boolean;
+	allowSelfCreateOrg?: boolean;
+	/** Not sent by the Hub yet; honoured when it appears (see billingFromMeta). */
+	billingEnabled?: boolean;
 }
 
 export interface RegisterInput {
@@ -27,6 +35,44 @@ export interface RegisterInput {
 	displayName: string;
 	setupCode?: string;
 	inviteToken?: string;
+	turnstileToken?: string;
+}
+
+export interface VerifyEmailResult {
+	verified: true;
+	status: "active" | "pending";
+}
+
+export type TransferStatus = "pending" | "accepted" | "rejected" | "canceled";
+
+export interface TransferView {
+	id: string;
+	teamId: string;
+	teamName: string;
+	fromUserId: string;
+	toOrgId: string;
+	toOrgName: string;
+	status: TransferStatus;
+	decidedBy: string | null;
+	createdAt: string;
+	decidedAt: string | null;
+	/** Set on accept: users who were not organization members and were added as `member`. */
+	addedMembers?: string[];
+}
+
+export interface AdminOrgView {
+	id: string;
+	name: string;
+	slug: string;
+	status: "active" | "disabled";
+	memberCount: number;
+	teamCount: number;
+	createdAt: string;
+}
+
+export interface DisposableDomainView {
+	domain: string;
+	createdAt: string;
 }
 
 export interface RegisterResult {
@@ -184,6 +230,8 @@ export interface RegistrationPolicy {
 
 export interface PlatformSettings {
 	allowPersonalTeams: boolean;
+	/** Public mode only: whether any verified user may create an organization. */
+	allowSelfCreateOrg: boolean;
 }
 
 export type InvitationScope = "org" | "team";

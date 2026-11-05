@@ -12,7 +12,7 @@ import {
 	type Unsubscribe,
 	unwrapEnvelope,
 } from "./api.ts";
-import type { InvitationView, MetaInfo, PublicUser, RegisterInput, RegisterResult, TokenPair } from "./types.ts";
+import type { InvitationView, MetaInfo, PublicUser, RegisterInput, RegisterResult, TokenPair, VerifyEmailResult } from "./types.ts";
 
 export const ACCESS_KEY = "prometheus.team.access";
 export const REFRESH_KEY = "prometheus.team.refresh";
@@ -272,6 +272,16 @@ export function createHubApi(options: HubApiOptions = {}): HubApi {
 			return pair.user;
 		},
 		register: (input: RegisterInput) => request<RegisterResult>("POST", "/api/auth/register", input, false),
+		verifyEmail: (token) => request<VerifyEmailResult>("POST", "/api/auth/verify-email", { token }, false),
+		async resendVerification(email): Promise<void> {
+			await request<unknown>("POST", "/api/auth/resend-verification", { email }, false);
+		},
+		async forgotPassword(email): Promise<void> {
+			await request<unknown>("POST", "/api/auth/forgot-password", { email }, false);
+		},
+		async resetPassword(token, password): Promise<void> {
+			await request<unknown>("POST", "/api/auth/reset-password", { token, password }, false);
+		},
 		lookupInvitation: (token) => request<InvitationView>("GET", `/api/invitations/${encodeURIComponent(token)}`, undefined, false),
 		async logout(): Promise<void> {
 			const refreshToken = getRefresh();

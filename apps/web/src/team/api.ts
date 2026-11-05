@@ -2,7 +2,11 @@
 //   createHubApi    (./hubApi.ts)    direct fetch to /plugins/team/api with the user's own tokens (Hub mode)
 //   createMemberApi (./memberApi.ts) relays through the local team plugin (member mode)
 import type {
+	AdminOrgView,
 	AdminUserView,
+	DisposableDomainView,
+	TransferView,
+	VerifyEmailResult,
 	AuditPage,
 	AuditQuery,
 	Board,
@@ -125,7 +129,8 @@ export interface TeamApi {
 	getOrgRegistration(orgId: string): Promise<RegistrationPolicy>;
 	putOrgRegistration(orgId: string, policy: RegistrationPolicy): Promise<RegistrationPolicy>;
 	getSettings(): Promise<PlatformSettings>;
-	putSettings(settings: PlatformSettings): Promise<PlatformSettings>;
+	/** Only the given fields change. */
+	putSettings(settings: Partial<PlatformSettings>): Promise<PlatformSettings>;
 
 	createInvitation(input: InvitationInput): Promise<CreatedInvitation>;
 
@@ -136,6 +141,24 @@ export interface TeamApi {
 	removeOrgMember(orgId: string, userId: string): Promise<void>;
 
 	listAudit(query?: AuditQuery): Promise<AuditPage>;
+
+	// ---- online service: team transfer into an organization ----
+	/** Personal team admin asks to move the team into an organization they belong to. */
+	requestTeamTransfer(teamId: string, orgId: string): Promise<TransferView>;
+	/** Requests the viewer made, plus requests for organizations they administer (operators see all). */
+	listTransfers(): Promise<TransferView[]>;
+	acceptTransfer(id: string): Promise<TransferView>;
+	rejectTransfer(id: string): Promise<TransferView>;
+	/** Only the requester may cancel. */
+	cancelTransfer(id: string): Promise<TransferView>;
+
+	// ---- online service: operator console ----
+	listAdminOrgs(): Promise<AdminOrgView[]>;
+	/** Disables the account, revokes its tokens and stops its tenant runtime. */
+	banUser(userId: string): Promise<PublicUser>;
+	listDisposableDomains(): Promise<DisposableDomainView[]>;
+	addDisposableDomain(domain: string): Promise<DisposableDomainView>;
+	removeDisposableDomain(domain: string): Promise<void>;
 
 	// ---- sessions (mirror, spectate, grants, relay, fork) ----
 	listSessions(workspaceId: string, filter?: { status?: SessionStatus; owner?: string; limit?: number }): Promise<SessionView[]>;
@@ -220,6 +243,12 @@ export interface HubApi extends TeamApi {
 	register(input: import("./types.ts").RegisterInput): Promise<import("./types.ts").RegisterResult>;
 	/** Public lookup of an invitation link token. */
 	lookupInvitation(token: string): Promise<import("./types.ts").InvitationView>;
+	/** Redeems the token of the mailed link. The token works once. */
+	verifyEmail(token: string): Promise<VerifyEmailResult>;
+	/** Always succeeds (the Hub never reveals whether the account exists). */
+	resendVerification(email: string): Promise<void>;
+	forgotPassword(email: string): Promise<void>;
+	resetPassword(token: string, password: string): Promise<void>;
 	logout(): Promise<void>;
 	/** True when an access or refresh token is stored (it may still be expired). */
 	hasSession(): boolean;
@@ -311,6 +340,18 @@ export function createApiMethods(r: Requester): Omit<TeamApi, "subscribe"> {
 		removeOrgMember: (orgId, userId) => empty("DELETE", `/api/orgs/${seg(orgId)}/members/${seg(userId)}`),
 
 		listAudit: (query) => get("/api/admin/audit", { ...query }),
+
+		requestTeamTransfer: (teamId, orgId) => send("POST", `/api/teams/${seg(teamId)}/transfer`, { orgId }),
+		listTransfers: () => get("/api/transfers"),
+		acceptTransfer: (id) => send("POST", `/api/transfers/${seg(id)}/accept`),
+		rejectTransfer: (id) => send("POST", `/api/transfers/${seg(id)}/reject`),
+		cancelTransfer: (id) => send("POST", `/api/transfers/${seg(id)}/cancel`),
+
+		listAdminOrgs: () => get("/api/admin/orgs"),
+		banUser: (id) => send("POST", `/api/admin/users/${seg(id)}/ban`),
+		listDisposableDomains: () => get("/api/admin/disposable-domains"),
+		addDisposableDomain: (domain) => send("POST", "/api/admin/disposable-domains", { domain }),
+		removeDisposableDomain: (domain) => empty("DELETE", `/api/admin/disposable-domains/${seg(domain)}`),
 
 		listSessions: (workspaceId, filter) => get(`/api/workspaces/${seg(workspaceId)}/sessions`, { ...filter }),
 		getSession: (id) => get(`/api/sessions/${seg(id)}`),
