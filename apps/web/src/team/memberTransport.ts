@@ -1,6 +1,7 @@
 // Binds createMemberApi to the connected Prometheus server (the store's websocket client).
-import { useStore } from "../lib/store.ts";
-import { createMemberApi, type PluginCall, type PluginWatch } from "./memberApi.ts";
+import { openSession, useStore } from "../lib/store.ts";
+import type { MemberPlugin } from "./context.tsx";
+import { createMemberApi, TEAM_PLUGIN, type PluginCall, type PluginWatch } from "./memberApi.ts";
 import type { TeamApi } from "./api.ts";
 
 const pluginCall: PluginCall = async (plugin, method, params) => {
@@ -21,6 +22,16 @@ const pluginWatch: PluginWatch = (plugin, topic, cb) => {
 		off();
 	};
 };
+
+let cachedPlugin: MemberPlugin | undefined;
+/** Plugin RPC and navigation into the host app's chat view (member mode only). */
+export function memberPlugin(): MemberPlugin {
+	cachedPlugin ??= {
+		call: (method, params) => pluginCall(TEAM_PLUGIN, method, params),
+		openLocalSession: (sessionId) => void openSession(sessionId),
+	};
+	return cachedPlugin;
+}
 
 let cached: TeamApi | undefined;
 /** One shared member-mode TeamApi (the relay holds no state of its own). */

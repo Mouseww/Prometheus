@@ -4,7 +4,7 @@ import { Loader2 } from "lucide-react";
 import { type ReactNode, useCallback, useMemo, useState } from "react";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import type { TeamApi } from "./api.ts";
-import { type Route, TeamContext, type TeamContextValue } from "./context.tsx";
+import { type MemberPlugin, type Route, TeamContext, type TeamContextValue } from "./context.tsx";
 import { useCommonT } from "./i18n.ts";
 import { ErrorBox, useAsync } from "./kit.tsx";
 import { DEFAULT_ROUTE_ID, findRoute, N, navFor, type TeamRoute } from "./routes.tsx";
@@ -16,11 +16,13 @@ const M = defineMessages({
 });
 
 /** Detail pages highlight the nav entry they belong to. */
-const NAV_PARENT: Record<string, string> = { team: "teams", workspace: "teams", mergeRequest: "teams" };
+const NAV_PARENT: Record<string, string> = { team: "teams", workspace: "teams", mergeRequest: "teams", session: "teamHome", notifications: "teamHome" };
 
 export interface TeamShellProps {
 	api: TeamApi;
 	mode: "hub" | "member";
+	/** Member mode: local plugin RPC and navigation (checkout, start/fork session, resolve binary conflicts). */
+	plugin?: MemberPlugin;
 	/** Rendered at the right end of the header (Hub mode: the user menu). */
 	topRight?: (ctx: { reloadMe: () => void }) => ReactNode;
 	initialRoute?: Route;
@@ -45,7 +47,7 @@ function NavButton({ route, active, onClick }: { route: TeamRoute; active: boole
 	);
 }
 
-export function TeamShell({ api, mode, topRight, initialRoute }: TeamShellProps) {
+export function TeamShell({ api, mode, plugin, topRight, initialRoute }: TeamShellProps) {
 	const t = useT(M);
 	const c = useCommonT();
 	const me = useAsync(() => api.me(), [api]);
@@ -58,7 +60,7 @@ export function TeamShell({ api, mode, topRight, initialRoute }: TeamShellProps)
 	const reload = me.reload;
 	const reloadMe = useCallback(async () => reload(), [reload]);
 
-	const ctx = useMemo<TeamContextValue | null>(() => (me.data ? { api, me: me.data, mode, route, navigate, back, reloadMe } : null), [api, me.data, mode, route, navigate, back, reloadMe]);
+	const ctx = useMemo<TeamContextValue | null>(() => (me.data ? { api, plugin, me: me.data, mode, route, navigate, back, reloadMe } : null), [api, plugin, me.data, mode, route, navigate, back, reloadMe]);
 
 	if (!ctx) {
 		if (me.error) {
@@ -82,7 +84,7 @@ export function TeamShell({ api, mode, topRight, initialRoute }: TeamShellProps)
 
 	return (
 		<TeamContext.Provider value={ctx}>
-			<div className="@container flex h-full min-h-0 w-full flex-col">
+			<div className="@container relative flex h-full min-h-0 w-full flex-col">
 				<header className="flex h-12 shrink-0 items-center gap-3 border-b hairline px-4">
 					<span className="font-display text-sm font-semibold tracking-wide">{t("brand")}</span>
 					{context && <span className="min-w-0 truncate rounded-md bg-ink-800 px-2 py-0.5 text-xs text-ink-300">{context}</span>}

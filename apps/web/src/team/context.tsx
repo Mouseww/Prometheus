@@ -8,8 +8,17 @@ export interface Route {
 	params?: Readonly<Record<string, string>>;
 }
 
+/** Member-mode only: the local team plugin RPC and the host app's navigation. Absent in Hub mode. */
+export interface MemberPlugin {
+	/** Calls a method of the `team` plugin (checkout, session.start, session.fork, ...). Rejects on failure. */
+	call(method: string, params: Record<string, unknown>): Promise<unknown>;
+	/** Opens a local Prometheus session in the normal chat view. */
+	openLocalSession(sessionId: string): void;
+}
+
 export interface TeamContextValue {
 	api: TeamApi;
+	plugin?: MemberPlugin;
 	me: MeResult;
 	/** `hub`: the page is the Hub's own web UI. `member`: embedded in the normal app through the team plugin. */
 	mode: "hub" | "member";

@@ -44,6 +44,10 @@ const E = defineMessages({
 		notDisabled: "该账号没有被停用",
 		notPending: "该账号不在待审批状态",
 		skipReviewDenied: "只有团队管理员或审核人可以跳过审核",
+		notGranted: "你没有这个会话的操作授权，请联系会话所有者",
+		ownerOffline: "会话所有者当前不在线，无法转发操作",
+		relayFailed: "所有者的 Prometheus 没有执行这个操作",
+		relayTimeout: "所有者的 Prometheus 没有及时响应，请稍后再试",
 	},
 	en: {
 		network: "Cannot reach the Hub. Check your network.",
@@ -85,6 +89,10 @@ const E = defineMessages({
 		notDisabled: "This account is not disabled",
 		notPending: "This account is not pending approval",
 		skipReviewDenied: "Only team admins and reviewers can skip review",
+		notGranted: "You are not granted to act on this session. Ask its owner.",
+		ownerOffline: "The session owner is offline, so the action cannot be relayed",
+		relayFailed: "The owner's Prometheus did not carry out the action",
+		relayTimeout: "The owner's Prometheus did not answer in time. Try again shortly.",
 	},
 });
 

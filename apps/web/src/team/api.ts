@@ -5,26 +5,49 @@ import type {
 	AdminUserView,
 	AuditPage,
 	AuditQuery,
+	Board,
+	CreateGatewayInput,
 	CreateOrgInput,
 	CreateWorkspaceInput,
 	CreatedInvitation,
+	FileListing,
+	ForkResult,
+	GatewayFilter,
+	GatewayView,
 	InvitationInput,
 	ListUsersQuery,
 	MeResult,
 	MergeRequestDiff,
 	MergeRequestStatus,
 	MergeRequestView,
+	NotificationsPage,
+	NotificationsQuery,
 	OrgMemberView,
 	OrgRole,
 	OrgSummary,
 	PlatformSettings,
 	PublicUser,
+	QuotaFilter,
+	QuotaView,
 	RegistrationPolicy,
+	ReportView,
+	SessionAction,
+	SessionDetail,
+	SessionEventsPage,
+	SessionEventsQuery,
+	SessionTranscript,
+	SessionView,
+	SetQuotaInput,
 	TeamMemberView,
 	TeamRole,
 	TeamView,
+	UpdateGatewayInput,
 	UpdateWorkspaceInput,
+	UsageQuery,
+	UsageRow,
+	VisibleModel,
 	WorkspaceView,
+	SessionStatus,
 } from "./types.ts";
 
 /** The Hub is mounted under this prefix; every request path below is Hub-relative and starts with `/api/`. */
@@ -91,6 +114,39 @@ export interface TeamApi {
 	removeOrgMember(orgId: string, userId: string): Promise<void>;
 
 	listAudit(query?: AuditQuery): Promise<AuditPage>;
+
+	// ---- sessions (mirror, spectate, grants, relay, fork) ----
+	listSessions(workspaceId: string, filter?: { status?: SessionStatus; owner?: string; limit?: number }): Promise<SessionView[]>;
+	getSession(sessionId: string): Promise<SessionDetail>;
+	listSessionEvents(sessionId: string, query?: SessionEventsQuery): Promise<SessionEventsPage>;
+	getSessionTranscript(sessionId: string): Promise<SessionTranscript>;
+	/** Files of the session snapshot. `path` is a repository-relative directory or file; empty for the root. */
+	browseSessionFiles(sessionId: string, path?: string): Promise<FileListing>;
+	listSessionGrants(sessionId: string): Promise<string[]>;
+	grantSession(sessionId: string, userId: string): Promise<unknown>;
+	revokeSessionGrant(sessionId: string, userId: string): Promise<void>;
+	/** Relay an action to the owner's machine. Fails with notGranted, ownerOffline, relayFailed or relayTimeout. */
+	sendSessionAction(sessionId: string, action: SessionAction): Promise<unknown>;
+	forkSession(sessionId: string, input?: { title?: string }): Promise<ForkResult>;
+
+	// ---- board, daily reports, notifications ----
+	getBoard(workspaceId: string): Promise<Board>;
+	/** The report for `date` (the latest one when omitted); null when none exists. */
+	getReport(workspaceId: string, date?: string): Promise<ReportView | null>;
+	generateReport(workspaceId: string, date?: string): Promise<ReportView>;
+	listNotifications(query?: NotificationsQuery): Promise<NotificationsPage>;
+	markNotificationsRead(input: { ids?: string[]; all?: boolean }): Promise<{ updated: number }>;
+
+	// ---- model gateways, quotas, usage ----
+	listGateways(filter?: GatewayFilter): Promise<GatewayView[]>;
+	createGateway(input: CreateGatewayInput): Promise<GatewayView>;
+	updateGateway(id: string, patch: UpdateGatewayInput): Promise<GatewayView>;
+	deleteGateway(id: string): Promise<void>;
+	listQuotas(filter?: QuotaFilter): Promise<QuotaView[]>;
+	/** Upserts a limit; `limitTokens: null` removes it (the Hub then answers null). */
+	setQuota(input: SetQuotaInput): Promise<QuotaView | null>;
+	getUsage(query: UsageQuery): Promise<UsageRow[]>;
+	listModels(): Promise<VisibleModel[]>;
 
 	/**
 	 * Receive realtime events for a topic ("user", "workspace:<id>", "session:<id>"). Returns the unsubscribe function.
@@ -198,5 +254,31 @@ export function createApiMethods(r: Requester): Omit<TeamApi, "subscribe"> {
 		removeOrgMember: (orgId, userId) => empty("DELETE", `/api/orgs/${seg(orgId)}/members/${seg(userId)}`),
 
 		listAudit: (query) => get("/api/admin/audit", { ...query }),
+
+		listSessions: (workspaceId, filter) => get(`/api/workspaces/${seg(workspaceId)}/sessions`, { ...filter }),
+		getSession: (id) => get(`/api/sessions/${seg(id)}`),
+		listSessionEvents: (id, query) => get(`/api/sessions/${seg(id)}/events`, { ...query }),
+		getSessionTranscript: (id) => get(`/api/sessions/${seg(id)}/transcript`),
+		browseSessionFiles: (id, path) => get(`/api/sessions/${seg(id)}/files`, { path }),
+		listSessionGrants: (id) => get(`/api/sessions/${seg(id)}/grants`),
+		grantSession: (id, userId) => send("POST", `/api/sessions/${seg(id)}/grants`, { userId }),
+		revokeSessionGrant: (id, userId) => empty("DELETE", `/api/sessions/${seg(id)}/grants/${seg(userId)}`),
+		sendSessionAction: (id, action) => send("POST", `/api/sessions/${seg(id)}/actions`, action),
+		forkSession: (id, input) => send("POST", `/api/sessions/${seg(id)}/fork`, input?.title ? { title: input.title } : {}),
+
+		getBoard: (workspaceId) => get(`/api/workspaces/${seg(workspaceId)}/board`),
+		getReport: (workspaceId, date) => get(`/api/workspaces/${seg(workspaceId)}/reports`, { date }),
+		generateReport: (workspaceId, date) => send("POST", `/api/workspaces/${seg(workspaceId)}/reports/generate`, date ? { date } : {}),
+		listNotifications: (query) => get("/api/notifications", { unread: query?.unread ? "1" : undefined, before: query?.before, limit: query?.limit }),
+		markNotificationsRead: (input) => send("POST", "/api/notifications/read", input),
+
+		listGateways: (filter) => get("/api/admin/gateways", { ...filter }),
+		createGateway: (input) => send("POST", "/api/admin/gateways", input),
+		updateGateway: (id, patch) => send("PUT", `/api/admin/gateways/${seg(id)}`, patch),
+		deleteGateway: (id) => empty("DELETE", `/api/admin/gateways/${seg(id)}`),
+		listQuotas: (filter) => get("/api/admin/quotas", { ...filter }),
+		setQuota: (input) => send("PUT", "/api/admin/quotas", input),
+		getUsage: (query) => get("/api/admin/usage", { ...query }),
+		listModels: () => get("/api/models"),
 	};
 }
