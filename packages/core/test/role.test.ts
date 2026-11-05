@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { PrometheusHost } from "../src/host.ts";
 import { assertAgentAllowed, pluginAllowed, serverRole } from "../src/role.ts";
+import { rpcMethodNames } from "./support/rpc-methods.ts";
 
 describe("serverRole", () => {
 	it("is a normal server unless PROMETHEUS_ROLE=hub", () => {
@@ -23,6 +24,40 @@ describe("assertAgentAllowed", () => {
 		}
 		expect(() => assertAgentAllowed("hub", "session.list", {})).not.toThrow();
 		expect(() => assertAgentAllowed("hub", "settings.get", {})).not.toThrow();
+	});
+	it("refuses every agent-driving method on a hub", () => {
+		for (const m of ["goal.set", "goal.control", "chat.compact", "message.retry", "message.edit", "agent.install", "system.openIn", "agent.syncSessions", "chat.abort", "ui.respond", "agent.save", "plugin.install", "workspace.add", "fs.pick"]) {
+			expect(() => assertAgentAllowed("hub", m, {}), m).toThrowError(expect.objectContaining({ code: "agentDisabled" }));
+			expect(() => assertAgentAllowed("server", m, {}), m).not.toThrow();
+		}
+	});
+	it("allows only the listed methods on a hub, and so denies methods nobody has thought about yet", () => {
+		const allowed = rpcMethodNames().filter((m) => {
+			try {
+				assertAgentAllowed("hub", m, m === "plugin.call" ? { plugin: "team", method: "x" } : {});
+				return true;
+			} catch {
+				return false;
+			}
+		});
+		expect(allowed.sort()).toEqual(
+			[
+				"host.info",
+				"session.list", "session.messages", "session.toolResult", "session.stats", "usage.stats",
+				"workspace.list",
+				"settings.get", "settings.set",
+				"gateway.list", "gateway.save", "gateway.delete", "gateway.test", "gateway.models", "gateway.pricing", "gateway.defaults", "gateway.piList", "gateway.piImport",
+				"plugin.list", "plugin.call", "panel.link",
+			].sort(),
+		);
+		expect(() => assertAgentAllowed("hub", "some.future.method", {})).toThrowError(expect.objectContaining({ code: "agentDisabled" }));
+	});
+	it("lets a hub call only the team plugin", () => {
+		expect(() => assertAgentAllowed("hub", "plugin.call", { plugin: "team", method: "anything" })).not.toThrow();
+		for (const plugin of ["git", "memory", "terminal", "ssh", "browser", "automations", "", undefined, 3]) {
+			expect(() => assertAgentAllowed("hub", "plugin.call", { plugin, method: "x" }), String(plugin)).toThrowError(expect.objectContaining({ code: "agentDisabled" }));
+		}
+		expect(() => assertAgentAllowed("hub", "plugin.call", undefined)).toThrowError(expect.objectContaining({ code: "agentDisabled" }));
 	});
 	it("refuses terminal and ssh creation through plugin.call", () => {
 		expect(() => assertAgentAllowed("hub", "plugin.call", { plugin: "terminal", method: "open" })).toThrowError(expect.objectContaining({ code: "agentDisabled" }));

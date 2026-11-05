@@ -11,6 +11,8 @@ export const ERROR_PARAMS = {
 	sessionNotFound: ["id"],
 	sessionNotOpen: [],
 	sessionForbidden: ["id"],
+	identityForbidden: ["method"],
+	invalidParams: ["method"],
 	policyLocked: ["field"],
 	agentDisabled: [],
 	transcriptInvalid: [],

@@ -54,7 +54,13 @@ export function parsePolicy(raw: unknown): AdminPolicy {
 	return out;
 }
 
-/** `PROMETHEUS_POLICY` wins over `<dataDir>/policy.json`; a missing file means no policy, a broken one throws. */
+/**
+ * `PROMETHEUS_POLICY` wins over `<dataDir>/policy.json`; a missing file means no policy, a broken one throws.
+ *
+ * Security note: a policy.json inside a data folder the user can write is not tamper-proof, since whoever can edit the
+ * file can lift every lock (including `serverOwner`). A deployment that relies on the policy against its own user (a
+ * Hub tenant) must point PROMETHEUS_POLICY at a path the user cannot write, such as a read-only mount.
+ */
 export async function loadPolicy(dataDir: string, env: NodeJS.ProcessEnv = process.env): Promise<AdminPolicy | undefined> {
 	const explicit = env.PROMETHEUS_POLICY?.trim();
 	const file = explicit || join(dataDir, "policy.json");

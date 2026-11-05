@@ -5,7 +5,7 @@
 import { randomUUID } from "node:crypto";
 import { open, realpath, stat } from "node:fs/promises";
 import { basename, isAbsolute, relative, resolve, sep } from "node:path";
-import { AppError } from "@prometheus/protocol";
+import { AppError, type Identity } from "@prometheus/protocol";
 
 /** Bytes returned per read call. The client asks for the next piece until the file ends. */
 export const MAX_CHUNK = 4 * 1024 * 1024;
@@ -84,26 +84,33 @@ export function takeTicket(id: string): Downloadable | undefined {
 }
 
 const PANEL_TTL_MS = 60_000;
-const panelTickets = new Map<string, number>();
+const panelTickets = new Map<string, { expires: number; identity?: Identity }>();
 
 /**
  * A short-lived pass for loading a plugin panel's page. The desktop shell's origin differs from the
  * server's, so the login cookie never reaches the sandboxed panel iframe; the client asks for this
- * pass over its authenticated connection and puts it in the iframe address.
+ * pass over its authenticated connection and puts it in the iframe address. The pass is bound to the
+ * identity of the client that asked (none for the machine's own user), and the page runs as that identity.
  */
-export function issuePanelTicket(): string {
+export function issuePanelTicket(identity?: Identity): string {
 	const now = Date.now();
-	for (const [id, expires] of panelTickets) if (expires < now) panelTickets.delete(id);
+	for (const [id, t] of panelTickets) if (t.expires < now) panelTickets.delete(id);
 	const id = randomUUID();
-	panelTickets.set(id, now + PANEL_TTL_MS);
+	panelTickets.set(id, { expires: now + PANEL_TTL_MS, ...(identity ? { identity: { ...identity } } : {}) });
 	return id;
 }
 
-/** Whether `id` is a live panel pass. Not consumed: the page may be requested again while it is valid. */
+/** The identity a live panel pass is bound to (`{}` for none), or undefined when `id` is not a live pass. Not consumed: the page may be requested again while it is valid. */
+export function panelTicketLookup(id: string | null | undefined): { identity?: Identity } | undefined {
+	if (!id) return undefined;
+	const t = panelTickets.get(id);
+	if (!t || t.expires < Date.now()) return undefined;
+	return t.identity ? { identity: t.identity } : {};
+}
+
+/** Whether `id` is a live panel pass. */
 export function panelTicketValid(id: string | null | undefined): boolean {
-	if (!id) return false;
-	const expires = panelTickets.get(id);
-	return expires !== undefined && expires >= Date.now();
+	return panelTicketLookup(id) !== undefined;
 }
 
 /** Folders that, besides the conversation's own, may be downloaded from. */

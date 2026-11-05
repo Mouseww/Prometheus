@@ -102,6 +102,14 @@ export function hubTrustFromEnv(env: NodeJS.ProcessEnv): AuthProvider | undefine
 - 在 `host.call` 入口（有 `caller` 时）对以下方法检查 `canAct`，否则抛 `AppError("sessionForbidden")`：
   `chat.prompt`、`ui.respond`、`session.abort`、`session.delete`、`session.rename`、`session.switchRuntime`、`permission.set`、`message.fork` **不在列表内**（fork 是只读来源，新会话归 fork 者）。实现者按 `RpcMethods` 中实际存在的、带 `sessionId` 且会改变会话状态的方法补全列表，并在测试里枚举。
 - 只读方法（订阅、获取快照、列表）不拦截：旁观是允许的。
+- **旁观者可以读取会话文件（设计如此）**：`file.read`、`file.link`、`file.stat` 属于只读方法，旁观者（非 owner 的身份）可以读取该会话工作目录与上传目录内的文件。这是旁观语义的一部分，不做代码改动；需要隔离时靠 owner 不共享会话或 Hub 层面的权限控制。
+- **身份调用者的补充约束**：
+  - 带身份的调用者调用上述写方法时，`params.sessionId` 必须是字符串，否则抛 `AppError("invalidParams")`（不再静默放行）。
+  - 当策略设置了 `serverOwner` 时，身份就是 `serverOwner` 本人则保留完整权限；仅 `actsFor` 包含 `serverOwner` 的代理身份（delegate）只能调用 `IDENTITY_READ_ONLY_METHODS`（`packages/core/src/session-access.ts` 中的显式只读白名单）和 `SESSION_WRITE_METHODS`（仍受 `canAct` 约束），其余 RPC（`plugin.call`、`plugin.install`、`settings.set`、`gateway.*`、`workspace.add`、`system.openIn`、`agent.install` 等）抛 `AppError("identityForbidden")`。白名单之外的新方法默认拒绝，测试会枚举全部 `RpcMethods` 键。
+  - `network.set`、`runtime.env` 对带身份的客户端一律拒绝（`networkLocalOnly`）。
+  - 面板票据（`panel.link`）绑定签发客户端的身份，凭票据加载的插件页面以该身份运行。
+  - 策略设置了 `serverOwner` 时，没有调用者身份创建的会话（插件、自动化、`agent.syncSessions`、导入）归 `serverOwner` 所有。
+  - 由 Hub 令牌认证的 WebSocket 连接在 `exp + 容差`（默认 60 秒，环境变量 `PROMETHEUS_TRUST_SKEW_SEC` 可调）时被服务器以 `4003` 关闭。
 
 ## S4. 管理员策略锁定层
 
@@ -109,6 +117,8 @@ export function hubTrustFromEnv(env: NodeJS.ProcessEnv): AuthProvider | undefine
 
 - `<dataDir>/policy.json`，或环境变量 `PROMETHEUS_POLICY` 指向的文件（优先）。文件不存在 = 无策略。
 - 由 `ConfigStore.load()` 一并读取；解析失败时**拒绝启动**（`console.error` 中文日志 + 抛错），避免静默失效。
+- **策略文件不防篡改**：放在用户可写的数据目录里的 `policy.json`，写得动该目录的人就能改掉所有锁（包括 `serverOwner`）。依赖策略约束用户本人的部署（例如 Hub 租户）必须把 `PROMETHEUS_POLICY` 指向用户不可写的只读挂载路径。代码只在 `loadPolicy` 注释中说明，不做额外校验。
+- **`serverOwner` 与信任密钥成对出现**：设置了 `PROMETHEUS_TRUST_KEY` 时，策略必须有 `serverOwner`，否则服务器中文报错并拒绝启动。`PROMETHEUS_TRUST_KEY` 必须是 Ed25519 公钥（`asymmetricKeyType === "ed25519"`），无法解析或类型不符同样拒绝启动；`verifyJwt` 也拒绝其他类型的密钥。
 
 ### 形状（`packages/protocol/src/index.ts`）
 
@@ -146,9 +156,11 @@ export interface AdminPolicy {
 ## S5. 按路径的读取确认
 
 - `decide(mode, call, env)` 的 `env` 增加 `policy?: { readOutsideProject?: "allow" | "ask" }`。
-- 当 `readOutsideProject === "ask"` 且模式不是 `bypassPermissions`/`auto`：
+- 当 `readOutsideProject === "ask"`，**所有模式下都生效，`bypassPermissions` 与 `auto` 也不例外**（管理员锁不能被模式绕过；这两种模式下非只读命令仍照常放行，只有读取项目外内容才询问）：
+  - 路径判断先按 Pi 的解析方式规范化：开头的 `~`、`~/` 展开为 home，去掉 `@` 前缀，`file://` URL 转路径，win32 上 Git-Bash 的 `/c/...` 转 `C:\...`；再比较目标（或其最近的已存在祖先）的 realpath 与 cwd 的 realpath。项目内指向项目外的符号链接要询问；任何出错一律按"询问"处理（fail closed）。
+  - 只读 shell 命令改为**白名单**：只有每个非 flag 参数都是普通相对路径（规范化去引号后不含 `$`、`%`、`:`、`~`、反引号、引号、`..` 段，且解析后在 cwd 内）才自动放行；形如 `-Name:value`、`--x=value`、附着短 flag `-fVALUE` 的值同样按路径检查（含路径分隔符或 `..` 的值视为路径）。其余一律询问。去引号时处理所有引号字符与拼接的引号片段，引号不闭合则询问。
   - 读类工具（`read`、`grep`、`find`、`ls`）：取 `input.path`（无则视为 cwd）；不在 `isProjectPath` 内 → `ask`（plan 模式下也是 `ask`，不是 `block`）。注意 `isProjectPath` 会把 `.git` / `.pi` 判为非项目路径，读取策略应使用一个只判断「是否在 cwd 内」的新函数 `isInside(path, cwd)`，不要误伤 `.git`。
-  - 只读 shell 命令（原本自动放行的那类）：若任一参数看起来是路径且不在 cwd 内（绝对路径、以 `~` 开头、含 `..` 段、Windows 盘符、`$HOME`/`%USERPROFILE%`），→ `ask`；否则维持放行。
+  - 只读 shell 命令（原本自动放行的那类）：按上面的白名单规则判断，不满足 → `ask`；满足则维持放行。
   - 声明 `readOnly` 的「other」类工具（如 MCP）：不按路径判断（无法得知路径），维持现状。
   - 「始终允许」不记住项目外读取（读类工具本就没有 rule key，保持）。
 - `PermissionGate` 增加 `policy` 字段，由 host 在 `attach` 时从 `ConfigStore.policy()` 填入；`evaluate` 传给 `decide`。
@@ -158,7 +170,7 @@ export interface AdminPolicy {
 
 - 环境变量 `PROMETHEUS_ROLE=hub`。`packages/core` 导出 `serverRole(): "server" | "hub"`。
 - Hub 角色下：
-  - 拒绝创建或驱动 Agent 的 RPC（`session.create`、`chat.prompt`、`message.fork`、`session.switchRuntime` 以及终端/SSH 类插件的创建方法），抛 `AppError("agentDisabled")`。
+  - RPC 采用**白名单**，名单外一律抛 `AppError("agentDisabled")`（含将来新增的方法）：`host.info`；`session.list`/`messages`/`toolResult`/`stats`、`usage.stats`；`workspace.list`；`settings.get`/`set`；`gateway.*`；`plugin.list`、`panel.link`；`plugin.call` 仅限 `team` 插件。`session.create`、`chat.prompt`、`goal.*`、`chat.compact`、`message.retry/edit/fork`、`agent.install`、`agent.syncSessions`、`system.openIn` 以及对非 `team` 插件的 `plugin.call` 都在名单外。
   - 若未配置 `pluginAllowlist`，默认不加载 `terminal`、`ssh`、`computer-use`、`browser`、`workbench`、`folder` 插件。
   - 自动化与 flows 插件不加载（Hub 的定时任务由团队插件自己调度）。
 - 未设置时行为不变。

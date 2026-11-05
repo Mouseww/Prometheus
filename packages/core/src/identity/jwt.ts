@@ -27,6 +27,15 @@ export interface VerifyOptions {
 
 const b64 = (data: Buffer | string): string => Buffer.from(data).toString("base64url");
 
+/** The key as a KeyObject, provided it is an Ed25519 public key; throws otherwise (bad PEM, a private key, another algorithm). */
+export function ed25519PublicKey(key: KeyObject | string): KeyObject {
+	if (typeof key === "string" && /PRIVATE KEY/.test(key)) throw new Error("expected a public key, got a private key");
+	const obj = typeof key === "string" ? createPublicKey(key) : key;
+	if (obj.type !== "public") throw new Error("expected a public key, got a private key");
+	if (obj.asymmetricKeyType !== "ed25519") throw new Error(`expected an ed25519 public key, got ${obj.asymmetricKeyType ?? "unknown"}`);
+	return obj;
+}
+
 /** Signs claims as a compact EdDSA (Ed25519) JWT. */
 export function signJwt(claims: JwtClaims, privateKey: KeyObject | string): string {
 	const key = typeof privateKey === "string" ? createPrivateKey(privateKey) : privateKey;
@@ -56,7 +65,7 @@ export function verifyJwt(token: string, opts: VerifyOptions): JwtClaims | undef
 		const header = parseJson(head);
 		if (!isRecord(header) || header.alg !== "EdDSA") return undefined;
 		if (header.typ !== undefined && header.typ !== "JWT") return undefined;
-		const key = typeof opts.publicKey === "string" ? createPublicKey(opts.publicKey) : opts.publicKey;
+		const key = ed25519PublicKey(opts.publicKey);
 		if (!verify(null, Buffer.from(`${head}.${body}`), key, Buffer.from(sig, "base64url"))) return undefined;
 		const claims = parseJson(body);
 		if (!isRecord(claims)) return undefined;

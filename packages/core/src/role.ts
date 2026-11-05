@@ -7,14 +7,22 @@ export function serverRole(env: NodeJS.ProcessEnv = process.env): ServerRole {
 	return env.PROMETHEUS_ROLE?.trim().toLowerCase() === "hub" ? "hub" : "server";
 }
 
-/** RPC methods that create or drive an agent; a Hub refuses them. */
-const HUB_BLOCKED_METHODS: ReadonlySet<string> = new Set(["session.create", "chat.prompt", "message.fork", "session.switchRuntime"]);
+/**
+ * The only RPC methods a Hub answers: reading sessions, the settings and gateway administration its owner needs,
+ * health and the workspace list. Everything else (including methods added later) is refused, so a new method that
+ * could drive an agent or touch the machine is denied until someone decides a Hub may have it.
+ */
+const HUB_ALLOWED_METHODS: ReadonlySet<string> = new Set([
+	"host.info",
+	"session.list", "session.messages", "session.toolResult", "session.stats", "usage.stats",
+	"workspace.list",
+	"settings.get", "settings.set",
+	"gateway.list", "gateway.save", "gateway.delete", "gateway.test", "gateway.models", "gateway.pricing", "gateway.defaults", "gateway.piList", "gateway.piImport",
+	"plugin.list", "plugin.call", "panel.link",
+]);
 
-/** Plugin methods that start a shell or reach into another machine, by plugin name. */
-const HUB_BLOCKED_PLUGIN_METHODS: Readonly<Record<string, ReadonlySet<string>>> = {
-	terminal: new Set(["open", "run"]),
-	ssh: new Set(["test"]),
-};
+/** The one plugin a Hub lets clients call into; the rest are agent tools or reach into other machines. */
+const HUB_CALLABLE_PLUGIN = "team";
 
 /** Plugins a Hub does not load unless the policy names them in `pluginAllowlist`. */
 const HUB_DEFAULT_EXCLUDED: ReadonlySet<string> = new Set(["terminal", "ssh", "computer-use", "browser", "workbench", "folder"]);
@@ -22,13 +30,13 @@ const HUB_DEFAULT_EXCLUDED: ReadonlySet<string> = new Set(["terminal", "ssh", "c
 /** Plugins a Hub never loads: its scheduled jobs belong to the team plugin. */
 const HUB_NEVER: ReadonlySet<string> = new Set(["automations", "flows"]);
 
-/** Throws `agentDisabled` when a Hub is asked to create or drive an agent. */
+/** Throws `agentDisabled` when a Hub is asked for anything outside its allowlist (see `HUB_ALLOWED_METHODS`). */
 export function assertAgentAllowed(role: ServerRole, method: string, params: unknown): void {
 	if (role !== "hub") return;
-	if (HUB_BLOCKED_METHODS.has(method)) throw new AppError("agentDisabled");
+	if (!HUB_ALLOWED_METHODS.has(method)) throw new AppError("agentDisabled");
 	if (method === "plugin.call") {
-		const { plugin, method: inner } = (params ?? {}) as { plugin?: unknown; method?: unknown };
-		if (typeof plugin === "string" && typeof inner === "string" && HUB_BLOCKED_PLUGIN_METHODS[plugin]?.has(inner)) throw new AppError("agentDisabled");
+		const plugin = (params as { plugin?: unknown } | null | undefined)?.plugin;
+		if (plugin !== HUB_CALLABLE_PLUGIN) throw new AppError("agentDisabled");
 	}
 }
 

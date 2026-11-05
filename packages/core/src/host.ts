@@ -18,6 +18,7 @@ import {
 	type DirListing,
 	type HostSettings,
 	parseGoalCommand,
+	type Identity,
 	type ImageContent,
 	type MessageRef,
 	type ModelRef,
@@ -54,7 +55,7 @@ import { BadgeStore } from "./agent/session-badges.ts";
 import { OwnerStore } from "./agent/session-owners.ts";
 import { allowedMode, publicPolicy } from "./policy.ts";
 import { assertAgentAllowed, serverRole } from "./role.ts";
-import { canAct, SESSION_WRITE_METHODS } from "./session-access.ts";
+import { canAct, identityMayCall, SESSION_WRITE_METHODS } from "./session-access.ts";
 import { bundledClaudeBinary, bundledClaudeVersion, ClaudeCodeRuntime } from "./agent/claude-code/cc-runtime.ts";
 import { CodexRuntime } from "./agent/codex/codex-runtime.ts";
 import { CODEX_CAPABILITIES } from "./agent/codex/codex-session.ts";
@@ -77,7 +78,7 @@ import { toModelRef } from "./events.ts";
 import { GoalTracker, type GoalView } from "./goal.ts";
 import { listExternalApps, openInExternalApp, openUrlNative, pickFolderNative } from "./native-dialog.ts";
 import { checkImages, imageOnlyTitle, titleWithoutNote } from "./images.ts";
-import { extraRoots, issuePanelTicket, issueTicket, panelTicketValid, readChunk, resolveDownload, takeTicket } from "./downloads.ts";
+import { extraRoots, issuePanelTicket, issueTicket, panelTicketLookup, panelTicketValid, readChunk, resolveDownload, takeTicket } from "./downloads.ts";
 import { UPLOAD_ROOT, pruneUploads, removeSessionUploads, saveAttachments } from "./uploads.ts";
 import { fullResultContent, slimMessage, slimMessages } from "./slim.ts";
 import { type GatePolicy, PermissionGate } from "./permission-gate.ts";
@@ -298,11 +299,22 @@ ${extras.map((p) => `- ${p}`).join("
 		const handler = (this.handlers as Partial<Record<RpcMethod, unknown>>)[method] as ((p: RpcParams<M>, caller?: Caller) => Promise<RpcResult<M>> | RpcResult<M>) | undefined;
 		if (!handler) throw new AppError("notFound", { what: method });
 		assertAgentAllowed(serverRole(), method, params);
-		if (caller?.identity && SESSION_WRITE_METHODS.has(method)) {
-			const sessionId = (params as { sessionId?: unknown } | undefined)?.sessionId;
-			if (typeof sessionId === "string" && !canAct(caller.identity, this.owners.get(sessionId))) throw new AppError("sessionForbidden", { id: sessionId });
-		}
+		if (caller?.identity) this.assertIdentityMayCall(method, params, caller.identity);
 		return handler(params ?? ({} as RpcParams<M>), caller);
+	}
+
+	/** The user the policy names as this server's owner, if any. */
+	private serverOwner(): string | undefined {
+		return this.runtime.config.policy()?.serverOwner;
+	}
+
+	/** What a vouched caller may do: the owner everything, a delegate reads and session writes only, and every session write needs a session it may act on. */
+	private assertIdentityMayCall(method: string, params: unknown, identity: Identity): void {
+		if (!identityMayCall(identity, this.serverOwner(), method)) throw new AppError("identityForbidden", { method });
+		if (!SESSION_WRITE_METHODS.has(method)) return;
+		const sessionId = (params as { sessionId?: unknown } | null | undefined)?.sessionId;
+		if (typeof sessionId !== "string") throw new AppError("invalidParams", { method });
+		if (!canAct(identity, this.owners.get(sessionId))) throw new AppError("sessionForbidden", { id: sessionId });
 	}
 
 	/** Every session event goes to the clients first, then to plugins; nothing a plugin does can disturb the stream. */
@@ -333,6 +345,11 @@ ${extras.map((p) => `- ${p}`).join("
 	/** Whether `id` (from `panel.link`) still lets a plugin panel page load without the login cookie. */
 	panelTicketValid(id: string | null | undefined): boolean {
 		return panelTicketValid(id);
+	}
+
+	/** The live panel pass `id` and the identity of the client that asked for it (none for the machine's own user); undefined when it is not valid. */
+	panelTicket(id: string | null | undefined): { identity?: Identity } | undefined {
+		return panelTicketLookup(id);
 	}
 
 	async dispose(): Promise<void> {
@@ -958,7 +975,8 @@ ${extras.map((p) => `- ${p}`).join("
 		const { id, path } = await this.needPi.importTranscript(cwd, opts.content, opts.name?.trim() || undefined);
 		await this.workspaces.add(dir);
 		this.paths.set(id, path);
-		if (opts.owner) this.owners.set(id, opts.owner);
+		const owner = opts.owner ?? this.serverOwner();
+		if (owner) this.owners.set(id, owner);
 		this.emitSessionsChanged();
 		return { sessionId: id };
 	}
@@ -976,6 +994,7 @@ ${extras.map((p) => `- ${p}`).join("
 		const live = await this.attach((init) => this.needPi.create({ ...init, cwd: normalizeDir(dir) }));
 		if (options.name?.trim()) live.session.setName(options.name.trim());
 		if (options.model) await live.session.setModel(options.model);
+		this.assignOwner(live.session.id, undefined);
 		this.emitSessionsChanged();
 		const id = live.session.id;
 		if (options.prompt?.trim()) void this.prompt(id, options.prompt, undefined, undefined).catch(() => {});
@@ -999,6 +1018,7 @@ ${extras.map((p) => `- ${p}`).join("
 			if (!dir || !existsSync(dir) || !statSync(dir).isDirectory()) throw new AppError("workdirNotFound", { dir });
 			await this.workspaces.add(dir);
 			live = await this.attach((init) => this.needPi.create({ ...init, cwd: normalizeDir(dir) }));
+			this.assignOwner(live.session.id, undefined);
 		}
 		const { session, bridge, gate } = live;
 		const id = session.id;
@@ -1087,9 +1107,9 @@ ${extras.map((p) => `- ${p}`).join("
 		return session.unqueue(kind, index, text);
 	}
 
-	/** Records the owner of a new session: the vouched caller, else the session it came from. */
+	/** Records the owner of a new session: the vouched caller, else the session it came from, else the server's owner (plugins, automations, imports). */
 	private assignOwner(id: string, caller: Caller | undefined, from?: string): void {
-		const owner = caller?.identity?.userId ?? (from ? this.owners.get(from) : undefined);
+		const owner = caller?.identity?.userId ?? (from ? this.owners.get(from) : undefined) ?? this.serverOwner();
 		if (owner) this.owners.set(id, owner);
 	}
 
@@ -1250,7 +1270,8 @@ ${extras.map((p) => `- ${p}`).join("
 			await this.worktrees.move(sessionId, live.session.id);
 			this.guardWorktree(live, live.session.id);
 			if (state.name) live.session.setName(state.name);
-			live.gate.setMode(source.gate.mode);
+			// The source may hold a mode the policy has banned since; carry over what is still allowed so the switch cannot fail half way.
+			live.gate.setMode(allowedMode(this.runtime.config.policy(), source.gate.mode));
 			this.assignOwner(live.session.id, caller, sessionId);
 			const handoff = buildHandoff(state.messages, this.agentName(from, this.index.get(sessionId)?.agent));
 			// PI carries the history itself; the others get the transcript as hidden first-turn context.
@@ -1534,6 +1555,7 @@ ${extras.map((p) => `- ${p}`).join("
 			const native = (await rt.listNative()).filter((n) => n.cwd);
 			const known = new Set(this.index.list().filter((e) => e.runtime === agent.kind).map((e) => e.nativeId));
 			const before = (await this.workspaces.list()).length;
+			const owner = this.serverOwner();
 			await this.workspaces.ensure(native.map((n) => ({ path: this.worktrees.rootOf(n.cwd), modified: n.modified })));
 			let added = 0;
 			for (const n of native) {
@@ -1552,6 +1574,7 @@ ${extras.map((p) => `- ${p}`).join("
 					gateway: { mode: "native" },
 					...(agent.id !== agent.kind ? { agent: agent.id } : {}),
 				});
+				if (owner) this.owners.set(n.ref.id, owner);
 				added++;
 			}
 			await this.index.flush();
@@ -1793,7 +1816,7 @@ ${extras.map((p) => `- ${p}`).join("
 			await this.runtime.plugins.remove(id);
 			return null;
 		},
-		"panel.link": () => ({ id: issuePanelTicket() }),
+		"panel.link": (_params, caller) => ({ id: issuePanelTicket(caller?.identity) }),
 		"plugin.call": async ({ plugin, method, params }, caller) => {
 			const handler = this.runtime.plugins.rpcs.get(`${plugin}/${method}`);
 			if (!handler) throw new AppError("pluginMethodNotFound", { plugin, method });

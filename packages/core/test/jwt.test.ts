@@ -1,6 +1,6 @@
-import { generateKeyPairSync, sign } from "node:crypto";
+import { createPrivateKey, createPublicKey, generateKeyPairSync, sign } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { generateKeyPair, identityFromClaims, type JwtClaims, signJwt, verifyJwt } from "../src/identity/jwt.ts";
+import { ed25519PublicKey, generateKeyPair, identityFromClaims, type JwtClaims, signJwt, verifyJwt } from "../src/identity/jwt.ts";
 
 const keys = generateKeyPair();
 const now = 1_800_000_000;
@@ -47,6 +47,22 @@ describe("jwt", () => {
 		expect(verifyAt(signJwt(rest as JwtClaims, keys.privateKey))).toBeUndefined();
 		expect(verifyAt("nonsense")).toBeUndefined();
 		expect(verifyJwt("a.b.c", { publicKey: "not a key" })).toBeUndefined();
+	});
+	it("rejects keys that are not Ed25519 public keys", () => {
+		const token = signJwt(claims(), keys.privateKey);
+		const rsa = generateKeyPairSync("rsa", { modulusLength: 2048 });
+		const ec = generateKeyPairSync("ec", { namedCurve: "P-256" });
+		const x448 = generateKeyPairSync("ed448");
+		for (const publicKey of [rsa.publicKey, ec.publicKey, x448.publicKey]) expect(verifyAt(token, { publicKey })).toBeUndefined();
+		// A private key object is not a public key either.
+		expect(verifyAt(token, { publicKey: createPrivateKey(keys.privateKey) })).toBeUndefined();
+		expect(verifyAt(token, { publicKey: createPublicKey(keys.publicKey) })).toBeDefined();
+	});
+	it("checks an Ed25519 public key up front", () => {
+		expect(ed25519PublicKey(keys.publicKey).asymmetricKeyType).toBe("ed25519");
+		expect(() => ed25519PublicKey("not a key")).toThrow();
+		expect(() => ed25519PublicKey(generateKeyPairSync("rsa", { modulusLength: 2048 }).publicKey.export({ type: "spki", format: "pem" }).toString())).toThrow(/ed25519/i);
+		expect(() => ed25519PublicKey(keys.privateKey)).toThrow();
 	});
 	it("maps claims to an identity", () => {
 		expect(identityFromClaims(claims({ acts_for: ["x"] }))).toEqual({ userId: "u1", name: "Ann", orgId: "o1", actsFor: ["x"] });
