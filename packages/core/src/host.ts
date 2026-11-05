@@ -50,7 +50,8 @@ import {
 } from "@prometheus/protocol";
 import { ToolBus } from "./agent/bus/tool-bus.ts";
 import { OwnerStore } from "./agent/session-owners.ts";
-import { allowedMode, modeForbidden, publicPolicy } from "./policy.ts";
+import { allowedMode, publicPolicy } from "./policy.ts";
+import { assertAgentAllowed, serverRole } from "./role.ts";
 import { canAct, SESSION_WRITE_METHODS } from "./session-access.ts";
 import { bundledClaudeBinary, bundledClaudeVersion, ClaudeCodeRuntime } from "./agent/claude-code/cc-runtime.ts";
 import { CodexRuntime } from "./agent/codex/codex-runtime.ts";
@@ -282,6 +283,7 @@ ${extras.map((p) => `- ${p}`).join("
 	async call<M extends RpcMethod>(method: M, params: RpcParams<M>, caller?: Caller): Promise<RpcResult<M>> {
 		const handler = (this.handlers as Partial<Record<RpcMethod, unknown>>)[method] as ((p: RpcParams<M>, caller?: Caller) => Promise<RpcResult<M>> | RpcResult<M>) | undefined;
 		if (!handler) throw new AppError("notFound", { what: method });
+		assertAgentAllowed(serverRole(), method, params);
 		if (caller?.identity && SESSION_WRITE_METHODS.has(method)) {
 			const sessionId = (params as { sessionId?: unknown } | undefined)?.sessionId;
 			if (typeof sessionId === "string" && !canAct(caller.identity, this.owners.get(sessionId))) throw new AppError("sessionForbidden", { id: sessionId });

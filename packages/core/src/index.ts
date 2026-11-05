@@ -17,6 +17,7 @@ export type {
 } from "./agent/types.ts";
 export { ConfigStore, DEFAULT_LAN_PORT, defaultDataDir, type NetworkConfig, type PrometheusConfig } from "./config.ts";
 export { generateKeyPair, identityFromClaims, type JwtClaims, signJwt, type VerifyOptions, verifyJwt } from "./identity/jwt.ts";
+export { serverRole, type ServerRole } from "./role.ts";
 export { canAct, SESSION_WRITE_METHODS } from "./session-access.ts";
 export { slimEvent } from "./events.ts";
 export { type HostListener, PROMETHEUS_VERSION, PrometheusHost, type PrometheusHostOptions } from "./host.ts";

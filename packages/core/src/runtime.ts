@@ -6,6 +6,7 @@ import { KnowledgeService, registerKnowledge } from "@prometheus/knowledge";
 import type { HostKind, PrometheusPlugin } from "@prometheus/plugin-sdk";
 import { ConfigStore, defaultDataDir } from "./config.ts";
 import { PluginHost } from "./plugin-host.ts";
+import { pluginAllowed, serverRole } from "./role.ts";
 
 export interface BootstrapOptions {
 	host: HostKind;
@@ -42,10 +43,7 @@ export async function bootstrap(options: BootstrapOptions): Promise<Runtime> {
 		gateways: () => config.gateways(),
 		isDisabled: (id) => config.get().disabledPlugins.includes(id),
 		setDisabled: (id, disabled) => config.setPluginDisabled(id, disabled),
-		allowPlugin: (name) => {
-			const list = config.policy()?.pluginAllowlist;
-			return !list || list.includes(name);
-		},
+		allowPlugin: (name) => pluginAllowed(serverRole(), config.policy()?.pluginAllowlist, name),
 	});
 
 	const knowledge = new KnowledgeService({
