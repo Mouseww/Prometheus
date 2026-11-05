@@ -74,6 +74,31 @@ describe("public mode invite registration", () => {
 	});
 });
 
+describe("refresh token reuse", () => {
+	it("a replayed logged-out or unknown token does not revoke other sessions", async () => {
+		const t = await startHub();
+		hubs.push(t);
+		await t.bootstrap();
+		const keep = await t.login("root@corp.test");
+		const gone = await t.login("root@corp.test");
+		await t.api("POST", "/api/auth/logout", { body: { refreshToken: gone.refreshToken } });
+		expect((await t.api("POST", "/api/auth/refresh", { body: { refreshToken: gone.refreshToken } })).status).toBe(401);
+		expect((await t.api("POST", "/api/auth/refresh", { body: { refreshToken: "unknown-token" } })).status).toBe(401);
+		expect((await t.api("POST", "/api/auth/refresh", { body: { refreshToken: keep.refreshToken } })).status).toBe(200);
+	});
+
+	it("reuse of a rotated token ends the other live sessions of that account too", async () => {
+		const t = await startHub();
+		hubs.push(t);
+		await t.bootstrap();
+		const a = await t.login("root@corp.test");
+		const b = await t.login("root@corp.test");
+		expect((await t.api("POST", "/api/auth/refresh", { body: { refreshToken: a.refreshToken } })).status).toBe(200);
+		expect((await t.api("POST", "/api/auth/refresh", { body: { refreshToken: a.refreshToken } })).status).toBe(401);
+		expect((await t.api("POST", "/api/auth/refresh", { body: { refreshToken: b.refreshToken } })).status).toBe(401);
+	});
+});
+
 describe("team member add", () => {
 	it("answers the same for unknown, inactive, outside-org users and personal teams", async () => {
 		const t = await startHub();

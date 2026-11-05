@@ -180,10 +180,13 @@ describe("tokens: refresh rotation and logout", () => {
 		const reuse = await t.api("POST", "/api/auth/refresh", { body: { refreshToken: first.refreshToken } });
 		expect(reuse.status).toBe(401);
 		expect(reuse.code).toBe("invalidRefreshToken");
-		// The rotated token still works.
+		// Reuse is a theft signal: the whole family, including the newest token, is revoked.
 		const third = await t.api("POST", "/api/auth/refresh", { body: { refreshToken: second.data.refreshToken } });
-		expect(third.status).toBe(200);
+		expect(third.status).toBe(401);
+		const audit = await t.hub.db.query("SELECT 1 FROM audit_log WHERE action = 'auth.refresh.reuse' AND target_id = $1", [root.userId]);
+		expect(audit.length).toBeGreaterThanOrEqual(1);
 	});
+
 
 	it("logout revokes the refresh token and is idempotent", async () => {
 		const l = await t.login("root@corp.test");

@@ -249,23 +249,44 @@ export function createAccountsService(deps: ServiceDeps, a: AccountsDeps): Accou
 		},
 
 		async refresh(refreshToken, client) {
-			return deps.db.tx({ system: true }, async (q) => {
+			// A reused (already rotated) token must revoke the family, and that write has to survive the 401, so the outcome is decided
+			// inside the transaction and thrown after it commits.
+			const outcome = await deps.db.tx({ system: true }, async (q): Promise<TokenPair | "invalid"> => {
+				const nowDate = new Date(deps.now());
+				const tokenHash = sha256Hex(refreshToken);
 				// Revoke-and-read in one statement so a token can be redeemed only once.
 				const revoked = await q.query<{ user_id: string }>(
 					"UPDATE refresh_tokens SET revoked_at = $2 WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > $2 RETURNING user_id",
-					[sha256Hex(refreshToken), new Date(deps.now())],
+					[tokenHash, nowDate],
 				);
 				const userId = revoked[0]?.user_id;
-				if (!userId) throw unauthorized("刷新令牌无效或已过期", "invalidRefreshToken");
+				if (!userId) {
+					// Rotation leaves `expires_at` in the future of `revoked_at`; logout pins them together, so those are not replays.
+					const replayed = await q.query<{ user_id: string }>(
+						"SELECT user_id FROM refresh_tokens WHERE token_hash = $1 AND revoked_at IS NOT NULL AND expires_at > revoked_at AND expires_at > $2",
+						[tokenHash, nowDate],
+					);
+					const victim = replayed[0]?.user_id;
+					if (victim) {
+						// Whoever presents a rotated token is either the thief or the victim holding a stale copy: end every session of the account.
+						await q.query("UPDATE refresh_tokens SET revoked_at = $2 WHERE user_id = $1 AND revoked_at IS NULL", [victim, nowDate]);
+						await a.audit.write(q, { actorId: victim, action: "auth.refresh.reuse", targetType: "user", targetId: victim, detail: { ip: client.ip } });
+						deps.log.warn(`${LOG_PREFIX} 检测到刷新令牌被重复使用，已撤销用户 ${victim} 的全部会话`);
+					}
+					return "invalid";
+				}
 				const users = await q.query<UserRow>(`SELECT ${USER_COLUMNS} FROM users WHERE id = $1`, [userId]);
 				const user = users[0];
 				if (!user || user.status !== "active") throw unauthorized("账号不可用", "accountUnavailable");
 				return issueTokens(q, user, client.userAgent);
 			});
+			if (outcome === "invalid") throw unauthorized("刷新令牌无效或已过期", "invalidRefreshToken");
+			return outcome;
 		},
 
 		async logout(refreshToken) {
-			await deps.db.query("UPDATE refresh_tokens SET revoked_at = $2 WHERE token_hash = $1 AND revoked_at IS NULL", [sha256Hex(refreshToken), new Date(deps.now())]);
+			// Expiry is pinned to the revocation time so a later replay of this token is told apart from a replay of a rotated one.
+			await deps.db.query("UPDATE refresh_tokens SET revoked_at = $2, expires_at = LEAST(expires_at, $2) WHERE token_hash = $1 AND revoked_at IS NULL", [sha256Hex(refreshToken), new Date(deps.now())]);
 		},
 
 		async me(actor) {
