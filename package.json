@@ -11,6 +11,8 @@
     "dev:web": "pnpm --filter @prometheus/web dev",
     "dev:desktop": "pnpm --filter @prometheus/desktop tauri dev",
     "tui": "pnpm --filter @prometheus/cli start",
+    "hub": "pnpm --filter @prometheus/server hub",
+    "hub:setup-sandbox": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/hub-setup-sandbox.ps1",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run"
