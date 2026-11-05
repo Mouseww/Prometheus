@@ -5,6 +5,7 @@ import { isOperator, useTeam } from "../../context.tsx";
 import { useCommonT } from "../../i18n.ts";
 import { AsyncView, Body, Card, Notice, useAction, useAsync } from "../../kit.tsx";
 import type { RegistrationPolicy } from "../../types.ts";
+import { MailWarning } from "./MailWarning.tsx";
 import { Checkbox, useAdminOrgs } from "./shared.tsx";
 
 const M = defineMessages({
@@ -138,6 +139,7 @@ export function RegistrationPage() {
 		<>
 			<PageHeader title={t("title")} subtitle={t("subtitle")} />
 			<Body className="space-y-4">
+				<MailWarning />
 				{isOperator(me) && <PlatformPolicy />}
 				<OrgPolicy />
 			</Body>

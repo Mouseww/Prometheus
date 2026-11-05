@@ -8,8 +8,12 @@ import { type MemberPlugin, type Route, TeamContext, type TeamContextValue } fro
 import { useCommonT } from "./i18n.ts";
 import { ErrorBox, useAsync } from "./kit.tsx";
 import { DEFAULT_ROUTE_ID, findRoute, N, navFor, type TeamRoute } from "./routes.tsx";
+import { ContextSwitcher } from "./ContextSwitcher.tsx";
 import { probeBilling } from "./logic/billing.ts";
+import { billingFromMeta, isPublicMode, SCOPE_ALL, validScope } from "./logic/publicMode.ts";
 import { NotificationsBell } from "./slots.tsx";
+import type { MetaInfo } from "./types.ts";
+import { VerifyBanner } from "./VerifyBanner.tsx";
 
 const M = defineMessages({
 	zh: { nav: "团队导航", admin: "管理后台", brand: "团队", orgs: "企业", unknownPage: "页面不存在" },
@@ -27,6 +31,10 @@ export interface TeamShellProps {
 	/** Rendered at the right end of the header (Hub mode: the user menu). */
 	topRight?: (ctx: { reloadMe: () => void }) => ReactNode;
 	initialRoute?: Route;
+	/** Hub mode: the public /api/meta answer. It decides billing visibility without a billing call, and feeds the account banners. */
+	hubMeta?: MetaInfo;
+	/** Hub mode: mails a new verification link. */
+	resendVerification?: (email: string) => Promise<void>;
 }
 
 function NavButton({ route, active, onClick }: { route: TeamRoute; active: boolean; onClick: () => void }) {
@@ -48,7 +56,7 @@ function NavButton({ route, active, onClick }: { route: TeamRoute; active: boole
 	);
 }
 
-export function TeamShell({ api, mode, plugin, topRight, initialRoute }: TeamShellProps) {
+export function TeamShell({ api, mode, plugin, topRight, initialRoute, hubMeta, resendVerification }: TeamShellProps) {
 	const t = useT(M);
 	const c = useCommonT();
 	const me = useAsync(() => api.me(), [api]);
@@ -61,13 +69,19 @@ export function TeamShell({ api, mode, plugin, topRight, initialRoute }: TeamShe
 	const reload = me.reload;
 	const reloadMe = useCallback(async () => reload(), [reload]);
 
-	// One probe per api: user billing routes answer 404 billingDisabled when billing is off, which hides the billing UI.
-	const billing = useAsync(() => probeBilling(() => api.getBillingSummary()), [api]);
-	const billingEnabled = billing.data === "enabled";
+	// Hub mode knows from /api/meta whether billing is on, so no billing call is made (a 404 would log a console error).
+	// Member mode has no meta: one probe per api, since the user billing routes answer 404 billingDisabled when off.
+	const metaBilling = billingFromMeta(hubMeta);
+	const billing = useAsync(() => (metaBilling === undefined ? probeBilling(() => api.getBillingSummary()) : Promise.resolve(undefined)), [api, metaBilling]);
+	const billingEnabled = metaBilling ?? billing.data === "enabled";
+	const [scope, setScope] = useState<string>(SCOPE_ALL);
 
 	const ctx = useMemo<TeamContextValue | null>(
-		() => (me.data ? { api, plugin, me: me.data, mode, route, navigate, back, reloadMe, billingEnabled } : null),
-		[api, plugin, me.data, mode, route, navigate, back, reloadMe, billingEnabled],
+		() =>
+			me.data
+				? { api, plugin, me: me.data, mode, route, navigate, back, reloadMe, billingEnabled, meta: hubMeta, scope: validScope(scope, me.data), setScope, resendVerification }
+				: null,
+		[api, plugin, me.data, mode, route, navigate, back, reloadMe, billingEnabled, hubMeta, scope, resendVerification],
 	);
 
 	if (!ctx) {
@@ -85,21 +99,22 @@ export function TeamShell({ api, mode, plugin, topRight, initialRoute }: TeamShe
 	const def = findRoute(route.page);
 	const Page = def?.component;
 	const activeNav = NAV_PARENT[route.page] ?? route.page;
-	const main = navFor(ctx.me, "main", { billing: billingEnabled });
-	const admin = navFor(ctx.me, "admin", { billing: billingEnabled });
+	const flags = { billing: billingEnabled, publicMode: isPublicMode(hubMeta) };
+	const main = navFor(ctx.me, "main", flags);
+	const admin = navFor(ctx.me, "admin", flags);
 	const teamName = route.params?.teamId ? ctx.me.teams.find((x) => x.id === route.params?.teamId)?.name : undefined;
-	const context = teamName ?? ctx.me.orgs.map((o) => o.name).join(" / ");
 
 	return (
 		<TeamContext.Provider value={ctx}>
 			<div className="@container relative flex h-full min-h-0 w-full flex-col">
 				<header className="flex h-12 shrink-0 items-center gap-3 border-b hairline px-4">
 					<span className="font-display text-sm font-semibold tracking-wide">{t("brand")}</span>
-					{context && <span className="min-w-0 truncate rounded-md bg-ink-800 px-2 py-0.5 text-xs text-ink-300">{context}</span>}
+					{teamName ? <span className="min-w-0 truncate rounded-md bg-ink-800 px-2 py-0.5 text-xs text-ink-300">{teamName}</span> : <ContextSwitcher />}
 					<span className="flex-1" />
 					<NotificationsBell />
 					{topRight?.({ reloadMe: me.reload })}
 				</header>
+				<VerifyBanner />
 				<div className="flex min-h-0 flex-1 flex-col @3xl:flex-row">
 					<nav aria-label={t("nav")} className="flex shrink-0 gap-1 overflow-x-auto border-b hairline px-2 py-2 @3xl:w-56 @3xl:flex-col @3xl:overflow-y-auto @3xl:border-r @3xl:border-b-0 @3xl:px-3">
 						{main.map((r) => (

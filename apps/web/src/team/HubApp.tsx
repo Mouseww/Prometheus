@@ -1,21 +1,24 @@
 // Root of the Hub's own web UI (Hub mode). Owns the login state; everything after sign-in is the shared TeamShell.
-import { Clock, LogOut } from "lucide-react";
+import { Clock, LogOut, MailCheck } from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Button, Field, Flame, Input } from "../components/ui.tsx";
+import { Button, Field, Input } from "../components/ui.tsx";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { usePrefs } from "../lib/prefs.ts";
 import { dismissSplash } from "../lib/splash.ts";
 import { TeamApiError, type HubApi } from "./api.ts";
+import { AuthFrame } from "./AuthFrame.tsx";
+import { ForgotPasswordForm, ResendVerification, ResetPasswordPage, VerifyEmailPage } from "./AuthLinkPages.tsx";
 import { createHubApi } from "./hubApi.ts";
 import { inviteTokenFromPath } from "./hubMode.ts";
 import { errorText, roleLabel, useCommonT } from "./i18n.ts";
 import { ErrorBox, Notice, useAction } from "./kit.tsx";
+import { APP_ROOT, type AuthLink, authLinkFromLocation, isPublicMode, needsTurnstile } from "./logic/publicMode.ts";
 import { TeamShell } from "./TeamShell.tsx";
 import type { InvitationView, MetaInfo } from "./types.ts";
+import { Turnstile } from "./Turnstile.tsx";
 
 const M = defineMessages({
 	zh: {
-		subtitle: "团队协作 Hub",
 		login: "登录",
 		register: "注册",
 		email: "邮箱",
@@ -30,11 +33,15 @@ const M = defineMessages({
 		busy: "请稍候",
 		noAccount: "还没有账号？注册",
 		haveAccount: "已有账号？登录",
+		forgot: "忘记密码？",
 		registrationClosed: "当前不开放注册，请联系管理员创建账号或发送邀请。",
 		invitedTo: "邀请你加入 {name}（{role}）",
 		inviteBad: "邀请链接无效或已过期。",
 		pendingTitle: "等待管理员审批",
 		pendingBody: "账号已创建，管理员批准后即可登录。",
+		verifyTitle: "请查收验证邮件",
+		verifyBody: "我们已向 {email} 发送了验证链接。点击链接验证邮箱后即可登录，链接 24 小时内有效。",
+		verifyNoMail: "这个 Hub 没有配置邮件服务，验证链接只会写入 Hub 日志。请联系运营者。",
 		backToLogin: "返回登录",
 		menu: "账户菜单",
 		signOut: "退出登录",
@@ -42,9 +49,15 @@ const M = defineMessages({
 		metaFailed: "无法读取 Hub 信息",
 		loading: "正在连接 Hub",
 		approvalNote: "注册后需要管理员审批。",
+		needVerify: "还没有验证邮箱？",
+		inviteSignedInTitle: "你已登录",
+		inviteSignedIn: "你当前以 {name}（{email}）登录。",
+		inviteDetail: "这个邀请要加入 {name}（{role}），发给 {to}。",
+		inviteHow: "邀请需要在创建新账号时使用。退出登录后，可以用这个邀请注册另一个账号；也可以继续使用当前账号。",
+		inviteSwitch: "退出登录，用其他账号使用邀请",
+		inviteKeep: "继续使用当前账号",
 	},
 	en: {
-		subtitle: "Team collaboration Hub",
 		login: "Sign in",
 		register: "Register",
 		email: "Email",
@@ -59,11 +72,15 @@ const M = defineMessages({
 		busy: "Please wait",
 		noAccount: "No account yet? Register",
 		haveAccount: "Have an account? Sign in",
+		forgot: "Forgot password?",
 		registrationClosed: "Registration is closed. Ask an administrator for an account or an invitation.",
 		invitedTo: "You are invited to join {name} ({role})",
 		inviteBad: "The invitation link is invalid or expired.",
 		pendingTitle: "Waiting for approval",
 		pendingBody: "Your account was created. You can sign in once an administrator approves it.",
+		verifyTitle: "Check your email",
+		verifyBody: "We sent a verification link to {email}. Click it to verify the address, then sign in. The link works for 24 hours.",
+		verifyNoMail: "This Hub has no mail service configured, so the verification link only goes to the Hub log. Ask the operator.",
 		backToLogin: "Back to sign in",
 		menu: "Account menu",
 		signOut: "Sign out",
@@ -71,43 +88,44 @@ const M = defineMessages({
 		metaFailed: "Cannot read Hub information",
 		loading: "Connecting to the Hub",
 		approvalNote: "An administrator must approve new accounts.",
+		needVerify: "Have not verified your email yet?",
+		inviteSignedInTitle: "You are signed in",
+		inviteSignedIn: "You are signed in as {name} ({email}).",
+		inviteDetail: "This invitation is to join {name} ({role}), addressed to {to}.",
+		inviteHow: "An invitation is used when creating a new account. Sign out to register another account with it, or keep using the current account.",
+		inviteSwitch: "Sign out and use another account",
+		inviteKeep: "Keep this account",
 	},
 });
 
 type Phase = "anon" | "authed" | "pending";
+type PendingInfo = { kind: "approval" } | { kind: "verify"; email: string };
 
-function AuthFrame({ children }: { children: React.ReactNode }) {
-	const t = useT(M);
-	return (
-		<div className="forge-bg flex h-full items-center justify-center overflow-y-auto p-4">
-			<div className="sheen w-full max-w-md space-y-5 rounded-2xl border border-ink-700 bg-ink-900 p-6 shadow-2xl shadow-black/50">
-				<div className="flex items-center gap-3">
-					<Flame className="size-9" />
-					<div>
-						<h1 className="font-display text-xl font-semibold tracking-tight">Prometheus Hub</h1>
-						<p className="text-xs text-ink-400">{t("subtitle")}</p>
-					</div>
-				</div>
-				{children}
-			</div>
-		</div>
-	);
+/** The one-time link must not linger in the address bar or the history once it has been used. */
+function leaveLinkUrl(): void {
+	try {
+		history.replaceState(null, "", APP_ROOT);
+	} catch {
+		/* sandboxed frames may forbid it; the URL then just stays */
+	}
 }
 
-function Pending({ onBack }: { onBack: () => void }) {
+function Pending({ api, info, mailConfigured, onBack }: { api: HubApi; info: PendingInfo; mailConfigured: boolean | undefined; onBack: () => void }) {
 	const t = useT(M);
 	return (
 		<AuthFrame>
 			<div className="space-y-3 text-center" role="status">
 				<div className="mx-auto grid size-12 place-items-center rounded-2xl border border-ink-700 text-ember-400">
-					<Clock className="size-5" aria-hidden />
+					{info.kind === "verify" ? <MailCheck className="size-5" aria-hidden /> : <Clock className="size-5" aria-hidden />}
 				</div>
-				<h2 className="font-display text-lg font-semibold">{t("pendingTitle")}</h2>
-				<p className="text-sm text-ink-400">{t("pendingBody")}</p>
-				<Button variant="outline" onClick={onBack}>
-					{t("backToLogin")}
-				</Button>
+				<h2 className="font-display text-lg font-semibold">{info.kind === "verify" ? t("verifyTitle") : t("pendingTitle")}</h2>
+				<p className="text-sm text-ink-400">{info.kind === "verify" ? t("verifyBody", { email: info.email }) : t("pendingBody")}</p>
+				{info.kind === "verify" && mailConfigured === false && <p className="text-xs text-ember-400">{t("verifyNoMail")}</p>}
 			</div>
+			{info.kind === "verify" && <ResendVerification api={api} initialEmail={info.email} />}
+			<Button variant="outline" onClick={onBack} className="w-full">
+				{t("backToLogin")}
+			</Button>
 		</AuthFrame>
 	);
 }
@@ -116,30 +134,35 @@ interface AuthProps {
 	api: HubApi;
 	meta: MetaInfo | undefined;
 	inviteToken: string | undefined;
+	startMode: "login" | "forgot";
 	onAuthed: () => void;
-	onPending: () => void;
+	onPending: (info: PendingInfo) => void;
 }
 
-function AuthScreen({ api, meta, inviteToken, onAuthed, onPending }: AuthProps) {
+function AuthScreen({ api, meta, inviteToken, startMode, onAuthed, onPending }: AuthProps) {
 	const t = useT(M);
 	const c = useCommonT();
 	const canRegister = Boolean(meta && (meta.needsSetup || meta.registration.open || meta.registration.invite || inviteToken));
-	const [mode, setMode] = useState<"login" | "register">(inviteToken || meta?.needsSetup ? "register" : "login");
+	const [mode, setMode] = useState<"login" | "register" | "forgot">(startMode === "forgot" ? "forgot" : inviteToken || meta?.needsSetup ? "register" : "login");
 	const [email, setEmail] = useState("");
 	const [password, setPassword] = useState("");
 	const [displayName, setDisplayName] = useState("");
 	const [setupCode, setSetupCode] = useState("");
 	const [remember, setRemember] = useState(false);
 	const [invitation, setInvitation] = useState<InvitationView | "bad" | undefined>(undefined);
+	const [needsVerify, setNeedsVerify] = useState(false);
+	const [turnstileToken, setTurnstileToken] = useState<string | undefined>(undefined);
+	const [turnstileRun, setTurnstileRun] = useState(0);
 	const { busy, error, run, clearError } = useAction();
 	const seeded = useRef(false);
+	const turnstile = mode === "register" && needsTurnstile(meta);
 
 	useEffect(() => {
-		if (meta?.needsSetup && !seeded.current) {
+		if (meta?.needsSetup && !seeded.current && startMode !== "forgot") {
 			seeded.current = true;
 			setMode("register");
 		}
-	}, [meta?.needsSetup]);
+	}, [meta?.needsSetup, startMode]);
 
 	useEffect(() => {
 		if (!inviteToken) return;
@@ -158,15 +181,17 @@ function AuthScreen({ api, meta, inviteToken, onAuthed, onPending }: AuthProps) 
 	}, [api, inviteToken]);
 
 	const signIn = async () => {
+		setNeedsVerify(false);
 		const user = await run(async () => {
 			try {
 				return await api.login(email.trim(), password, remember);
 			} catch (e) {
 				if (e instanceof TeamApiError && e.code === "pendingApproval") return null;
+				if (e instanceof TeamApiError && e.code === "emailNotVerified") setNeedsVerify(true);
 				throw e;
 			}
 		});
-		if (user === null) onPending();
+		if (user === null) onPending({ kind: "approval" });
 		else if (user) onAuthed();
 	};
 
@@ -180,12 +205,26 @@ function AuthScreen({ api, meta, inviteToken, onAuthed, onPending }: AuthProps) 
 				displayName: displayName.trim(),
 				...(setupCode.trim() ? { setupCode: setupCode.trim() } : {}),
 				...(inviteToken ? { inviteToken } : {}),
+				...(turnstile && turnstileToken ? { turnstileToken } : {}),
 			}),
 		);
+		// A Turnstile token is single use, whatever the outcome.
+		if (turnstile) {
+			setTurnstileToken(undefined);
+			setTurnstileRun((n) => n + 1);
+		}
 		if (!res) return;
-		if (res.status === "pending") return onPending();
+		if (res.status === "pending") return onPending(isPublicMode(meta) && !res.bootstrap && res.user.emailVerifiedAt === null ? { kind: "verify", email: email.trim() } : { kind: "approval" });
 		await signIn();
 	};
+
+	if (mode === "forgot") {
+		return (
+			<AuthFrame>
+				<ForgotPasswordForm api={api} initialEmail={email} onBack={() => setMode("login")} />
+			</AuthFrame>
+		);
+	}
 
 	return (
 		<AuthFrame>
@@ -209,22 +248,43 @@ function AuthScreen({ api, meta, inviteToken, onAuthed, onPending }: AuthProps) 
 					</Field>
 				)}
 				{mode === "login" && (
-					<label className="flex items-center gap-2 text-sm text-ink-300">
-						<input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} className="size-4 accent-ember-500" />
-						{t("remember")}
-					</label>
+					<div className="flex items-center justify-between gap-3">
+						<label className="flex items-center gap-2 text-sm text-ink-300">
+							<input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} className="size-4 accent-ember-500" />
+							{t("remember")}
+						</label>
+						<button
+							type="button"
+							onClick={() => {
+								clearError();
+								setMode("forgot");
+							}}
+							className="text-sm text-ink-400 underline-offset-2 hover:text-ink-100 hover:underline"
+						>
+							{t("forgot")}
+						</button>
+					</div>
 				)}
-				{mode === "register" && meta?.registration.approval && !meta.needsSetup && <p className="text-xs text-ink-400">{t("approvalNote")}</p>}
+				{/* An invitation skips approval, so the note would be wrong for it. */}
+				{mode === "register" && meta?.registration.approval && !meta.needsSetup && !inviteToken && <p className="text-xs text-ink-400">{t("approvalNote")}</p>}
+				{turnstile && meta?.turnstileSiteKey && <Turnstile key={turnstileRun} siteKey={meta.turnstileSiteKey} onToken={setTurnstileToken} />}
 				{error && <Notice kind="error">{error}</Notice>}
-				<Button type="submit" variant="primary" disabled={busy} className="w-full">
+				<Button type="submit" variant="primary" disabled={busy || (turnstile && !turnstileToken)} className="w-full">
 					{busy ? t("busy") : mode === "login" ? t("signIn") : t("signUp")}
 				</Button>
 			</form>
+			{mode === "login" && needsVerify && (
+				<div className="space-y-2 border-t hairline pt-3">
+					<p className="text-xs text-ink-400">{t("needVerify")}</p>
+					<ResendVerification api={api} initialEmail={email.trim()} />
+				</div>
+			)}
 			{canRegister ? (
 				<button
 					type="button"
 					onClick={() => {
 						clearError();
+						setNeedsVerify(false);
 						setMode(mode === "login" ? "register" : "login");
 					}}
 					className="text-sm text-ink-400 underline-offset-2 hover:text-ink-100 hover:underline"
@@ -234,6 +294,47 @@ function AuthScreen({ api, meta, inviteToken, onAuthed, onPending }: AuthProps) 
 			) : (
 				meta && <p className="text-xs text-ink-500">{t("registrationClosed")}</p>
 			)}
+		</AuthFrame>
+	);
+}
+
+/** Shown instead of the app when an /invite/<token> link is opened while signed in. The Hub has no accept-for-current-user endpoint. */
+function InviteWhileSignedIn({ api, inviteToken, onSwitch, onKeep }: { api: HubApi; inviteToken: string; onSwitch: () => void; onKeep: () => void }) {
+	const t = useT(M);
+	const c = useCommonT();
+	const [who, setWho] = useState<{ name: string; email: string } | undefined>(undefined);
+	const [invitation, setInvitation] = useState<InvitationView | "bad" | undefined>(undefined);
+	useEffect(() => {
+		let live = true;
+		api.me().then(
+			(m) => live && setWho({ name: m.user.displayName, email: m.user.email }),
+			() => undefined,
+		);
+		api.lookupInvitation(inviteToken).then(
+			(inv) => live && setInvitation(inv),
+			() => live && setInvitation("bad"),
+		);
+		return () => {
+			live = false;
+		};
+	}, [api, inviteToken]);
+	return (
+		<AuthFrame>
+			<div className="space-y-3" role="region" aria-label={t("inviteSignedInTitle")}>
+				<h2 className="font-display text-lg font-semibold">{t("inviteSignedInTitle")}</h2>
+				{who && <p className="text-sm text-ink-300">{t("inviteSignedIn", who)}</p>}
+				{invitation === "bad" && <Notice kind="error">{t("inviteBad")}</Notice>}
+				{invitation && invitation !== "bad" && <Notice kind="ok">{t("inviteDetail", { name: invitation.scopeName, role: roleLabel(c, invitation.role), to: invitation.email })}</Notice>}
+				<p className="text-sm text-ink-400">{t("inviteHow")}</p>
+				<div className="flex flex-col gap-2">
+					<Button variant="primary" onClick={onSwitch}>
+						{t("inviteSwitch")}
+					</Button>
+					<Button variant="outline" onClick={onKeep}>
+						{t("inviteKeep")}
+					</Button>
+				</div>
+			</div>
 		</AuthFrame>
 	);
 }
@@ -298,8 +399,11 @@ function UserMenu({ api, onSignedOut }: { api: HubApi; onSignedOut: () => void }
 export function HubApp() {
 	const t = useT(M);
 	const api = useMemo(() => createHubApi(), []);
-	const inviteToken = useMemo(() => inviteTokenFromPath(location.pathname), []);
+	const [inviteToken, setInviteToken] = useState<string | undefined>(() => inviteTokenFromPath(location.pathname));
+	const [link, setLink] = useState<AuthLink | undefined>(() => authLinkFromLocation(location.pathname, location.search));
+	const [startMode, setStartMode] = useState<"login" | "forgot">("login");
 	const [phase, setPhase] = useState<Phase>(() => (api.hasSession() ? "authed" : "anon"));
+	const [pending, setPending] = useState<PendingInfo>({ kind: "approval" });
 	const [meta, setMeta] = useState<MetaInfo | undefined>(undefined);
 	const [metaError, setMetaError] = useState<string | undefined>(undefined);
 	const [metaTick, setMetaTick] = useState(0);
@@ -309,9 +413,8 @@ export function HubApp() {
 		document.title = "Prometheus Hub";
 	}, []);
 	useEffect(() => api.onSessionEnd(() => setPhase("anon")), [api]);
-	// Public information (setup needed, registration policy) is only needed on the sign-in screen.
+	// Public information: the sign-in screen needs the registration policy; the signed-in shell needs the mode and mail state.
 	useEffect(() => {
-		if (phase === "authed") return;
 		let live = true;
 		api.meta().then(
 			(m) => {
@@ -326,14 +429,63 @@ export function HubApp() {
 		};
 	}, [api, phase, metaTick]);
 
+	const dropInvite = () => {
+		setInviteToken(undefined);
+		leaveLinkUrl();
+	};
+	const dropLink = () => {
+		setLink(undefined);
+		leaveLinkUrl();
+	};
+
+	if (link?.kind === "verify-email") return <VerifyEmailPage api={api} token={link.token} onDone={dropLink} />;
+	if (link?.kind === "reset-password") {
+		return (
+			<ResetPasswordPage
+				api={api}
+				token={link.token}
+				onDone={dropLink}
+				onRequestAnother={() => {
+					setStartMode("forgot");
+					dropLink();
+				}}
+			/>
+		);
+	}
+
 	if (phase === "authed") {
+		if (inviteToken) {
+			return (
+				<InviteWhileSignedIn
+					api={api}
+					inviteToken={inviteToken}
+					onKeep={dropInvite}
+					onSwitch={() => void api.logout().finally(() => setPhase("anon"))}
+				/>
+			);
+		}
+		if (!meta && !metaError) {
+			return (
+				<AuthFrame>
+					<p role="status" className="text-sm text-ink-400">
+						{t("loading")}
+					</p>
+				</AuthFrame>
+			);
+		}
 		return (
 			<div className="forge-bg h-full">
-				<TeamShell api={api} mode="hub" topRight={() => <UserMenu api={api} onSignedOut={() => setPhase("anon")} />} />
+				<TeamShell
+					api={api}
+					mode="hub"
+					hubMeta={meta}
+					resendVerification={(email) => api.resendVerification(email)}
+					topRight={() => <UserMenu api={api} onSignedOut={() => setPhase("anon")} />}
+				/>
 			</div>
 		);
 	}
-	if (phase === "pending") return <Pending onBack={() => setPhase("anon")} />;
+	if (phase === "pending") return <Pending api={api} info={pending} mailConfigured={meta?.mailConfigured} onBack={() => setPhase("anon")} />;
 	if (!meta && metaError) {
 		return (
 			<AuthFrame>
@@ -341,5 +493,21 @@ export function HubApp() {
 			</AuthFrame>
 		);
 	}
-	return <AuthScreen api={api} meta={meta} inviteToken={inviteToken} onAuthed={() => setPhase("authed")} onPending={() => setPhase("pending")} />;
+	return (
+		<AuthScreen
+			api={api}
+			meta={meta}
+			inviteToken={inviteToken}
+			startMode={startMode}
+			onAuthed={() => {
+				dropInvite();
+				setPhase("authed");
+			}}
+			onPending={(info) => {
+				dropInvite();
+				setPending(info);
+				setPhase("pending");
+			}}
+		/>
+	);
 }

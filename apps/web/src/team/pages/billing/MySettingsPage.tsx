@@ -4,6 +4,7 @@ import { PageHeader } from "../../../components/ui.tsx";
 import { defineMessages, useT } from "../../../lib/i18n.ts";
 import { useTeam } from "../../context.tsx";
 import { Body, Tabs } from "../../kit.tsx";
+import { BillingOffNotice } from "./BillingOffNotice.tsx";
 import { BillingTab } from "./BillingTab.tsx";
 import { MyModelsTab } from "./MyModelsTab.tsx";
 
@@ -26,6 +27,7 @@ export function MySettingsPage() {
 			<PageHeader title={t("title")} subtitle={t("subtitle")} />
 			<Body>
 				<Tabs tabs={tabs} value={active} onChange={setTab} label={t("tabs")} />
+				{!billingEnabled && <BillingOffNotice audience="user" />}
 				{active === "models" ? <MyModelsTab /> : <BillingTab />}
 			</Body>
 		</>

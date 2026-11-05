@@ -7,6 +7,7 @@ import { isTeamAdmin, useTeam } from "../context.tsx";
 import { roleLabel, useCommonT } from "../i18n.ts";
 import { AsyncView, Body, Card, ConfirmButton, ErrorBox, Notice, shortDate, Table, Tabs, Td, useAction, useAsync } from "../kit.tsx";
 import type { TeamRole, TeamView, WorkspaceView } from "../types.ts";
+import { TransferCard } from "./TransferCard.tsx";
 
 const M = defineMessages({
 	zh: {
@@ -268,7 +269,7 @@ function Workspaces({ team }: { team: TeamView }) {
 }
 
 export function TeamDetailPage() {
-	const { api, route, navigate } = useTeam();
+	const { api, me, route, navigate } = useTeam();
 	const t = useT(M);
 	const c = useCommonT();
 	const teamId = route.params?.teamId ?? "";
@@ -292,6 +293,7 @@ export function TeamDetailPage() {
 					{() =>
 						team ? (
 							<>
+								{team.orgId === null && isTeamAdmin(team.role) && me.orgs.length > 0 && <TransferCard team={team} />}
 								<Tabs
 									label={t("tabs")}
 									value={tab}

@@ -5,6 +5,7 @@ import { PageHeader } from "../../../components/ui.tsx";
 import { defineMessages, useT } from "../../../lib/i18n.ts";
 import { isOperator, useTeam } from "../../context.tsx";
 import { Body, ErrorBox, Tabs } from "../../kit.tsx";
+import { BillingOffNotice } from "./BillingOffNotice.tsx";
 import { ByokPanel } from "./ByokPanel.tsx";
 import { CodesPanel } from "./CodesPanel.tsx";
 import { GrantPanel } from "./GrantPanel.tsx";
@@ -45,7 +46,7 @@ const M = defineMessages({
 type TabId = "plans" | "prices" | "orders" | "codes" | "settings" | "grant" | "byok";
 
 export function OpsBillingPage() {
-	const { me } = useTeam();
+	const { me, billingEnabled } = useTeam();
 	const t = useT(M);
 	const [tab, setTab] = useState<TabId>("plans");
 	if (!isOperator(me)) return <ErrorBox message={t("operatorOnly")} />;
@@ -62,6 +63,7 @@ export function OpsBillingPage() {
 		<>
 			<PageHeader title={t("title")} subtitle={t("subtitle")} />
 			<Body>
+				{!billingEnabled && <BillingOffNotice audience="operator" />}
 				<Tabs tabs={tabs} value={tab} onChange={setTab} label={t("tabs")} />
 				{tab === "plans" && <PlansPanel />}
 				{tab === "prices" && <PricesPanel />}

@@ -1,10 +1,12 @@
 // The team UI route table. The shell (TeamShell) renders the left nav and the page from this list only, so adding a
 // page means adding an entry here. The ids in ./slots.tsx SLOT are the stable contract for navigating to part 2 pages.
-import { Activity, Building2, Cpu, Gauge, LayoutDashboard, type LucideIcon, Mailbox, ScrollText, Settings2, ShieldCheck, UserCog, UserRound, Users, Wallet } from "lucide-react";
+import { Activity, ArrowRightLeft, Building2, Cpu, Gauge, LayoutDashboard, type LucideIcon, Mailbox, MailX, ScrollText, Settings2, ShieldCheck, UserCog, UserRound, Users, Wallet } from "lucide-react";
 import type { ComponentType } from "react";
 import { defineMessages } from "../lib/i18n.ts";
 import { canSeeAdmin, isOperator } from "./context.tsx";
 import { AuditPage } from "./pages/admin/AuditPage.tsx";
+import { DisposableDomainsPage } from "./pages/admin/DisposableDomainsPage.tsx";
+import { TransfersPage } from "./pages/TransfersPage.tsx";
 import { GatewaysPage } from "./pages/admin/GatewaysPage.tsx";
 import { InvitationsPage } from "./pages/admin/InvitationsPage.tsx";
 import { OrgsPage } from "./pages/admin/OrgsPage.tsx";
@@ -43,6 +45,8 @@ export const N = defineMessages({
 		notifications: "通知",
 		mySettings: "个人设置",
 		opsBilling: "运营",
+		transfers: "团队转入",
+		domains: "邮箱黑名单",
 	},
 	en: {
 		teamHome: "Team home",
@@ -61,6 +65,8 @@ export const N = defineMessages({
 		notifications: "Notifications",
 		mySettings: "My settings",
 		opsBilling: "Operations",
+		transfers: "Team transfers",
+		domains: "Blocked email domains",
 	},
 });
 
@@ -69,6 +75,8 @@ export type NavKey = keyof typeof N.zh;
 /** Facts beyond the viewer that decide nav visibility. `billing` is false until the one-time probe says billing is on. */
 export interface NavFlags {
 	billing: boolean;
+	/** The Hub runs in public (online service) mode. */
+	publicMode?: boolean;
 }
 
 export interface TeamRoute {
@@ -81,6 +89,8 @@ export interface TeamRoute {
 }
 
 const operatorOnly = (me: MeResult) => isOperator(me);
+/** The transfer inbox is for people who can send a personal team into an organization or decide on one. */
+const canUseTransfers = (me: MeResult): boolean => isOperator(me) || me.orgs.length > 0 || me.teams.some((t) => t.orgId === null);
 
 export const TEAM_ROUTES: readonly TeamRoute[] = [
 	// ---- part 1 pages ----
@@ -110,6 +120,10 @@ export const TEAM_ROUTES: readonly TeamRoute[] = [
 	// ---- part 4D: personal settings (BYOK models, credits and billing) and the operator billing console ----
 	{ id: SLOT.mySettings, component: MySettingsPage, nav: { group: "main", label: "mySettings", icon: UserRound } },
 	{ id: SLOT.opsBilling, component: OpsBillingPage, nav: { group: "admin", label: "opsBilling", icon: Wallet, visible: operatorOnly } },
+
+	// ---- part 4D-2: online service (team transfer inbox, operator disposable-domain list) ----
+	{ id: SLOT.transfers, component: TransfersPage, nav: { group: "main", label: "transfers", icon: ArrowRightLeft, visible: (me) => canUseTransfers(me) } },
+	{ id: SLOT.domains, component: DisposableDomainsPage, nav: { group: "admin", label: "domains", icon: MailX, visible: (me, flags) => isOperator(me) && flags.publicMode === true } },
 ];
 
 export const DEFAULT_ROUTE_ID = "teams";

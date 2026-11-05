@@ -14,6 +14,8 @@ export const SLOT = {
 	usage: "admin.usage",
 	mySettings: "settings.me",
 	opsBilling: "admin.billing",
+	transfers: "transfers",
+	domains: "admin.domains",
 } as const;
 
 export { NotificationsBell } from "./pages/notifications/NotificationsBell.tsx";

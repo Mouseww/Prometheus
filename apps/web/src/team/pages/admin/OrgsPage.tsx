@@ -6,6 +6,7 @@ import { isOperator, useTeam } from "../../context.tsx";
 import { roleLabel, statusLabel, useCommonT } from "../../i18n.ts";
 import { AsyncView, Body, Card, ConfirmButton, Notice, Table, Td, useAction, useAsync } from "../../kit.tsx";
 import type { OrgRole } from "../../types.ts";
+import { OperatorOrgs } from "./OperatorOrgs.tsx";
 import { useAdminOrgs } from "./shared.tsx";
 
 const M = defineMessages({
@@ -208,6 +209,7 @@ export function OrgsPage() {
 				}
 			/>
 			<Body>
+				{isOperator(me) && <OperatorOrgs />}
 				{creating && (
 					<Card className="mb-4">
 						<CreateOrg

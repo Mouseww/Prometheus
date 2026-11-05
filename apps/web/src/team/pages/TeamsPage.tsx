@@ -5,6 +5,7 @@ import { defineMessages, useT } from "../../lib/i18n.ts";
 import { isOperator, managedOrgs, useTeam } from "../context.tsx";
 import { roleLabel, useCommonT } from "../i18n.ts";
 import { AsyncView, Body, Card, Notice, useAction, useAsync } from "../kit.tsx";
+import { filterTeamsByScope, SCOPE_ALL } from "../logic/publicMode.ts";
 import type { OrgSummary, TeamView } from "../types.ts";
 
 const M = defineMessages({
@@ -17,6 +18,8 @@ const M = defineMessages({
 		personal: "个人团队",
 		empty: "你还没有加入任何团队",
 		emptyHint: "新建一个团队，或让管理员邀请你加入。",
+		emptyScope: "这个范围里还没有团队",
+		emptyScopeHint: "切换到“全部”查看其他团队，或在这里新建一个。",
 		personalTag: "个人",
 		open: "打开团队 {name}",
 	},
@@ -29,6 +32,8 @@ const M = defineMessages({
 		personal: "Personal team",
 		empty: "You are not in any team yet",
 		emptyHint: "Create a team, or ask an administrator to invite you.",
+		emptyScope: "No teams in this context yet",
+		emptyScopeHint: "Switch to All to see your other teams, or create one here.",
 		personalTag: "Personal",
 		open: "Open team {name}",
 	},
@@ -78,7 +83,7 @@ function CreateTeamForm({ orgs, onCreated }: { orgs: OrgSummary[]; onCreated: (t
 }
 
 export function TeamsPage() {
-	const { api, me, navigate } = useTeam();
+	const { api, me, navigate, scope } = useTeam();
 	const t = useT(M);
 	const c = useCommonT();
 	const teams = useAsync(() => api.listTeams(), [api]);
@@ -112,10 +117,11 @@ export function TeamsPage() {
 					</Card>
 				)}
 				<AsyncView state={teams}>
-					{(list) =>
-						list.length === 0 ? (
-							<Empty icon={<Users className="size-5" />} title={t("empty")}>
-								{t("emptyHint")}
+					{(all) => {
+						const list = filterTeamsByScope(all, scope);
+						return list.length === 0 ? (
+							<Empty icon={<Users className="size-5" />} title={scope === SCOPE_ALL ? t("empty") : t("emptyScope")}>
+								{scope === SCOPE_ALL ? t("emptyHint") : t("emptyScopeHint")}
 							</Empty>
 						) : (
 							<ul className="grid gap-3 @2xl:grid-cols-2">
@@ -139,8 +145,8 @@ export function TeamsPage() {
 									</li>
 								))}
 							</ul>
-						)
-					}
+						);
+					}}
 				</AsyncView>
 			</Body>
 		</>

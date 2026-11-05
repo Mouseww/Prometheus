@@ -1,6 +1,6 @@
 import { createContext, useContext } from "react";
 import type { TeamApi } from "./api.ts";
-import type { MeResult } from "./types.ts";
+import type { MeResult, MetaInfo } from "./types.ts";
 
 export interface Route {
 	/** Id of an entry of the route table (./routes.tsx). */
@@ -29,6 +29,13 @@ export interface TeamContextValue {
 	reloadMe: () => Promise<void>;
 	/** False once the Hub answered billingDisabled; the billing UI is then hidden. Unknown (probe running) counts as false. */
 	billingEnabled: boolean;
+	/** Hub mode: what /api/meta says (mode, mail, self-service organizations). Absent in member mode. */
+	meta?: MetaInfo;
+	/** Context switcher: "all", "personal" or "org:<id>" (see logic/publicMode.ts). It scopes the Teams list. */
+	scope: string;
+	setScope: (scope: string) => void;
+	/** Hub mode: asks the Hub to mail a new verification link to `email`. */
+	resendVerification?: (email: string) => Promise<void>;
 }
 
 export const TeamContext = createContext<TeamContextValue | null>(null);

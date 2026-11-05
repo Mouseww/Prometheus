@@ -3,10 +3,12 @@ import { type FormEvent, useState } from "react";
 import { Badge, Button, Empty, Field, Input, PageHeader, Select } from "../../../components/ui.tsx";
 import { defineMessages, useT } from "../../../lib/i18n.ts";
 import { usePrefs } from "../../../lib/prefs.ts";
-import { useTeam } from "../../context.tsx";
+import { isOperator, useTeam } from "../../context.tsx";
 import { statusLabel, useCommonT } from "../../i18n.ts";
-import { AsyncView, Body, Card, Notice, shortDate, Table, Td, useAction, useAsync } from "../../kit.tsx";
+import { AsyncView, Body, Card, ConfirmButton, Notice, shortDate, Table, Td, useAction, useAsync } from "../../kit.tsx";
+import { isPublicMode } from "../../logic/publicMode.ts";
 import type { AdminUserView, UserStatus } from "../../types.ts";
+import { MailWarning } from "./MailWarning.tsx";
 import { useAdminOrgs } from "./shared.tsx";
 
 const M = defineMessages({
@@ -23,6 +25,9 @@ const M = defineMessages({
 		approve: "批准",
 		disable: "停用",
 		enable: "启用",
+		ban: "封禁",
+		banConfirm: "确认封禁",
+		unverified: "未验证邮箱",
 		actionsFor: "对 {name} 的操作",
 		none: "没有符合条件的用户",
 		createUser: "创建用户",
@@ -44,6 +49,9 @@ const M = defineMessages({
 		approve: "Approve",
 		disable: "Disable",
 		enable: "Enable",
+		ban: "Ban",
+		banConfirm: "Confirm ban",
+		unverified: "Email unverified",
 		actionsFor: "Actions for {name}",
 		none: "No users match",
 		createUser: "Create user",
@@ -115,7 +123,8 @@ function CreateUser({ onCreated }: { onCreated: () => void }) {
 }
 
 export function UsersPage() {
-	const { api } = useTeam();
+	const { api, me, meta } = useTeam();
+	const operator = isOperator(me);
 	const t = useT(M);
 	const c = useCommonT();
 	const lang = usePrefs((s) => s.lang);
@@ -139,6 +148,7 @@ export function UsersPage() {
 				}
 			/>
 			<Body>
+				<MailWarning />
 				{creating && (
 					<Card className="mb-4">
 						<CreateUser onCreated={users.reload} />
@@ -175,6 +185,11 @@ export function UsersPage() {
 										<Td className="text-ink-400">{u.email}</Td>
 										<Td>
 											<Badge tone={tone(u.status)}>{statusLabel(c, u.status)}</Badge>
+											{isPublicMode(meta) && u.emailVerifiedAt === null && (
+												<span className="ml-1.5">
+													<Badge tone="muted">{t("unverified")}</Badge>
+												</span>
+											)}
 										</Td>
 										<Td className="text-xs text-ink-400">{shortDate(u.createdAt, lang)}</Td>
 										<Td className="text-right">
@@ -188,6 +203,9 @@ export function UsersPage() {
 													<Button variant="danger" disabled={busy} onClick={() => change((x) => api.disableUser(x.id), u)}>
 														{t("disable")}
 													</Button>
+												)}
+												{operator && u.platformRole !== "operator" && u.status !== "disabled" && (
+													<ConfirmButton label={t("ban")} confirmLabel={t("banConfirm")} disabled={busy} onConfirm={() => change((x) => api.banUser(x.id), u)} />
 												)}
 												{u.status === "disabled" && (
 													<Button variant="outline" disabled={busy} onClick={() => change((x) => api.enableUser(x.id), u)}>
