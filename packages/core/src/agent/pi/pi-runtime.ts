@@ -1,7 +1,7 @@
 // PiRuntime: the in-process PI agent behind the AgentRuntime interface. Owns everything PI-specific that
 // used to sit in host.ts: the ModelRuntime, resource loading, session creation and native storage.
-import { readFile, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import {
 	createAgentSession,
 	createCodemodeExtension,
@@ -25,6 +25,7 @@ import type { Runtime } from "../../runtime.ts";
 import { collectUsage } from "../../usage.ts";
 import type { AgentRuntime, GatewayChoice, NativeSessionInfo, ResumeInit, RuntimeHealth, RuntimeSession, SessionInit, SessionRef } from "../types.ts";
 import { PendingForks } from "./forks.ts";
+import { retargetTranscript } from "./transcript.ts";
 import { applyCompactPercent, DEFAULT_COMPACT_PERCENT } from "./compaction.ts";
 import { raiseRetryBudget } from "./retry.ts";
 import { PiRuntimeSession } from "./pi-session.ts";
@@ -292,6 +293,22 @@ export class PiRuntime implements AgentRuntime {
 			messageCount: info.messageCount,
 			firstMessage: info.firstMessage,
 		}));
+	}
+
+	/**
+	 * Writes `content` (a PI session file) into PI's session store as a new session in `cwd`, so it is listed and can be
+	 * resumed. The id is fresh; the file name and folder come from PI itself.
+	 */
+	async importTranscript(cwd: string, content: string, name?: string): Promise<{ id: string; path: string }> {
+		const target = SessionManager.create(cwd);
+		const path = target.getSessionFile();
+		if (!path) throw new AppError("generic");
+		const id = target.getSessionId();
+		const body = retargetTranscript(content, id, cwd);
+		await mkdir(dirname(path), { recursive: true });
+		await writeFile(path, body, { encoding: "utf8", flag: "wx" });
+		if (name) SessionManager.open(path).appendSessionInfo(name);
+		return { id, path };
 	}
 
 	async deleteNative(ref: SessionRef): Promise<void> {

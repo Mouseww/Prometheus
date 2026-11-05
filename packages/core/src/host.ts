@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { DEFAULT_CATALOG_URL, listModels, matchModelDefaults, mergeGatewayUpdate, type ModelCatalog, parseModelCatalog, redactGateway } from "@prometheus/gateway";
@@ -37,6 +37,7 @@ import {
 	type ServerRpcMethod,
 	agentPreset,
 	BUILTIN_AGENTS,
+	type SessionBadge,
 	type SessionEvent,
 	type SessionSnapshot,
 	type SessionSummary,
@@ -49,6 +50,7 @@ import {
 	GOAL_MAX_TURNS,
 } from "@prometheus/protocol";
 import { ToolBus } from "./agent/bus/tool-bus.ts";
+import { BadgeStore } from "./agent/session-badges.ts";
 import { OwnerStore } from "./agent/session-owners.ts";
 import { allowedMode, publicPolicy } from "./policy.ts";
 import { assertAgentAllowed, serverRole } from "./role.ts";
@@ -207,6 +209,7 @@ export class PrometheusHost {
 	private readonly index: SessionIndex;
 	private readonly permissions: PermissionStore;
 	private readonly owners: OwnerStore;
+	private readonly badges: BadgeStore;
 	private readonly externalRuntimes = new Map<string, AgentRuntime>();
 	/** Runtimes replaced after a profile edit; what they keep across chats (a shared server) stops with the host. */
 	private readonly retiredRuntimes: AgentRuntime[] = [];
@@ -230,6 +233,15 @@ export class PrometheusHost {
 		this.index = new SessionIndex(join(runtime.dataDir, "sessions", "index.json"));
 		this.permissions = new PermissionStore(join(runtime.dataDir, "sessions", "permissions.json"));
 		this.owners = new OwnerStore(join(runtime.dataDir, "sessions", "owners.json"));
+		this.badges = new BadgeStore(join(runtime.dataDir, "sessions", "badges.json"));
+		runtime.plugins.sessionOps = {
+			prompt: (id, text, opts) => this.pluginPrompt(id, text, opts?.actor),
+			respond: async (id, requestId, response) => void this.require(id).bridge.respond(requestId, response),
+			abort: async (id) => void (await this.live.get(id)?.session.abort()),
+			exportTranscript: (id) => this.exportTranscript(id),
+			importTranscript: (opts) => this.importTranscript(opts),
+			setBadge: (id, badge) => this.setBadge(id, badge),
+		};
 		runtime.plugins.reloadSessions = () => this.reloadSessions();
 		runtime.plugins.workspaces = async () => (await this.workspaces.list()).map((w) => ({ id: w.id, path: w.path, name: w.name }));
 		runtime.plugins.hostProviders.push(async (req) => {
@@ -276,6 +288,7 @@ ${extras.map((p) => `- ${p}`).join("
 		await host.worktrees.load();
 		await host.permissions.load();
 		await host.owners.load();
+		await host.badges.load();
 		pi?.syncGateways();
 		void pruneUploads().catch(() => {});
 		return host;
@@ -543,8 +556,14 @@ ${extras.map((p) => `- ${p}`).join("
 			},
 		});
 		const bridge = new UIBridge({
-			request: (r) => this.listener.uiRequest(id, r),
-			resolved: (rid) => this.listener.uiResolved(id, rid),
+			request: (r) => {
+				this.listener.uiRequest(id, r);
+				this.runtime.plugins.emitUiRequest(id, r);
+			},
+			resolved: (rid) => {
+				this.listener.uiResolved(id, rid);
+				this.runtime.plugins.emitUiResolved(id, rid);
+			},
 		});
 		const hooks: SessionHooks = {
 			created: (s) => {
@@ -768,6 +787,7 @@ ${extras.map((p) => `- ${p}`).join("
 		this.goals.erase(sessionId);
 		this.permissions.delete(sessionId);
 		this.owners.delete(sessionId);
+		this.badges.delete(sessionId);
 		const entry = this.index.get(sessionId);
 		if (entry && entry.runtime !== "pi") {
 			await this.closeSession(sessionId);
@@ -855,7 +875,8 @@ ${extras.map((p) => `- ${p}`).join("
 			.sort((a, b) => b.modified.localeCompare(a.modified));
 		return all.map((s) => {
 			const owner = this.owners.get(s.id);
-			return owner ? { ...s, owner } : s;
+			const badge = this.badges.get(s.id);
+			return owner || badge ? { ...s, ...(owner ? { owner } : {}), ...(badge ? { badge } : {}) } : s;
 		});
 	}
 
@@ -890,6 +911,7 @@ ${extras.map((p) => `- ${p}`).join("
 			...(this.index.get(s.id)?.agent ? { agent: this.index.get(s.id)?.agent } : {}),
 			...(this.goals.get(s.id) ? { goal: this.goals.get(s.id) } : {}),
 			...(this.owners.get(s.id) ? { owner: this.owners.get(s.id) } : {}),
+			...(this.badges.get(s.id) ? { badge: this.badges.get(s.id) } : {}),
 		};
 	}
 
@@ -904,7 +926,49 @@ ${extras.map((p) => `- ${p}`).join("
 		return this.resolvePath(sessionId).then(() => true, () => false);
 	}
 
-	/** A saved chat the user can open, as if they had pressed "new chat"; the optional first message runs in the background. */
+	/** Trusted plugin prompt (no caller check). A Hub still refuses to drive an agent. */
+	private async pluginPrompt(sessionId: string, text: string, actor: string | undefined): Promise<void> {
+		assertAgentAllowed(serverRole(), "chat.prompt", { sessionId, text });
+		if (typeof text !== "string" || !text.trim()) throw new AppError("messageEmpty");
+		const who = actor?.trim();
+		const live = await this.open(sessionId);
+		await this.prompt(sessionId, who ? `[来自 ${who}] ${text}` : text, undefined, live.session.isStreaming ? "followUp" : undefined);
+	}
+
+	/** The PI transcript file of a session; undefined for other runtimes or when nothing was written yet. */
+	private async exportTranscript(sessionId: string): Promise<{ format: "pi-jsonl"; content: string } | undefined> {
+		const live = this.live.get(sessionId);
+		const runtime = live?.session.ref().runtime ?? this.index.get(sessionId)?.runtime ?? "pi";
+		if (runtime !== "pi") return undefined;
+		const path = live?.session.ref().path ?? (await this.resolvePath(sessionId).catch(() => undefined));
+		if (!path) return undefined;
+		try {
+			return { format: "pi-jsonl", content: await readFile(path, "utf8") };
+		} catch {
+			return undefined;
+		}
+	}
+
+	/** Writes a PI session file with a fresh id into the PI store, so it is listed and can be resumed. */
+	private async importTranscript(opts: { cwd: string; content: string; name?: string; owner?: string; runtime?: "pi" }): Promise<{ sessionId: string }> {
+		if (opts.runtime !== undefined && opts.runtime !== "pi") throw new AppError("transcriptInvalid");
+		const dir = opts.cwd?.trim();
+		if (!dir || !existsSync(dir) || !statSync(dir).isDirectory()) throw new AppError("workdirNotFound", { dir });
+		const cwd = normalizeDir(dir);
+		const { id, path } = await this.needPi.importTranscript(cwd, opts.content, opts.name?.trim() || undefined);
+		await this.workspaces.add(dir);
+		this.paths.set(id, path);
+		if (opts.owner) this.owners.set(id, opts.owner);
+		this.emitSessionsChanged();
+		return { sessionId: id };
+	}
+
+	private async setBadge(sessionId: string, badge: SessionBadge | undefined): Promise<void> {
+		if (badge !== undefined && !(await this.sessionExists(sessionId))) throw new AppError("sessionNotFound", { id: sessionId });
+		if (this.badges.set(sessionId, badge)) this.emitSessionsChanged();
+	}
+
+	/** A saved chat the user can open, as if they had pressed "new chat";the optional first message runs in the background. */
 	private async openSession(options: OpenSessionOptions): Promise<{ sessionId: string }> {
 		const dir = options.cwd?.trim();
 		if (!dir || !existsSync(dir) || !statSync(dir).isDirectory()) throw new AppError("workdirNotFound", { dir });

@@ -13,6 +13,7 @@ export const ERROR_PARAMS = {
 	sessionForbidden: ["id"],
 	policyLocked: ["field"],
 	agentDisabled: [],
+	transcriptInvalid: [],
 	policyInvalid: ["detail"],
 	workspaceNotFound: ["id"],
 	workdirNotFound: ["dir"],

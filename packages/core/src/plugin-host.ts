@@ -24,9 +24,21 @@ import type {
 	RpcHandler,
 	StreamPublishOptions,
 	WorkspaceRef,
+	WsRouteHandler,
 } from "@prometheus/plugin-sdk";
-import { AppError, encodeError, type GatewayConfig, type PanelInfo, type PluginFile, type PluginInfo, type PluginInstallResult, type RunAccess, type SessionEvent, type SessionSummary } from "@prometheus/protocol";
+import { AppError, encodeError, type GatewayConfig, type PanelInfo, type PluginFile, type PluginInfo, type PluginInstallResult, type RunAccess, type SessionEvent, type SessionSummary, type UIRequest } from "@prometheus/protocol";
 import { type Captured, type CapturedCommand, captureExtension, type Handler, HOOK_NAMES, type HookName } from "./agent/facade/pi-facade.ts";
+
+/** A WebSocket upgrade route (`ctx.wsRoute`). */
+export interface PluginWsRoute {
+	/** Full path, e.g. /plugins/foo/ws */
+	path: string;
+	handler: WsRouteHandler;
+	auth: RouteAuth;
+}
+
+/** What `ctx.sessions` offers beyond `info`; wired by the session host. */
+export type SessionOps = Omit<PluginContext["sessions"], "info">;
 
 export interface PluginRoute {
 	method: HttpMethod;
@@ -120,6 +132,7 @@ interface Registration {
 	storeIds: string[];
 	rpcKeys: string[];
 	routes: PluginRoute[];
+	wsRoutes: PluginWsRoute[];
 	disposers: (() => void | Promise<void>)[];
 	/** `stream.onWatch` listeners. */
 	watchers: ((topic: string, count: number) => void)[];
@@ -218,6 +231,27 @@ export class PluginHost {
 	sessionInfo: (sessionId: string) => Promise<SessionSummary | undefined> = async () => undefined;
 	private readonly sessionListeners = new Set<SessionListener>();
 	private readonly changedListeners = new Set<() => void>();
+	private readonly uiListeners = new Set<(sessionId: string, request: UIRequest) => void>();
+	private readonly uiResolvedListeners = new Set<(sessionId: string, requestId: string) => void>();
+	/** Wired by the session host: trusted in-process session control (`ctx.sessions`). */
+	sessionOps: SessionOps = {
+		prompt: async () => {
+			throw new AppError("pluginBackgroundUnsupported");
+		},
+		respond: async () => {
+			throw new AppError("pluginBackgroundUnsupported");
+		},
+		abort: async () => {
+			throw new AppError("pluginBackgroundUnsupported");
+		},
+		exportTranscript: async () => undefined,
+		importTranscript: async () => {
+			throw new AppError("pluginBackgroundUnsupported");
+		},
+		setBadge: async () => {
+			throw new AppError("pluginBackgroundUnsupported");
+		},
+	};
 	onChanged: () => void = () => {};
 	/** Wired by the server: pushes a `plugin.notify` frame for one plugin. */
 	notifyPlugin: (plugin: string) => void = () => {};
@@ -248,6 +282,10 @@ export class PluginHost {
 
 	get routes(): PluginRoute[] {
 		return this.entries.flatMap((e) => e.reg?.routes ?? []);
+	}
+
+	get wsRoutes(): PluginWsRoute[] {
+		return this.entries.flatMap((e) => e.reg?.wsRoutes ?? []);
 	}
 
 	/** Runtime-neutral tools of every active plugin, in plugin order. */
@@ -505,7 +543,7 @@ export class PluginHost {
 		info.status = "loaded";
 		info.error = undefined;
 		info.panels = [];
-		const reg: Registration = { factories: [], tools: [], providers: [], traffic: [], storeIds: [], rpcKeys: [], routes: [], disposers: [], watchers: [] };
+		const reg: Registration = { factories: [], tools: [], providers: [], traffic: [], storeIds: [], rpcKeys: [], routes: [], wsRoutes: [], disposers: [], watchers: [] };
 		entry.reg = reg;
 		try {
 			const plugin = await entry.fetch();
@@ -539,6 +577,19 @@ export class PluginHost {
 
 	emitSessionsChanged(): void {
 		for (const listener of [...this.changedListeners]) this.safely(listener);
+	}
+
+	/** Whether any plugin listens to UI requests, so the host can skip the call. */
+	get hasUiListeners(): boolean {
+		return this.uiListeners.size + this.uiResolvedListeners.size > 0;
+	}
+
+	emitUiRequest(sessionId: string, request: UIRequest): void {
+		for (const listener of [...this.uiListeners]) this.safely(() => listener(sessionId, request));
+	}
+
+	emitUiResolved(sessionId: string, requestId: string): void {
+		for (const listener of [...this.uiResolvedListeners]) this.safely(() => listener(sessionId, requestId));
 	}
 
 	private safely(fn: () => unknown): void {
@@ -781,8 +832,30 @@ export class PluginHost {
 					reg.disposers.push(off);
 					return off;
 				},
+				onUiRequest: (listener) => {
+					if (entry.reg !== reg) return () => {};
+					this.uiListeners.add(listener);
+					const off = () => void this.uiListeners.delete(listener);
+					reg.disposers.push(off);
+					return off;
+				},
+				onUiResolved: (listener) => {
+					if (entry.reg !== reg) return () => {};
+					this.uiResolvedListeners.add(listener);
+					const off = () => void this.uiResolvedListeners.delete(listener);
+					reg.disposers.push(off);
+					return off;
+				},
 			},
-			sessions: { info: (id) => this.sessionInfo(id) },
+			sessions: {
+				info: (id) => this.sessionInfo(id),
+				prompt: (id, text, opts) => this.sessionOps.prompt(id, text, opts),
+				respond: (id, requestId, response) => this.sessionOps.respond(id, requestId, response),
+				abort: (id) => this.sessionOps.abort(id),
+				exportTranscript: (id) => this.sessionOps.exportTranscript(id),
+				importTranscript: (opts) => this.sessionOps.importTranscript(opts),
+				setBadge: (id, badge) => this.sessionOps.setBadge(id, badge),
+			},
 			callPlugin: async (plugin, method, params) => {
 				const handler = this.rpcs.get(`${plugin}/${method}`);
 				if (!handler) throw new AppError("pluginMethodNotFound", { plugin, method });
@@ -822,6 +895,10 @@ export class PluginHost {
 			route: (method, path, handler, opts) => {
 				if (!path.startsWith("/")) throw new AppError("pluginRoutePath");
 				reg.routes.push({ method, path: `/plugins/${name}${path}`, handler, auth: opts?.auth === "public" ? "public" : "host" });
+			},
+			wsRoute: (path, handler, opts) => {
+				if (!path.startsWith("/")) throw new AppError("pluginRoutePath");
+				reg.wsRoutes.push({ path: `/plugins/${name}${path}`, handler, auth: opts?.auth === "public" ? "public" : "host" });
 			},
 			panel: (panel) => {
 				entry.info.panels.push({ plugin: name, id: panel.id, title: panel.title, icon: panel.icon, url: `/plugins/${name}${panel.path}` });

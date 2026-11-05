@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
-import type { BlockedCall, Caller, GatewayConfig, Identity, ModelRef, PermissionMode, RunAccess, SessionEvent, SessionSummary } from "@prometheus/protocol";
+import type { BlockedCall, Caller, GatewayConfig, Identity, ModelRef, PermissionMode, RunAccess, SessionBadge, SessionEvent, SessionSummary, UIRequest, UIResponse } from "@prometheus/protocol";
 
 export type { ExtensionAPI, ExtensionFactory, ToolDefinition } from "@earendil-works/pi-coding-agent";
 export { createJsonStore, type JsonStore } from "./json-store.ts";
@@ -50,6 +50,18 @@ export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 export type RouteHandler = (req: IncomingMessage, res: ServerResponse, ctx: { identity?: Identity }) => void | Promise<void>;
 /** "host": the host checks the login first (default). "public": the plugin authenticates the request itself. */
 export type RouteAuth = "host" | "public";
+/** The part of a `ws` WebSocket a plugin needs; the host passes the real one. */
+export interface PluginWebSocket {
+	readonly readyState: number;
+	send(data: string | Uint8Array, cb?: (err?: Error) => void): void;
+	close(code?: number, reason?: string): void;
+	terminate(): void;
+	ping(): void;
+	on(event: string, listener: (...args: any[]) => void): unknown;
+	off(event: string, listener: (...args: any[]) => void): unknown;
+}
+/** Called once per accepted WebSocket upgrade; `ctx.identity` is set when a trusted issuer vouched for the caller. */
+export type WsRouteHandler = (ws: PluginWebSocket, req: IncomingMessage, ctx: { identity?: Identity }) => void | Promise<void>;
 /** Params arrive straight from clients: validate before use. `caller` is absent for internal calls. */
 export type RpcHandler = (params: Record<string, unknown>, caller?: Caller) => unknown;
 
@@ -112,6 +124,8 @@ export interface OpenSessionOptions {
 	/** Sent as the first message without waiting for the answer. The user is present: questions go to whoever has the chat open. */
 	prompt?: string;
 	model?: ModelRef;
+	/** Agent runtime. Only "pi" is supported for now (it is also the default); stating it makes the intent explicit. */
+	runtime?: "pi";
 }
 
 export interface AgentRunResult {
@@ -313,10 +327,29 @@ export interface PluginContext {
 		onSession(listener: (sessionId: string, event: SessionEvent, info: { owner?: string; cwd: string }) => void): () => void;
 		/** The session list changed (created, renamed, deleted, archived). */
 		onSessionsChanged(listener: () => void): () => void;
+		/** A session asks the user something (permission, select, confirm, input, ...), fanned out alongside the clients' ui.request. */
+		onUiRequest(listener: (sessionId: string, request: UIRequest) => void): () => void;
+		/** A pending UI request was answered or cancelled. */
+		onUiResolved(listener: (sessionId: string, requestId: string) => void): () => void;
 	};
+	/**
+	 * Trusted in-process control of sessions: there is no caller check (the plugin vouches for its own callers).
+	 * The hub role still refuses anything that would run an agent (`agentDisabled`).
+	 */
 	sessions: {
 		/** The session's list entry, or undefined when there is none. */
 		info(sessionId: string): Promise<SessionSummary | undefined>;
+		/** Send a message to an open or saved session. With `actor` the text is prefixed "[来自 <actor>] ". */
+		prompt(sessionId: string, text: string, opts?: { actor?: string }): Promise<void>;
+		/** Answer a pending UI request (see `events.onUiRequest`). */
+		respond(sessionId: string, requestId: string, response: UIResponse): Promise<void>;
+		abort(sessionId: string): Promise<void>;
+		/** The session's PI transcript as JSONL; undefined for sessions of other runtimes or without a file. */
+		exportTranscript(sessionId: string): Promise<{ format: "pi-jsonl"; content: string } | undefined>;
+		/** Write a new PI session (fresh id, the given cwd) into the PI session store so the host lists and can resume it. */
+		importTranscript(opts: { cwd: string; content: string; name?: string; owner?: string; runtime?: "pi" }): Promise<{ sessionId: string }>;
+		/** Pin a short note to the session (list and header); undefined clears it. Survives restarts. */
+		setBadge(sessionId: string, badge: SessionBadge | undefined): Promise<void>;
 	};
 
 	/** Contribute a PI extension: tools, commands, providers, lifecycle hooks. */
@@ -329,8 +362,16 @@ export interface PluginContext {
 	hooks: { gatewayTraffic(hooks: GatewayTrafficHooks): void };
 	/** Register a knowledge store backend under an id (e.g. "qdrant"). */
 	knowledgeStore(id: string, factory: KnowledgeStoreFactory): void;
-	/** Mount an HTTP route at /plugins/<name><path>. Server host only. */
+	/**
+	 * Mount an HTTP route at /plugins/<name><path>. Server host only. A path ending in "/*" matches every sub-path
+	 * (the handler sees the full req.url); an exact route wins over a prefix route and the longest prefix wins.
+	 */
 	route(method: HttpMethod, path: string, handler: RouteHandler, opts?: { auth?: RouteAuth }): void;
+	/**
+	 * Accept WebSocket upgrades at /plugins/<name><path> (same auth and "/*" matching as `route`). Server host only.
+	 * `auth: "public"` skips the host login; the handler must authenticate itself.
+	 */
+	wsRoute(path: string, handler: WsRouteHandler, opts?: { auth?: RouteAuth }): void;
 	/** Add a sidebar panel rendered in an iframe. Server host only. */
 	panel(panel: PanelContribution): void;
 	/** Expose a method to clients as `plugin.call({ plugin: <name>, method })`. */

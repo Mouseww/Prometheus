@@ -365,8 +365,16 @@ export interface Caller {
 	identity?: Identity;
 }
 
+/** A short note a plugin pins to a session in the list and header (e.g. "team: waiting for approval"). */
+export interface SessionBadge {
+	text: string;
+	tone: "info" | "warn";
+}
+
 export interface SessionSummary {
 	id: string;
+	/** Set by a plugin through `ctx.sessions.setBadge`. */
+	badge?: SessionBadge;
 	/** User who owns the session, when a trusted issuer vouched for its creator. */
 	owner?: string;
 	name?: string;
@@ -600,6 +608,8 @@ export interface SessionSnapshot {
 	goal?: GoalState;
 	/** Set when the chat works in its own git worktree. */
 	worktree?: SessionWorktree;
+	/** Set by a plugin through `ctx.sessions.setBadge`. */
+	badge?: SessionBadge;
 }
 
 /** Estimated tokens (chars/4) per context component; the sum approximates, not equals, `contextTokens`. */
