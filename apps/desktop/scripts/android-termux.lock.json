@@ -16,8 +16,8 @@
 		"sha256": "623d84855e176f3f2a415d24c0e1d2f529356f4b5439bb3313e6d7ff0da4585c"
 	},
 	"ca-certificates": {
-		"filename": "pool/main/c/ca-certificates/ca-certificates_1:2026.10.20-1_all.deb",
-		"sha256": "ab8a7fe63293b455c02399ee125eb8a0041e430ccfdf89a5be8317522fdf9107"
+		"filename": "pool/main/c/ca-certificates/ca-certificates_1:2026.11.05_all.deb",
+		"sha256": "4cf292d604e14ed2878847eec2acea7c24ba10f598a5c5cd75dfc5e3750717da"
 	},
 	"coreutils": {
 		"filename": "pool/main/c/coreutils/coreutils_9.12_aarch64.deb",
@@ -172,8 +172,8 @@
 		"sha256": "150d7dd382e92587808d96813b9538fe5c6c41fa33f1a1033daa4e30c6ff2695"
 	},
 	"npm": {
-		"filename": "pool/main/n/npm/npm_12.2.1_all.deb",
-		"sha256": "2898344f7f54a44ead5926f0e03e958bee00e839c6fd84a47d54278ecb4a13e6"
+		"filename": "pool/main/n/npm/npm_12.2.2_all.deb",
+		"sha256": "edb4a1dc3a6967f1e65872c7cb7588bd3672152beab6ae633ba848931371e9e1"
 	},
 	"openssl": {
 		"filename": "pool/main/o/openssl/openssl_1:3.6.5_aarch64.deb",
