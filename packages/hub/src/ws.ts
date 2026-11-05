@@ -7,7 +7,15 @@ import type { HubDeps, UpgradeHandler } from "./deps.ts";
 import { relativePath } from "./http/dispatch.ts";
 import { verifyJwt } from "./jwt.ts";
 import { LOG_PREFIX } from "./log.ts";
+import { type ConnKind, type HandPeer, HandRouter, type HandRouterOptions } from "./services/hands.ts";
 import { RELAY_TIMEOUT_MS, type Realtime, type RelayMessage, type RelayOutcome } from "./services/realtime.ts";
+
+/** Audience of the long-lived credential a tenant instance's team plugin presents (see runtime/tenant-env.ts). */
+const TENANT_TOKEN_AUDIENCE = "prometheus-tenant";
+const COMMAND_TIMEOUT_MS = 60_000;
+const SNAPSHOT_REF_FIELD = /^[A-Za-z0-9_.-]{1,200}$/;
+
+export type CommandOutcome = { kind: "ok"; data: unknown } | { kind: "offline" } | { kind: "timeout" } | { kind: "failed"; error?: string; code?: string };
 
 /** A member's WebSocket may be gone this long before the Hub flags their sessions offline (spec 6.2). */
 export const OFFLINE_GRACE_MS = 60_000;
@@ -33,17 +41,29 @@ export interface WsGateway extends Realtime {
 	 */
 	attach(ws: WebSocket, req: IncomingMessage): void;
 	setHandlers(handlers: WsHandlers): void;
+	/**
+	 * Sends a command frame `{type:"cmd", cmdId, cmd, params}` to the user's newest connection of `kind` and waits for its
+	 * `cmdResult`. Used by the handoff orchestration; only the connection the command went to may answer it.
+	 */
+	command(userId: string, kind: ConnKind, cmd: string, params: Record<string, unknown>, timeoutMs?: number): Promise<CommandOutcome>;
+	/** Starts the user's tenant when a hand call targets an offline team side (set by the runtime-aware route module). */
+	setWake(wake: HandRouterOptions["wake"]): void;
 	/** Flags sessions of owners that have had no connection for longer than the grace period. Runs every 10 seconds; exposed for tests. */
 	sweep(): Promise<number>;
-	connectionCount(userId?: string): number;
+	connectionCount(userId?: string, kind?: ConnKind): number;
 	close(): Promise<void>;
 }
 
-interface Conn {
+interface Conn extends HandPeer {
 	ws: WebSocket;
-	userId: string;
 	topics: Set<string>;
 	alive: boolean;
+}
+
+interface PendingCommand {
+	conn: Conn;
+	resolve(outcome: CommandOutcome): void;
+	timer: NodeJS.Timeout;
 }
 
 interface PendingRelay {
@@ -66,13 +86,21 @@ export function createWsGateway(deps: HubDeps, options: { offlineGraceMs?: numbe
 	const byUser = new Map<string, Conn[]>();
 	const disconnectedAt = new Map<string, number>();
 	const pending = new Map<string, PendingRelay>();
+	const pendingCommands = new Map<string, PendingCommand>();
 	const startedAt = deps.now();
 	let handlers: WsHandlers | undefined;
+	let wakeTenant: HandRouterOptions["wake"];
 	let sweeping = false;
 
 	const send = (ws: WebSocket, frame: unknown): void => {
 		if (ws.readyState === 1) ws.send(JSON.stringify(frame));
 	};
+
+	const hands = new HandRouter({
+		peers: (userId, kind) => (byUser.get(userId) ?? []).filter((c) => c.kind === kind),
+		log: deps.log,
+		wake: (userId) => (wakeTenant ? wakeTenant(userId) : Promise.reject(new Error("no wake"))),
+	});
 
 	const failPendingFor = (conn: Conn): void => {
 		for (const [id, p] of pending) {
@@ -81,6 +109,26 @@ export function createWsGateway(deps: HubDeps, options: { offlineGraceMs?: numbe
 			pending.delete(id);
 			p.resolve({ kind: "offline" });
 		}
+		for (const [id, p] of pendingCommands) {
+			if (p.conn !== conn) continue;
+			clearTimeout(p.timer);
+			pendingCommands.delete(id);
+			p.resolve({ kind: "offline" });
+		}
+		hands.dropPeer(conn);
+	};
+
+	/** Frames of the other connections of the same user (the sender never hears its own snapshot messages). */
+	const toSiblings = (from: Conn, frame: unknown): void => {
+		for (const c of byUser.get(from.userId) ?? []) if (c !== from) send(c.ws, frame);
+	};
+
+	const snapshotFrame = (type: "snapshot.updated" | "snapshot.applied", msg: Record<string, unknown>): Record<string, unknown> | undefined => {
+		const { hubSessionId, side, commit } = msg;
+		if (typeof hubSessionId !== "string" || !SNAPSHOT_REF_FIELD.test(hubSessionId)) return undefined;
+		if (side !== "local" && side !== "team") return undefined;
+		if (typeof commit !== "string" || !/^[0-9a-f]{40,64}$/.test(commit)) return undefined;
+		return { type, hubSessionId, side, commit, ...(typeof msg.conflictRef === "string" && msg.conflictRef.length <= 300 ? { conflictRef: msg.conflictRef } : {}) };
 	};
 
 	const removeConn = (conn: Conn): void => {
@@ -139,13 +187,43 @@ export function createWsGateway(deps: HubDeps, options: { offlineGraceMs?: numbe
 				entry.resolve(msg.ok === true ? { kind: "ok" } : { kind: "failed", error: typeof msg.error === "string" ? msg.error : undefined });
 				return;
 			}
+			case "cmdResult": {
+				const cmdId = msg.cmdId;
+				const entry = typeof cmdId === "string" ? pendingCommands.get(cmdId) : undefined;
+				if (!entry || entry.conn !== conn || typeof cmdId !== "string") return;
+				clearTimeout(entry.timer);
+				pendingCommands.delete(cmdId);
+				entry.resolve(
+					msg.ok === true
+						? { kind: "ok", data: msg.data }
+						: { kind: "failed", error: typeof msg.error === "string" ? msg.error : undefined, code: typeof msg.code === "string" ? msg.code : undefined },
+				);
+				return;
+			}
+			case "hand.call":
+				await hands.call(conn, msg);
+				return;
+			case "hand.result":
+				hands.result(conn, msg);
+				return;
+			case "snapshot.updated":
+			case "snapshot.applied": {
+				const frame = snapshotFrame(msg.type, msg);
+				if (!frame) {
+					send(conn.ws, { type: "error", code: "invalidMessage", message: `${msg.type} 缺少或带有无效的 hubSessionId/side/commit` });
+					return;
+				}
+				toSiblings(conn, frame);
+				return;
+			}
 			default:
 				send(conn.ws, { type: "error", code: "invalidMessage", message: `未知消息类型 ${msg.type}` });
 		}
 	};
 
-	const accept = (ws: WebSocket, userId: string): void => {
-		const conn: Conn = { ws, userId, topics: new Set(), alive: true };
+	const accept = (ws: WebSocket, who: { userId: string; kind: ConnKind }): void => {
+		const { userId, kind } = who;
+		const conn: Conn = { ws, userId, kind, topics: new Set(), alive: true, send: (frame) => send(ws, frame) };
 		conns.add(conn);
 		const list = byUser.get(userId) ?? [];
 		const first = list.length === 0;
@@ -161,7 +239,7 @@ export function createWsGateway(deps: HubDeps, options: { offlineGraceMs?: numbe
 		});
 		ws.on("close", () => removeConn(conn));
 		ws.on("error", () => removeConn(conn));
-		send(ws, { type: "ready", userId });
+		send(ws, { type: "ready", userId, kind });
 		if (first && handlers) {
 			void handlers.onOnline(userId).catch((err: unknown) => {
 				deps.log.warn(`${LOG_PREFIX} 恢复会话在线状态失败: ${err instanceof Error ? err.message : String(err)}`);
@@ -169,17 +247,33 @@ export function createWsGateway(deps: HubDeps, options: { offlineGraceMs?: numbe
 		}
 	};
 
-	/** The user id behind the `token` query parameter, or undefined when it is missing, invalid, or the account is gone. */
-	const authenticate = async (url: URL): Promise<string | undefined> => {
+	/**
+	 * Who the `token` query parameter belongs to, or undefined when it is missing, invalid, or the account is gone. A user
+	 * access token makes a `local` connection; a tenant credential (aud `prometheus-tenant`, `tenant: true`) makes a `tenant`
+	 * one. The `kind` parameter may only repeat what the token already says, so a user cannot pose as a tenant instance.
+	 */
+	const authenticate = async (url: URL): Promise<{ userId: string; kind: ConnKind } | undefined> => {
 		const token = url.searchParams.get("token");
-		const claims = token ? verifyJwt(token, { publicKey: deps.publicKeyPem, issuer: deps.config.issuer, audience: JWT_AUDIENCE }) : undefined;
+		if (!token) return undefined;
+		const base = { publicKey: deps.publicKeyPem, issuer: deps.config.issuer };
+		let kind: ConnKind = "local";
+		let claims = verifyJwt(token, { ...base, audience: JWT_AUDIENCE });
+		if (!claims) {
+			const tenantClaims = verifyJwt(token, { ...base, audience: TENANT_TOKEN_AUDIENCE });
+			if (tenantClaims && (tenantClaims as { tenant?: unknown }).tenant === true) {
+				claims = tenantClaims;
+				kind = "tenant";
+			}
+		}
 		if (!claims) return undefined;
+		const declared = url.searchParams.get("kind");
+		if (declared !== null && declared !== kind) return undefined;
 		try {
 			await deps.services.actors.load(claims.sub);
 		} catch {
 			return undefined;
 		}
-		return claims.sub;
+		return { userId: claims.sub, kind };
 	};
 
 	const attach = (ws: WebSocket, req: IncomingMessage): void => {
@@ -191,12 +285,12 @@ export function createWsGateway(deps: HubDeps, options: { offlineGraceMs?: numbe
 		ws.on("message", hold);
 		ws.on("error", noop);
 		void authenticate(url)
-			.then((userId) => {
+			.then((who) => {
 				ws.off("message", hold);
 				ws.off("error", noop);
-				if (!userId) return ws.close(4401, "Unauthorized");
+				if (!who) return ws.close(4401, "Unauthorized");
 				if (ws.readyState !== 1) return;
-				accept(ws, userId);
+				accept(ws, who);
 				for (const raw of early) ws.emit("message", raw, false);
 			})
 			.catch((err: unknown) => {
@@ -210,10 +304,10 @@ export function createWsGateway(deps: HubDeps, options: { offlineGraceMs?: numbe
 		if (relativePath(deps.config, url.pathname) !== WS_PATH) return false;
 		socket.on("error", () => {});
 		void (async () => {
-			const userId = await authenticate(url);
-			if (!userId) return rejectUpgrade(socket, 401, "Unauthorized");
+			const who = await authenticate(url);
+			if (!who) return rejectUpgrade(socket, 401, "Unauthorized");
 			if (socket.destroyed) return;
-			wss.handleUpgrade(req, socket, head, (ws) => accept(ws, userId));
+			wss.handleUpgrade(req, socket, head, (ws) => accept(ws, who));
 		})().catch((err: unknown) => {
 			deps.log.error(`${LOG_PREFIX} WebSocket 升级失败: ${err instanceof Error ? err.message : String(err)}`);
 			rejectUpgrade(socket, 500, "Internal Server Error");
@@ -263,7 +357,24 @@ export function createWsGateway(deps: HubDeps, options: { offlineGraceMs?: numbe
 			handlers = h;
 		},
 		sweep,
-		connectionCount: (userId) => (userId ? (byUser.get(userId)?.length ?? 0) : conns.size),
+		connectionCount: (userId, kind) => (userId ? (byUser.get(userId) ?? []).filter((c) => kind === undefined || c.kind === kind).length : conns.size),
+		setWake(wake) {
+			wakeTenant = wake;
+		},
+
+		command(userId, kind, cmd, params, timeoutMs = COMMAND_TIMEOUT_MS) {
+			const conn = (byUser.get(userId) ?? []).filter((c) => c.kind === kind).at(-1);
+			if (!conn) return Promise.resolve<CommandOutcome>({ kind: "offline" });
+			const cmdId = randomUUID();
+			return new Promise<CommandOutcome>((resolve) => {
+				const timer = setTimeout(() => {
+					pendingCommands.delete(cmdId);
+					resolve({ kind: "timeout" });
+				}, timeoutMs);
+				pendingCommands.set(cmdId, { conn, resolve, timer });
+				send(conn.ws, { type: "cmd", cmdId, cmd, params });
+			});
+		},
 
 		publish(topic, data) {
 			for (const conn of conns) if (conn.topics.has(topic)) send(conn.ws, { type: "event", topic, data });
@@ -274,7 +385,8 @@ export function createWsGateway(deps: HubDeps, options: { offlineGraceMs?: numbe
 		isOnline: (userId) => byUser.has(userId),
 
 		relay(userId, msg: RelayMessage, timeoutMs = RELAY_TIMEOUT_MS) {
-			const list = byUser.get(userId);
+			// Relays go to the owner's own machine; a tenant instance only serves hand calls and commands.
+			const list = byUser.get(userId)?.filter((c) => c.kind === "local");
 			const conn = list?.[list.length - 1];
 			if (!conn) return Promise.resolve<RelayOutcome>({ kind: "offline" });
 			const relayId = randomUUID();
@@ -296,6 +408,12 @@ export function createWsGateway(deps: HubDeps, options: { offlineGraceMs?: numbe
 				pending.delete(id);
 				p.resolve({ kind: "offline" });
 			}
+			for (const [id, p] of pendingCommands) {
+				clearTimeout(p.timer);
+				pendingCommands.delete(id);
+				p.resolve({ kind: "offline" });
+			}
+			hands.dispose();
 			for (const conn of conns) conn.ws.terminate();
 			conns.clear();
 			byUser.clear();
