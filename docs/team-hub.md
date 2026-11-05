@@ -183,7 +183,7 @@ server {
 | `HUB_TENANT_ROOT` | `<数据目录>/tenants`；restricted 驱动为与数据目录同级的 `<数据目录名>-restricted-tenants` | 租户目录根。restricted 租户的根目录必须在存放 `jwt.key`、`secret.key` 与 `pgdata` 的目录之外 |
 | `HUB_ALLOW_RESTRICTED` | 空 | `HUB_MODE=public` 下默认拒绝 restricted 驱动，设为 `1` 才允许。auto 在公开模式永远不会选 restricted，找不到 docker 或 sandbox 时报错并写日志 |
 | `HUB_RUNTIME_ORIGIN` | 空 | 工作台专用来源，如 `https://rt.example.com`。设置后 `/rt` 只在该 Host 上提供，Hub 主界面所在 Host 拒绝 `/rt`，`GET /api/runtime` 与 `POST /api/runtime/start` 返回该来源下的 `workbenchUrl`。反向代理必须保留 Host 头。公开模式未设置时启动会输出警告 |
-| `HUB_TENANT_READ_DENY` | 自动检测 | 强制 restricted 策略是否写入 `readOutsideProject: "deny"`，`1` 或 `0` |
+| `HUB_TENANT_READ_DENY` | 自动检测（当前 core 支持，默认写入 `deny`） | 强制 restricted 策略是否写入 `readOutsideProject: "deny"`，`1` 或 `0` |
 | `HUB_TENANT_IMAGE` | `prometheus:local` | docker 驱动使用的镜像，可用仓库根目录的 `Dockerfile` 构建 |
 | `HUB_DOCKER_RUNTIME` | 空 | Docker 运行时，如 `runsc`（gVisor） |
 | `HUB_TENANT_NETWORK` | `bridge` | docker 网络 |
@@ -232,8 +232,8 @@ server {
 ### 用户
 
 - **审批**：`requireApproval` 为真时，自助注册的账号处于待审批状态，运营方或企业管理员批准后才能登录。
-- **禁用与启用**：禁用后账号不能登录，已有的令牌在下一次请求时被拒绝。
-- **封禁**：仅运营方可以执行。封禁会禁用账号，并立即停止该用户的租户实例。解封使用「启用」。
+- **禁用与启用**：禁用后账号不能登录，已有的令牌在下一次请求时被拒绝。禁用同时会吊销该用户的全部租户凭据与网关令牌、关闭其所有 WebSocket 连接，并停止其租户实例。
+- **封禁**：仅运营方可以执行。封禁等同于禁用（包含上述吊销、断开与停止租户实例）。解封使用「启用」。
 - **直接创建账号**：填写邮箱、显示名与初始密码，账号直接启用并加入指定企业。这种账号不记录邮箱验证时间，因此不能自助创建企业（见在线服务文档）。初始密码由管理员设定，请通过安全渠道告知用户。
 
 ### 注册策略
@@ -384,7 +384,9 @@ server {
 
 - **行级安全（RLS）**：团队相关的表启用了行级安全。每个请求的事务先切换到应用角色，再把当前用户与运营方标志写入会话变量，策略据此决定用户能看到哪些企业、团队与会话。后台任务使用系统身份，不受这些限制。
 - **密钥只写**：模型网关与 BYOK 的 API Key 只能写入，接口只返回掩码。主密钥来自 `HUB_SECRET_KEY`，未设置时自动生成到 `secret.key`。
-- **令牌有效期与吊销**：访问令牌 15 分钟，刷新令牌 30 天。租户凭据（`TEAM_TENANT_TOKEN`，受众 `prometheus-tenant`，30 天）与租户网关令牌（受众 `prometheus-llm`，7 天）都带 `jti` 并记录在 `tenant_credentials` 表中。租户停止、用户被禁用或封禁、签发新凭据时，旧凭据立即吊销。网关令牌只被 `/llm` 代理接受。用租户凭据换取的访问令牌带 `scope: "tenant"`，只能访问白名单内的接口（会话、工作区、合并请求、模型列表等），其余接口返回 403 `tenantScope`。
+- **刷新令牌家族**：每次登录开启一个刷新令牌家族，轮换产生的新令牌留在同一家族内。已轮换的旧令牌在 20 秒宽限期内再次出现（例如两个标签页共用同一份存储的令牌）不算盗用，会得到同一家族的新令牌；超过宽限期再次出现，只撤销该家族，同一账号在其他设备上的登录不受影响。登出、禁用、重置密码后，宽限期内的旧令牌也不会复活已撤销的家族。
+- **用户可见性**：`users` 表只对本人、同企业成员、共享团队的成员与运营方可见。不属于任何企业或团队的账号（例如待验证的自助注册账号）企业管理员看不到。企业管理员创建账号时，授权检查通过后在系统事务中插入。按邮箱添加团队成员同样在授权后以系统身份查找，对不存在、未激活、不在企业内的用户统一返回 404。
+- **令牌有效期与吊销**：访问令牌 15 分钟，刷新令牌 30 天。Git 智能 HTTP 对 `scope: "tenant"` 的访问令牌同样检查其凭据是否仍有效。租户凭据（`TEAM_TENANT_TOKEN`，受众 `prometheus-tenant`，30 天）与租户网关令牌（受众 `prometheus-llm`，7 天）都带 `jti` 并记录在 `tenant_credentials` 表中。租户停止、用户被禁用或封禁、签发新凭据时，旧凭据立即吊销。网关令牌只被 `/llm` 代理接受。用租户凭据换取的访问令牌带 `scope: "tenant"`，只能访问白名单内的接口（会话、工作区、合并请求、模型列表等），其余接口返回 403 `tenantScope`。
 - **WebSocket 复核**：每个连接约每 60 秒重新校验账号与凭据是否仍有效，失败则关闭连接（4401）。向 `workspace:` 与 `session:` 主题推送时按连接重新检查订阅权限（缓存 15 秒），权限被收回后不再收到事件。
 - **工作台同源风险**：默认 `/rt` 与 Hub 同源，租户里运行的页面可以读取 Hub 页面的数据。公开部署应设置 `HUB_RUNTIME_ORIGIN` 把工作台放到独立来源。`/rt` 响应带 `Content-Security-Policy: frame-ancestors` 与 `X-Content-Type-Options: nosniff`。
 - **restricted 不是安全边界**：restricted 驱动直接 spawn Node，租户代码以 Hub 同一系统账号运行。Hub 对非主人租户去掉 `terminal` 与 `mcp` 插件，并把租户根放在密钥目录之外，但这只能防误操作。不信任的用户必须使用 docker 或 sandbox。
@@ -398,7 +400,7 @@ server {
 | `serverOwner` | 服务端所有者的用户 ID。租户实例中即该用户 |
 | `forbiddenModes` | 禁止切换到的权限模式。Hub 租户默认禁止 `bypassPermissions` 与 `auto` |
 | `defaultPermission` | 所选模式被禁止时回退的模式，缺省为 `default` |
-| `readOutsideProject` | 读取项目目录之外的文件：`allow` 或 `ask` |
+| `readOutsideProject` | 读取项目目录之外的文件：`allow`、`ask`（每次询问）或 `deny`（直接拒绝，不询问，所有模式与无人值守运行都生效）。restricted 租户默认 `deny` |
 | `pluginAllowlist` | 允许加载的插件名单 |
 | `gateways` | 模型网关列表。对客户端只显示 id、名称、格式与地址，不显示密钥 |
 | `disabledTools` | 禁用的工具名。运行时在调用时拦截，见「已知限制」 |
@@ -415,7 +417,10 @@ server {
 - **Docker 运行时**：尚未对真实 Docker 守护进程验证。
 - **PI 运行时的工具禁用**：PI 运行时无法把被禁用的工具从模型的工具列表中隐藏，只能在调用时拦截。模型仍可能看到这些工具并尝试调用。
 - **租户网关令牌**：有效期 7 天，租户停止、账号禁用或签发新凭据时立即吊销（见「安全说明」）。
-- **预扣余额**：模型代理在请求前按输入估算加最大输出检查余额，但并发请求仍可能同时通过检查。严格防超支需要钱包预留接口（先预留、结算后释放）。
+- **额度预留**：模型代理在请求前按输入估算加最大输出预留额度（`credit_reservations`），结算时按实际用量扣费并释放预留，失败或无用量时释放。并发请求会看到彼此的预留，合计不会超过余额。无人结算的预留 10 分钟后失效。预留只覆盖估算值，实际用量超出估算时仍按余额封顶扣费（透支记录在 `overdraft_credits`）。
+- **刷新令牌宽限期**：20 秒宽限期内重放旧令牌会得到新令牌，窃取者若恰好在这段时间内重放也能换到令牌，这是对多标签页并发刷新的取舍。其新令牌与受害者的令牌同属一个家族，之后任何一方在宽限期后重放旧令牌都会撤销整个家族。
+- **读取项目外的 deny 检测**：Hub 通过读取 core 的 `policy.ts` 源码判断是否支持 `deny`，部署形态不含源码时需要显式设置 `HUB_TENANT_READ_DENY=1`。设置到不支持 `deny` 的旧版 core 会使租户无法启动。
+- **设置界面**：设置接口的 `readOutsideProject` 在策略为 `deny` 时报告为 `ask`（协议里该字段只有 `allow` 与 `ask`），实际限制以 `policy.readOutsideProject` 为准。
 - **审计与配额表**：`audit_log`、`quotas`、`usage_ledger` 与 `model_gateways` 中 `org_id` 为空的行对所有登录用户可见。
 - **空闲检测**：空闲判断只看经代理的请求与 WebSocket 连接，不考虑正在运行的 Agent。Agent 在后台长时间运行时，租户仍可能被判定为闲置而停止。
 - **管理界面**：租户实例与执行节点只有接口，没有管理后台页面。

@@ -74,7 +74,7 @@ pwsh scripts/hub-setup-sandbox.ps1 -DataDir "$env:USERPROFILE\.prometheus-hub\pl
 
 `PROMETHEUS_HOME`、`PROMETHEUS_CWD`、`PROMETHEUS_HOST`、`PROMETHEUS_PORT`、`PROMETHEUS_TOKEN`（随机，仅 Hub 持有）、`PROMETHEUS_TRUST_KEY`（`@<policy 目录>/hub-trust.pem`，Hub 公钥）、`PROMETHEUS_TRUST_ISSUER`、`PROMETHEUS_TRUST_AUDIENCE=prometheus`、`PROMETHEUS_POLICY`、`TEAM_HUB_URL`、`TEAM_TENANT_TOKEN`（`aud=prometheus-tenant`，30 天，带 `jti`，租户停止时吊销）。
 
-`policy.json` 由 Hub 生成：`serverOwner`、`forbiddenModes=["bypassPermissions","auto"]`、`readOutsideProject="ask"`、`pluginAllowlist`（`team`、`git`、`memory`、`skills`、`todos`、`subagents`、`modes`、`knowledge-lancedb`、`terminal`、`mcp`，restricted 非主人租户去掉 `terminal` 与 `mcp`）、指向 Hub 模型代理 `/llm/<format>` 的 `gateways`（密钥是该用户的 7 天网关令牌，`aud=prometheus-llm`，仅 `/llm` 接受，不含任何上游 API Key）。`policy.json` 与凭据文件权限为 0600（Windows 尽力而为；docker 驱动因容器内另一 uid 需读取而保持 0644）、`managedBy`。
+`policy.json` 由 Hub 生成：`serverOwner`、`forbiddenModes=["bypassPermissions","auto"]`、`readOutsideProject`（restricted 租户为 `deny`，其余为 `ask`）、`pluginAllowlist`（`team`、`git`、`memory`、`skills`、`todos`、`subagents`、`modes`、`knowledge-lancedb`、`terminal`、`mcp`，restricted 非主人租户去掉 `terminal` 与 `mcp`）、指向 Hub 模型代理 `/llm/<format>` 的 `gateways`（密钥是该用户的 7 天网关令牌，`aud=prometheus-llm`，仅 `/llm` 接受，不含任何上游 API Key）。`policy.json` 与凭据文件权限为 0600（Windows 尽力而为；docker 驱动因容器内另一 uid 需读取而保持 0644）、`managedBy`。
 
 ## 生命周期
 
