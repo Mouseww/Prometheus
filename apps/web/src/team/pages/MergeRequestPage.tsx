@@ -25,6 +25,9 @@ const M = defineMessages({
 		modifiedBy: "已被 {name} 修改",
 		binary: "二进制",
 		unknownModifier: "已被他人修改",
+		keepMine: "保留我的",
+		keepTeam: "保留团队的",
+		resolved: "已处理，已重新检测",
 		approve: "通过并合并",
 		reject: "拒绝",
 		refresh: "刷新冲突检测",
@@ -51,6 +54,9 @@ const M = defineMessages({
 		modifiedBy: "Already modified by {name}",
 		binary: "Binary",
 		unknownModifier: "Already modified by someone else",
+		keepMine: "Keep mine",
+		keepTeam: "Keep the team's",
+		resolved: "Resolved and re-checked",
 		approve: "Approve and merge",
 		reject: "Reject",
 		refresh: "Refresh conflict check",
@@ -66,17 +72,51 @@ const M = defineMessages({
 
 const short = (sha: string) => sha.slice(0, 8);
 
-function ConflictList({ files }: { files: ConflictFile[] }) {
+/** Member mode, author only: pick a side for a binary conflict through the local plugin, then re-check the merge request. */
+function BinaryResolve({ mr, path, onChanged }: { mr: MergeRequestView; path: string; onChanged: (mr: MergeRequestView) => void }) {
+	const { api, plugin } = useTeam();
 	const t = useT(M);
+	const { busy, error, run } = useAction();
+	const [done, setDone] = useState(false);
+	if (!plugin) return null;
+	const resolve = async (keep: "mine" | "team") => {
+		const next = await run(async () => {
+			await plugin.call("session.resolveBinary", { mergeRequestId: mr.id, path, keep });
+			return api.refreshMergeRequest(mr.id);
+		});
+		if (next) {
+			setDone(true);
+			onChanged(next);
+		}
+	};
+	return (
+		<span className="flex flex-wrap items-center gap-1.5">
+			<Button variant="outline" disabled={busy || done} onClick={() => void resolve("mine")}>
+				{t("keepMine")}
+			</Button>
+			<Button variant="outline" disabled={busy || done} onClick={() => void resolve("team")}>
+				{t("keepTeam")}
+			</Button>
+			{done && <span className="text-xs text-moss-400">{t("resolved")}</span>}
+			{error && <span className="text-xs text-rose-400">{error}</span>}
+		</span>
+	);
+}
+
+function ConflictList({ mr, files, onChanged }: { mr: MergeRequestView; files: ConflictFile[]; onChanged: (mr: MergeRequestView) => void }) {
+	const { mode, me } = useTeam();
+	const t = useT(M);
+	const canResolve = mode === "member" && mr.authorId === me.user.id && (mr.status === "conflict" || mr.status === "open");
 	return (
 		<Card title={t("conflicts")} className="border-ember-500/40">
 			<p className="mb-3 text-sm text-ink-300">{t("conflictHint")}</p>
-			<ul className="space-y-1.5">
+			<ul className="space-y-2">
 				{files.map((f) => (
 					<li key={f.path} className="flex flex-wrap items-center gap-2 text-sm">
 						<span className="break-all font-mono text-xs">{f.path}</span>
 						{f.binary && <Badge tone="ember">{t("binary")}</Badge>}
 						<span className="text-ink-400">{f.lastModifiedBy ? t("modifiedBy", { name: f.lastModifiedBy.displayName }) : t("unknownModifier")}</span>
+						{f.binary && canResolve && <BinaryResolve mr={mr} path={f.path} onChanged={onChanged} />}
 					</li>
 				))}
 			</ul>
@@ -182,13 +222,21 @@ export function MergeRequestPage() {
 									</span>
 									{m.decidedAt && <span className="text-xs text-ink-500">{t("decided", { date: shortDate(m.decidedAt, lang) })}</span>}
 									{m.mergedCommit && <span className="text-xs text-ink-400">{t("merged", { commit: short(m.mergedCommit) })}</span>}
-									{m.sessionId && <span className="font-mono text-xs text-ink-500">{t("session", { id: short(m.sessionId) })}</span>}
+									{m.sessionId && (
+											<button
+												type="button"
+												onClick={() => navigate({ page: "session", params: { sessionId: m.sessionId as string, workspaceId: wsId, teamId } })}
+												className="rounded font-mono text-xs text-ink-400 underline underline-offset-2 hover:text-ink-100 focus-visible:outline-2 focus-visible:outline-ember-400"
+											>
+												{t("session", { id: short(m.sessionId) })}
+											</button>
+										)}
 								</div>
 								<h3 className="mt-3 mb-1 text-xs font-medium tracking-wide text-ink-300">{t("description")}</h3>
 								<p className="whitespace-pre-wrap break-words text-sm text-ink-200">{m.description || <span className="text-ink-500">{t("noDescription")}</span>}</p>
 							</Card>
 							<Actions mr={m} role={role} onChanged={mr.setData} />
-							{m.conflictFiles && m.conflictFiles.length > 0 && <ConflictList files={m.conflictFiles} />}
+							{m.conflictFiles && m.conflictFiles.length > 0 && <ConflictList mr={m} files={m.conflictFiles} onChanged={mr.setData} />}
 							<h2 className="font-display text-sm font-semibold tracking-wide text-ink-200">{t("changes")}</h2>
 							<AsyncView state={diff}>{(d) => <DiffView diff={d} />}</AsyncView>
 						</div>

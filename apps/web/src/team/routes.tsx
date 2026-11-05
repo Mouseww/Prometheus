@@ -1,21 +1,26 @@
 // The team UI route table. The shell (TeamShell) renders the left nav and the page from this list only, so adding a
-// page means adding an entry here. Entries marked `slot: true` are placeholders that part 2 (2E-2) replaces by
-// swapping their `component`; their ids (see ./slots.tsx SLOT) are the stable contract.
+// page means adding an entry here. The ids in ./slots.tsx SLOT are the stable contract for navigating to part 2 pages.
 import { Activity, Building2, Cpu, Gauge, LayoutDashboard, type LucideIcon, Mailbox, ScrollText, Settings2, ShieldCheck, UserCog, Users } from "lucide-react";
 import type { ComponentType } from "react";
-import { defineMessages, useT } from "../lib/i18n.ts";
+import { defineMessages } from "../lib/i18n.ts";
 import { canSeeAdmin, isOperator } from "./context.tsx";
 import { AuditPage } from "./pages/admin/AuditPage.tsx";
+import { GatewaysPage } from "./pages/admin/GatewaysPage.tsx";
 import { InvitationsPage } from "./pages/admin/InvitationsPage.tsx";
 import { OrgsPage } from "./pages/admin/OrgsPage.tsx";
+import { QuotasPage } from "./pages/admin/QuotasPage.tsx";
 import { RegistrationPage } from "./pages/admin/RegistrationPage.tsx";
 import { SettingsPage } from "./pages/admin/SettingsPage.tsx";
+import { UsagePage } from "./pages/admin/UsagePage.tsx";
 import { UsersPage } from "./pages/admin/UsersPage.tsx";
+import { TeamHomePage } from "./pages/home/TeamHomePage.tsx";
 import { MergeRequestPage } from "./pages/MergeRequestPage.tsx";
+import { NotificationsPage } from "./pages/notifications/NotificationsPage.tsx";
+import { SessionPage } from "./pages/session/SessionPage.tsx";
 import { TeamDetailPage } from "./pages/TeamDetailPage.tsx";
 import { TeamsPage } from "./pages/TeamsPage.tsx";
 import { WorkspacePage } from "./pages/WorkspacePage.tsx";
-import { ComingSoon, SLOT } from "./slots.tsx";
+import { SLOT } from "./slots.tsx";
 import type { MeResult } from "./types.ts";
 
 export const N = defineMessages({
@@ -62,17 +67,6 @@ export interface TeamRoute {
 	nav?: { group: "main" | "admin"; label: NavKey; icon: LucideIcon; visible?: (me: MeResult) => boolean };
 	/** Title key for routes without a nav entry (used by the header). */
 	title?: NavKey;
-	/** Placeholder for part 2. */
-	slot?: boolean;
-}
-
-/** Placeholder page factory for slots (stable component identity per slot). */
-function slotPage(slot: string, label: NavKey): ComponentType {
-	function SlotPage() {
-		const t = useT(N);
-		return <ComingSoon slot={slot} title={t(label)} />;
-	}
-	return SlotPage;
 }
 
 const operatorOnly = (me: MeResult) => isOperator(me);
@@ -90,17 +84,17 @@ export const TEAM_ROUTES: readonly TeamRoute[] = [
 	{ id: "admin.settings", component: SettingsPage, nav: { group: "admin", label: "settings", icon: Settings2, visible: operatorOnly } },
 	{ id: "admin.audit", component: AuditPage, nav: { group: "admin", label: "audit", icon: ScrollText, visible: canSeeAdmin } },
 
-	// ---- EXTENSION SLOTS (part 2 replaces these components, keeps the ids) ----
+	// ---- part 2 pages (ids reserved by ./slots.tsx) ----
 	// Team home: daily report | board.
-	{ id: SLOT.teamHome, component: slotPage(SLOT.teamHome, "teamHome"), nav: { group: "main", label: "teamHome", icon: LayoutDashboard }, slot: true },
+	{ id: SLOT.teamHome, component: TeamHomePage, nav: { group: "main", label: "teamHome", icon: LayoutDashboard } },
 	// Session viewer (spectate, fork, grant). Opened from the board and merge requests; no nav entry.
-	{ id: SLOT.session, component: slotPage(SLOT.session, "session"), title: "session", slot: true },
+	{ id: SLOT.session, component: SessionPage, title: "session" },
 	// Notifications list. The bell lives in the shell header (NotificationsBell in ./slots.tsx).
-	{ id: SLOT.notifications, component: slotPage(SLOT.notifications, "notifications"), title: "notifications", slot: true },
+	{ id: SLOT.notifications, component: NotificationsPage, title: "notifications" },
 	// Admin: model gateways, quotas, usage.
-	{ id: SLOT.gateways, component: slotPage(SLOT.gateways, "gateways"), nav: { group: "admin", label: "gateways", icon: Cpu, visible: canSeeAdmin }, slot: true },
-	{ id: SLOT.quotas, component: slotPage(SLOT.quotas, "quotas"), nav: { group: "admin", label: "quotas", icon: Gauge, visible: canSeeAdmin }, slot: true },
-	{ id: SLOT.usage, component: slotPage(SLOT.usage, "usage"), nav: { group: "admin", label: "usage", icon: Activity, visible: canSeeAdmin }, slot: true },
+	{ id: SLOT.gateways, component: GatewaysPage, nav: { group: "admin", label: "gateways", icon: Cpu, visible: canSeeAdmin } },
+	{ id: SLOT.quotas, component: QuotasPage, nav: { group: "admin", label: "quotas", icon: Gauge, visible: canSeeAdmin } },
+	{ id: SLOT.usage, component: UsagePage, nav: { group: "admin", label: "usage", icon: Activity, visible: canSeeAdmin } },
 ];
 
 export const DEFAULT_ROUTE_ID = "teams";

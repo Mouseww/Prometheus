@@ -7,6 +7,7 @@ import { isTeamAdmin, useTeam } from "../context.tsx";
 import { useCommonT } from "../i18n.ts";
 import { AsyncView, Body, Card, Notice, shortDate, Tabs, useAction, useAsync } from "../kit.tsx";
 import { MERGE_REQUEST_STATUSES, type MergeRequestStatus, type UpdateWorkspaceInput, type UpstreamStatus, type WorkspaceView } from "../types.ts";
+import { MemberWorkspaceActions } from "./MemberWorkspaceActions.tsx";
 import { MergeRequestStatusBadge, mrStatusLabel } from "./mrStatus.tsx";
 
 const M = defineMessages({
@@ -274,9 +275,12 @@ export function WorkspacePage() {
 				title={ws.data?.name ?? "..."}
 				subtitle={ws.data ? t("defaultBranch", { branch: ws.data.defaultBranch }) : undefined}
 				actions={
-					<Button variant="ghost" onClick={() => navigate({ page: "team", params: { teamId } })}>
-						{teams.data?.find((x) => x.id === teamId)?.name ?? t("back")}
-					</Button>
+					<div className="flex flex-wrap items-center gap-2">
+						<MemberWorkspaceActions workspaceId={workspaceId} />
+						<Button variant="ghost" onClick={() => navigate({ page: "team", params: { teamId } })}>
+							{teams.data?.find((x) => x.id === teamId)?.name ?? t("back")}
+						</Button>
+					</div>
 				}
 			/>
 			<Body>
