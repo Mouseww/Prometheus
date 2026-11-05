@@ -50,6 +50,9 @@ const MrListQuery = Type.Object({
 	status: Type.Optional(Type.Union([Type.Literal("open"), Type.Literal("approved"), Type.Literal("merged"), Type.Literal("rejected"), Type.Literal("conflict"), Type.Literal("closed")])),
 });
 
+/** The head commit the reviewer looked at; approval fails with 409 `headChanged` if the request moved since. */
+const ApproveBody = Type.Object({ expectedHeadCommit: Type.String({ minLength: 40, maxLength: 40 }) });
+
 const RejectBody = Type.Object({ reason: Type.Optional(Type.String({ maxLength: 2000 })) });
 
 const GIT_REALM = { "www-authenticate": 'Basic realm="Prometheus Hub"' };
@@ -119,7 +122,11 @@ export function registerGitRoutes(router: Router, deps: HubDeps): void {
 	});
 	router.get("/api/merge-requests/:id", async (ctx) => mergeRequests.get(await ctx.actor(), ctx.params.id as string));
 	router.get("/api/merge-requests/:id/diff", async (ctx) => mergeRequests.diff(await ctx.actor(), ctx.params.id as string));
-	router.post("/api/merge-requests/:id/approve", async (ctx) => mergeRequests.approve(await ctx.actor(), ctx.params.id as string));
+	router.post("/api/merge-requests/:id/approve", async (ctx) => {
+		const actor = await ctx.actor();
+		const body = await ctx.json(ApproveBody);
+		return mergeRequests.approve(actor, ctx.params.id as string, body.expectedHeadCommit);
+	});
 	router.post("/api/merge-requests/:id/reject", async (ctx) => {
 		// The body is optional: an empty request rejects without a reason.
 		const raw = (await readJsonBody(ctx.req)) ?? {};

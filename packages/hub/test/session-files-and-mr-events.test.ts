@@ -65,7 +65,7 @@ describe("merge request realtime events", () => {
 		expect(open.topic).toBe(`workspace:${w.wsId}`);
 		expect(open.data.mergeRequest.status).toBe("open");
 
-		const approved = await w.t.api("POST", `/api/merge-requests/${mrId}/approve`, { token: w.bob.token });
+		const approved = await w.t.api("POST", `/api/merge-requests/${mrId}/approve`, { token: w.bob.token, body: { expectedHeadCommit: created.data.headCommit } });
 		expect(approved.status).toBe(200);
 		const merged = await bob.waitFor((f) => f.type === "event" && f.data?.kind === "mergeRequest" && f.data.mergeRequest.id === mrId && f.data.mergeRequest.status === "merged");
 		expect(merged.data.mergeRequest.mergedCommit).toBeTruthy();

@@ -6,9 +6,17 @@ import { commitAll, git, gitOk, openMr, sessionBranch, setupWorld, showFile, tmp
 
 const T = 90_000;
 
-const act = (w: World, who: Sess, id: string, action: "approve" | "reject" | "refresh" | "close", body?: unknown) =>
-	w.t.api("POST", `/api/merge-requests/${id}/${action}`, { token: who.token, body });
 const getMr = async (w: World, id: string, who: Sess = w.alice) => (await w.t.api("GET", `/api/merge-requests/${id}`, { token: who.token })).data;
+/** Approve defaults to the head commit currently on the request (what a reviewer would have looked at); pass a body to override. */
+const act = async (w: World, who: Sess, id: string, action: "approve" | "reject" | "refresh" | "close", body?: unknown) => {
+	let payload = body;
+	if (action === "approve" && payload === undefined) {
+		const found = await w.t.api("GET", `/api/merge-requests/${id}`, { token: who.token });
+		// Callers who cannot see the request (outsiders) still send a well-formed body so authorization is what gets exercised.
+		payload = { expectedHeadCommit: found.status === 200 ? found.data.headCommit : "0".repeat(40) };
+	}
+	return w.t.api("POST", `/api/merge-requests/${id}/${action}`, { token: who.token, body: payload });
+};
 const mainTip = (w: World) => gitOk(["--git-dir", w.repoPath, "rev-parse", "refs/heads/main"]);
 
 /** Recipients of stored notifications of a kind (block 2C's notifications service writes them), optionally for one merge request. */
@@ -26,6 +34,9 @@ describe("merge request lifecycle and permissions", () => {
 
 	it("a clean merge request opens, and approval creates a merge commit (author = MR author, committer = reviewer)", async () => {
 		const s = await sessionBranch(w, w.alice, "feat", { "feature.txt": "hello\n" });
+		await w.t.hub.db.tx({ system: true }, (q) =>
+			q.query("INSERT INTO sessions (id, workspace_id, org_id, owner_user_id) VALUES ('sess-1',$1,$2,$3)", [w.wsId, w.root.orgId, w.alice.userId]),
+		);
 		const created = await openMr(w, w.alice, s, { sessionId: "sess-1" }, "Add feature");
 		expect(created.status).toBe(201);
 		expect(created.data).toMatchObject({ status: "open", authorId: w.alice.userId, authorName: "Alice", title: "Add feature", branch: s.branch, headCommit: s.head, skippedReview: false, conflictFiles: null, sessionId: "sess-1" });

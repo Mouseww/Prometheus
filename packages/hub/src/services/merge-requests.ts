@@ -1,6 +1,7 @@
 import { toIso } from "../db/db.ts";
 import type { Queryable } from "../db/db.ts";
 import { badRequest, conflict, forbidden, notFound } from "../errors.ts";
+import { mergeCommitMessage } from "../git/commit-message.ts";
 import type { TeamNotifier } from "../git/notify.ts";
 import { isPushableRef } from "../git/pktline.ts";
 import {
@@ -77,7 +78,8 @@ export interface MergeRequestsService {
 	create(actor: Actor, workspaceId: string, input: CreateMergeRequestInput): Promise<MergeRequestView>;
 	list(actor: Actor, workspaceId: string, filter?: { status?: MergeRequestStatus }): Promise<MergeRequestView[]>;
 	get(actor: Actor, id: string): Promise<MergeRequestView>;
-	approve(actor: Actor, id: string): Promise<MergeRequestView>;
+	/** Approves and merges exactly the commit the reviewer looked at: 409 `headChanged` when the head moved since. */
+	approve(actor: Actor, id: string, expectedHeadCommit: string): Promise<MergeRequestView>;
 	reject(actor: Actor, id: string, reason?: string): Promise<MergeRequestView>;
 	refresh(actor: Actor, id: string): Promise<MergeRequestView>;
 	close(actor: Actor, id: string): Promise<MergeRequestView>;
@@ -211,11 +213,17 @@ export function createMergeRequestsService(deps: MergeRequestsDeps): MergeReques
 		return { clean: false, files: await describeConflicts(ws, tip, head, mt.conflictPaths) };
 	};
 
+	/**
+	 * Records a fresh check. Any earlier approval is reset (`reviewer_id` cleared), and the update only applies while the request is still
+	 * open or in conflict: a merge claimed meanwhile (`approved`) is never overwritten.
+	 */
 	const setCheckResult = async (q: Queryable, id: string, headCommit: string, result: { clean: boolean; files: ConflictFile[] }): Promise<void> => {
-		await q.query(
-			"UPDATE merge_requests SET head_commit = $2, status = $3, conflict_files = $4::text::jsonb, updated_at = now() WHERE id = $1",
+		const updated = await q.query(
+			`UPDATE merge_requests SET head_commit = $2, status = $3, conflict_files = $4::text::jsonb, reviewer_id = NULL, skipped_review = false, updated_at = now()
+			 WHERE id = $1 AND status IN ('open', 'conflict') RETURNING id`,
 			[id, headCommit, result.clean ? "open" : "conflict", result.clean ? null : JSON.stringify(result.files)],
 		);
+		if (updated.length === 0) throw conflict("合并请求状态已变化，无法刷新", "invalidState");
 	};
 
 	/** Tells everyone watching the workspace (`workspace:<id>`) that a merge request changed. */
@@ -229,12 +237,14 @@ export function createMergeRequestsService(deps: MergeRequestsDeps): MergeReques
 	};
 
 	/** Claims an open MR, runs the git merge, and records the outcome. Used by approve and by skipReview creation. */
-	const executeMerge = async (actor: Actor, id: string, skipped: boolean): Promise<{ view: MergeRequestView; merged: boolean }> => {
+	const executeMerge = async (actor: Actor, id: string, skipped: boolean, expectedHead: string): Promise<{ view: MergeRequestView; merged: boolean }> => {
 		const { row, ws } = await db.tx(scopeOf(actor), async (q) => {
 			const loaded = await load(q, actor, id);
+			// The claim is bound to the commit the reviewer saw, so a refresh that moved the head in between cannot be merged unreviewed.
+			if (loaded.row.head_commit !== expectedHead) throw conflict("合并请求的提交已变化，请重新查看后再批准", "headChanged");
 			const claimed = await q.query(
-				"UPDATE merge_requests SET status = 'approved', reviewer_id = $2, skipped_review = $3, updated_at = now() WHERE id = $1 AND status = 'open' RETURNING id",
-				[id, actor.userId, skipped],
+				"UPDATE merge_requests SET status = 'approved', reviewer_id = $2, skipped_review = $3, updated_at = now() WHERE id = $1 AND status = 'open' AND head_commit = $4 RETURNING id",
+				[id, actor.userId, skipped, expectedHead],
 			);
 			if (claimed.length === 0) throw conflict("合并请求状态已变化，无法合并", "invalidState");
 			return loaded;
@@ -248,11 +258,10 @@ export function createMergeRequestsService(deps: MergeRequestsDeps): MergeReques
 			const author = people.find((p) => p.id === row.author_id);
 			const reviewer = people.find((p) => p.id === actor.userId);
 			if (!author || !reviewer) throw new Error("找不到作者或审核人账号");
-			const body = row.description ? `\n\n${row.description}` : "";
 			outcome = await mergeIntoDefault(gitDir, {
 				defaultBranch: ws.defaultBranch,
 				head: row.head_commit,
-				message: `Merge ${row.branch}: ${row.title}${body}\n\nMerge-Request: ${row.id}\n`,
+				message: mergeCommitMessage({ branch: row.branch, title: row.title, description: row.description, mergeRequestId: row.id }),
 				author: { name: author.display_name, email: author.email },
 				committer: { name: reviewer.display_name, email: reviewer.email },
 			});
@@ -316,6 +325,11 @@ export function createMergeRequestsService(deps: MergeRequestsDeps): MergeReques
 				if (input.skipReview && !can(actor, "mr.skipReview", { teamId: found.teamId, orgId: found.orgId })) {
 					throw forbidden("只有团队管理员或审核人可以跳过审核", "skipReviewDenied");
 				}
+				if (input.sessionId) {
+					// The link must point at the author's own session in this workspace (the session list is not shared with a forged id).
+					const owned = await q.query("SELECT 1 FROM sessions WHERE id = $1 AND workspace_id = $2 AND owner_user_id = $3", [input.sessionId, found.id, actor.userId]);
+					if (owned.length === 0) throw badRequest("sessionId 必须是你在该工作区下的会话", "invalidSession");
+				}
 				return found;
 			});
 			if (!OID.test(input.baseCommit) || !OID.test(input.headCommit)) throw badRequest("baseCommit 与 headCommit 必须是 40 位提交号", "invalidCommit");
@@ -361,7 +375,7 @@ export function createMergeRequestsService(deps: MergeRequestsDeps): MergeReques
 				return toView(await loadRow(q, id));
 			});
 
-			if (input.skipReview && result.clean) return (await executeMerge(actor, id, true)).view;
+			if (input.skipReview && result.clean) return (await executeMerge(actor, id, true, head)).view;
 			const reviewers = await notifier.teamUsers(ws.teamId, ["admin", "reviewer"]);
 			await notifier.send(ws.orgId, reviewers.filter((u) => u !== actor.userId), "mr.created", { mergeRequestId: id, workspaceId: ws.id, title: input.title, status: created.status });
 			return publishChange(created);
@@ -386,16 +400,18 @@ export function createMergeRequestsService(deps: MergeRequestsDeps): MergeReques
 			});
 		},
 
-		async approve(actor, id) {
+		async approve(actor, id, expectedHeadCommit) {
 			await runtime.requireMerge();
+			if (!OID.test(expectedHeadCommit)) throw badRequest("expectedHeadCommit 必须是 40 位提交号", "invalidCommit");
 			const row = await db.tx(scopeOf(actor), async (q) => {
 				const { row: found, ws } = await load(q, actor, id);
 				if (!can(actor, "mr.review", { teamId: ws.teamId, orgId: ws.orgId })) throw forbidden();
 				if (found.status === "conflict") throw conflict("合并请求存在冲突，请作者解决后刷新", "mergeConflict");
 				if (found.status !== "open") throw conflict(`合并请求已是 ${found.status} 状态`, "invalidState");
+				if (found.head_commit !== expectedHeadCommit) throw conflict("合并请求的提交已变化，请重新查看后再批准", "headChanged");
 				return found;
 			});
-			const { view, merged } = await executeMerge(actor, row.id, false);
+			const { view, merged } = await executeMerge(actor, row.id, false, expectedHeadCommit);
 			if (!merged) throw conflict("合并请求与默认分支存在冲突，已标记为冲突", "mergeConflict");
 			return view;
 		},
