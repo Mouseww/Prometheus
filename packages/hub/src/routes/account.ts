@@ -9,6 +9,7 @@ const RegisterBody = Type.Object({
 	displayName: DisplayNameSchema,
 	setupCode: Type.Optional(Type.String({ maxLength: 64 })),
 	inviteToken: Type.Optional(Type.String({ maxLength: 200 })),
+	turnstileToken: Type.Optional(Type.String({ maxLength: 2048 })),
 });
 const LoginBody = Type.Object({ email: EmailSchema, password: Type.String({ minLength: 1, maxLength: 200 }) });
 const RefreshBody = Type.Object({ refreshToken: Type.String({ minLength: 1, maxLength: 200 }) });

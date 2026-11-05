@@ -9,6 +9,7 @@ import { LOG_PREFIX } from "../log.ts";
 import type { Actor, OrgRole } from "../permissions.ts";
 import type { RateLimiter } from "../rate-limit.ts";
 import type { SetupCode } from "../setup-code.ts";
+import type { PublicAccounts, PublicMeta } from "./accounts-public.ts";
 import type { AuditService } from "./audit.ts";
 import { emailDomain, normalizeEmail, type PublicUser, type ServiceDeps, slugify, toPublicUser, USER_COLUMNS, type UserRow } from "./common.ts";
 import type { InvitationsService } from "./invitations.ts";
@@ -16,7 +17,7 @@ import { evaluateSelfRegistration, type RegistrationService } from "./registrati
 import type { SettingsService } from "./settings.ts";
 import type { TeamsService, TeamView } from "./teams.ts";
 
-export interface MetaInfo {
+export interface MetaInfo extends PublicMeta {
 	version: string;
 	publicKey: string;
 	needsSetup: boolean;
@@ -29,14 +30,18 @@ export interface RegisterInput {
 	displayName: string;
 	setupCode?: string;
 	inviteToken?: string;
+	/** Cloudflare Turnstile response; required in public mode when HUB_TURNSTILE_SECRET is set. */
+	turnstileToken?: string;
 }
 
 export interface RegisterResult {
 	user: PublicUser;
-	/** `pending` accounts cannot log in until an administrator approves them. */
+	/** `pending` accounts cannot log in until an administrator approves them (private) or the email is verified (public). */
 	status: "active" | "pending";
 	/** True for the very first account (operator). */
 	bootstrap: boolean;
+	/** Public mode: a verification mail was sent and the account stays pending until the link is used. */
+	verificationRequired?: boolean;
 }
 
 export interface TokenPair {
@@ -79,6 +84,8 @@ export interface AccountsDeps {
 	teams: TeamsService;
 	setupCode: SetupCode;
 	limiter: RateLimiter;
+	/** Block 4A: email verification, Turnstile and abuse guards; active only when `config.mode === "public"`. */
+	pub: PublicAccounts;
 }
 
 /** Serialises first-account and registration races (users table is tiny; contention is irrelevant). */
@@ -163,7 +170,9 @@ export function createAccountsService(deps: ServiceDeps, a: AccountsDeps): Accou
 
 	const registerSelf = async (q: Queryable, input: RegisterInput, email: string, passwordHash: string): Promise<RegisterResult> => {
 		const platform = await a.registration.platformPolicy(q);
-		const defaultOrg = await a.settings.defaultOrgId(q);
+		// Public mode: nobody is auto-joined to an organization; the account waits for email verification.
+		const isPublic = config.mode === "public";
+		const defaultOrg = isPublic ? undefined : await a.settings.defaultOrgId(q);
 		const orgPolicy = defaultOrg ? await a.registration.orgPolicy(defaultOrg, q) : undefined;
 		const decision = evaluateSelfRegistration(platform, orgPolicy, email);
 		if (!decision.allowed) {
@@ -171,21 +180,22 @@ export function createAccountsService(deps: ServiceDeps, a: AccountsDeps): Accou
 				? forbidden("注册已关闭，请联系管理员或使用邀请链接", "registrationClosed")
 				: forbidden(`邮箱域名 ${emailDomain(email)} 不在允许注册的范围内`, "domainNotAllowed");
 		}
-		const status = decision.requireApproval ? "pending" : "active";
+		const status = decision.requireApproval || isPublic ? "pending" : "active";
 		const user = await insertUser(q, { email, displayName: input.displayName, passwordHash, status });
 		if (defaultOrg) {
 			await q.query("INSERT INTO org_members (org_id, user_id, role, status) VALUES ($1,$2,'member',$3)", [defaultOrg, user.id, status]);
 		}
 		await a.audit.write(q, { actorId: user.id, orgId: defaultOrg ?? null, action: "user.register", targetType: "user", targetId: user.id, detail: { status } });
-		return { user: toPublicUser(user), status, bootstrap: false };
+		return { user: toPublicUser(user), status, bootstrap: false, ...(isPublic ? { verificationRequired: true } : {}) };
 	};
 
 	return {
 		insertUser,
 
 		async meta() {
-			const [platform, count] = await Promise.all([a.registration.platformPolicy(), deps.db.query<{ n: string | number }>("SELECT count(*) AS n FROM users")]);
+			const [platform, count, extra] = await Promise.all([a.registration.platformPolicy(), deps.db.query<{ n: string | number }>("SELECT count(*) AS n FROM users"), a.pub.meta()]);
 			return {
+				...extra,
 				version: config.version,
 				publicKey: a.publicKey,
 				needsSetup: Number(count[0]?.n ?? 0) === 0,
@@ -196,6 +206,7 @@ export function createAccountsService(deps: ServiceDeps, a: AccountsDeps): Accou
 		async register(input, client) {
 			const email = normalizeEmail(input.email);
 			throttle(client, email);
+			if (config.mode === "public" && !input.inviteToken) await a.pub.guardRegister({ email, turnstileToken: input.turnstileToken }, client.ip);
 			const passwordHash = await hashPassword(input.password);
 			const result = await deps.db.tx({ system: true }, async (q) => {
 				await q.query("SELECT pg_advisory_xact_lock($1)", [REGISTER_LOCK_KEY]);
@@ -207,6 +218,7 @@ export function createAccountsService(deps: ServiceDeps, a: AccountsDeps): Accou
 				await a.setupCode.clear();
 				deps.log.info(`${LOG_PREFIX} 已创建首个管理员账号 ${result.user.email} 与默认企业`);
 			}
+			if (result.verificationRequired) await a.pub.sendVerification({ id: result.user.id, email: result.user.email, displayName: result.user.displayName });
 			return result;
 		},
 
@@ -221,6 +233,7 @@ export function createAccountsService(deps: ServiceDeps, a: AccountsDeps): Accou
 			}
 			if (!(await verifyPassword(input.password, user.password_hash))) throw unauthorized("邮箱或密码错误", "invalidCredentials");
 			// Status is revealed only after the password proved correct.
+			if (user.status === "pending" && config.mode === "public" && user.email_verified_at === null) throw forbidden("请先验证邮箱，验证邮件已发送至注册邮箱", "emailNotVerified");
 			if (user.status === "pending") throw forbidden("账号正在等待管理员审批", "pendingApproval");
 			if (user.status === "disabled") throw forbidden("账号已被禁用", "accountDisabled");
 			return deps.db.tx({ system: true }, (q) => issueTokens(q, user, client.userAgent));

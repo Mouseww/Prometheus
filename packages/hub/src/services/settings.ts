@@ -6,6 +6,8 @@ export interface SettingsService {
 	set(q: Queryable, key: string, value: unknown): Promise<void>;
 	allowPersonalTeams(q?: Queryable): Promise<boolean>;
 	defaultOrgId(q?: Queryable): Promise<string | undefined>;
+	/** Public mode: may any verified user create an organization? Defaults to true when unset. */
+	allowSelfCreateOrg(q?: Queryable): Promise<boolean>;
 }
 
 /** Platform wide settings (`platform_settings`): allow_personal_teams, default_org_id. */
@@ -24,6 +26,9 @@ export function createSettingsService(deps: ServiceDeps): SettingsService {
 		},
 		async allowPersonalTeams(q) {
 			return (await get<boolean>("allow_personal_teams", q)) === true;
+		},
+		async allowSelfCreateOrg(q) {
+			return (await get<boolean>("allow_self_create_org", q)) !== false;
 		},
 		async defaultOrgId(q) {
 			const v = await get<string | null>("default_org_id", q);
