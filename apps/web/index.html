@@ -6,10 +6,19 @@
       // The build uses relative asset URLs ("./assets/..."). Behind the Hub's tenant proxy the page lives under "<prefix>/rt/",
       // and a deep address would resolve them against the wrong directory, so pin the base first.
       // Same rule as basePathFromPathname in src/lib/basePath.ts (test/basePath.test.ts keeps them equal); outside the proxy it is "/".
+      // The prefix comes from the address bar, so it is only used when it stays on this origin (no "//host", backslash, colon or ".."):
+      // otherwise "//evil.com/rt/" would make every relative script load from another site.
       (function () {
         var m = /^(\/.*?\/rt)(?:\/|$)/.exec(location.pathname);
+        var p = m ? m[1] : "";
+        if (p) {
+          try {
+            var u = new URL(p + "/", location.origin);
+            if (p.charAt(1) === "/" || p.charAt(1) === "\\" || /[\\:%]/.test(p) || p.split("/").indexOf("..") >= 0 || u.origin !== location.origin || u.pathname !== p + "/") p = "";
+          } catch (e) { p = ""; }
+        }
         var b = document.createElement("base");
-        b.href = (m ? m[1] : "") + "/";
+        b.href = p + "/";
         document.head.appendChild(b);
       })();
     </script>

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
-import { basePathFromPathname, PROXY_PREFIX_PATTERN, withBase, wsUrlFor } from "../src/lib/basePath.ts";
+import { basePathFromPathname, isSafePrefix, PROXY_PREFIX_PATTERN, withBase, wsUrlFor } from "../src/lib/basePath.ts";
 import { targetFromUrl } from "../src/lib/target.ts";
 import { createHubApi, type KeyValueStore } from "../src/team/hubApi.ts";
 
@@ -22,6 +23,29 @@ describe("basePathFromPathname", () => {
 	it("does not mistake a path that merely contains the letters rt", () => {
 		expect(basePathFromPathname("/art/")).toBe("");
 		expect(basePathFromPathname("/plugins/team/rtx/")).toBe("");
+	});
+});
+
+const ORIGIN = "https://hub.test";
+const HOSTILE = ["//evil.com/rt/x", "/\\evil.com/rt/x", "/%2F%2Fevil.com/rt/x", "///evil.com/rt/", "/a/../rt/x", "/a/%2e%2e/rt/x", "/a:b/rt/x", "/a\\b/rt/x", "//evil.com/rt"];
+
+describe("basePathFromPathname hostile prefixes", () => {
+	it("falls back to the root for anything that could leave the origin", () => {
+		for (const p of HOSTILE) expect(basePathFromPathname(p, ORIGIN), p).toBe("");
+	});
+
+	it("keeps valid prefixes and ordinary routes", () => {
+		expect(basePathFromPathname("/a/rt/x", ORIGIN)).toBe("/a/rt");
+		expect(basePathFromPathname("/plugins/team/rt/", ORIGIN)).toBe("/plugins/team/rt");
+		expect(basePathFromPathname("/", ORIGIN)).toBe("");
+		expect(basePathFromPathname("/invite/0123456789abcdef", ORIGIN)).toBe("");
+		expect(basePathFromPathname("/a/b/c/d/e/verify-email", ORIGIN)).toBe("");
+	});
+
+	it("isSafePrefix resolves against the origin", () => {
+		expect(isSafePrefix("/a/rt", ORIGIN)).toBe(true);
+		expect(isSafePrefix("//evil.com/rt", ORIGIN)).toBe(false);
+		expect(isSafePrefix("/a/rt", "null")).toBe(false);
 	});
 });
 
@@ -69,6 +93,29 @@ describe("index.html base rule", () => {
 		const literal = html.slice(start + "var m = /".length, end);
 		// The inline script holds the pattern as a regex literal, the helper as a string: equal once unescaped.
 		expect(literal.replace(/\\\//g, "/")).toBe(PROXY_PREFIX_PATTERN);
+	});
+
+	it("picks the same base as the runtime helper for every path, hostile ones included", () => {
+		const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+		const script = /<script>([\s\S]*?)<\/script>/.exec(html)?.[1] ?? "";
+		const paths = [...HOSTILE, "/", "/invite/abc", "/a/rt/x", "/a/rt", "/plugins/team/rt/", "/hub/plugins/team/rt/deep/route", "/art/", "/plugins/team/rtx/"];
+		for (const pathname of paths) {
+			let href = "";
+			const sandbox = {
+				location: { pathname, origin: ORIGIN },
+				URL,
+				document: {
+					createElement: () => ({
+						set href(v: string) {
+							href = v;
+						},
+					}),
+					head: { appendChild: () => undefined },
+				},
+			};
+			runInNewContext(script, sandbox);
+			expect(href, pathname).toBe(`${basePathFromPathname(pathname, ORIGIN)}/`);
+		}
 	});
 });
 
