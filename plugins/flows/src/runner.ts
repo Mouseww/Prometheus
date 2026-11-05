@@ -1,5 +1,6 @@
 import type { AgentRunOptions, AgentRunResult } from "@prometheus/plugin-sdk";
-import type { Flow, FlowEdge, FlowNode, FlowNodeRun, FlowRun, RunAccess } from "@prometheus/protocol";
+import { flowSccs, isFlowLoopBack, MAX_FLOW_LOOPS } from "@prometheus/protocol";
+import type { Flow, FlowEdge, FlowNode, FlowNodeRun, FlowNodeVisit, FlowResumeAction, FlowRun, RunAccess } from "@prometheus/protocol";
 
 export interface RunnerDeps {
 	runAgent(options: AgentRunOptions): Promise<AgentRunResult>;
@@ -17,6 +18,11 @@ export interface RunnerDeps {
 	runChild?(flowId: string, input: string, onStart: (childRunId: string) => void): Promise<FlowRun>;
 }
 
+export interface ResumeOpts {
+	run: FlowRun;
+	action: FlowResumeAction;
+}
+
 const MAX_PARALLEL = 3;
 const OUTPUT_CHARS = 6000;
 
@@ -31,45 +37,139 @@ export function checkText(mode: "contains" | "regex", match: string, text: strin
 	return text.toLowerCase().includes(match.toLowerCase());
 }
 
+function sccMembers(nodes: FlowNode[], edges: FlowEdge[], id: string): Set<string> {
+	for (const scc of flowSccs(nodes, edges)) if (scc.includes(id)) return new Set(scc);
+	return new Set([id]);
+}
+
+function snapshotVisit(state: FlowNodeRun): FlowNodeVisit | undefined {
+	if (state.status !== "success" && state.status !== "error") return undefined;
+	return {
+		status: state.status,
+		...(state.startedAt ? { startedAt: state.startedAt } : {}),
+		...(state.finishedAt ? { finishedAt: state.finishedAt } : {}),
+		...(state.sessionId ? { sessionId: state.sessionId } : {}),
+		...(state.output ? { output: state.output } : {}),
+		...(state.error ? { error: state.error } : {}),
+		...(state.branch !== undefined ? { branch: state.branch } : {}),
+	};
+}
+
+function archiveAndPend(state: FlowNodeRun): void {
+	const snap = snapshotVisit(state);
+	if (snap) state.history = [...(state.history ?? []), snap];
+	state.status = "pending";
+	delete state.startedAt;
+	delete state.finishedAt;
+	delete state.sessionId;
+	delete state.childRunId;
+	delete state.output;
+	delete state.error;
+	delete state.blocked;
+	delete state.branch;
+}
+
 function endpointState(edge: FlowEdge, byId: Map<string, FlowNode>, runs: Record<string, FlowNodeRun>, taken: Map<string, boolean>): "live" | "dead" | "waiting" {
 	const src = runs[edge.from];
 	if (!src || src.status === "pending" || src.status === "running") return "waiting";
-	if (src.status !== "success") return "dead";
-	if (byId.get(edge.from)?.kind === "condition") return String(taken.get(edge.from)) === edge.branch ? "live" : "dead";
+	if (src.status === "error") return "dead";
+	if (byId.get(edge.from)?.kind === "condition") {
+		const ans = taken.has(edge.from) ? taken.get(edge.from) : src.branch;
+		return String(ans) === edge.branch ? "live" : "dead";
+	}
+	// A node the user skipped after it failed still has startedAt: treat it as live so the rest can continue.
+	if (src.status === "skipped") return src.startedAt ? "live" : "dead";
 	return "live";
 }
 
+function applyResume(run: FlowRun, action: FlowResumeAction): void {
+	for (const state of Object.values(run.nodes)) {
+		if (action === "retry" && state.status === "error") archiveAndPend(state);
+		else if (action === "skip" && state.status === "error") {
+			state.status = "skipped";
+			// A skipped condition with no answer takes the "no" branch so the flow has an exit.
+			if (state.branch === undefined) state.branch = false;
+		} else if (state.status === "skipped") {
+			state.status = "pending";
+			delete state.finishedAt;
+		}
+	}
+	run.status = "running";
+	delete run.finishedAt;
+	delete run.error;
+	delete run.output;
+	delete run.warning;
+}
+
+function finishRun(flow: Flow, run: FlowRun, signal: AbortSignal, emit: () => void): FlowRun {
+	for (const state of Object.values(run.nodes)) if (state.status === "pending") state.status = "skipped";
+	if (signal.aborted) {
+		run.status = "cancelled";
+		run.error ??= "已取消";
+	} else if (run.error) run.status = "error";
+	else {
+		run.status = "success";
+		const outputOf = (id: string) => run.nodes[id]?.output ?? "";
+		const ends = flow.nodes.filter((n) => n.kind === "end" && run.nodes[n.id]?.status === "success");
+		const sinks = flow.nodes.filter((n) => run.nodes[n.id]?.status === "success" && !flow.edges.some((e) => e.from === n.id && run.nodes[e.to]?.status === "success"));
+		const finals = ends.length ? ends : sinks.filter((n) => n.kind !== "start");
+		run.output = finals.map((n) => outputOf(n.id)).filter(Boolean).join("\n\n---\n\n") || undefined;
+	}
+	const refused = flow.nodes.filter((n) => run.nodes[n.id]?.blocked?.length);
+	if (refused.length) run.warning = `以下步骤有调用因权限不足被拒绝：${refused.map((n) => `${n.title}（${run.nodes[n.id]!.blocked!.length} 次）`).join("、")}。在这些步骤里把权限调高后重试。`;
+	emit();
+	return run;
+}
+
 /**
- * Walks the graph: a node runs once every incoming edge is settled and at least one is live; nodes on a branch that
- * was not taken are skipped. Independent branches run in parallel (up to MAX_PARALLEL agents at once). The first
- * failing step stops the run.
+ * Walks the graph: a node runs once every *forward* incoming edge is settled and at least one is live.
+ * A condition that takes a back-edge resets its strongly-connected component so the loop body runs again
+ * (capped at MAX_FLOW_LOOPS). Independent branches run in parallel (up to MAX_PARALLEL agents at once).
+ * A failing step stops the run; the same record can later be resumed (retry the failed node, or skip it).
  */
-export async function runFlow(flow: Flow, input: string, runId: string, deps: RunnerDeps, signal: AbortSignal): Promise<FlowRun> {
+export async function runFlow(flow: Flow, input: string, runId: string, deps: RunnerDeps, signal: AbortSignal, resume?: ResumeOpts): Promise<FlowRun> {
 	const byId = new Map(flow.nodes.map((n) => [n.id, n]));
-	const run: FlowRun = {
-		id: runId,
-		flowId: flow.id,
-		flowName: flow.name,
-		input,
-		startedAt: deps.now().toISOString(),
-		status: "running",
-		...(deps.trigger ? { trigger: deps.trigger } : {}),
-		...(deps.parentRunId ? { parentRunId: deps.parentRunId } : {}),
-		...(deps.location ? { location: deps.location } : {}),
-		nodes: Object.fromEntries(flow.nodes.map((n) => [n.id, { status: "pending" } satisfies FlowNodeRun])),
-	};
+	const startId = flow.nodes.find((n) => n.kind === "start")?.id ?? flow.nodes[0]!.id;
+	const loopBack = (from: string, to: string) => isFlowLoopBack(startId, flow.edges, from, to);
+
+	const run: FlowRun = resume
+		? resume.run
+		: {
+				id: runId,
+				flowId: flow.id,
+				flowName: flow.name,
+				input,
+				startedAt: deps.now().toISOString(),
+				status: "running",
+				...(deps.trigger ? { trigger: deps.trigger } : {}),
+				...(deps.parentRunId ? { parentRunId: deps.parentRunId } : {}),
+				...(deps.location ? { location: deps.location } : {}),
+				...(deps.accessOverride ? { accessOverride: deps.accessOverride } : {}),
+				graph: { nodes: structuredClone(flow.nodes), edges: structuredClone(flow.edges) },
+				nodes: Object.fromEntries(flow.nodes.map((n) => [n.id, { status: "pending" } satisfies FlowNodeRun])),
+			};
+	if (resume) applyResume(run, resume.action);
+
 	const taken = new Map<string, boolean>();
+	for (const [id, state] of Object.entries(run.nodes)) {
+		if (byId.get(id)?.kind === "condition" && state.branch !== undefined) taken.set(id, state.branch);
+	}
 	const emit = () => deps.update(run);
 	emit();
 
 	const outputOf = (id: string) => run.nodes[id]?.output ?? "";
+	const usable = (id: string) => {
+		const s = run.nodes[id];
+		return Boolean(s && (s.status === "success" || (s.status === "skipped" && s.startedAt)));
+	};
 	const upstream = (node: FlowNode) =>
 		flow.edges
-			.filter((e) => e.to === node.id && run.nodes[e.from]?.status === "success" && endpointState(e, byId, run.nodes, taken) === "live")
+			.filter((e) => e.to === node.id && usable(e.from) && endpointState(e, byId, run.nodes, taken) === "live")
 			.map((e) => e.from);
 
+	const forwardIncoming = (node: FlowNode) => flow.edges.filter((e) => e.to === node.id && !loopBack(e.from, e.to));
+
 	const execute = async (node: FlowNode): Promise<void> => {
-		// Settle asynchronously even for trivial nodes, so the scheduler never sees a node finish mid-pass.
 		await Promise.resolve();
 		const state = run.nodes[node.id]!;
 		state.status = "running";
@@ -96,7 +196,6 @@ export async function runFlow(flow: Flow, input: string, runId: string, deps: Ru
 				state.output = (child.output ?? "").slice(0, OUTPUT_CHARS);
 			} else if (node.kind === "agent") {
 				const raw = node.prompt ?? "";
-				// A prompt that never mentions the upstream result still needs it, or the step would work blind.
 				const onlyStart = ups.every((id) => byId.get(id)?.kind === "start");
 				const needsContext = prev && !/\{\{\s*(?!input\b)[\w.-]+\s*\}\}/.test(raw) && !(onlyStart && /\{\{\s*input\s*\}\}/.test(raw));
 				const prompt = fillTemplate(raw, vars) + (needsContext ? `\n\n以下是上游步骤的输出：\n${prev}` : "");
@@ -137,6 +236,7 @@ export async function runFlow(flow: Flow, input: string, runId: string, deps: Ru
 					answer = /^\W*(yes|是|true|对)/i.test(res.text.trim());
 				} else answer = checkText(mode, node.match ?? "", prev);
 				taken.set(node.id, answer);
+				state.branch = answer;
 				state.output = prev;
 			}
 			state.status = "success";
@@ -146,24 +246,58 @@ export async function runFlow(flow: Flow, input: string, runId: string, deps: Ru
 			if (!run.error) run.error = `「${node.title}」${state.error}`;
 		} finally {
 			state.finishedAt = deps.now().toISOString();
+			state.visits = (state.visits ?? 0) + 1;
 			emit();
 		}
+	};
+
+	const reviveSkipped = (id: string, seen = new Set<string>()): void => {
+		if (seen.has(id)) return;
+		seen.add(id);
+		const state = run.nodes[id];
+		if (!state || state.status !== "skipped") return;
+		state.status = "pending";
+		delete state.finishedAt;
+		for (const e of flow.edges) if (e.from === id) reviveSkipped(e.to, seen);
+	};
+
+	const rewindLoop = (from: string, to: string): boolean => {
+		const body = sccMembers(flow.nodes, flow.edges, from);
+		if (!body.has(to)) body.add(to);
+		for (const id of body) {
+			if ((run.nodes[id]?.visits ?? 0) >= MAX_FLOW_LOOPS) {
+				run.error = `循环次数超过 ${MAX_FLOW_LOOPS}，条件「${byId.get(from)?.title ?? from}」一直走回「${byId.get(to)?.title ?? to}」`;
+				return false;
+			}
+		}
+		for (const id of body) {
+			if (id === startId) continue;
+			const state = run.nodes[id];
+			if (!state) continue;
+			archiveAndPend(state);
+			taken.delete(id);
+		}
+		run.loopCount = (run.loopCount ?? 0) + 1;
+		return true;
 	};
 
 	const running = new Map<string, Promise<string>>();
 	const launch = (node: FlowNode) => running.set(node.id, execute(node).then(() => node.id));
 
-	const settled = (node: FlowNode) => flow.edges.filter((e) => e.to === node.id).map((e) => endpointState(e, byId, run.nodes, taken));
+	const forwardStates = (node: FlowNode) => {
+		const list = forwardIncoming(node);
+		const edges = list.length ? list : flow.edges.filter((e) => e.to === node.id);
+		return edges.map((e) => endpointState(e, byId, run.nodes, taken));
+	};
 
 	for (;;) {
-		const failed = Object.values(run.nodes).some((n) => n.status === "error");
+		const failed = Boolean(run.error) || Object.values(run.nodes).some((n) => n.status === "error");
 		if (!failed && !signal.aborted) {
-			// Skipping one node can settle the next, so repeat until nothing changes.
 			for (let changed = true; changed; ) {
 				changed = false;
 				for (const node of flow.nodes) {
 					if (run.nodes[node.id]!.status !== "pending" || node.kind === "start") continue;
-					const states = settled(node);
+					const states = forwardStates(node);
 					if (!states.includes("waiting") && !states.includes("live")) {
 						run.nodes[node.id]!.status = "skipped";
 						changed = true;
@@ -174,8 +308,8 @@ export async function runFlow(flow: Flow, input: string, runId: string, deps: Ru
 				if (running.size >= MAX_PARALLEL) break;
 				if (run.nodes[node.id]!.status !== "pending" || running.has(node.id)) continue;
 				if (node.kind !== "start") {
-					const states = settled(node);
-					if (states.includes("waiting") || !states.includes("live")) continue; // not ready, or skipped on the next pass
+					const states = forwardStates(node);
+					if (states.includes("waiting") || !states.includes("live")) continue;
 				}
 				run.nodes[node.id]!.status = "running";
 				launch(node);
@@ -185,23 +319,22 @@ export async function runFlow(flow: Flow, input: string, runId: string, deps: Ru
 		if (running.size === 0) break;
 		const done = await Promise.race(running.values());
 		running.delete(done);
+		const doneState = run.nodes[done];
+		if (doneState?.status === "success") {
+			for (const e of flow.edges) {
+				if (e.from !== done || endpointState(e, byId, run.nodes, taken) !== "live") continue;
+				if (loopBack(e.from, e.to)) {
+					const target = run.nodes[e.to];
+					if (!target || target.status === "pending") continue;
+					if (!rewindLoop(e.from, e.to)) break;
+				} else {
+					// Previous loop iterations skipped the exit branch; bring it back now that this branch is live.
+					reviveSkipped(e.to);
+				}
+			}
+		}
 	}
 
-	for (const state of Object.values(run.nodes)) if (state.status === "pending") state.status = "skipped";
 	run.finishedAt = deps.now().toISOString();
-	if (signal.aborted) {
-		run.status = "cancelled";
-		run.error ??= "已取消";
-	} else if (run.error) run.status = "error";
-	else {
-		run.status = "success";
-		const ends = flow.nodes.filter((n) => n.kind === "end" && run.nodes[n.id]?.status === "success");
-		const sinks = flow.nodes.filter((n) => run.nodes[n.id]?.status === "success" && !flow.edges.some((e) => e.from === n.id && run.nodes[e.to]?.status === "success"));
-		const finals = ends.length ? ends : sinks.filter((n) => n.kind !== "start");
-		run.output = finals.map((n) => outputOf(n.id)).filter(Boolean).join("\n\n---\n\n") || undefined;
-	}
-	const refused = flow.nodes.filter((n) => run.nodes[n.id]?.blocked?.length);
-	if (refused.length) run.warning = `以下步骤有调用因权限不足被拒绝：${refused.map((n) => `${n.title}（${run.nodes[n.id]!.blocked!.length} 次）`).join("、")}。在这些步骤里把权限调高后重试。`;
-	emit();
-	return run;
+	return finishRun(flow, run, signal, emit);
 }

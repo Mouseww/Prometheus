@@ -15,7 +15,9 @@ import {
 	Play,
 	Plus,
 	Redo2,
+	RotateCcw,
 	Save,
+	SkipForward,
 	Sparkles,
 	Trash2,
 	Undo2,
@@ -24,7 +26,7 @@ import {
 	Zap,
 } from "lucide-react";
 import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { type Flow, type FlowEdge, type FlowInput, type FlowIssue, type FlowNode, type FlowNodeKind, type FlowNodeRun, type FlowRun, flowIssues, type RunAccess } from "@prometheus/protocol";
+import { type Flow, type FlowEdge, type FlowInput, type FlowIssue, type FlowNode, type FlowNodeKind, type FlowNodeRun, type FlowRun, flowIssues, flowLoopBackIds, type RunAccess } from "@prometheus/protocol";
 import { confirmDialog } from "../lib/dialogs.ts";
 import { layoutFlow, NODE_H, NODE_W, runProgress } from "../lib/flowLayout.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
@@ -56,7 +58,7 @@ const M = defineMessages({
 		addEnd: "结束",
 		layout: "自动排版",
 		palette: "添加",
-		dragHint: "拖动节点移动 · 拖右侧圆点到另一个节点连线 · 拖空白处平移 · Ctrl+滚轮缩放",
+		dragHint: "拖动节点移动 · 拖右侧圆点连线（条件的一条分支可以连回前面的步骤形成循环） · 拖空白处平移 · Ctrl+滚轮缩放",
 		kindStart: "开始",
 		kindAgent: "Agent",
 		kindCondition: "条件",
@@ -132,6 +134,12 @@ const M = defineMessages({
 		runCancelled: "运行已取消",
 		lastRun: "最近一次运行",
 		sessions: "查看会话",
+		retry: "重试失败步骤",
+		skip: "跳过并继续",
+		resumed: "已继续运行",
+		looped: "循环 {n} 次",
+		visits: "×{n}",
+		instance: "实例 {id}",
 	},
 	en: {
 		back: "Back",
@@ -154,7 +162,7 @@ const M = defineMessages({
 		addEnd: "End",
 		layout: "Auto layout",
 		palette: "Add",
-		dragHint: "Drag nodes · drag the right dot onto a node to connect · drag the background to pan · Ctrl+wheel to zoom",
+		dragHint: "Drag nodes · drag the right dot to connect (a condition branch can loop back to an earlier step) · drag the background to pan · Ctrl+wheel to zoom",
 		kindStart: "Start",
 		kindAgent: "Agent",
 		kindCondition: "Condition",
@@ -230,6 +238,12 @@ const M = defineMessages({
 		runCancelled: "Run cancelled",
 		lastRun: "Last run",
 		sessions: "Open chats",
+		retry: "Retry failed step",
+		skip: "Skip and continue",
+		resumed: "Run continued",
+		looped: "looped {n}×",
+		visits: "×{n}",
+		instance: "Instance {id}",
 	},
 });
 
@@ -263,7 +277,11 @@ function outPoint(n: FlowNode, branch?: "true" | "false") {
 	return { x: n.x + NODE_W, y };
 }
 
-function curve(a: { x: number; y: number }, b: { x: number; y: number }) {
+function curve(a: { x: number; y: number }, b: { x: number; y: number }, loop?: boolean) {
+	if (loop) {
+		const lift = Math.min(a.y, b.y) - 56;
+		return `M${a.x},${a.y} C${a.x + 72},${lift} ${b.x - 72},${lift} ${b.x},${b.y}`;
+	}
 	const d = Math.max(40, Math.abs(b.x - a.x) / 2);
 	return `M${a.x},${a.y} C${a.x + d},${a.y} ${b.x - d},${b.y} ${b.x},${b.y}`;
 }
@@ -292,7 +310,7 @@ const STATUS_RING: Record<string, string> = {
 	skipped: "border-ink-700 opacity-45",
 };
 
-export function FlowEditor({ initial, runs, flows, onClose, onSaved, onOpenFlow }: { initial: EditorInitial; runs: FlowRun[]; flows: Flow[]; onClose: () => void; onSaved: (flow: Flow) => void; onOpenFlow: (flow: Flow) => void }) {
+export function FlowEditor({ initial, runs, flows, inspectRunId, onClose, onSaved, onOpenFlow }: { initial: EditorInitial; runs: FlowRun[]; flows: Flow[]; inspectRunId?: string; onClose: () => void; onSaved: (flow: Flow) => void; onOpenFlow: (flow: Flow) => void }) {
 	const t = useT(M);
 	const lang = usePrefs((p) => p.lang);
 	const workspaces = useStore((s) => s.workspaces);
@@ -383,11 +401,20 @@ export function FlowEditor({ initial, runs, flows, onClose, onSaved, onOpenFlow 
 		if (!issues.length) setShowIssues(false);
 	}, [issues.length]);
 
-	// ----- latest run -----
-	const run = useMemo(() => (draft.id ? runs.find((r) => r.flowId === draft.id) : undefined), [runs, draft.id]);
+	// ----- latest / inspected run -----
+	const run = useMemo(() => {
+		if (inspectRunId) return runs.find((r) => r.id === inspectRunId);
+		return draft.id ? runs.find((r) => r.flowId === draft.id && !r.parentRunId) : undefined;
+	}, [runs, draft.id, inspectRunId]);
 	const running = run?.status === "running";
-	// A run made before the flow was last saved describes a graph that no longer exists, so it is not painted.
-	const paint = run && (running || !meta.updatedAt || new Date(run.startedAt).getTime() >= new Date(meta.updatedAt).getTime()) ? run : undefined;
+	const inspectingPast = Boolean(inspectRunId && run && !running);
+	// A run made before the flow was last saved describes a graph that no longer exists, so it is not painted — unless we are inspecting that instance (it carries its own graph).
+	const paint = run && (inspectingPast || running || !meta.updatedAt || new Date(run.startedAt).getTime() >= new Date(meta.updatedAt).getTime()) ? run : undefined;
+	const view = inspectingPast && paint?.graph ? paint.graph : { nodes: draft.nodes, edges: draft.edges };
+	const viewNodes = view.nodes;
+	const viewEdges = view.edges;
+	const viewById = useMemo(() => new Map(viewNodes.map((n) => [n.id, n])), [viewNodes]);
+	const loopBacks = useMemo(() => flowLoopBackIds(viewNodes, viewEdges), [viewNodes, viewEdges]);
 	useEffect(() => {
 		if (!running) return;
 		const id = setInterval(() => setNow(Date.now()), 1000);
@@ -547,16 +574,7 @@ export function FlowEditor({ initial, runs, flows, onClose, onSaved, onOpenFlow 
 			const target = d.nodes.find((n) => n.id === to);
 			if (!target || target.kind === "start") return d;
 			if (d.edges.some((e) => e.from === from && e.to === to && e.branch === branch)) return d;
-			// A cycle would make the flow unrunnable: refuse a connection that leads back to its own source.
-			const reach = new Set<string>([to]);
-			for (let grew = true; grew; ) {
-				grew = false;
-				for (const e of d.edges) if (reach.has(e.from) && !reach.has(e.to)) (reach.add(e.to), (grew = true));
-			}
-			if (reach.has(from)) {
-				toast(lang === "zh" ? "这条连线会形成环，已忽略" : "That connection would make a loop; ignored", "warning");
-				return d;
-			}
+			// Loops are allowed: a condition in the cycle with an exit decides when to leave. Validation reports the rest.
 			return { ...d, edges: [...d.edges, { id: `e${Date.now().toString(36)}${d.edges.length}`, from, to, ...(branch ? { branch } : {}) }] };
 		});
 	};
@@ -693,7 +711,7 @@ export function FlowEditor({ initial, runs, flows, onClose, onSaved, onOpenFlow 
 	// ----- derived view data -----
 	const selNode = sel?.type === "node" ? byId.get(sel.id) : undefined;
 	const statusText = (s: string) => t(s === "success" ? "success" : s === "error" ? "failed" : (s as "running" | "skipped" | "pending"));
-	const prog = paint ? runProgress(nodes, paint) : { done: 0, total: 0, current: [] as string[] };
+	const prog = paint ? runProgress(viewNodes, paint) : { done: 0, total: 0, current: [] as string[] };
 	const doneCount = prog.done;
 	const currentNames = prog.current;
 	const workTotal = prog.total;
@@ -702,6 +720,11 @@ export function FlowEditor({ initial, runs, flows, onClose, onSaved, onOpenFlow 
 	const lastSession = paint ? Object.values(paint.nodes).filter((n) => n.sessionId).at(-1)?.sessionId : undefined;
 	const hasSchedule = draft.scheduleEnabled === true && !!draft.schedule;
 	const panel = selNode || sel?.type === "edge" || paint?.output;
+	const resume = async (action: "retry" | "skip") => {
+		if (!run) return;
+		const res = await pluginCall("flows", "resume", { runId: run.id, action });
+		if (res) toast(t("resumed"));
+	};
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
@@ -757,18 +780,30 @@ export function FlowEditor({ initial, runs, flows, onClose, onSaved, onOpenFlow 
 			{paint && (
 				<div className={clsx("flex flex-wrap items-center gap-x-3 gap-y-1 border-b hairline px-4 py-2 text-xs", running ? "bg-ember-500/5" : paint.status === "success" ? "bg-moss-400/5" : paint.status === "error" ? "bg-rose-400/5" : "")}>
 					{running ? <LoaderCircle className="size-3.5 animate-spin text-ember-300" /> : paint.status === "success" ? <Badge tone="moss">{t("runDone")}</Badge> : paint.status === "error" ? <Badge tone="rose">{t("runFailed")}</Badge> : <Badge>{t("runCancelled")}</Badge>}
+					<span className="text-ink-500">{t("instance", { id: paint.id })}</span>
 					<span className="text-ink-300">{t("stepOf", { done: doneCount, total: workTotal })}</span>
 					<div className="h-1.5 w-40 overflow-hidden rounded-full bg-ink-800">
 						<div className={clsx("h-full rounded-full transition-all duration-500", paint.status === "error" ? "bg-rose-400" : paint.status === "success" ? "bg-moss-400" : "bg-ember-400")} style={{ width: `${workTotal ? (doneCount / workTotal) * 100 : 0}%` }} />
 					</div>
 					{running && currentNames.length > 0 && <span className="text-ember-200">{t("current", { name: currentNames.join("、") })}</span>}
 					<span className="text-ink-500">{t("took", { t: fmtDur(runMs) })}</span>
+					{paint.loopCount ? <span className="text-ink-400">· {t("looped", { n: paint.loopCount })}</span> : null}
 					{paint.location && <span className="text-ink-400">· {t("ranIn", { place: placeLabel(lang === "zh" ? "zh" : "en", paint.location) })}</span>}
 					{paint.trigger === "schedule" && <span className="text-ink-500">· {t("viaSchedule")}</span>}
 					{paint.trigger === "agent" && <span className="text-ink-500">· {t("viaAgent")}</span>}
 					{paint.error && <span className="min-w-0 flex-1 truncate text-rose-400">{paint.error}</span>}
+					{!running && (paint.status === "error" || paint.status === "cancelled") && (
+						<span className="ml-auto flex items-center gap-1">
+							<Button variant="outline" onClick={() => void resume("retry")}>
+								<RotateCcw className="size-3.5" /> {t("retry")}
+							</Button>
+							<Button variant="ghost" onClick={() => void resume("skip")}>
+								<SkipForward className="size-3.5" /> {t("skip")}
+							</Button>
+						</span>
+					)}
 					{lastSession && (
-						<button type="button" className="ml-auto flex items-center gap-1 text-ember-300 hover:underline" onClick={() => void openSession(lastSession)}>
+						<button type="button" className={clsx("flex items-center gap-1 text-ember-300 hover:underline", !running && (paint.status === "error" || paint.status === "cancelled") ? "" : "ml-auto")} onClick={() => void openSession(lastSession)}>
 							<MessageSquare className="size-3" /> {t("sessions")} ({sessionCount})
 						</button>
 					)}
@@ -825,12 +860,13 @@ export function FlowEditor({ initial, runs, flows, onClose, onSaved, onOpenFlow 
 										<path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
 									</marker>
 								</defs>
-								{draft.edges.map((e) => {
-									const a = byId.get(e.from);
-									const b = byId.get(e.to);
+								{viewEdges.map((e) => {
+									const a = viewById.get(e.from);
+									const b = viewById.get(e.to);
 									if (!a || !b) return null;
+									const looping = loopBacks.has(e.id);
 									const p = outPoint(a, e.branch);
-									const q = { x: b.x - 9, y: b.y + NODE_H / 2 };
+									const q = looping ? { x: b.x + NODE_W / 2, y: b.y - 2 } : { x: b.x - 9, y: b.y + NODE_H / 2 };
 									const on = sel?.type === "edge" && sel.id === e.id;
 									const sa = nodeRun(e.from)?.status;
 									const sb = nodeRun(e.to)?.status;
@@ -838,23 +874,23 @@ export function FlowEditor({ initial, runs, flows, onClose, onSaved, onOpenFlow 
 									const passed = sa === "success" && (sb === "success" || sb === "running" || sb === "error");
 									const dead = paint && (sb === "skipped" || sa === "skipped");
 									const bad = showIssues && issueEdges.has(e.id);
-									const d = curve(p, q);
+									const d = curve(p, q, looping);
 									return (
-										<g key={e.id} className={clsx(bad ? "text-rose-400" : on ? "text-ember-300" : flowing ? "text-ember-400" : passed ? "text-moss-400" : "text-ink-500", dead && "opacity-30")}>
-											<path d={d} fill="none" stroke="currentColor" strokeWidth={on ? 2.8 : 2} markerEnd="url(#flow-arrow)" className={flowing ? "flow-edge-live" : undefined} strokeDasharray={flowing ? "8 6" : undefined} />
+										<g key={e.id} className={clsx(bad ? "text-rose-400" : on ? "text-ember-300" : flowing ? "text-ember-400" : looping ? "text-sky-400" : passed ? "text-moss-400" : "text-ink-500", dead && "opacity-30")}>
+											<path d={d} fill="none" stroke="currentColor" strokeWidth={on ? 2.8 : 2} markerEnd="url(#flow-arrow)" className={flowing ? "flow-edge-live" : undefined} strokeDasharray={flowing ? "8 6" : looping ? "6 5" : undefined} />
 											<path d={d} fill="none" stroke="transparent" strokeWidth={16} className="pointer-events-auto cursor-pointer" onPointerDown={(ev) => (ev.stopPropagation(), setSel({ type: "edge", id: e.id }))} />
 											{e.branch && (
-												<text x={p.x + 12} y={p.y + (e.branch === "true" ? -7 : 15)} fontSize={12} fontWeight={600} fill={e.branch === "true" ? "#9bc77a" : "#f0767a"} className="select-none">
+												<text x={looping ? (p.x + q.x) / 2 : p.x + 12} y={looping ? Math.min(p.y, q.y) - 48 : p.y + (e.branch === "true" ? -7 : 15)} fontSize={12} fontWeight={600} fill={e.branch === "true" ? "#9bc77a" : "#f0767a"} className="select-none" textAnchor={looping ? "middle" : "start"}>
 													{e.branch === "true" ? t("yes") : t("no")}
 												</text>
 											)}
 										</g>
 									);
 								})}
-								{link && <path d={curve(outPoint(byId.get(link.from)!, link.branch), { x: link.x, y: link.y })} fill="none" stroke="#ffa055" strokeWidth={2} strokeDasharray="5 4" />}
+								{link && byId.get(link.from) && <path d={curve(outPoint(byId.get(link.from)!, link.branch), { x: link.x, y: link.y })} fill="none" stroke="#ffa055" strokeWidth={2} strokeDasharray="5 4" />}
 							</svg>
 
-							{nodes.map((n) => {
+							{viewNodes.map((n) => {
 								const Icon = KIND_ICON[n.kind];
 								const nr = nodeRun(n.id);
 								const st = nr?.status;
@@ -879,6 +915,7 @@ export function FlowEditor({ initial, runs, flows, onClose, onSaved, onOpenFlow 
 											<span className="ml-auto flex items-center gap-1">
 												{st === "running" && <LoaderCircle className="size-3.5 animate-spin text-ember-300" />}
 												{st && st !== "pending" && st !== "running" && <span className={clsx(st === "success" && "text-moss-400", st === "error" && "text-rose-400")}>{statusText(st)}</span>}
+												{nr?.visits && nr.visits > 1 && <span className="text-ink-500">{t("visits", { n: nr.visits })}</span>}
 												{dur > 0 && st !== "skipped" && <span className="tabular-nums text-ink-500">{fmtDur(dur)}</span>}
 											</span>
 										</div>

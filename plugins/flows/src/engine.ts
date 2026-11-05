@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { AgentRunOptions, AgentRunResult, WorkspaceRef } from "@prometheus/plugin-sdk";
-import { type Flow, type FlowInput, type FlowRefContext, type FlowRun, type FlowRunLocation, MAX_SUBFLOW_DEPTH, type RunAccess } from "@prometheus/protocol";
+import { type Flow, type FlowInput, type FlowRefContext, type FlowResumeAction, type FlowRun, type FlowRunLocation, MAX_SUBFLOW_DEPTH, type RunAccess } from "@prometheus/protocol";
 import { ensureStart, extractJson, GENERATE_GUIDE, normalizeFlow, validateFlow } from "./graph.ts";
-import { runFlow } from "./runner.ts";
+import { type ResumeOpts, runFlow } from "./runner.ts";
 import { catchUpDue, nextRun, validateSchedule } from "./schedule.ts";
 
 export interface FlowState {
@@ -53,7 +53,13 @@ export class FlowEngine {
 			run.status = "error";
 			run.error = "应用关闭时中断";
 			run.finishedAt = now;
-			for (const n of Object.values(run.nodes)) if (n.status === "running" || n.status === "pending") n.status = "skipped";
+			for (const n of Object.values(run.nodes)) {
+				if (n.status === "running") {
+					n.status = "error";
+					n.error = "应用关闭时中断";
+					n.finishedAt = now;
+				} else if (n.status === "pending") n.status = "skipped";
+			}
 		}
 		const nowDate = this.deps.now();
 		for (const flow of this.state.flows) {
@@ -204,6 +210,30 @@ export class FlowEngine {
 		return this.launch(flowId, input, { parentSessionId, trigger, depth: 0, location, accessOverride });
 	}
 
+	/** Continues a failed or cancelled instance: retry the failed step, or skip it and go on. */
+	async resumeRun(runId: string, action: FlowResumeAction, parentSessionId?: string): Promise<{ runId: string; done: Promise<FlowRun> }> {
+		const stored = this.state.runs.find((r) => r.id === runId);
+		if (!stored) throw new Error("运行实例不存在");
+		if (stored.status === "running") throw new Error("该实例正在运行");
+		if (stored.status === "success") throw new Error("该实例已经成功结束");
+		if (this.state.runs.some((r) => r.flowId === stored.flowId && r.status === "running" && !r.parentRunId && r.id !== runId)) throw new Error("该流程正在运行");
+		const flow = structuredClone(this.get(stored.flowId));
+		if (stored.graph) {
+			flow.nodes = structuredClone(stored.graph.nodes);
+			flow.edges = structuredClone(stored.graph.edges);
+		}
+		const location = stored.location ?? (await this.locate(flow, undefined, undefined));
+		return this.launch(stored.flowId, stored.input, {
+			parentSessionId,
+			trigger: stored.trigger ?? "manual",
+			depth: stored.parentRunId ? 1 : 0,
+			location,
+			accessOverride: stored.accessOverride,
+			parentRunId: stored.parentRunId,
+			resume: { run: structuredClone(stored), action },
+		});
+	}
+
 	/** Resolves where a flow runs. Throws when a project-bound flow is asked to run somewhere else. */
 	private async locate(flow: Flow, where: RunWhere | undefined, inherited: FlowRunLocation | undefined): Promise<FlowRunLocation> {
 		const spaces = await this.deps.workspaces();
@@ -244,13 +274,18 @@ export class FlowEngine {
 			parentRunId?: string;
 			parentSignal?: AbortSignal;
 			onStart?: (runId: string) => void;
+			resume?: ResumeOpts;
 		},
 	): Promise<{ runId: string; done: Promise<FlowRun> }> {
 		if (o.depth > MAX_SUBFLOW_DEPTH) throw new Error(`子流程嵌套超过 ${MAX_SUBFLOW_DEPTH} 层`);
 		const flow = structuredClone(this.get(flowId));
+		if (o.resume?.run.graph) {
+			flow.nodes = structuredClone(o.resume.run.graph.nodes);
+			flow.edges = structuredClone(o.resume.run.graph.edges);
+		}
 		const errors = validateFlow(flow, this.refs(flow.id));
 		if (errors.length) throw new Error(errors.join("；"));
-		const runId = randomUUID().slice(0, 8);
+		const runId = o.resume?.run.id ?? randomUUID().slice(0, 8);
 		const ctl = new AbortController();
 		// A parent that is stopped stops everything it started.
 		if (o.parentSignal) {
@@ -259,7 +294,7 @@ export class FlowEngine {
 		}
 		this.running.set(runId, ctl);
 		this.get(flowId).lastRunAt = this.deps.now().toISOString();
-		let first = true;
+		let first = !o.resume;
 		const done = runFlow(
 			flow,
 			input.slice(0, 8000),
@@ -293,6 +328,7 @@ export class FlowEngine {
 				},
 			},
 			ctl.signal,
+			o.resume,
 		).finally(() => this.running.delete(runId));
 		return { runId, done };
 	}

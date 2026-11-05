@@ -72,24 +72,31 @@ export default definePlugin({
 		ctx.tools.register({
 			name: "flow_run",
 			label: "运行流程",
-			description: "Run a saved flow to completion and return its final output. Steps never get more permission than this chat has. Can take many minutes.",
-			promptSnippet: "flow_run: run a saved flow (custom SOP) with an input and get the result",
-			parameters: Type.Object({ flow: Type.String({ description: "Flow id or name" }), input: Type.Optional(Type.String({ description: "Input text, available to steps as {{input}}" })) }),
+			description: "Run a saved flow to completion and return its final output. Steps never get more permission than this chat has. Can take many minutes. To continue a failed instance, pass runId with action retry (re-run the failed step) or skip (mark it skipped and go on).",
+			promptSnippet: "flow_run: run a saved flow, or resume a failed run instance by runId",
+			parameters: Type.Object({
+				flow: Type.Optional(Type.String({ description: "Flow id or name (required unless resuming)" })),
+				input: Type.Optional(Type.String({ description: "Input text, available to steps as {{input}}" })),
+				runId: Type.Optional(Type.String({ description: "Failed or cancelled run instance to continue" })),
+				action: Type.Optional(Type.String({ description: "When resuming: retry (default) or skip" })),
+			}),
 			async execute(_id, params, signal, _update, toolCtx) {
-				const flow = byRef(params.flow);
-				const { done, runId } = await engine.startRun(flow.id, params.input ?? "", toolCtx.sessionId ?? "unknown", "agent", { cwd: toolCtx.cwd });
-				signal?.addEventListener("abort", () => engine.cancel(runId), { once: true });
-				const run = await done;
-				const steps = flow.nodes.filter((n) => n.kind === "agent").map((n) => `- ${n.title}: ${run.nodes[n.id]?.status}`);
+				if (!params.runId && !params.flow) throw new Error("请提供流程 id/名称，或要续跑的实例 runId");
+				const started = params.runId
+					? await engine.resumeRun(params.runId, params.action === "skip" ? "skip" : "retry", toolCtx.sessionId ?? "unknown")
+					: await engine.startRun(byRef(params.flow!).id, params.input ?? "", toolCtx.sessionId ?? "unknown", "agent", { cwd: toolCtx.cwd });
+				signal?.addEventListener("abort", () => engine.cancel(started.runId), { once: true });
+				const run = await started.done;
+				const steps = Object.entries(run.nodes).map(([id, n]) => `- ${id}: ${n.status}${n.visits && n.visits > 1 ? ` ×${n.visits}` : ""}`);
 				const warning = run.warning ? `\n\n${run.warning}` : "";
-				return text(`${run.status === "success" ? "Flow finished." : `Flow ${run.status}: ${run.error ?? ""}`}\n${steps.join("\n")}${warning}\n\n${run.output ?? ""}`);
+				return text(`${run.status === "success" ? "Flow finished." : `Flow ${run.status}: ${run.error ?? ""}`}\ninstance ${run.id}\n${steps.join("\n")}${warning}\n\n${run.output ?? ""}`);
 			},
 		});
 		ctx.tools.register({
 			name: "flow_create",
 			label: "创建流程",
 			description:
-				"Save a flow (a DAG of agent steps). Provide `flow` as a JSON string: {name,description,nodes:[{id,kind:start|agent|condition|end,title,prompt?,access?,mode?,match?}],edges:[{from,to,branch?}]}. Exactly one start node. Prompts may use {{input}}, {{prev}}, {{nodeId}}. Step access is capped at this chat's permission: readonly reads only, edits writes files but cannot run commands, full also runs commands (a step that runs tests or scripts needs full).",
+				"Save a flow (agent steps, conditions, optional loops). Provide `flow` as a JSON string: {name,description,nodes:[{id,kind:start|agent|condition|end,title,prompt?,access?,mode?,match?}],edges:[{from,to,branch?}]}. Exactly one start node. A condition can loop by sending one branch back to an earlier step and the other branch out of the loop. Prompts may use {{input}}, {{prev}}, {{nodeId}}. Step access is capped at this chat's permission: readonly reads only, edits writes files but cannot run commands, full also runs commands (a step that runs tests or scripts needs full).",
 			promptSnippet: "flow_create: save a multi-step agent flow (custom SOP)",
 			parameters: Type.Object({ flow: Type.String({ description: "Flow as a JSON object string" }) }),
 			async execute(_id, params, _signal, _update, toolCtx) {
@@ -138,6 +145,12 @@ export default definePlugin({
 		// For callers that need the outcome (automations): the run record, or nothing once it has been trimmed away.
 		ctx.rpc("get", (p) => engine.getRun(str(p.runId)) ?? null);
 		ctx.rpc("cancel", (p) => ({ cancelled: engine.cancel(str(p.runId)) }));
+		ctx.rpc("resume", async (p): Promise<{ runId: string }> => {
+			const action = p.action === "skip" ? "skip" : "retry";
+			const { runId, done } = await engine.resumeRun(str(p.runId), action);
+			void done.catch((err: unknown) => ctx.log.warn(`流程续跑失败：${err instanceof Error ? err.message : err}`));
+			return { runId };
+		});
 		ctx.rpc("clearRuns", async () => void (await engine.clearRuns()));
 	},
 });

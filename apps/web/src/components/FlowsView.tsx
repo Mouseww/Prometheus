@@ -1,4 +1,4 @@
-import { AlarmClock, Bug, CircleAlert, CircleCheck, Copy, FileText, GitPullRequest, LayoutTemplate, LoaderCircle, MessageSquare, Newspaper, Pencil, Play, Plus, Rocket, Sparkles, Trash2, Workflow } from "lucide-react";
+import { AlarmClock, Bug, CircleAlert, CircleCheck, Copy, FileText, GitPullRequest, LayoutTemplate, LoaderCircle, MessageSquare, Newspaper, Pencil, Play, Plus, Rocket, RotateCcw, SkipForward, Sparkles, Trash2, Workflow } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Flow, FlowInput, FlowRun, RunAccess } from "@prometheus/protocol";
 import { confirmDialog } from "../lib/dialogs.ts";
@@ -44,11 +44,11 @@ const M = defineMessages({
 		duplicate: "复制",
 		delete: "删除",
 		confirmDelete: "删除流程「{name}」？",
-		runs: "运行记录",
+		runs: "运行实例",
 		project: "项目专属 · {name}",
 		general: "通用流程",
 		allPlaces: "全部位置",
-		noRuns: "还没有运行记录",
+		noRuns: "还没有运行实例",
 		clear: "清空记录",
 		running: "运行中",
 		success: "成功",
@@ -56,6 +56,11 @@ const M = defineMessages({
 		cancelled: "已取消",
 		blockedShort: "有步骤因权限不足被拒",
 		openEditor: "打开查看进度",
+		openRun: "查看进度",
+		retry: "重试失败步骤",
+		skip: "跳过并继续",
+		resumed: "已继续运行",
+		looped: "循环 {n} 次",
 		generated: "已生成，请检查后保存",
 		input: "运行输入",
 		inputHint: "启动时传给流程的内容，步骤里用 {{input}} 引用。可留空。",
@@ -99,7 +104,7 @@ const M = defineMessages({
 		duplicate: "Duplicate",
 		delete: "Delete",
 		confirmDelete: 'Delete flow "{name}"?',
-		runs: "Run history",
+		runs: "Run instances",
 		project: "Project · {name}",
 		general: "General flow",
 		allPlaces: "All places",
@@ -111,6 +116,11 @@ const M = defineMessages({
 		cancelled: "Cancelled",
 		blockedShort: "Steps blocked by permissions",
 		openEditor: "Open to watch",
+		openRun: "Watch progress",
+		retry: "Retry failed step",
+		skip: "Skip and continue",
+		resumed: "Run continued",
+		looped: "looped {n}×",
 		generated: "Generated; review it, then save",
 		input: "Run input",
 		inputHint: "Passed to the flow at start; steps reference it as {{input}}. May be empty.",
@@ -204,7 +214,7 @@ function TemplateGrid({ onPick, onBlank }: { onPick: (tpl: FlowTemplate) => void
 	);
 }
 
-type Editing = (FlowInput & { id?: string; updatedAt?: string; nextRunAt?: string }) | null;
+type Editing = (FlowInput & { id?: string; updatedAt?: string; nextRunAt?: string; inspectRunId?: string }) | null;
 
 export function FlowsView() {
 	const t = useT(M);
@@ -243,10 +253,11 @@ export function FlowsView() {
 	if (editing)
 		return (
 			<FlowEditor
-				key={editing.id ?? "new"}
+				key={`${editing.id ?? "new"}:${editing.inspectRunId ?? ""}`}
 				initial={editing}
 				runs={data?.runs ?? []}
 				flows={data?.flows ?? []}
+				inspectRunId={editing.inspectRunId}
 				onOpenFlow={(f) => setEditing(f)}
 				onClose={() => {
 					setEditing(null);
@@ -388,11 +399,25 @@ export function FlowsView() {
 									{shownRuns.map((r) => {
 										const flow = data.flows.find((f) => f.id === r.flowId);
 										const sessions = Object.values(r.nodes).filter((n) => n.sessionId);
+										const openInstance = () => {
+											if (flow) setEditing({ ...flow, inspectRunId: r.id });
+										};
+										const resume = (action: "retry" | "skip") =>
+											void pluginCall("flows", "resume", { runId: r.id, action }).then((ok) => {
+												if (ok) {
+													toast(t("resumed"));
+													openInstance();
+												}
+											});
 										return (
 											<li key={r.id} className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
 												<RunBadge status={r.status} />
-												<span className="font-medium text-ink-200">{r.flowName}</span>
+												<button type="button" className="font-medium text-ink-200 hover:underline" onClick={openInstance}>
+													{r.flowName}
+												</button>
+												<span className="font-mono text-[11px] text-ink-600">{r.id}</span>
 												<span className="text-xs text-ink-500">{when(r.startedAt)}</span>
+												{r.loopCount ? <span className="text-xs text-ink-500">{t("looped", { n: r.loopCount })}</span> : null}
 												{r.location && <Badge>{placeLabel(lang2, r.location)}</Badge>}
 												{r.error && <span className="min-w-0 flex-1 truncate text-xs text-rose-400">{r.error}</span>}
 												{r.warning && !r.error && (
@@ -407,9 +432,19 @@ export function FlowsView() {
 															<MessageSquare className="size-3" /> {sessions.length}
 														</button>
 													)}
+													{(r.status === "error" || r.status === "cancelled") && (
+														<>
+															<button type="button" className="text-xs text-ember-300 hover:underline" title={t("retry")} onClick={() => resume("retry")}>
+																<RotateCcw className="inline size-3" /> {t("retry")}
+															</button>
+															<button type="button" className="text-xs text-ink-400 hover:text-ink-100" title={t("skip")} onClick={() => resume("skip")}>
+																<SkipForward className="inline size-3" /> {t("skip")}
+															</button>
+														</>
+													)}
 													{flow && (
-														<button type="button" className="text-xs text-ink-400 hover:text-ink-100" onClick={() => setEditing(flow)}>
-															{t("edit")}
+														<button type="button" className="text-xs text-ink-400 hover:text-ink-100" onClick={openInstance}>
+															{t("openRun")}
 														</button>
 													)}
 												</span>

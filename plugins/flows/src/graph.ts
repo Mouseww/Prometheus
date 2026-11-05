@@ -1,4 +1,4 @@
-import { type FlowRefContext, flowHasCycle, flowIssues, MAX_FLOW_NODES as MAX_NODES } from "@prometheus/protocol";
+import { type FlowRefContext, flowHasCycle, flowIssues, flowLoopBackIds, MAX_FLOW_NODES as MAX_NODES } from "@prometheus/protocol";
 import type { FlowEdge, FlowInput, FlowNode } from "@prometheus/protocol";
 
 export { MAX_NODES };
@@ -12,14 +12,16 @@ export function validateFlow(flow: Pick<FlowInput, "name" | "nodes" | "edges">, 
 
 export const hasCycle = flowHasCycle;
 
-/** Left-to-right layers by longest path from the roots. Used for generated flows that carry no positions. */
+/** Left-to-right layers by longest path from the roots. Loop-back edges are ignored so a cycle does not collapse the layout. */
 export function autoLayout(nodes: FlowNode[], edges: FlowEdge[]): FlowNode[] {
+	const back = flowLoopBackIds(nodes, edges);
+	const forward = edges.filter((e) => !back.has(e.id));
 	const layer = new Map<string, number>();
 	const visit = (id: string, guard = 0): number => {
 		const known = layer.get(id);
 		if (known !== undefined) return known;
 		if (guard > nodes.length) return 0;
-		const ups = edges.filter((e) => e.to === id).map((e) => visit(e.from, guard + 1) + 1);
+		const ups = forward.filter((e) => e.to === id).map((e) => visit(e.from, guard + 1) + 1);
 		const l = ups.length ? Math.max(...ups) : 0;
 		layer.set(id, l);
 		return l;
@@ -116,18 +118,18 @@ export function extractJson(text: string): unknown {
 	throw new Error("没有从回复里解析出流程 JSON");
 }
 
-export const GENERATE_GUIDE = `你是流程编排设计师。把用户描述的工作流程（SOP）设计成一个有向无环图，只输出一个 JSON 对象，不要任何解释。
+export const GENERATE_GUIDE = `你是流程编排设计师。把用户描述的工作流程（SOP）设计成一张流程图，只输出一个 JSON 对象，不要任何解释。
 格式：
 {"name":"流程名","description":"一句话说明","nodes":[...],"edges":[...]}
 节点 kind：
 - start：入口，有且仅有一个，id 用 "start"。用户启动时输入的内容可在提示词里用 {{input}} 引用。
 - agent：一个由 Agent 执行的步骤。字段 id,title,prompt(完整、自包含的指令),access("readonly"只读|"edits"可改文件但**不能执行命令**|"full"可改文件也可执行命令；默认 readonly)。步骤要跑构建/测试/脚本或任何命令行时，必须给 "full"，否则命令会被拒绝；只读调研才用 "readonly"，不要无谓给高权限。
-- condition：分支判断。字段 id,title,mode("ai"用 prompt 写是/否问题|"contains"|"regex"),prompt 或 match。它的每条出线必须带 branch:"true" 或 "false"。
+- condition：分支判断。字段 id,title,mode("ai"用 prompt 写是/否问题|"contains"|"regex"),prompt 或 match。它的每条出线必须带 branch:"true" 或 "false"。需要循环时，把条件的一条分支连回前面要重做的步骤，另一条连到循环外作为出口；不要单独加循环器节点。
 - end：可选出口，汇总最终结果。
 提示词里可用变量：{{input}} 启动输入，{{prev}} 直接上游步骤的输出，{{节点id}} 指定节点的输出。
 edges 形如 {"from":"start","to":"a1"}；并行就让一个节点连向多个下游，汇合就让多个节点连向同一个下游。
 类型 subflow：调用另一条已保存的流程。字段 id,title,flowId(下面“可用的子流程”里的 id),prompt(传给子流程的输入，可省略，默认 {{prev}})。子流程的最终输出就是该节点的输出。
-步骤要拆得单一明确（3~8 个为宜），不要有环。`;
+步骤要拆得单一明确（3~8 个为宜）。除了条件节点的回边，不要出现没有出口的环。`;
 
 /** An AI draft may forget the entry node: add one in front of every node that has no incoming edge. */
 export function ensureStart(flow: FlowInput): FlowInput {

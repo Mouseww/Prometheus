@@ -1,16 +1,18 @@
-import type { FlowEdge, FlowNode } from "@prometheus/protocol";
+import { flowLoopBackIds, type FlowEdge, type FlowNode } from "@prometheus/protocol";
 
 export const NODE_W = 200;
 export const NODE_H = 76;
 
-/** Left-to-right layers by longest path from the roots; siblings stack downward. */
+/** Left-to-right layers by longest path from the roots; siblings stack downward. Loop-back edges are ignored so a cycle does not collapse the layout. */
 export function layoutFlow(nodes: FlowNode[], edges: FlowEdge[]): FlowNode[] {
+	const back = flowLoopBackIds(nodes, edges);
+	const forward = edges.filter((e) => !back.has(e.id));
 	const layer = new Map<string, number>();
 	const visit = (id: string, guard = 0): number => {
 		const known = layer.get(id);
 		if (known !== undefined) return known;
 		if (guard > nodes.length) return 0;
-		const ups = edges.filter((e) => e.to === id).map((e) => visit(e.from, guard + 1) + 1);
+		const ups = forward.filter((e) => e.to === id).map((e) => visit(e.from, guard + 1) + 1);
 		const l = ups.length ? Math.max(...ups) : 0;
 		layer.set(id, l);
 		return l;

@@ -34,12 +34,12 @@ const run = (flow: Flow, input: string, a: ReturnType<typeof agent>, signal = ne
 describe("validateFlow", () => {
 	const ok = () => ({ name: "x", nodes: [node("start", "start"), node("a", "agent")], edges: [edge("start", "a")] });
 	it("accepts a simple flow", () => expect(validateFlow(ok())).toEqual([]));
-	it("rejects cycles, missing prompt, unreachable nodes and unlabeled branches", () => {
+	it("rejects cycles without a condition, missing prompt, unreachable nodes and unlabeled branches", () => {
 		const f = ok();
 		f.nodes.push(node("b", "agent"), node("c", "condition", { mode: "contains", match: "x" }), node("d", "agent", { prompt: "" }));
 		f.edges.push(edge("a", "b"), edge("b", "a"));
 		const errors = validateFlow(f).join("|");
-		expect(errors).toMatch(/环/);
+		expect(errors).toMatch(/没有条件/);
 		expect(errors).toMatch(/没有填写指令/);
 		const g = ok();
 		g.nodes.push(node("c", "condition", { mode: "contains", match: "x" }), node("z", "agent"));
@@ -53,6 +53,16 @@ describe("validateFlow", () => {
 		expect(validateFlow({ name: "x", nodes: [node("a", "agent")], edges: [] }).join("|")).toMatch(/开始节点/);
 	});
 	it("detects cycles", () => expect(hasCycle([node("a", "agent"), node("b", "agent")], [edge("a", "b"), edge("b", "a")])).toBe(true));
+	it("allows a condition that loops back, and rejects a loop with no exit", () => {
+		const loop = {
+			name: "x",
+			nodes: [node("start", "start"), node("a", "agent"), node("c", "condition", { mode: "contains", match: "again" }), node("end", "end")],
+			edges: [edge("start", "a"), edge("a", "c"), edge("c", "a", "true"), edge("c", "end", "false")],
+		};
+		expect(validateFlow(loop)).toEqual([]);
+		const trapped = { ...loop, edges: [edge("start", "a"), edge("a", "c"), edge("c", "a", "true")] };
+		expect(validateFlow(trapped).join("|")).toMatch(/没有出口/);
+	});
 });
 
 describe("graph helpers", () => {
@@ -167,6 +177,85 @@ describe("runFlow", () => {
 		expect(r.nodes.b?.status).toBe("skipped");
 	});
 
+	it("a later step that loops back after a condition also re-runs the body", async () => {
+		let n = 0;
+		const a = agent((o) => {
+			if (o.prompt.startsWith("do a")) return `try ${++n}`;
+			return "ok";
+		});
+		const flow = flowOf(
+			[node("start", "start"), node("a", "agent"), node("c", "condition", { mode: "contains", match: "try 1" }), node("b", "agent"), node("end", "end")],
+			[edge("start", "a"), edge("a", "c"), edge("c", "b", "true"), edge("c", "end", "false"), edge("b", "a")],
+		);
+		const r = await run(flow, "", a);
+		expect(r.status).toBe("success");
+		expect(n).toBe(2);
+		expect(r.nodes.b?.visits).toBe(1);
+		expect(r.output).toBe("try 2");
+	});
+
+	it("a condition that loops back re-runs the body until it takes the exit", async () => {
+		let n = 0;
+		const a = agent((o) => {
+			if (o.prompt.startsWith("do a")) return `try ${++n}`;
+			return "done";
+		});
+		const flow = flowOf(
+			[node("start", "start"), node("a", "agent"), node("c", "condition", { mode: "contains", match: "try 1" }), node("end", "end")],
+			[edge("start", "a"), edge("a", "c"), edge("c", "a", "true"), edge("c", "end", "false")],
+		);
+		const r = await run(flow, "", a);
+		expect(r.status).toBe("success");
+		expect(n).toBe(2);
+		expect(r.nodes.a?.visits).toBe(2);
+		expect(r.nodes.a?.output).toBe("try 2");
+		expect(r.nodes.a?.history).toHaveLength(1);
+		expect(r.loopCount).toBe(1);
+		expect(r.output).toBe("try 2");
+		expect(r.graph?.nodes).toHaveLength(4);
+	});
+
+	it("retries a failed step on the same instance, then continues", async () => {
+		let n = 0;
+		const a = agent((o) => {
+			if (o.prompt.startsWith("do a")) return ++n === 1 ? new Error("boom") : "A-ok";
+			return "B-ok";
+		});
+		const flow = flowOf([node("start", "start"), node("a", "agent"), node("b", "agent")], [edge("start", "a"), edge("a", "b")]);
+		const first = await run(flow, "", a);
+		expect(first.status).toBe("error");
+		expect(first.nodes.b?.status).toBe("skipped");
+		const second = await runFlow(flow, "", "r1", { runAgent: a.runAgent, now: () => new Date(0), update: () => {}, cwd: "/proj" }, new AbortController().signal, { run: first, action: "retry" });
+		expect(second.status).toBe("success");
+		expect(second.id).toBe("r1");
+		expect(second.nodes.a?.visits).toBe(2);
+		expect(second.nodes.b?.status).toBe("success");
+		expect(second.output).toBe("B-ok");
+	});
+
+	it("skips a failed step and continues the rest of the instance", async () => {
+		const a = agent((o) => (o.prompt.startsWith("do a") ? new Error("boom") : "B-ok"));
+		const flow = flowOf([node("start", "start"), node("a", "agent"), node("b", "agent")], [edge("start", "a"), edge("a", "b")]);
+		const first = await run(flow, "", a);
+		const second = await runFlow(flow, "", "r1", { runAgent: a.runAgent, now: () => new Date(0), update: () => {}, cwd: "/proj" }, new AbortController().signal, { run: first, action: "skip" });
+		expect(second.status).toBe("success");
+		expect(second.nodes.a?.status).toBe("skipped");
+		expect(second.nodes.b?.status).toBe("success");
+		expect(second.output).toBe("B-ok");
+	});
+
+	it("stops a loop that never takes its exit", async () => {
+		const a = agent(() => "again");
+		const flow = flowOf(
+			[node("start", "start"), node("a", "agent"), node("c", "condition", { mode: "contains", match: "again" }), node("end", "end")],
+			[edge("start", "a"), edge("a", "c"), edge("c", "a", "true"), edge("c", "end", "false")],
+		);
+		const r = await run(flow, "", a);
+		expect(r.status).toBe("error");
+		expect(r.error).toMatch(/循环次数/);
+		expect((r.nodes.a?.visits ?? 0) >= 20).toBe(true);
+	});
+
 	it("records refused calls on the step and warns on the run", async () => {
 		const calls: AgentRunOptions[] = [];
 		const blocked = [{ tool: "bash", reason: 'Blocked by permissions: running commands is not covered by "edits" access: this step needs "full".' }];
@@ -264,12 +353,27 @@ describe("FlowEngine", () => {
 		await h.engine.stop();
 	});
 
+	it("resumes a failed instance in place", async () => {
+		let n = 0;
+		const { engine } = harness((o) => (o.prompt.startsWith("do a") && ++n === 1 ? (new Error("boom") as never) : "ok"));
+		await engine.start();
+		const flow = await engine.create(body());
+		const first = await (await engine.startRun(flow.id, "in")).done;
+		expect(first.status).toBe("error");
+		const { runId, done } = await engine.resumeRun(first.id, "retry");
+		expect(runId).toBe(first.id);
+		const second = await done;
+		expect(second.status).toBe("success");
+		expect(engine.snapshot().runs.filter((r) => r.id === first.id)).toHaveLength(1);
+		await engine.stop();
+	});
+
 	it("marks runs cut short by a shutdown", async () => {
 		const stale = { id: "old", flowId: "f", flowName: "demo", input: "", startedAt: "", status: "running" as const, nodes: { a: { status: "running" as const } } };
 		const h = harness(() => "out", { flows: [], runs: [stale] });
 		await h.engine.start();
 		expect(h.saved().runs[0]).toMatchObject({ status: "error", error: "应用关闭时中断" });
-		expect(h.saved().runs[0]!.nodes.a?.status).toBe("skipped");
+		expect(h.saved().runs[0]!.nodes.a?.status).toBe("error");
 		await h.engine.stop();
 	});
 });

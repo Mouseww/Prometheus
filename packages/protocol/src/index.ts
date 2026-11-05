@@ -1068,6 +1068,18 @@ export type FlowInput = Pick<Flow, "name" | "description" | "workspaceId" | "nod
 
 export type FlowNodeStatus = "pending" | "running" | "success" | "error" | "skipped";
 
+/** One past execution of a node, kept when a loop or a resume runs it again. */
+export interface FlowNodeVisit {
+	status: "success" | "error";
+	startedAt?: string;
+	finishedAt?: string;
+	sessionId?: string;
+	output?: string;
+	error?: string;
+	/** condition: which branch this visit took. */
+	branch?: boolean;
+}
+
 export interface FlowNodeRun {
 	status: FlowNodeStatus;
 	startedAt?: string;
@@ -1079,6 +1091,12 @@ export interface FlowNodeRun {
 	error?: string;
 	/** Calls this step was refused for lack of permission: the step's access is too low for what its prompt asks. */
 	blocked?: BlockedCall[];
+	/** condition: which branch was taken on the latest visit. */
+	branch?: boolean;
+	/** How many times this node has finished (loops and retries count). */
+	visits?: number;
+	/** Earlier visits, newest last. The latest result lives on the fields above. */
+	history?: FlowNodeVisit[];
 }
 
 export interface FlowRunLocation {
@@ -1088,6 +1106,8 @@ export interface FlowRunLocation {
 	workspaceId?: string;
 	personal?: boolean;
 }
+
+export type FlowResumeAction = "retry" | "skip";
 
 export interface FlowRun {
 	id: string;
@@ -1108,6 +1128,12 @@ export interface FlowRun {
 	error?: string;
 	/** The run finished, but some steps were refused actions for lack of permission: they did less than their prompt asked. */
 	warning?: string;
+	/** Graph at the moment this instance started, so it can still be inspected after the flow is edited. */
+	graph?: { nodes: FlowNode[]; edges: FlowEdge[] };
+	/** How many times a condition took a back-edge (a loop). */
+	loopCount?: number;
+	/** One access level applied to every step of this instance. */
+	accessOverride?: RunAccess;
 }
 
 // ---------- Voice plugin ----------

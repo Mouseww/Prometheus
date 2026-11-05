@@ -7,6 +7,8 @@ const ACCESS = ["readonly", "edits", "full"];
 const KINDS = ["start", "agent", "condition", "end", "subflow"];
 /** How many flows may call each other in a chain; a run deeper than this is refused. */
 export const MAX_SUBFLOW_DEPTH = 3;
+/** How many times a node may finish in one run (a loop that never takes its exit is cut off here). */
+export const MAX_FLOW_LOOPS = 20;
 
 export interface FlowIssue {
 	/** The node to highlight, when the problem belongs to one. */
@@ -31,6 +33,72 @@ export function flowHasCycle(nodes: FlowNode[], edges: FlowEdge[]): boolean {
 		}
 	}
 	return done < nodes.length;
+}
+
+/** Strongly connected components (Kosaraju). A component of size > 1, or a self-loop, is a cycle. */
+export function flowSccs(nodes: FlowNode[], edges: FlowEdge[]): string[][] {
+	const ids = nodes.map((n) => n.id);
+	const out = new Map(ids.map((id) => [id, [] as string[]]));
+	const inn = new Map(ids.map((id) => [id, [] as string[]]));
+	for (const e of edges) {
+		if (!out.has(e.from) || !out.has(e.to)) continue;
+		out.get(e.from)!.push(e.to);
+		inn.get(e.to)!.push(e.from);
+	}
+	const seen = new Set<string>();
+	const order: string[] = [];
+	const dfs1 = (id: string) => {
+		if (seen.has(id)) return;
+		seen.add(id);
+		for (const t of out.get(id) ?? []) dfs1(t);
+		order.push(id);
+	};
+	for (const id of ids) dfs1(id);
+	const placed = new Set<string>();
+	const sccs: string[][] = [];
+	const dfs2 = (id: string, bucket: string[]) => {
+		if (placed.has(id)) return;
+		placed.add(id);
+		bucket.push(id);
+		for (const t of inn.get(id) ?? []) dfs2(t, bucket);
+	};
+	for (const id of order.reverse()) {
+		if (placed.has(id)) continue;
+		const bucket: string[] = [];
+		dfs2(id, bucket);
+		sccs.push(bucket);
+	}
+	return sccs;
+}
+
+function canReach(fromId: string, target: string, edges: FlowEdge[]): boolean {
+	if (fromId === target) return true;
+	const seen = new Set([fromId]);
+	const stack = [fromId];
+	while (stack.length) {
+		const id = stack.pop()!;
+		for (const e of edges) {
+			if (e.from !== id || seen.has(e.to)) continue;
+			if (e.to === target) return true;
+			seen.add(e.to);
+			stack.push(e.to);
+		}
+	}
+	return false;
+}
+
+/** True when `from → to` closes a cycle: `to` is already on a path from start, and `to` can reach `from`. */
+export function isFlowLoopBack(startId: string, edges: FlowEdge[], from: string, to: string): boolean {
+	if (from === to) return true;
+	const without = edges.filter((e) => !(e.from === from && e.to === to));
+	return canReach(startId, to, without) && canReach(to, from, edges);
+}
+
+/** Cycle-closing edges. Layout ignores them so a loop does not pull its target into a later column. */
+export function flowLoopBackIds(nodes: FlowNode[], edges: FlowEdge[]): Set<string> {
+	const start = nodes.find((n) => n.kind === "start");
+	if (!start) return new Set();
+	return new Set(edges.filter((e) => isFlowLoopBack(start.id, edges, e.from, e.to)).map((e) => e.id));
 }
 
 function reachableFrom(start: string, edges: FlowEdge[]): Set<string> {
@@ -128,8 +196,21 @@ export function flowIssues(flow: { name: string; nodes: FlowNode[]; edges: FlowE
 		const loop = subflowLoop({ id: refs.selfId, name: flow.name, nodes }, refs.flows);
 		if (loop) add(`子流程形成了循环调用：${loop.join(" → ")}`);
 	}
-	if (flowHasCycle(nodes, edges)) add("流程中存在环，目前只支持有向无环图");
-	else if (starts.length === 1) {
+	for (const scc of flowSccs(nodes, edges)) {
+		const idSet = new Set(scc);
+		const internal = edges.filter((e) => idSet.has(e.from) && idSet.has(e.to));
+		if (scc.length < 2 && internal.length === 0) continue;
+		const sccNodes = scc.map((id) => byId.get(id)).filter((n): n is FlowNode => Boolean(n));
+		const gate = sccNodes.find((n) => n.kind === "condition");
+		if (!gate) {
+			add("循环路径上没有条件节点，无法决定何时退出。把条件的一条分支连回前面要重做的步骤，另一条连到循环外", sccNodes[0]?.id);
+			continue;
+		}
+		if (!edges.some((e) => idSet.has(e.from) && !idSet.has(e.to))) {
+			add(`循环「${gate.title}」没有出口：条件需要有一条分支连到循环外，否则会永远转下去`, gate.id);
+		}
+	}
+	if (starts.length === 1) {
 		const reach = reachableFrom(starts[0]!.id, edges);
 		for (const n of nodes) if (!reach.has(n.id)) add(`节点「${n.title}」从开始节点无法到达`, n.id);
 	}
