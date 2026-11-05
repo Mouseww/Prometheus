@@ -301,8 +301,11 @@ describe("teams", () => {
 		const stranger = await t.createUser(root.token, "stranger@corp.test", "S", orgB);
 		await t.api("DELETE", `/api/orgs/${root.orgId}/members/${stranger.userId}`, { token: root.token });
 		const notMember = await t.api("POST", `/api/teams/${teamId}/members`, { token: tAdmin.token, body: { userId: stranger.userId, role: "member" } });
-		expect(notMember.code).toBe("notOrgMember");
-		expect((await t.api("POST", `/api/teams/${teamId}/members`, { token: tAdmin.token, body: { email: "ghost@corp.test", role: "member" } })).status).toBe(404);
+		// Not an org member, unknown email and inactive account all answer the same, so the endpoint cannot probe registered emails.
+		const ghost = await t.api("POST", `/api/teams/${teamId}/members`, { token: tAdmin.token, body: { email: "ghost@corp.test", role: "member" } });
+		expect(notMember.status).toBe(404);
+		expect(ghost.status).toBe(404);
+		expect(notMember.body).toEqual(ghost.body);
 		expect((await t.api("POST", `/api/teams/${teamId}/members`, { token: tAdmin.token, body: { role: "member" } })).code).toBe("validationError");
 		expect((await t.api("POST", `/api/teams/${teamId}/members`, { token: tAdmin.token, body: { userId: plain.userId, role: "boss" } })).status).toBe(400);
 	});
@@ -327,9 +330,13 @@ describe("teams", () => {
 		// Only members see a personal team, even operators and org admins.
 		expect((await t.api("GET", `/api/teams/${personalId}/members`, { token: orgAdmin.token })).status).toBe(404);
 		expect((await t.api("GET", "/api/teams", { token: orgAdmin.token })).data.some((x: any) => x.id === personalId)).toBe(false);
-		// Anyone active can be added; the owner cannot be demoted or removed.
-		const added = await t.api("POST", `/api/teams/${personalId}/members`, { token: plain.token, body: { userId: reviewer.userId, role: "member" } });
-		expect(added.status).toBe(201);
+		// No direct add on a personal team (even for an active user); members join through the invitation flow.
+		const direct = await t.api("POST", `/api/teams/${personalId}/members`, { token: plain.token, body: { userId: reviewer.userId, role: "member" } });
+		expect(direct.status).toBe(404);
+		const inv = await t.api("POST", "/api/invitations", { token: plain.token, body: { scope: "team", scopeId: personalId, email: "reviewer@corp.test", role: "member" } });
+		expect(inv.status).toBe(201);
+		expect((await t.api("POST", `/api/invitations/${inv.data.token}/accept`, { token: reviewer.token })).status).toBe(200);
+		// The owner cannot be demoted or removed.
 		expect((await t.api("PUT", `/api/teams/${personalId}/members/${plain.userId}`, { token: plain.token, body: { role: "member" } })).code).toBe("ownerImmutable");
 		expect((await t.api("DELETE", `/api/teams/${personalId}/members/${plain.userId}`, { token: plain.token })).code).toBe("ownerImmutable");
 		expect((await t.api("GET", `/api/teams/${personalId}/members`, { token: reviewer.token })).status).toBe(200);

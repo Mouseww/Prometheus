@@ -52,7 +52,9 @@ async function world(): Promise<World> {
 	const org = await t.api("POST", "/api/orgs", { token: owner.token, body: { name: "Acme" } });
 	const team = await t.api("POST", "/api/teams", { token: owner.token, body: { name: "Solo" } });
 	expect(team.data.orgId).toBeNull();
-	await t.api("POST", `/api/teams/${team.data.id}/members`, { token: owner.token, body: { userId: mate.userId, role: "member" } });
+	// Direct add is not allowed on personal teams; join through the invitation flow.
+	const inv = await t.api("POST", "/api/invitations", { token: owner.token, body: { scope: "team", scopeId: team.data.id, email: "mate@example.com", role: "member" } });
+	await t.api("POST", `/api/invitations/${inv.data.token}/accept`, { token: mate.token });
 	const ids = await seed(t, owner, mate, team.data.id);
 	return { t, owner, mate, outsider, orgId: org.data.id, teamId: team.data.id, ...ids };
 }

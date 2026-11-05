@@ -165,12 +165,14 @@ export function createAccountsService(deps: ServiceDeps, a: AccountsDeps): Accou
 			if (orgPolicy && !orgPolicy.allowInvite) throw forbidden("该企业不允许通过邀请注册", "inviteDisabled");
 		}
 		// Public mode: any team admin can invite an arbitrary address, so the invite proves nothing about ownership of the mailbox.
-		// The account is active and joined (approval, Turnstile and disposable checks are skipped) but must still verify its email.
+		// The abuse guards ran before this transaction; the account joins but stays pending (no login, no free credit grant,
+		// no invites) until the mailbox is verified, exactly like a self-registered account.
 		const isPublic = config.mode === "public";
-		const user = await insertUser(q, { email, displayName: input.displayName, passwordHash, status: "active", verified: !isPublic });
+		const status = isPublic ? "pending" : "active";
+		const user = await insertUser(q, { email, displayName: input.displayName, passwordHash, status, verified: !isPublic });
 		await a.invitations.apply(q, inv, user.id);
 		await a.audit.write(q, { actorId: user.id, orgId, action: "user.register.invite", targetType: "user", targetId: user.id, detail: { invitationId: inv.id } });
-		return { user: toPublicUser(user), status: "active", bootstrap: false, ...(isPublic ? { verificationRequired: true } : {}) };
+		return { user: toPublicUser(user), status, bootstrap: false, ...(isPublic ? { verificationRequired: true } : {}) };
 	};
 
 	const registerSelf = async (q: Queryable, input: RegisterInput, email: string, passwordHash: string): Promise<RegisterResult> => {
@@ -212,7 +214,8 @@ export function createAccountsService(deps: ServiceDeps, a: AccountsDeps): Accou
 		async register(input, client) {
 			const email = normalizeEmail(input.email);
 			throttle(client, email);
-			if (config.mode === "public" && !input.inviteToken) await a.pub.guardRegister({ email, turnstileToken: input.turnstileToken }, client.ip);
+			// Invitation registration is guarded too: an invite can name any address, so it must not bypass the abuse controls.
+			if (config.mode === "public") await a.pub.guardRegister({ email, turnstileToken: input.turnstileToken }, client.ip);
 			const passwordHash = await hashPassword(input.password);
 			const result = await deps.db.tx({ system: true }, async (q) => {
 				await q.query("SELECT pg_advisory_xact_lock($1)", [REGISTER_LOCK_KEY]);

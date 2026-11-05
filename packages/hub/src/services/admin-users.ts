@@ -49,7 +49,33 @@ export function createAdminUsersService(deps: ServiceDeps, audit: AuditService, 
 		return { user, orgIds: actor.operator ? memberships.map((m) => m.org_id) : shared };
 	};
 
+	/**
+	 * Extra rules for a non-operator disabling or enabling an account. Disabling is global, so the account must live entirely inside
+	 * organizations the actor administers, must not own an organization, and an operator's disable cannot be undone by an org admin.
+	 * Read with system scope (org admins cannot see other orgs' membership or audit rows) and before the actor transaction opens.
+	 */
+	const assertOrgAdminMayToggle = async (actor: Actor, userId: string, action: "disable" | "enable"): Promise<void> => {
+		const { memberships, lastDisableByOperator } = await deps.db.tx({ system: true }, async (q) => ({
+			memberships: await q.query<{ org_id: string; role: OrgRole }>("SELECT org_id, role FROM org_members WHERE user_id = $1", [userId]),
+			lastDisableByOperator: (
+				await q.query<{ operator: boolean | null }>(
+					`SELECT (u.platform_role = 'operator') AS operator FROM audit_log a LEFT JOIN users u ON u.id = a.actor_id
+					 WHERE a.action = 'user.disable' AND a.target_type = 'user' AND a.target_id = $1 ORDER BY a.created_at DESC, a.id DESC LIMIT 1`,
+					[userId],
+				)
+			)[0]?.operator === true,
+		}));
+		if (memberships.some((m) => m.role === "owner")) throw forbidden("不能禁用或启用企业所有者的账号", "ownerProtected");
+		if (!memberships.every((m) => can(actor, "org.users.manage", { orgId: m.org_id }))) throw forbidden("该账号还属于你不管理的企业，只有平台管理员可以禁用或启用", "outsideManagedOrgs");
+		if (action === "enable" && lastDisableByOperator) throw forbidden("该账号由平台管理员禁用，只有平台管理员可以重新启用", "disabledByOperator");
+	};
+
 	const setStatus = async (actor: Actor, userId: string, action: "approve" | "disable" | "enable"): Promise<PublicUser> => {
+		if (!actor.operator && action !== "approve") {
+			// Not-a-manager and unknown targets keep answering 404 (see `authority`), so only run the extra rules for users the actor can see.
+			const visible = await deps.db.tx(scopeOf(actor), (q) => authority(q, actor, userId).then(() => true));
+			if (visible) await assertOrgAdminMayToggle(actor, userId, action);
+		}
 		return deps.db.tx(scopeOf(actor), async (q) => {
 			const { user, orgIds } = await authority(q, actor, userId);
 			if (action !== "approve" && user.id === actor.userId) throw badRequest("不能对自己执行此操作", "cannotActOnSelf");

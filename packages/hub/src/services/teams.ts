@@ -129,12 +129,15 @@ export function createTeamsService(deps: ServiceDeps, audit: AuditService, setti
 						? await q.query<{ id: string; status: string }>("SELECT id, status FROM users WHERE id = $1", [input.userId])
 						: await q.query<{ id: string; status: string }>("SELECT id, status FROM users WHERE email = $1", [normalizeEmail(input.email ?? "")]);
 					const user = users[0];
-					if (!user) throw notFound("用户不存在");
-					if (user.status !== "active") throw conflict("用户账号未启用", "userNotActive");
-					if (team.orgId) {
-						const m = await q.query("SELECT 1 FROM org_members WHERE org_id = $1 AND user_id = $2 AND status = 'active'", [team.orgId, user.id]);
-						if (m.length === 0) throw conflict("企业团队的成员必须是该企业的在职成员", "notOrgMember");
-					}
+					// Direct add is only for active members of the team's own organization. Everyone else (unknown, inactive, outside the org,
+					// or any user for a personal team) goes through the invitation flow, and all of those cases answer identically so the
+					// endpoint cannot be used to probe which emails are registered.
+					const ineligible = (): never => {
+						throw notFound("用户不存在，或无法直接添加；请改用邀请");
+					};
+					if (!user || user.status !== "active" || !team.orgId) return ineligible();
+					const m = await q.query("SELECT 1 FROM org_members WHERE org_id = $1 AND user_id = $2 AND status = 'active'", [team.orgId, user.id]);
+					if (m.length === 0) return ineligible();
 					await q.query("INSERT INTO team_members (team_id, user_id, role, org_id) VALUES ($1,$2,$3,$4)", [teamId, user.id, input.role, team.orgId]);
 					await audit.write(q, { actorId: actor.userId, orgId: team.orgId, action: "team.member.add", targetType: "user", targetId: user.id, detail: { teamId, role: input.role } });
 					return memberView(q, teamId, user.id);

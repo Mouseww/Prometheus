@@ -2,7 +2,9 @@ import { Type } from "typebox";
 import type { HubDeps } from "../deps.ts";
 import { forbidden } from "../errors.ts";
 import { Reply, type Router } from "../http/router.ts";
+import { LOG_PREFIX } from "../log.ts";
 import { can } from "../permissions.ts";
+import { invitesPerDay } from "../services/invitations.ts";
 import type { OrgsPublicService } from "../services/orgs-public.ts";
 import { DisplayNameSchema, EmailSchema, IdSchema, NameSchema, OrgRoleSchema, PasswordSchema, RegistrationPolicySchema } from "./schemas.ts";
 
@@ -30,6 +32,11 @@ const AuditQuery = Type.Object({
 });
 const SettingsBody = Type.Object({ allowPersonalTeams: Type.Optional(Type.Boolean()), allowSelfCreateOrg: Type.Optional(Type.Boolean()) });
 
+/** Whatever the runtime manager registers; looked up lazily because the runtime block may be absent. */
+interface TenantStopper {
+	stop?: (userId: string, reason?: string) => Promise<void>;
+}
+
 /** Admin console: users, registration policy, invitations, organizations and members, audit log, platform settings. */
 export function registerAdminRoutes(router: Router, deps: HubDeps): void {
 	const { adminUsers, registration, invitations, orgs, audit, settings } = deps.services;
@@ -37,7 +44,21 @@ export function registerAdminRoutes(router: Router, deps: HubDeps): void {
 	router.get("/api/admin/users", async (ctx) => adminUsers.list(await ctx.actor(), ctx.query(UserListQuery)));
 	router.post("/api/admin/users", async (ctx) => new Reply(201, await adminUsers.create(await ctx.actor(), await ctx.json(CreateUserBody))));
 	router.post("/api/admin/users/:id/approve", async (ctx) => adminUsers.approve(await ctx.actor(), ctx.params.id as string));
-	router.post("/api/admin/users/:id/disable", async (ctx) => adminUsers.disable(await ctx.actor(), ctx.params.id as string));
+	router.post("/api/admin/users/:id/disable", async (ctx) => {
+		const userId = ctx.params.id as string;
+		const user = await adminUsers.disable(await ctx.actor(), userId);
+		// Same lookup as the operator ban: an explicit `tenants` service wins over `runtime.manager`. Best effort, the account is already disabled.
+		const runtime = deps.registry.get<TenantStopper & { manager?: TenantStopper }>("runtime");
+		const stopper = deps.registry.get<TenantStopper>("tenants") ?? runtime?.manager ?? runtime;
+		if (typeof stopper?.stop === "function") {
+			try {
+				await stopper.stop(userId, "disabled");
+			} catch (err) {
+				deps.log.warn(`${LOG_PREFIX} 禁用用户 ${userId} 时停止租户实例失败: ${err instanceof Error ? err.message : String(err)}`);
+			}
+		}
+		return user;
+	});
 	router.post("/api/admin/users/:id/enable", async (ctx) => adminUsers.enable(await ctx.actor(), ctx.params.id as string));
 
 	router.get("/api/admin/registration", async (ctx) => registration.getPlatform(await ctx.actor()));
@@ -62,7 +83,7 @@ export function registerAdminRoutes(router: Router, deps: HubDeps): void {
 		return { allowPersonalTeams: await settings.allowPersonalTeams(), allowSelfCreateOrg: await settings.allowSelfCreateOrg() };
 	});
 
-	router.post("/api/invitations", async (ctx) => new Reply(201, await invitations.create(await ctx.actor(), await ctx.json(InvitationBody))));
+	router.post("/api/invitations", async (ctx) => new Reply(201, await invitations.create(await ctx.actor(), await ctx.json(InvitationBody), invitesPerDay(deps.config.mode))));
 
 	router.get("/api/orgs", async (ctx) => orgs.list(await ctx.actor()));
 	router.post("/api/orgs", async (ctx) => new Reply(201, await deps.registry.require<OrgsPublicService>("orgsPublic").create(await ctx.actor(), await ctx.json(CreateOrgBody))));

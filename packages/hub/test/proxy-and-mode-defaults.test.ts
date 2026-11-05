@@ -120,20 +120,21 @@ describe("invite registration and email verification", () => {
 		expect(created.status).toBe(201);
 		const reg = await t.api("POST", "/api/auth/register", { body: { email: "sam@example.com", password: PASSWORD, displayName: "Sam", inviteToken: created.data.token } });
 		expect(reg.status).toBe(201);
-		expect(reg.data).toMatchObject({ status: "active", verificationRequired: true });
+		expect(reg.data).toMatchObject({ status: "pending", verificationRequired: true });
 		expect(reg.data.user.emailVerifiedAt).toBeNull();
 		await t.flush();
 		const verifyToken = t.capture.tokenFor("sam@example.com", "verify-email");
 		expect(verifyToken).toBeTruthy();
 
+		// Unverified: no session at all, so no invites, no orgs and no free credit grant.
+		const early = await t.api("POST", "/api/auth/login", { body: { email: "sam@example.com", password: PASSWORD } });
+		expect(early.code).toBe("emailNotVerified");
+
+		expect((await t.api("POST", "/api/auth/verify-email", { body: { token: verifyToken } })).data).toEqual({ verified: true, status: "active" });
 		const login = await t.login("sam@example.com");
 		const me = await t.api("GET", "/api/me", { token: login.token });
 		expect(me.data.orgs.map((o: { id: string }) => o.id)).toContain(t.operator.orgId);
-		expect(me.data.user.emailVerifiedAt).toBeNull();
-		// Unverified: cannot self-create an organization.
-		expect((await t.api("POST", "/api/orgs", { token: login.token, body: { name: "Sneaky" } })).code).toBe("emailNotVerified");
-
-		expect((await t.api("POST", "/api/auth/verify-email", { body: { token: verifyToken } })).data).toEqual({ verified: true, status: "active" });
+		expect(me.data.user.emailVerifiedAt).not.toBeNull();
 		expect((await t.api("POST", "/api/orgs", { token: login.token, body: { name: "Legit" } })).status).toBe(201);
 	});
 

@@ -89,11 +89,13 @@ describe("registration with Turnstile enabled", () => {
 		expect(fake.requests.map((r) => r.get("response"))).toEqual(["bad", "good"]);
 	});
 
-	it("does not call Turnstile for invitation based registration", async () => {
+	it("also requires Turnstile for invitation based registration", async () => {
 		const { t, fake } = await startWith();
-		const before = fake.requests.length;
-		const r = await t.api("POST", "/api/auth/register", { body: { email: "z@example.com", password: PASSWORD, displayName: "Z", inviteToken: "bogus" } });
-		expect(r.code).toBe("invalidInvite");
-		expect(fake.requests.length).toBe(before);
+		const reg = (turnstileToken?: string) =>
+			t.api("POST", "/api/auth/register", { body: { email: "z@example.com", password: PASSWORD, displayName: "Z", inviteToken: "bogus", ...(turnstileToken ? { turnstileToken } : {}) } });
+		expect((await reg()).code).toBe("turnstileRequired");
+		expect((await reg("bad")).code).toBe("turnstileFailed");
+		expect((await reg("good")).code).toBe("invalidInvite");
+		expect(fake.requests.map((r) => r.get("response"))).toEqual(["bad", "good"]);
 	});
 });
