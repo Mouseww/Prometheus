@@ -6,6 +6,7 @@ import { registerBillingRoutes } from "./billing.ts";
 import { registerByokRoutes } from "./byok.ts";
 import { registerGitRoutes } from "./git.ts";
 import { registerModelRoutes } from "./models.ts";
+import { registerPublicRoutes } from "./public.ts";
 import { registerRuntimeRoutes } from "./runtime.ts";
 import { registerSessionRoutes } from "./sessions.ts";
 import { registerTeamRoutes } from "./teams.ts";
@@ -21,4 +22,5 @@ export function registerRoutes(router: Router, deps: HubDeps): void {
 	registerRuntimeRoutes(router, deps);
 	registerByokRoutes(router, deps);
 	registerBillingRoutes(router, deps);
+	registerPublicRoutes(router, deps);
 }

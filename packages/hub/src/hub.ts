@@ -15,7 +15,13 @@ import { LOG_PREFIX, stderrLog } from "./log.ts";
 import { RateLimiter } from "./rate-limit.ts";
 import { registerRoutes } from "./routes/index.ts";
 import { createSetupCode } from "./setup-code.ts";
+import { createAbuseGuard } from "./services/abuse.ts";
 import { createAccountsService } from "./services/accounts.ts";
+import { createPublicAccounts } from "./services/accounts-public.ts";
+import { createMailer } from "./services/mailer.ts";
+import { createOrgsPublicService } from "./services/orgs-public.ts";
+import { createTransfersService } from "./services/transfers.ts";
+import { resolveTurnstile } from "./services/turnstile.ts";
 import { createActorService } from "./services/actors.ts";
 import { createAdminUsersService } from "./services/admin-users.ts";
 import { createAuditService } from "./services/audit.ts";
@@ -70,7 +76,11 @@ export async function createHub(options: HubOptions): Promise<Hub> {
 		const orgs = createOrgsService(base, audit);
 		const teams = createTeamsService(base, audit, settings);
 		const invitations = createInvitationsService(base, audit, teams, config.publicUrl);
+		const mailer = createMailer({ smtpUrl: env.HUB_SMTP_URL || undefined, from: env.HUB_MAIL_FROM || undefined }, log);
+		const abuse = createAbuseGuard(base, limiter, audit);
+		const pub = createPublicAccounts(base, { config, mailer, turnstile: resolveTurnstile(env), abuse, limiter, audit, registration, settings });
 		const accounts = createAccountsService(base, {
+			pub,
 			config,
 			privateKey: keys.privateKey,
 			publicKey: keys.publicKey,
@@ -93,6 +103,11 @@ export async function createHub(options: HubOptions): Promise<Hub> {
 
 		const upgradeHandlers: UpgradeHandler[] = [];
 		const registry = new ServiceRegistry();
+		registry.register("mailer", mailer);
+		registry.register("abuse", abuse);
+		registry.register("publicAccounts", pub);
+		registry.register("orgsPublic", createOrgsPublicService(base, { config, orgs, settings, audit, adminUsers, registry }));
+		registry.register("transfers", createTransfersService(base, audit));
 		const deps: HubDeps = {
 			db,
 			config,
