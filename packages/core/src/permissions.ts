@@ -101,11 +101,12 @@ export function ruleKey(toolName: string, input: Record<string, unknown>): strin
 }
 
 export const TOOL_DISABLED_REASON = "This tool has been disabled by the administrator.";
+export const READ_OUTSIDE_DENIED_REASON = "Reading outside the working folder is not allowed by the administrator. Stay inside the project folder.";
 
 export function decide(
 	mode: PermissionMode,
 	call: { toolName: string; input: Record<string, unknown>; /** Tool declares itself read-only (MCP annotation). */ readOnly?: boolean },
-	env: { cwd: string; allowed: ReadonlySet<string>; /** Locks from the administrator or the user's own settings. */ policy?: { readOutsideProject?: "allow" | "ask"; disabledTools?: readonly string[] } },
+	env: { cwd: string; allowed: ReadonlySet<string>; /** Locks from the administrator or the user's own settings. */ policy?: { readOutsideProject?: "allow" | "ask" | "deny"; disabledTools?: readonly string[] } },
 ): Verdict {
 	// An administrator ban holds in every mode, "bypass" and "auto" included.
 	if (env.policy?.disabledTools?.includes(call.toolName)) return { type: "block", reason: TOOL_DISABLED_REASON };
@@ -113,10 +114,14 @@ export function decide(
 	if (call.toolName === INSTALL_PLUGIN_TOOL) return mode === "plan" ? { type: "block", reason: PLAN_BLOCK_REASON } : { type: "ask" };
 	const kind = toolKind(call.toolName);
 	// A reading lock the administrator set holds in every mode, "bypass" and "auto" included.
-	if (env.policy?.readOutsideProject === "ask") {
-		if (kind === "read" && !isInside(str(call.input.path) || ".", env.cwd)) return { type: "ask", noRemember: true };
+	// "ask" confirms each such read with the owner; "deny" refuses it outright.
+	const outside = env.policy?.readOutsideProject;
+	if (outside === "ask" || outside === "deny") {
 		const command = str(call.input.command);
-		if (kind === "exec" && isReadOnlyCommand(command) && !commandStaysInside(command, env.cwd)) return { type: "ask", noRemember: true };
+		const leaves =
+			(kind === "read" && !isInside(str(call.input.path) || ".", env.cwd)) ||
+			(kind === "exec" && isReadOnlyCommand(command) && !commandStaysInside(command, env.cwd));
+		if (leaves) return outside === "deny" ? { type: "block", reason: READ_OUTSIDE_DENIED_REASON } : { type: "ask", noRemember: true };
 	}
 	if (mode === "bypassPermissions" || mode === "auto") return { type: "allow" };
 	if (kind === "read") return { type: "allow" };

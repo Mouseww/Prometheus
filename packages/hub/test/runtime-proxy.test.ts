@@ -152,7 +152,7 @@ describe("tenant files and environment", () => {
 		expect(tenantToken).toMatchObject({ sub: s.bob.userId, tenant: true });
 
 		const policy = JSON.parse(await readFile(env.PROMETHEUS_POLICY as string, "utf8")) as Record<string, any>;
-		expect(policy).toMatchObject({ serverOwner: s.bob.userId, forbiddenModes: ["bypassPermissions", "auto"], readOutsideProject: "ask" });
+		expect(policy).toMatchObject({ serverOwner: s.bob.userId, forbiddenModes: ["bypassPermissions", "auto"], readOutsideProject: "deny" });
 		expect(policy.managedBy).toContain("prometheus-hub");
 		expect(policy.pluginAllowlist).toContain("team");
 		expect(policy.pluginAllowlist).not.toContain("computer-use");

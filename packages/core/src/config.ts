@@ -183,7 +183,7 @@ export class ConfigStore {
 	}
 
 	/** The effective choice: the administrator's, else the user's, else "allow". */
-	readOutsideProject(): "allow" | "ask" {
+	readOutsideProject(): "allow" | "ask" | "deny" {
 		return this.adminPolicy?.readOutsideProject ?? this.config.readOutsideProject ?? "allow";
 	}
 

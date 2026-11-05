@@ -148,6 +148,16 @@ describe("commandStaysInside (allowlist)", () => {
 		expect(ok("ls escape")).toBe(false);
 	});
 
+	it("deny blocks the same reads in every mode instead of asking", () => {
+		const env = { cwd, allowed: new Set<string>(), policy: { readOutsideProject: "deny" as const } };
+		for (const mode of ["default", "plan", "acceptEdits", "bypassPermissions", "auto"] as const) {
+			expect(decide(mode, { toolName: "bash", input: { command: "cat $HOME/.ssh/id_rsa" } }, env), mode).toMatchObject({ type: "block" });
+			expect(decide(mode, { toolName: "read", input: { path: "/etc/passwd" } }, env), mode).toMatchObject({ type: "block" });
+			expect(decide(mode, { toolName: "read", input: { path: "src/a.ts" } }, env), mode).not.toMatchObject({ type: "block" });
+			expect(decide(mode, { toolName: "bash", input: { command: 'cat "src"/"a.ts"' } }, env), mode).not.toMatchObject({ type: "block" });
+		}
+	});
+
 	it("shows up in decide for every mode that reads", () => {
 		const env = { cwd, allowed: new Set<string>(), policy: { readOutsideProject: "ask" as const } };
 		for (const mode of ["default", "plan", "acceptEdits", "bypassPermissions", "auto"] as const) {

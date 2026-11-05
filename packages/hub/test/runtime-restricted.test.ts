@@ -74,6 +74,9 @@ describe("restricted tenant policy", () => {
 		expect(buildTenantPolicy({ ...base, restricted: true, supportsReadOutsideDeny: true }).readOutsideProject).toBe("deny");
 		expect(buildTenantPolicy({ ...base, restricted: true, supportsReadOutsideDeny: false }).readOutsideProject).toBe("ask");
 		expect(buildTenantPolicy({ ...base, restricted: false, supportsReadOutsideDeny: true }).readOutsideProject).toBe("ask");
+		// The core in this repository accepts "deny", so restricted tenants get it by default; the env var can still switch it off.
+		expect(detectReadOutsideDenySupport({})).toBe(true);
+		expect(detectReadOutsideDenySupport({ HUB_TENANT_READ_DENY: "0" })).toBe(false);
 		expect(detectReadOutsideDenySupport({ HUB_TENANT_READ_DENY: "1" })).toBe(true);
 		expect(detectReadOutsideDenySupport({ HUB_TENANT_READ_DENY: "0" })).toBe(false);
 		expect(detectReadOutsideDenySupport({}, () => 'invalid(\'readOutsideProject must be "allow", "ask" or "deny"\')')).toBe(true);

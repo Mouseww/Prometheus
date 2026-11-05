@@ -35,6 +35,7 @@ describe("parsePolicy", () => {
 		expect(() => parsePolicy({ forbiddenModes: ["nope"] })).toThrow();
 		expect(() => parsePolicy({ defaultPermission: "auto", forbiddenModes: ["auto"] })).toThrow();
 		expect(() => parsePolicy({ readOutsideProject: "maybe" })).toThrow();
+		expect(parsePolicy({ readOutsideProject: "deny" }).readOutsideProject).toBe("deny");
 		expect(() => parsePolicy({ pluginAllowlist: [1] })).toThrow();
 		expect(() => parsePolicy({ gateways: [{ id: "" }] })).toThrow();
 		expect(() => parsePolicy({ forbidenModes: [] })).toThrow();
@@ -194,6 +195,31 @@ describe("PermissionGate reading outside the project", () => {
 		expect(prompts).toEqual(["read", "read"]);
 		expect(await gate.evaluate({ ...read, input: { path: "src/a.ts" } })).toBeUndefined();
 		expect(prompts).toHaveLength(2);
+	});
+	it("deny refuses an outside read without asking, in every mode", async () => {
+		const gate = new PermissionGate();
+		gate.policy = { readOutsideProject: "deny" };
+		let asked = 0;
+		gate.ask = async () => {
+			asked++;
+			return "allow";
+		};
+		const read = { toolName: "read", input: { path: "/elsewhere/file" }, readOnly: false, cwd: "/w/app" };
+		for (const mode of ["default", "plan", "acceptEdits", "bypassPermissions", "auto"] as const) {
+			gate.mode = mode;
+			expect(await gate.evaluate(read), mode).toMatchObject({ block: true, reason: expect.stringContaining("not allowed by the administrator") });
+			expect(await gate.evaluate({ ...read, toolName: "bash", input: { command: "cat /etc/passwd" } }), mode).toMatchObject({ block: true });
+			expect(await gate.evaluate({ ...read, input: { path: "src/a.ts" } }), mode).toBeUndefined();
+		}
+		expect(asked).toBe(0);
+	});
+	it("deny also holds for an unattended run", async () => {
+		const gate = new PermissionGate();
+		gate.unattended = "full";
+		gate.policy = { readOutsideProject: "deny" };
+		const out = await gate.evaluate({ toolName: "read", input: { path: "/elsewhere" }, readOnly: false, cwd: "/w/app" });
+		expect(out).toMatchObject({ block: true });
+		expect(gate.takeBlocked()[0]?.reason).toContain("not allowed by the administrator");
 	});
 	it("an unattended run that would read outside is refused", async () => {
 		const gate = new PermissionGate();

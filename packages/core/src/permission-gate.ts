@@ -132,6 +132,7 @@ export class PermissionGate {
 		const access = `"${this.unattended}" access`;
 		if (toolName === INSTALL_PLUGIN_TOOL) return "installing a plugin runs with the app's own rights and is never done unattended";
 		const kind = toolKind(toolName);
+		if (this.policy?.readOutsideProject === "deny" && (kind === "read" || kind === "exec")) return "reading outside the working folder is not allowed by the administrator";
 		if (kind === "read" || (kind === "exec" && this.policy?.readOutsideProject === "ask")) return `reading outside the working folder needs the owner's confirmation, which an unattended run cannot get`;
 		if (kind === "exec") return `running commands is not covered by ${access}: this step needs "full"`;
 		if (kind === "edit") return isProjectPath(str(input.path), cwd) ? `${access} does not cover edits` : `writing outside the working folder is not covered by ${access}: this step needs "full"`;

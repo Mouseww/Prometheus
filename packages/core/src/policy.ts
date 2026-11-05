@@ -31,7 +31,7 @@ export function parsePolicy(raw: unknown): AdminPolicy {
 		out.defaultPermission = raw.defaultPermission;
 	}
 	if (raw.readOutsideProject !== undefined) {
-		if (raw.readOutsideProject !== "allow" && raw.readOutsideProject !== "ask") invalid('readOutsideProject must be "allow" or "ask"');
+		if (raw.readOutsideProject !== "allow" && raw.readOutsideProject !== "ask" && raw.readOutsideProject !== "deny") invalid('readOutsideProject must be "allow", "ask" or "deny"');
 		out.readOutsideProject = raw.readOutsideProject;
 	}
 	if (raw.pluginAllowlist !== undefined) {

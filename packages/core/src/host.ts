@@ -1162,13 +1162,13 @@ ${extras.map((p) => `- ${p}`).join("
 		if (!policy?.forbiddenModes && readOutsideProject === "allow") return undefined;
 		return {
 			...(policy?.forbiddenModes ? { forbiddenModes: policy.forbiddenModes } : {}),
-			...(readOutsideProject === "ask" ? { readOutsideProject } : {}),
+			...(readOutsideProject !== "allow" ? { readOutsideProject } : {}),
 		};
 	}
 
 	private hostSettings(): HostSettings {
 		const policy = this.runtime.config.policy();
-		return { ...(policy ? { policy: publicPolicy(policy) } : {}), ...(this.runtime.config.readOutsideProject() === "ask" ? { readOutsideProject: "ask" as const } : {}), autoCompaction: this.pi?.autoCompaction() ?? true, workspaceRoot: this.workspaceRoot(), defaultAgent: this.defaultAgent(), defaultPermission: this.defaultPermission(), defaultThinking: this.defaultThinking(), goalTurns: this.runtime.config.get().goalTurns || GOAL_DEFAULT_TURNS, compactPercent: this.compactPercent(), worktreeMode: this.worktreeMode(), worktreeDefault: this.runtime.config.get().worktreeDefault, worktreeStrategy: this.worktreeStrategy() };
+		return { ...(policy ? { policy: publicPolicy(policy) } : {}), ...(this.runtime.config.readOutsideProject() !== "allow" ? { readOutsideProject: "ask" as const } : {}), autoCompaction: this.pi?.autoCompaction() ?? true, workspaceRoot: this.workspaceRoot(), defaultAgent: this.defaultAgent(), defaultPermission: this.defaultPermission(), defaultThinking: this.defaultThinking(), goalTurns: this.runtime.config.get().goalTurns || GOAL_DEFAULT_TURNS, compactPercent: this.compactPercent(), worktreeMode: this.worktreeMode(), worktreeDefault: this.runtime.config.get().worktreeDefault, worktreeStrategy: this.worktreeStrategy() };
 	}
 
 	/** The permission mode new chats start in; unknown values (a hand-edited config) fall back to asking first. */

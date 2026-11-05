@@ -345,8 +345,8 @@ export interface AdminPolicy {
 	forbiddenModes?: PermissionMode[];
 	/** Forced default permission mode. */
 	defaultPermission?: PermissionMode;
-	/** "ask": reading outside the session's working folder needs the owner's confirmation. */
-	readOutsideProject?: "allow" | "ask";
+	/** "ask": reading outside the session's working folder needs the owner's confirmation; "deny": it is refused without asking. */
+	readOutsideProject?: "allow" | "ask" | "deny";
 	/** When set, only these plugins load and only these can be installed or enabled. */
 	pluginAllowlist?: string[];
 	/** Gateways supplied by the administrator; when present, users cannot add, edit or delete gateways. */
