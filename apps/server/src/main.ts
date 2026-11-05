@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import type { Duplex } from "node:stream";
 import { delimiter, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { builtinPlugins } from "@prometheus/builtin-plugins";
-import { canAct, DEFAULT_LAN_PORT, PrometheusHost } from "@prometheus/core";
+import { canAct, DEFAULT_LAN_PORT, matchPluginRoute, PrometheusHost, serverRole } from "@prometheus/core";
 import { AppError, type ClientFrame, encodeBinaryFrame, encodeError, type Identity, type NetworkPatch, type NetworkStatus, PROTOCOL_VERSION, type RuntimeEnv, type ServerFrame } from "@prometheus/protocol";
 import { WebSocket, WebSocketServer } from "ws";
 import {
@@ -24,9 +25,18 @@ import {
 	verifySession,
 } from "./network.ts";
 import { type AuthProvider, type CredentialResult, hubTrustFromEnv, identityAllowed } from "./auth.ts";
+import { resolveRole } from "./cli.ts";
 import { isLoopbackAddress, originAllowed, parseCookies, tokensEqual } from "./security.ts";
 import { defaultWebRoot, serveStatic } from "./static.ts";
 import { QuickTunnel } from "./tunnel.ts";
+
+// `--role hub` is PROMETHEUS_ROLE=hub plus the Hub's default port and data directory; it must run before anything reads the environment.
+try {
+	Object.assign(process.env, resolveRole(process.argv.slice(2), process.env).env);
+} catch (err) {
+	console.error(`[prometheus] ${err instanceof Error ? err.message : String(err)}`);
+	process.exit(1);
+}
 
 const HOST = process.env.PROMETHEUS_HOST ?? "127.0.0.1";
 const PORT = Number(process.env.PROMETHEUS_PORT ?? 7420);
@@ -277,7 +287,7 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, kind: Kind)
 	if (!requestAllowed(req, kind, access)) return json(res, 403, { error: "forbidden" });
 	const needsLogin = access.mode !== "none";
 
-	if (url.pathname === "/api/health") return json(res, 200, { ok: true, protocol: PROTOCOL_VERSION, authRequired: needsLogin, login: access.mode === "password" ? "password" : access.mode === "token" ? "token" : undefined });
+	if (url.pathname === "/api/health") return json(res, 200, { ok: true, protocol: PROTOCOL_VERSION, role: serverRole(), authRequired: needsLogin, login: access.mode === "password" ? "password" : access.mode === "token" ? "token" : undefined });
 
 	// Exchanges a credential for an HttpOnly cookie so plugin panel iframes can load authenticated routes.
 	if (url.pathname === "/api/login" && req.method === "POST") {
@@ -313,7 +323,7 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, kind: Kind)
 
 	if (url.pathname.startsWith("/plugins/")) {
 		// A panel page is loaded by a sandboxed iframe that may not carry the cookie; it brings a pass instead.
-		const route = host.runtime.plugins.routes.find((r) => r.method === req.method && r.path === url.pathname);
+		const route = matchPluginRoute(host.runtime.plugins.routes, req.method, url.pathname);
 		// A public route authenticates itself; an unknown path still demands a login so its existence is not revealed.
 		if (route?.auth === "public") return void (await route.handler(req, res, {}));
 		const passed = req.method === "GET" && host.panelTicketValid(url.searchParams.get("pt"));
@@ -328,6 +338,33 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, kind: Kind)
 	json(res, 404, { error: "not found" });
 }
 
+function refuseUpgrade(socket: Duplex, status: string): void {
+	socket.write(`HTTP/1.1 ${status}\r\nConnection: close\r\n\r\n`);
+	socket.destroy();
+}
+
+/**
+ * WebSocket upgrades for plugin routes, with the same rules as their HTTP counterparts: a public route authenticates
+ * itself, any other needs the login (an unknown path asks for it too, so its existence is not revealed).
+ */
+function upgradePlugin(req: IncomingMessage, socket: Duplex, head: Buffer, kind: Kind, pathname: string): void {
+	if (!requestAllowed(req, kind, accessOf(req, kind))) return refuseUpgrade(socket, "403 Forbidden");
+	const route = matchPluginRoute(host.runtime.plugins.wsRoutes, undefined, pathname);
+	let identity: Identity | undefined;
+	if (route?.auth !== "public") {
+		const who = httpIdentity(req, kind);
+		if (!who.ok) return refuseUpgrade(socket, "401 Unauthorized");
+		identity = who.identity;
+	}
+	if (!route) return refuseUpgrade(socket, "404 Not Found");
+	pluginWss.handleUpgrade(req, socket, head, (ws) => {
+		Promise.resolve(route.handler(ws, req, identity ? { identity } : {})).catch((err: unknown) => {
+			console.error("[prometheus] 插件 WebSocket 处理出错", err);
+			ws.close(1011, "internal error");
+		});
+	});
+}
+
 function makeServer(kind: Kind): Server {
 	const server = createServer((req, res) => {
 		handleHttp(req, res, kind).catch((err: unknown) => {
@@ -338,6 +375,10 @@ function makeServer(kind: Kind): Server {
 	});
 	server.on("upgrade", (req, socket, head) => {
 		const { pathname } = new URL(req.url ?? "/", "http://x");
+		if (pathname.startsWith("/plugins/")) {
+			upgradePlugin(req, socket, head, kind, pathname);
+			return;
+		}
 		if (pathname !== "/ws" || !requestAllowed(req, kind, accessOf(req, kind))) {
 			socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
 			socket.destroy();
@@ -362,6 +403,9 @@ const wss = new WebSocketServer({
 		concurrencyLimit: 8,
 	},
 });
+
+/** Plugin sockets carry their own protocol, so they get a plain server (no per-frame compression, plugin-sized frames). */
+const pluginWss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
 
 // ---------- network settings ----------
 

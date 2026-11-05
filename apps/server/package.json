@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "node --watch src/main.ts",
     "start": "node src/main.ts",
+    "hub": "node src/main.ts --role hub",
     "typecheck": "tsc -p ."
   },
   "dependencies": {
