@@ -161,6 +161,13 @@ describe("replica sync", () => {
 			expect(a.handleFrame({ type: "snapshot.updated", hubSessionId: "x", commit: "c", side: "local" })).toBe(true);
 			expect(a.handleFrame({ type: "snapshot.updated", hubSessionId: 5, commit: "c", side: "team" })).toBe(true);
 			expect(a.handleFrame({ type: "something.else" })).toBe(false);
+			// Object ids and session ids from the Hub are validated before they can reach a git command line.
+			for (const commit of ["--upload-pack=evil", "HEAD", "abc123", "A".repeat(40), `${"a".repeat(40)} --x`, "a".repeat(41)]) {
+				await expect(a.applyIncoming("sess-1", commit)).rejects.toMatchObject({ code: "invalidParams" });
+				expect(a.handleFrame({ type: "snapshot.updated", hubSessionId: "sess-1", commit, side: "team" })).toBe(true);
+			}
+			await expect(a.applyIncoming("../evil", "a".repeat(40))).rejects.toMatchObject({ code: "invalidParams" });
+			expect(a.target("sess-1")).toBeUndefined();
 			expect(a.target("unknown-session")).toBeUndefined();
 			await expect(a.publish("unknown-session")).rejects.toMatchObject({ code: "notTeamSession" });
 		} finally {

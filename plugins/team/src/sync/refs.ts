@@ -2,6 +2,13 @@ import { TeamError } from "../types.ts";
 
 const SAFE = /^[A-Za-z0-9_-]{1,64}$/;
 
+/** A git object id as the Hub sends it: SHA-1 (40) or SHA-256 (64) hex, lowercase. Anything else never reaches a git command line. */
+const OBJECT_ID = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+
+export const isObjectId = (value: unknown): value is string => typeof value === "string" && OBJECT_ID.test(value);
+
+export const isSafeId = (value: unknown): value is string => typeof value === "string" && SAFE.test(value);
+
 function part(value: string, what: string): string {
 	if (!SAFE.test(value)) throw new TeamError("invalidParams", `${what} 含有不允许出现在 ref 名中的字符`);
 	return value;

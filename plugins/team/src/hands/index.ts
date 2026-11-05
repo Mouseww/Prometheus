@@ -31,7 +31,7 @@ const DECISIONS: readonly string[] = ["once", "session", "deny"];
 
 /**
  * Wires the two hands (spec 4): registers this side's tools, answers hand calls from the other side, and exposes the confirmation flow.
- * Stream topics: `handRequest` {callId, tool, input, session, insideProject} when the user must decide, `handResolved` {callId, decision} when it is over.
+ * Stream topics: `handRequest` {callId, tool, input, session, insideProject, allowSession} when the user must decide, `handResolved` {callId, decision} when it is over.
  * RPC: `hand.answer` {callId, decision: "once"|"session"|"deny"}, `hand.pending` (open questions).
  */
 export function setupHands(ctx: HandsCtx, env: MemberEnv, socket: Pick<HubSocket, "sendFrame" | "onFrame">, sync: SyncManager, options: HandsOptions = {}): HandsApi {

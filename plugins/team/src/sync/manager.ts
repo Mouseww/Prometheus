@@ -7,7 +7,7 @@ import { errorMessage, LOG, type ReplicaMapping, TeamError } from "../types.ts";
 import { type ApplyResult, applySnapshot, fetchSnapshot } from "./apply.ts";
 import { type ConflictInfo, listConflicts, type RestoreMode, type RestoreResult, restoreConflict } from "./conflicts.ts";
 import { publishSnapshot } from "./publish.ts";
-import { snapshotRef } from "./refs.ts";
+import { isObjectId, isSafeId, snapshotRef } from "./refs.ts";
 import { currentTree } from "./tree.ts";
 
 /** A snapshot written by one side must be applied by the other within this long before a side switch is aborted (spec 5). */
@@ -170,6 +170,10 @@ export class SyncManager {
 		if (frame.type !== "snapshot.updated" && frame.type !== "snapshot.applied") return false;
 		const { hubSessionId, commit, side } = frame;
 		if (typeof hubSessionId !== "string" || typeof commit !== "string" || side === this.env.side) return true;
+		if (!isSafeId(hubSessionId) || !isObjectId(commit)) {
+			this.env.log.warn(`${LOG} 忽略 Hub 发来的无效快照帧 (${frame.type}): 会话 id 或提交 id 格式不合法`);
+			return true;
+		}
 		if (frame.type === "snapshot.applied") {
 			this.recordReceipt(hubSessionId, commit);
 			return true;
@@ -180,6 +184,8 @@ export class SyncManager {
 
 	/** Reader side: make the files match the writer's snapshot, then confirm. */
 	applyIncoming(hubSessionId: string, commit: string): Promise<ApplyResult> {
+		if (!isSafeId(hubSessionId)) return Promise.reject(new TeamError("invalidParams", "会话 id 格式不合法"));
+		if (!isObjectId(commit)) return Promise.reject(new TeamError("invalidParams", "快照提交 id 格式不合法 (需要 40 或 64 位小写十六进制)"));
 		return this.queue(hubSessionId, async () => {
 			const target = this.target(hubSessionId) ?? (await this.ensureReplica(hubSessionId));
 			const result = await applySnapshot(this.env, target, hubSessionId, commit, this.opts.now);

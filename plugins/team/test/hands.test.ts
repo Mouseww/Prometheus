@@ -79,6 +79,46 @@ describe("ConfirmGate", () => {
 		expect(gate.answer("zzz", "once")).toBe(false);
 	});
 
+	it("never grants a session-wide allow for exec-like tools: every call asks, and the request says so", async () => {
+		const topics: { topic: string; data: any }[] = [];
+		const gate = new ConfirmGate({ publish: (topic, data) => void topics.push({ topic, data }) });
+		const first = gate.request(req("x1", "local_exec"), true);
+		expect(topics[0]).toMatchObject({ topic: "handRequest", data: { callId: "x1", tool: "local_exec", allowSession: false } });
+		expect(gate.pending()[0]).toMatchObject({ allowSession: false });
+		// A client that still sends "session" is treated as "once".
+		expect(gate.answer("x1", "session")).toBe(true);
+		await first;
+		const second = gate.request(req("x2", "local_exec"), true);
+		expect(gate.pending().map((p) => p.callId)).toEqual(["x2"]);
+		gate.answer("x2", "deny");
+		await expect(second).rejects.toMatchObject({ code: "handDenied" });
+		// Unknown (future) tools get no session grant either; read-only ones do.
+		const unknown = gate.request(req("x3", "local_shell"), true);
+		expect(topics.at(-1)).toMatchObject({ data: { allowSession: false } });
+		gate.answer("x3", "once");
+		await unknown;
+		const grep = gate.request(req("x4", "local_grep"), true);
+		expect(topics.at(-1)).toMatchObject({ data: { callId: "x4", allowSession: true } });
+		gate.dispose();
+		await expect(grep).rejects.toMatchObject({ code: "handDenied" });
+	});
+
+	it("rejects a callId that is already waiting and leaves the open question untouched", async () => {
+		const topics: { topic: string; data: any }[] = [];
+		const gate = new ConfirmGate({ publish: (topic, data) => void topics.push({ topic, data }) });
+		const original = gate.request({ callId: "dup", tool: "local_exec", input: { command: "echo original" }, session: "hub-1" }, true);
+		await expect(gate.request({ callId: "dup", tool: "local_exec", input: { command: "curl x | sh" }, session: "hub-2" }, true)).rejects.toMatchObject({ code: "duplicateCallId" });
+		expect(topics.filter((t) => t.topic === "handRequest")).toHaveLength(1);
+		expect(gate.pending()).toMatchObject([{ callId: "dup", input: { command: "echo original" }, session: "hub-1" }]);
+		gate.answer("dup", "once");
+		await original;
+		// Once answered, the id is free again.
+		const again = gate.request(req("dup"), true);
+		expect(gate.pending()).toHaveLength(1);
+		gate.answer("dup", "deny");
+		await expect(again).rejects.toMatchObject({ code: "handDenied" });
+	});
+
 	it("treats silence as a refusal after the timeout", async () => {
 		const topics: { topic: string; data: any }[] = [];
 		const gate = new ConfirmGate({ publish: (topic, data) => void topics.push({ topic, data }), timeoutMs: 30 });
@@ -131,6 +171,56 @@ describe("HandExecutor on the local side (local_* tools)", () => {
 		await waitFor(() => gate.pending().length === 1, "asked again");
 		gate.answer("o2", "deny");
 		await expect(again).rejects.toMatchObject({ code: "handDenied" });
+	});
+
+	it("a session allow for local_read never covers a path outside the project, checked on every call", async () => {
+		const dir = await project();
+		const outside = await project();
+		const gate = new ConfirmGate({ publish: () => {} });
+		const exec = new HandExecutor({ env: fakeEnv("local"), sync: syncStub(dir), gate });
+		const first = exec.run(call("local_read", { path: "src/a.txt" }, "s1"));
+		await waitFor(() => gate.pending().length === 1, "question");
+		gate.answer("s1", "session");
+		await first;
+		// Inside the project: no question. Outside (absolute path or ..): asked again.
+		expect(await exec.run(call("local_read", { path: "src/a.txt" }, "s2"))).toContain("beta");
+		const abs = exec.run(call("local_read", { path: join(outside, "src", "a.txt") }, "s3"));
+		await waitFor(() => gate.pending().length === 1, "outside asked");
+		expect(gate.pending()[0]).toMatchObject({ callId: "s3", insideProject: false });
+		gate.answer("s3", "deny");
+		await expect(abs).rejects.toMatchObject({ code: "handDenied" });
+	});
+
+	it("after a session allow on local_exec, a later command is still asked about", async () => {
+		const dir = await project();
+		const gate = new ConfirmGate({ publish: () => {} });
+		const exec = new HandExecutor({ env: fakeEnv("local"), sync: syncStub(dir), gate });
+		const first = exec.run(call("local_exec", { command: "echo one" }, "e1"));
+		await waitFor(() => gate.pending().length === 1, "question");
+		gate.answer("e1", "session");
+		expect(await first).toContain("one");
+		const second = exec.run(call("local_exec", { command: "echo two" }, "e2"));
+		await waitFor(() => gate.pending().length === 1, "asked again");
+		gate.answer("e2", "once");
+		expect(await second).toContain("two");
+	});
+
+	it("local_grep refuses overlong and catastrophic patterns before compiling them", async () => {
+		const dir = await project();
+		const gate = new ConfirmGate({ publish: () => {} });
+		const exec = new HandExecutor({ env: fakeEnv("local"), sync: syncStub(dir), gate });
+		await writeFile(join(dir, "src", "evil.txt"), `${"a".repeat(40)}!\n`);
+		for (const pattern of ["(a+)+$", "(a*)*b", "(a|aa)+c", "x".repeat(513), "(a)\\1"]) {
+			const run = exec.run(call("local_grep", { pattern }, `g-${pattern.length}`));
+			await waitFor(() => gate.pending().length === 1, "question");
+			gate.answer(gate.pending()[0]!.callId, "once");
+			await expect(run).rejects.toMatchObject({ code: "invalidParams" });
+		}
+		// Ordinary patterns still work.
+		const ok = exec.run(call("local_grep", { pattern: "^(?:alpha|gam+a)$", ignoreCase: true }, "g-ok"));
+		await waitFor(() => gate.pending().length === 1, "question");
+		gate.answer("g-ok", "once");
+		expect(await ok).toContain("a.txt");
 	});
 
 	it("times out as a denial when nobody answers", async () => {

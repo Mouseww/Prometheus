@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { TeamError } from "../types.ts";
+import { assertSafePattern, MAX_MATCH_LINE_CHARS } from "./regex-safety.ts";
 
 export const MAX_OUTPUT_CHARS = 200_000;
 const MAX_GREP_MATCHES = 200;
@@ -86,6 +87,7 @@ async function* walk(dir: string, budget: { files: number }): AsyncGenerator<str
 
 /** Regex search over text files below `abs` (a file or a directory); at most 200 matches, as `path:line: text`. */
 export async function grepOp(abs: string, pattern: string, opts: { ignoreCase?: boolean; base?: string }): Promise<string> {
+	assertSafePattern(pattern);
 	let re: RegExp;
 	try {
 		re = new RegExp(pattern, opts.ignoreCase ? "i" : "");
@@ -103,7 +105,7 @@ export async function grepOp(abs: string, pattern: string, opts: { ignoreCase?: 
 		if (!buf || buf.subarray(0, 1024).includes(0)) continue;
 		const lines = buf.toString("utf8").split("\n");
 		for (let i = 0; i < lines.length; i++) {
-			if (!re.test(lines[i] as string)) continue;
+			if (!re.test((lines[i] as string).slice(0, MAX_MATCH_LINE_CHARS))) continue;
 			out.push(`${relative(opts.base ?? abs, file) || file}:${i + 1}: ${(lines[i] as string).slice(0, 300)}`);
 			if (out.length >= MAX_GREP_MATCHES) return `${out.join("\n")}\n...[已达到 ${MAX_GREP_MATCHES} 条匹配上限]`;
 		}
