@@ -5,12 +5,12 @@ import { ArrowRightLeft, Cloud, Eye, Laptop, LoaderCircle } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Badge, Button, Dialog } from "../../components/ui.tsx";
 import { defineMessages, useT } from "../../lib/i18n.ts";
-import { useStore } from "../../lib/store.ts";
+import { pluginActive, useStore } from "../../lib/store.ts";
 import { TeamApiError } from "../api.ts";
-import { useTeamExec } from "../execStore.ts";
+import { loadSessionLink, useTeamExec } from "../execStore.ts";
 import { errorText } from "../i18n.ts";
 import { isReadOnly, otherSide } from "../logic/exec.ts";
-import { memberTeamApi } from "../memberTransport.ts";
+import { memberPlugin, memberTeamApi } from "../memberTransport.ts";
 import type { ExecLocation, ExecMode } from "../types.ts";
 
 const M = defineMessages({
@@ -155,6 +155,7 @@ export function TeamSessionBar() {
 	const link = useTeamExec((s) => (sessionId ? s.links[sessionId] : undefined));
 	const setExecState = useTeamExec((s) => s.setExecState);
 	const hubSessionId = link?.hubSessionId;
+	const teamOn = useStore((s) => pluginActive(s.plugins, "team"));
 	const [loadError, setLoadError] = useState<string | undefined>(undefined);
 	const [pending, setPending] = useState(false);
 	const [dialog, setDialog] = useState(false);
@@ -169,6 +170,11 @@ export function TeamSessionBar() {
 			.then((state) => setExecState(sessionId, state))
 			.catch((e: unknown) => setLoadError(errorText(e)));
 	}, [sessionId, hubSessionId, setExecState]);
+
+	// A session this app never saw start or move (created on another device, or before the link was kept) asks the plugin once.
+	useEffect(() => {
+		if (sessionId && teamOn && !hubSessionId) void loadSessionLink(memberPlugin().call, sessionId);
+	}, [sessionId, teamOn, hubSessionId]);
 
 	// The Hub is the source of truth for mode and location; events keep the link current afterwards.
 	useEffect(() => {

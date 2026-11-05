@@ -55,6 +55,49 @@ export function linkFromStartResult(result: unknown): { localSessionId: string; 
 	return localSessionId && hubSessionId ? { localSessionId, hubSessionId } : undefined;
 }
 
+/** What RPC `session.link` knows about a local session. */
+export interface SessionLinkInfo {
+	hubSessionId: string;
+	workspaceId: string;
+	readOnly: boolean;
+	activeSide: ExecLocation;
+	activeSessionId?: string;
+	execMode?: ExecMode;
+}
+
+/** Answer of `session.link`: null when the session is not a team session, undefined when it is not shaped like an answer. */
+export function parseSessionLink(data: unknown): SessionLinkInfo | null | undefined {
+	if (data === null) return null;
+	if (!isRecord(data)) return undefined;
+	const hubSessionId = str(data.hubSessionId);
+	const activeSide = side(data.activeSide);
+	if (!hubSessionId || !activeSide) return undefined;
+	const activeSessionId = str(data.activeSessionId);
+	const execMode = data.execMode === "local-first" || data.execMode === "team-first" ? data.execMode : undefined;
+	return {
+		hubSessionId,
+		workspaceId: str(data.workspaceId) ?? "",
+		readOnly: data.readOnly === true,
+		activeSide,
+		...(activeSessionId ? { activeSessionId } : {}),
+		...(execMode ? { execMode } : {}),
+	};
+}
+
+/** Sets the link of a local session from the plugin's answer. It is authoritative for side and read-only state; a known mode is kept when it brings none. */
+export function applySessionLink(links: SessionLinks, localSessionId: string, info: SessionLinkInfo): SessionLinks {
+	const mode = info.execMode ?? (links[localSessionId]?.hubSessionId === info.hubSessionId ? links[localSessionId]?.mode : undefined);
+	const next: SessionLink = {
+		hubSessionId: info.hubSessionId,
+		location: info.activeSide,
+		...(mode ? { mode } : {}),
+		...(info.readOnly ? { readOnly: { to: info.activeSide, ...(info.activeSessionId ? { activeSessionId: info.activeSessionId } : {}) } } : {}),
+	};
+	const current = links[localSessionId];
+	if (current && JSON.stringify(current) === JSON.stringify(next)) return links;
+	return { ...links, [localSessionId]: next };
+}
+
 export function applyExecChanged(links: SessionLinks, ev: ExecChanged): SessionLinks {
 	const current = links[ev.sessionId];
 	const next: SessionLink = {
@@ -200,6 +243,26 @@ export function parseSyncConflict(data: unknown): SyncConflict | undefined {
 	const worktree = str(data.worktree);
 	if (!hubSessionId || !conflictRef || !worktree) return undefined;
 	return { hubSessionId, conflictRef, conflictCommit: str(data.conflictCommit) ?? "", worktree, message: str(data.message) ?? "" };
+}
+
+/** Answer of `sync.conflicts`, newest first; malformed entries are dropped. The saved message text is not kept, the notice uses its default. */
+export function parseConflictList(data: unknown, hubSessionId: string): SyncConflict[] {
+	const items = isRecord(data) && Array.isArray(data.conflicts) ? data.conflicts : [];
+	const out: SyncConflict[] = [];
+	for (const item of items) {
+		if (!isRecord(item)) continue;
+		const conflictRef = str(item.conflictRef);
+		const worktree = str(item.worktree);
+		if (conflictRef && worktree) out.push({ hubSessionId, conflictRef, conflictCommit: str(item.commit) ?? "", worktree, message: "" });
+	}
+	return out;
+}
+
+/** Shows a conflict loaded after a reload unless the session already has one (a live event is newer) or the user dismissed this very one. */
+export function seedConflict(conflicts: Readonly<Record<string, SyncConflict>>, dismissed: Readonly<Record<string, string>>, loaded: readonly SyncConflict[]): Record<string, SyncConflict> {
+	const newest = loaded[0];
+	if (!newest || conflicts[newest.hubSessionId] || dismissed[newest.hubSessionId] === newest.conflictRef) return conflicts;
+	return setConflict(conflicts, newest);
 }
 
 export interface SyncInfo {

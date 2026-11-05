@@ -6,6 +6,7 @@ import {
 	addHand,
 	applyExecChanged,
 	applyExecState,
+	applySessionLink,
 	applySnapshot,
 	dismissConflict,
 	type HandItem,
@@ -14,12 +15,16 @@ import {
 	mergeHands,
 	parseExecChanged,
 	parseHandRequest,
+	parseConflictList,
 	parseHandResolved,
 	parsePendingHands,
+	parseSessionLink,
 	parseSnapshotApplied,
 	parseSyncConflict,
 	resolveHand,
+	seedConflict,
 	type SessionLink,
+	type SessionLinkInfo,
 	type SessionLinks,
 	setConflict,
 	type SyncConflict,
@@ -40,7 +45,11 @@ export interface TeamExecState {
 	timedOut: HandItem[];
 	sync: Record<string, SyncInfo>;
 	conflicts: Record<string, SyncConflict>;
+	/** The conflict ref the user dismissed per Hub session (memory only), so a reload of the list does not bring it back in the same run. */
+	dismissed: Record<string, string>;
 	link(localSessionId: string, hubSessionId: string): void;
+	/** Sets the link from `session.link`'s answer. */
+	seedLink(localSessionId: string, info: SessionLinkInfo): void;
 	setExecState(localSessionId: string, state: Pick<ExecState, "location" | "mode">): void;
 	dismissConflict(hubSessionId: string): void;
 	dropTimedOut(callId: string): void;
@@ -82,9 +91,14 @@ export const useTeamExec = create<TeamExecState>((set, get) => {
 		timedOut: [],
 		sync: {},
 		conflicts: {},
+		dismissed: {},
 		link: (localSessionId, hubSessionId) => setLinks(linkSession(get().links, localSessionId, hubSessionId)),
+		seedLink: (localSessionId, info) => setLinks(applySessionLink(get().links, localSessionId, info)),
 		setExecState: (localSessionId, state) => setLinks(applyExecState(get().links, localSessionId, state)),
-		dismissConflict: (hubSessionId) => set({ conflicts: dismissConflict(get().conflicts, hubSessionId) }),
+		dismissConflict: (hubSessionId) => {
+			const shown = get().conflicts[hubSessionId];
+			set({ conflicts: dismissConflict(get().conflicts, hubSessionId), ...(shown ? { dismissed: { ...get().dismissed, [hubSessionId]: shown.conflictRef } } : {}) });
+		},
 		dropTimedOut: (callId) => set({ timedOut: get().timedOut.filter((h) => h.callId !== callId) }),
 	};
 });
@@ -135,6 +149,41 @@ export function rememberTeamSession(result: unknown): void {
 	const l = linkFromStartResult(result);
 	if (l) useTeamExec.getState().link(l.localSessionId, l.hubSessionId);
 }
+
+/** Calls a method of the member's team plugin (`memberPlugin().call` in the app). */
+export type TeamPluginCall = (method: string, params: Record<string, unknown>) => Promise<unknown>;
+
+const noLinkAsked = new Set<string>();
+
+/**
+ * Asks the plugin which Hub session a local session belongs to and seeds the store with it. Does nothing when a link is already known
+ * (events keep it current) or when the session was already found not to be a team session. Never rejects.
+ */
+export async function loadSessionLink(call: TeamPluginCall, localSessionId: string): Promise<void> {
+	if (useTeamExec.getState().links[localSessionId] || noLinkAsked.has(localSessionId)) return;
+	try {
+		const info = parseSessionLink(await call("session.link", { sessionId: localSessionId }));
+		if (info) useTeamExec.getState().seedLink(localSessionId, info);
+		else if (info === null) noLinkAsked.add(localSessionId);
+	} catch {
+		/* the plugin is not running or not logged in: the bar stays hidden until an event or a start result links the session */
+	}
+}
+
+/** Loads the sync conflicts this machine saved for a Hub session and shows the newest, so the notice survives a reload. Never rejects. */
+export async function loadConflicts(call: TeamPluginCall, hubSessionId: string): Promise<void> {
+	try {
+		const loaded = parseConflictList(await call("sync.conflicts", { hubSessionId }), hubSessionId);
+		const { conflicts, dismissed } = useTeamExec.getState();
+		const next = seedConflict(conflicts, dismissed, loaded);
+		if (next !== conflicts) useTeamExec.setState({ conflicts: next });
+	} catch {
+		/* no worktree of the session on this machine, or the plugin is off: nothing to show */
+	}
+}
+
+/** Test hook: forget which sessions were found not to be team sessions. */
+export const resetLinkLookups = (): void => noLinkAsked.clear();
 
 export const TEAM_EVENT_TOPICS = ["handRequest", "handResolved", "execChanged", "snapshotApplied", "syncConflict"] as const;
 

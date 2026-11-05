@@ -1,12 +1,12 @@
 // Workspace sync status of the open team session: the last snapshot applied from the other side, and a visible notice
 // when the user's own local changes were saved aside because the snapshot overwrote the working tree.
 import { Check, Copy, GitBranch, LoaderCircle, TriangleAlert, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "../../components/ui.tsx";
 import { defineMessages, useT } from "../../lib/i18n.ts";
 import { copyToClipboard } from "../../lib/clipboard.ts";
 import { useStore } from "../../lib/store.ts";
-import { useTeamExec } from "../execStore.ts";
+import { loadConflicts, useTeamExec } from "../execStore.ts";
 import { errorText } from "../i18n.ts";
 import { gitInspectCommand, parseRestoreResult, type RestoreMode, type RestoreResult, shortCommit, type SyncConflict } from "../logic/exec.ts";
 import { memberPlugin } from "../memberTransport.ts";
@@ -120,6 +120,10 @@ export function SyncStatus() {
 	const info = useTeamExec((s) => (hubSessionId ? s.sync[hubSessionId] : undefined));
 	const conflict = useTeamExec((s) => (hubSessionId ? s.conflicts[hubSessionId] : undefined));
 	const dismiss = useTeamExec((s) => s.dismissConflict);
+	// After a reload the live "syncConflict" event is gone; the saved conflicts are still in the worktree's refs.
+	useEffect(() => {
+		if (hubSessionId) void loadConflicts(memberPlugin().call, hubSessionId);
+	}, [hubSessionId]);
 	if (!hubSessionId || (!info && !conflict)) return null;
 
 	return (
