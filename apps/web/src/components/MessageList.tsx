@@ -13,6 +13,7 @@ import { speedTracker } from "../lib/speed.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { imagesOf } from "../lib/images.ts";
 import { deleteMessage, editMessage, fetchToolResult, forkMessage, openFile, pluginActive, retryMessage, type ToolRun, toast, useStore } from "../lib/store.ts";
+import { assistantTurnLive } from "../lib/turnLive.ts";
 import { ImageStrip } from "./ImageStrip.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { DelegationCard, delegationOf } from "./DelegationCard.tsx";
@@ -493,7 +494,6 @@ function TurnBody({
 	group,
 	live,
 	awaitingNext,
-	streaming,
 	lastIndex,
 	tools,
 	results,
@@ -501,7 +501,6 @@ function TurnBody({
 	group: { message: AssistantMessage; index: number }[];
 	live: boolean;
 	awaitingNext: boolean;
-	streaming: boolean;
 	lastIndex: number;
 	tools: Record<string, ToolRun>;
 	results: Map<string, ToolResultMessage>;
@@ -531,7 +530,7 @@ function TurnBody({
 			<AssistantBlock
 				key={`${mode}${g.index}`}
 				message={g.message}
-				live={streaming && g.index === lastIndex}
+				live={live && g.index === lastIndex}
 				tools={tools}
 				results={results}
 				mode={mode}
@@ -802,12 +801,19 @@ export function MessageList({
 					const lastInGroup = group[group.length - 1]?.index ?? i;
 					// Tool results after the last assistant message mean the next model call is still pending.
 					const awaitingNext = lastInGroup < lastIndex && lastNonResult === lastInGroup;
-					const live = streaming && (lastInGroup === lastIndex || awaitingNext);
+					const live = assistantTurnLive({
+						streaming,
+						pending: Boolean(pending),
+						lastInGroup,
+						lastIndex,
+						lastNonResult,
+						stopReason: group[group.length - 1]?.message.stopReason,
+					});
 					return (
 						<div key={i + offset} className={clsx("group/msg flex animate-rise gap-3", far(i) && "msg-far")}>
 							<Avatar />
 							<div className="min-w-0 flex-1">
-								<TurnBody group={group} live={live} awaitingNext={awaitingNext} streaming={streaming} lastIndex={lastIndex} tools={tools} results={results} />
+								<TurnBody group={group} live={live} awaitingNext={awaitingNext} lastIndex={lastIndex} tools={tools} results={results} />
 								{!live && <TurnStats group={group} sessionId={sessionId} />}
 								{!live && (
 									<Actions

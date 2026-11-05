@@ -37,6 +37,8 @@ export interface PiSessionOptions {
 	keepFork: (manager: SessionManager) => void;
 	/** Called once when the session is disposed (the runtime drops forks that were never resumed). */
 	onDispose?: () => void;
+	/** Called after the model changed: the compaction threshold is a share of the model's window and must be recomputed. */
+	onModelChanged?: (contextWindow: number) => void;
 }
 
 type Entry = { entryId: string; message: ChatMessage };
@@ -159,6 +161,7 @@ export class PiRuntimeSession implements RuntimeSession {
 		const target = this.opts.modelRuntime.getModel(model.provider, model.id);
 		if (!target) throw new AppError("modelNotFound", { provider: model.provider, id: model.id });
 		await this.session.setModel(target);
+		this.opts.onModelChanged?.(this.session.model?.contextWindow ?? target.contextWindow ?? 0);
 	}
 
 	async setThinking(level: ThinkingLevel): Promise<void> {

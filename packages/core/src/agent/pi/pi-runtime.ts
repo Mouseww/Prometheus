@@ -259,6 +259,7 @@ export class PiRuntime implements AgentRuntime {
 			notifyError: (message) => bridge.context().notify(message, "error"),
 			keepFork: (manager) => this.forks.keep(session.sessionId, manager),
 			onDispose: () => this.forks.dropFrom(session.sessionId),
+			onModelChanged: (window) => applyCompactPercent(settingsManager, this.compactPercent(), window),
 		});
 		// The threshold is a share of this model's window, so it is set after the session knows its model.
 		applyCompactPercent(settingsManager, this.compactPercent(), session.model?.contextWindow ?? 0);
