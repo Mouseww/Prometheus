@@ -6,6 +6,28 @@ import type {
 	AuditPage,
 	AuditQuery,
 	Board,
+	BillingSettings,
+	BillingSummary,
+	ByokAllowed,
+	ByokSettingsView,
+	CheckoutInput,
+	CheckoutResult,
+	CreateUserGatewayInput,
+	GenerateCodesInput,
+	GeneratedCodes,
+	GrantCreditsInput,
+	OrderQuery,
+	OrdersPage,
+	OrderView,
+	PlanInput,
+	PlanView,
+	PriceInput,
+	PriceView,
+	RedeemCodeView,
+	RedeemResult,
+	SetByokInput,
+	UpdateUserGatewayInput,
+	UserGatewayView,
 	CreateGatewayInput,
 	CreateOrgInput,
 	CreateWorkspaceInput,
@@ -148,6 +170,41 @@ export interface TeamApi {
 	getUsage(query: UsageQuery): Promise<UsageRow[]>;
 	listModels(): Promise<VisibleModel[]>;
 
+	// ---- BYOK: personal gateways and the platform / organization switch ----
+	listMyGateways(): Promise<UserGatewayView[]>;
+	createMyGateway(input: CreateUserGatewayInput): Promise<UserGatewayView>;
+	updateMyGateway(id: string, patch: UpdateUserGatewayInput): Promise<UserGatewayView>;
+	deleteMyGateway(id: string): Promise<void>;
+	/** Whether the viewer may use personal gateways at all. */
+	getMyByok(): Promise<ByokAllowed>;
+	getByokSettings(orgId?: string): Promise<ByokSettingsView>;
+	setByokSettings(input: SetByokInput): Promise<unknown>;
+
+	// ---- billing (user routes answer 404 billingDisabled when billing is off) ----
+	listBillingPlans(): Promise<PlanView[]>;
+	getBillingSummary(orgId?: string): Promise<BillingSummary>;
+	checkout(input: CheckoutInput): Promise<CheckoutResult>;
+	redeemCode(input: { code: string; orgId?: string }): Promise<RedeemResult>;
+
+	// ---- billing, operator ----
+	listAdminPlans(): Promise<PlanView[]>;
+	createPlan(input: PlanInput): Promise<PlanView>;
+	updatePlan(id: string, patch: Partial<PlanInput>): Promise<PlanView>;
+	deletePlan(id: string): Promise<void>;
+	listPrices(): Promise<PriceView[]>;
+	createPrice(input: PriceInput): Promise<PriceView>;
+	updatePrice(id: string, patch: Partial<PriceInput>): Promise<PriceView>;
+	deletePrice(id: string): Promise<void>;
+	listOrders(query?: OrderQuery): Promise<OrdersPage>;
+	markOrderPaid(id: string): Promise<OrderView>;
+	markOrderRefunded(id: string): Promise<OrderView>;
+	listRedeemCodes(): Promise<RedeemCodeView[]>;
+	/** The only reply that carries the plaintext codes. */
+	generateRedeemCodes(input: GenerateCodesInput): Promise<GeneratedCodes>;
+	getBillingSettings(): Promise<BillingSettings>;
+	putBillingSettings(patch: Partial<BillingSettings>): Promise<BillingSettings>;
+	grantCredits(input: GrantCreditsInput): Promise<{ id: string }>;
+
 	/**
 	 * Receive realtime events for a topic ("user", "workspace:<id>", "session:<id>"). Returns the unsubscribe function.
 	 * Hub mode uses the Hub WebSocket, member mode the plugin watch on `hub:<topic>`.
@@ -280,5 +337,35 @@ export function createApiMethods(r: Requester): Omit<TeamApi, "subscribe"> {
 		setQuota: (input) => send("PUT", "/api/admin/quotas", input),
 		getUsage: (query) => get("/api/admin/usage", { ...query }),
 		listModels: () => get("/api/models"),
+
+		listMyGateways: () => get("/api/me/gateways"),
+		createMyGateway: (input) => send("POST", "/api/me/gateways", input),
+		updateMyGateway: (id, patch) => send("PUT", `/api/me/gateways/${seg(id)}`, patch),
+		deleteMyGateway: (id) => empty("DELETE", `/api/me/gateways/${seg(id)}`),
+		getMyByok: () => get("/api/me/byok"),
+		getByokSettings: (orgId) => get("/api/admin/byok", { orgId }),
+		setByokSettings: (input) => send("PUT", "/api/admin/byok", input),
+
+		listBillingPlans: () => get("/api/billing/plans"),
+		getBillingSummary: (orgId) => get("/api/billing/summary", { orgId }),
+		checkout: (input) => send("POST", "/api/billing/checkout", input),
+		redeemCode: (input) => send("POST", "/api/billing/redeem", input),
+
+		listAdminPlans: () => get("/api/admin/plans"),
+		createPlan: (input) => send("POST", "/api/admin/plans", input),
+		updatePlan: (id, patch) => send("PUT", `/api/admin/plans/${seg(id)}`, patch),
+		deletePlan: (id) => empty("DELETE", `/api/admin/plans/${seg(id)}`),
+		listPrices: () => get("/api/admin/prices"),
+		createPrice: (input) => send("POST", "/api/admin/prices", input),
+		updatePrice: (id, patch) => send("PUT", `/api/admin/prices/${seg(id)}`, patch),
+		deletePrice: (id) => empty("DELETE", `/api/admin/prices/${seg(id)}`),
+		listOrders: (query) => get("/api/admin/orders", { ...query }),
+		markOrderPaid: (id) => send("POST", `/api/admin/orders/${seg(id)}/mark-paid`),
+		markOrderRefunded: (id) => send("POST", `/api/admin/orders/${seg(id)}/mark-refunded`),
+		listRedeemCodes: () => get("/api/admin/redeem-codes"),
+		generateRedeemCodes: (input) => send("POST", "/api/admin/redeem-codes", input),
+		getBillingSettings: () => get("/api/admin/billing/settings"),
+		putBillingSettings: (patch) => send("PUT", "/api/admin/billing/settings", patch),
+		grantCredits: (input) => send("POST", "/api/admin/credits", input),
 	};
 }

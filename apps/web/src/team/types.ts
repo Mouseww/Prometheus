@@ -507,3 +507,214 @@ export interface VisibleModel {
 	gatewayName: string;
 	source: "user" | "org" | "platform";
 }
+
+// ---- billing and BYOK (packages/hub/src/billing, src/services/byok.ts) ----
+
+/** A personal gateway (bring your own key). Same shape the admin gateways use, minus the scope. */
+export interface UserGatewayView {
+	id: string;
+	name: string;
+	format: GatewayFormat;
+	baseUrl: string;
+	/** Never the key itself: the last four characters only. */
+	apiKeyMasked: string;
+	models: GatewayModel[];
+	enabled: boolean;
+	createdAt: string;
+	updatedAt: string;
+}
+
+export interface CreateUserGatewayInput {
+	name: string;
+	format: GatewayFormat;
+	baseUrl: string;
+	apiKey: string;
+	models?: GatewayModel[];
+	enabled?: boolean;
+}
+
+export type UpdateUserGatewayInput = Partial<CreateUserGatewayInput>;
+
+export interface ByokAllowed {
+	allowed: boolean;
+}
+
+export type ByokScope = "platform" | "org";
+
+export interface ByokSettingsView {
+	/** Effective switch of the platform setting alone. */
+	platform: boolean;
+	/** The organization override; null when it follows the platform. */
+	org: boolean | null;
+}
+
+export interface SetByokInput {
+	scope: ByokScope;
+	orgId?: string;
+	/** null removes an organization override (follow the platform). */
+	allowed: boolean | null;
+}
+
+export type BillingSubjectType = "user" | "org";
+export type OrderKind = "topup" | "subscription";
+export type OrderStatus = "pending" | "paid" | "failed" | "refunded" | "canceled";
+export const ORDER_STATUSES: readonly OrderStatus[] = ["pending", "paid", "failed", "refunded", "canceled"];
+export type PlanPeriod = "month" | "year";
+
+export interface PlanView {
+	id: string;
+	name: string;
+	period: PlanPeriod;
+	priceCents: number;
+	currency: string;
+	monthlyCredits: number;
+	features: Record<string, unknown>;
+	active: boolean;
+}
+
+export interface PlanInput {
+	name: string;
+	period: PlanPeriod;
+	priceCents: number;
+	currency: string;
+	monthlyCredits: number;
+	features?: Record<string, unknown>;
+	active?: boolean;
+}
+
+export interface PriceView {
+	id: string;
+	/** A model id, or "*" for the fallback row. */
+	model: string;
+	gatewayId: string | null;
+	/** Credits per million tokens. */
+	inputPrice: number;
+	outputPrice: number;
+	currencyNote: string | null;
+}
+
+export interface PriceInput {
+	model: string;
+	gatewayId?: string | null;
+	inputPrice: number;
+	outputPrice: number;
+	currencyNote?: string | null;
+}
+
+export interface OrderView {
+	id: string;
+	subjectType: BillingSubjectType;
+	subjectId: string;
+	kind: OrderKind;
+	amountCents: number;
+	currency: string;
+	credits: number;
+	planId: string | null;
+	status: OrderStatus;
+	provider: string;
+	providerRef: string | null;
+	createdBy: string | null;
+	createdAt: string;
+	paidAt: string | null;
+}
+
+export interface GrantView {
+	id: string;
+	source: string;
+	amount: number;
+	remaining: number;
+	expiresAt: string | null;
+}
+
+export interface BillingSummary {
+	subject: { type: BillingSubjectType; id: string };
+	balance: number;
+	grants: GrantView[];
+	plan: PlanView;
+	subscription: { planId: string; status: string; currentPeriodStart: string; currentPeriodEnd: string; provider: string } | null;
+	periodUsage: { credits: number; inputTokens: number; outputTokens: number; requests: number; overdraftCredits: number };
+	recentOrders: OrderView[];
+	providers: string[];
+}
+
+export interface CheckoutInput {
+	kind: OrderKind;
+	planId?: string;
+	credits?: number;
+	orgId?: string;
+	provider?: string;
+	successUrl?: string;
+	cancelUrl?: string;
+}
+
+export interface CheckoutResult {
+	orderId: string;
+	status: OrderStatus;
+	provider: string;
+	/** Where to send the browser; null for offline providers (the order waits for an operator). */
+	redirectUrl: string | null;
+	amountCents: number;
+	currency: string;
+	credits: number;
+}
+
+export interface RedeemResult {
+	credits: number;
+	balance: number;
+}
+
+export interface OrderQuery {
+	status?: OrderStatus;
+	provider?: string;
+	subjectType?: BillingSubjectType;
+	subjectId?: string;
+	before?: string;
+	limit?: number;
+}
+
+export interface OrdersPage {
+	items: OrderView[];
+	nextBefore: string | null;
+}
+
+export interface RedeemCodeView {
+	id: string;
+	/** Last characters of the code; the full code is only shown once, when generated. */
+	hint: string;
+	credits: number;
+	maxUses: number;
+	usedCount: number;
+	expiresAt: string | null;
+	createdBy: string | null;
+	createdAt: string;
+}
+
+export interface GenerateCodesInput {
+	count: number;
+	credits: number;
+	maxUses?: number;
+	expiresAt?: string | null;
+}
+
+export interface GeneratedCodes {
+	/** Plaintext: shown once, never stored by the Hub. */
+	codes: string[];
+	credits: number;
+	maxUses: number;
+	expiresAt: string | null;
+}
+
+export interface BillingSettings {
+	/** Credits one cent buys on top-up. */
+	topupCreditsPerCent: number;
+	currency: string;
+	/** Top-up credits expire after this many days; null = never. */
+	topupExpiryDays: number | null;
+}
+
+export interface GrantCreditsInput {
+	subjectType: BillingSubjectType;
+	subjectId: string;
+	credits: number;
+	expiresAt?: string | null;
+}
