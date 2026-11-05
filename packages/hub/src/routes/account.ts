@@ -45,4 +45,6 @@ export function registerAccountRoutes(router: Router, deps: HubDeps): void {
 	router.get("/api/me", async (ctx) => accounts.me(await ctx.actor()));
 
 	router.get("/api/invitations/:token", async (ctx) => invitations.lookup(ctx.params.token as string), { auth: "public" });
+
+	router.post("/api/invitations/:token/accept", async (ctx) => invitations.accept(await ctx.actor(), ctx.params.token as string));
 }

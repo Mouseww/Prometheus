@@ -86,6 +86,7 @@ describe("registration, approval and login", () => {
 		await t.api("PUT", "/api/admin/registration", { token: root.token, body: { allowOpen: false, allowedDomains: ["Corp.Test"], requireApproval: true, allowInvite: true, closed: false } });
 		const meta = await t.api("GET", "/api/meta");
 		expect(meta.data.registration).toEqual({ open: false, domains: ["corp.test"], approval: true, invite: true });
+		expect(meta.data.billingEnabled).toBe(false);
 
 		const r = await register("Alice@Corp.Test");
 		expect(r.status).toBe(201);
@@ -240,5 +241,19 @@ describe("rate limiting", () => {
 		for (let i = 0; i < 12; i++) codes.push((await t.api("POST", "/api/auth/login", { ip, body: { email: `u${i}@x.test`, password: "wrong-password" } })).status);
 		expect(codes.slice(0, 10).every((c) => c === 401)).toBe(true);
 		expect(codes.slice(10)).toEqual([429, 429]);
+	});
+});
+
+describe("GET /api/meta billingEnabled", () => {
+	it("follows HubConfig.billingEnabled: on with HUB_BILLING in private mode, off by default", async () => {
+		const on = await startHub({ billing: true });
+		const off = await startHub();
+		try {
+			expect((await on.api("GET", "/api/meta")).data).toMatchObject({ mode: "private", billingEnabled: true });
+			expect((await off.api("GET", "/api/meta")).data).toMatchObject({ mode: "private", billingEnabled: false });
+		} finally {
+			await on.stop();
+			await off.stop();
+		}
 	});
 });

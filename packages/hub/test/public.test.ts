@@ -124,7 +124,7 @@ describe("public mode registration and email verification", () => {
 	it("exposes mode, mailConfigured and the Turnstile site key in /api/meta", async () => {
 		const t = await start({ env: { HUB_TURNSTILE_SECRET: "s", HUB_TURNSTILE_SITE_KEY: "site-key" } });
 		const meta = await t.api("GET", "/api/meta");
-		expect(meta.data).toMatchObject({ mode: "public", mailConfigured: false, turnstileSiteKey: "site-key", turnstileRequired: true, allowSelfCreateOrg: true });
+		expect(meta.data).toMatchObject({ mode: "public", mailConfigured: false, turnstileSiteKey: "site-key", turnstileRequired: true, allowSelfCreateOrg: true, billingEnabled: true });
 	});
 });
 

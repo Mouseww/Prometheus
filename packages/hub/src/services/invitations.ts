@@ -47,6 +47,16 @@ export interface InvitationsService {
 	find(q: Queryable, token: string): Promise<InvitationRow | undefined>;
 	/** Adds the user to the invited organization/team and marks the invitation used. */
 	apply(q: Queryable, invitation: InvitationRow, userId: string): Promise<{ orgId: string | null }>;
+	/** A signed-in user redeems an invitation link for the current account (same checks as registration). */
+	accept(actor: Actor, token: string): Promise<AcceptedInvitation>;
+}
+
+export interface AcceptedInvitation {
+	scope: InvitationScope;
+	scopeId: string;
+	scopeName: string;
+	role: string;
+	orgId: string | null;
 }
 
 const ORG_ROLES: readonly string[] = ["admin", "member"];
@@ -65,7 +75,7 @@ export function createInvitationsService(deps: ServiceDeps, audit: AuditService,
 		return rows[0];
 	};
 
-	return {
+	const service: InvitationsService = {
 		find,
 
 		async create(actor, input) {
@@ -121,5 +131,22 @@ export function createInvitationsService(deps: ServiceDeps, audit: AuditService,
 			await q.query("UPDATE invitations SET accepted_at = $2 WHERE id = $1", [inv.id, new Date(deps.now())]);
 			return { orgId };
 		},
+
+		async accept(actor, token) {
+			// System scope like registration: the invitation is the authority for the membership rows, the actor is already authenticated.
+			return deps.db.tx({ system: true }, async (q) => {
+				const inv = await find(q, token);
+				if (!inv) throw badRequest("邀请无效或已过期", "invalidInvite");
+				const users = await q.query<{ email: string }>("SELECT email FROM users WHERE id = $1", [actor.userId]);
+				const email = users[0]?.email;
+				if (!email) throw notFound("用户不存在");
+				if (normalizeEmail(inv.email) !== normalizeEmail(email)) throw badRequest("邀请对应的邮箱与当前账号邮箱不一致", "inviteEmailMismatch");
+				const name = (await scopeName(q, inv.scope, inv.scope_id)) ?? "";
+				const { orgId } = await service.apply(q, inv, actor.userId);
+				await audit.write(q, { actorId: actor.userId, orgId, action: "invitation.accept", targetType: inv.scope, targetId: inv.scope_id, detail: { invitationId: inv.id, role: inv.role } });
+				return { scope: inv.scope, scopeId: inv.scope_id, scopeName: name, role: inv.role, orgId };
+			});
+		},
 	};
+	return service;
 }

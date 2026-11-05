@@ -68,6 +68,56 @@ describe("invitations", () => {
 		expect(me.data.teams).toEqual([{ id: team.data.id, name: "Platform", role: "reviewer", orgId: root.orgId }]);
 	});
 
+	describe("POST /api/invitations/:token/accept (signed-in user)", () => {
+		const invite = (body: Record<string, unknown>) => t.api("POST", "/api/invitations", { token: root.token, body });
+		const accept = (who: string | undefined, inviteToken: string) => t.api("POST", `/api/invitations/${inviteToken}/accept`, { ...(who ? { token: who } : {}) });
+
+		it("joins an org with the invited role, audits it and consumes the invitation", async () => {
+			const user = await t.createUser(root.token, "acc-org@outside.test");
+			// createUser already enrols the account in the default org; an existing membership keeps its role, so start clean.
+			await t.hub.db.query("DELETE FROM org_members WHERE user_id = $1", [user.userId]);
+			const c = await invite({ scope: "org", scopeId: root.orgId, email: "Acc-Org@Outside.test", role: "admin" });
+			const r = await accept(user.token, c.data.token);
+			expect(r.status).toBe(200);
+			expect(r.data).toMatchObject({ scope: "org", scopeId: root.orgId, role: "admin", orgId: root.orgId });
+			const me = await t.api("GET", "/api/me", { token: user.token });
+			expect(me.data.orgs.find((o: { id: string }) => o.id === root.orgId)).toMatchObject({ role: "admin" });
+			const audit = await t.hub.db.query("SELECT 1 FROM audit_log WHERE action = 'invitation.accept' AND actor_id = $1", [user.userId]);
+			expect(audit).toHaveLength(1);
+			// Single use.
+			expect((await accept(user.token, c.data.token)).code).toBe("invalidInvite");
+			expect((await t.api("GET", `/api/invitations/${c.data.token}`)).status).toBe(404);
+		});
+
+		it("joins a team and adds the org membership", async () => {
+			const team = await t.api("POST", "/api/teams", { token: root.token, body: { name: "Accepting", orgId: root.orgId } });
+			const user = await t.createUser(root.token, "acc-team@outside.test");
+			const c = await invite({ scope: "team", scopeId: team.data.id, email: "acc-team@outside.test", role: "reviewer" });
+			const r = await accept(user.token, c.data.token);
+			expect(r.data).toMatchObject({ scope: "team", scopeId: team.data.id, scopeName: "Accepting", role: "reviewer", orgId: root.orgId });
+			const me = await t.api("GET", "/api/me", { token: user.token });
+			expect(me.data.teams).toContainEqual({ id: team.data.id, name: "Accepting", role: "reviewer", orgId: root.orgId });
+		});
+
+		it("rejects an email mismatch without consuming the invitation", async () => {
+			const user = await t.createUser(root.token, "acc-wrong@outside.test");
+			const c = await invite({ scope: "org", scopeId: root.orgId, email: "acc-right@outside.test", role: "member" });
+			const r = await accept(user.token, c.data.token);
+			expect(r.status).toBe(400);
+			expect(r.code).toBe("inviteEmailMismatch");
+			expect((await t.api("GET", `/api/invitations/${c.data.token}`)).status).toBe(200);
+		});
+
+		it("rejects unknown and expired tokens, and anonymous callers", async () => {
+			const user = await t.createUser(root.token, "acc-exp@outside.test");
+			expect((await accept(user.token, "nope")).code).toBe("invalidInvite");
+			const c = await invite({ scope: "org", scopeId: root.orgId, email: "acc-exp@outside.test", role: "member" });
+			expect((await accept(undefined, c.data.token)).status).toBe(401);
+			await t.hub.db.query("UPDATE invitations SET expires_at = now() - interval '1 hour' WHERE token_hash IS NOT NULL AND accepted_at IS NULL");
+			expect((await accept(user.token, c.data.token)).code).toBe("invalidInvite");
+		});
+	});
+
 	it("validates roles and permissions when creating invitations", async () => {
 		const bad = await t.api("POST", "/api/invitations", { token: root.token, body: { scope: "org", scopeId: root.orgId, email: "m@x.test", role: "owner" } });
 		expect(bad.code).toBe("invalidRole");

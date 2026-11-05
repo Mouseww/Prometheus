@@ -21,6 +21,8 @@ export interface MetaInfo extends PublicMeta {
 	version: string;
 	publicKey: string;
 	needsSetup: boolean;
+	/** Same rule as the billing service: HUB_MODE=public or HUB_BILLING=on (`HubConfig.billingEnabled`). */
+	billingEnabled: boolean;
 	registration: { open: boolean; domains: string[]; approval: boolean; invite: boolean };
 }
 
@@ -199,6 +201,7 @@ export function createAccountsService(deps: ServiceDeps, a: AccountsDeps): Accou
 				version: config.version,
 				publicKey: a.publicKey,
 				needsSetup: Number(count[0]?.n ?? 0) === 0,
+				billingEnabled: config.billingEnabled,
 				registration: { open: platform.allowOpen && !platform.closed, domains: platform.closed ? [] : platform.allowedDomains, approval: platform.requireApproval, invite: platform.allowInvite },
 			};
 		},
