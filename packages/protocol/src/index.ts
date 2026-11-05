@@ -362,6 +362,8 @@ export interface Caller {
 
 export interface SessionSummary {
 	id: string;
+	/** User who owns the session, when a trusted issuer vouched for its creator. */
+	owner?: string;
 	name?: string;
 	cwd: string;
 	created: string;
@@ -561,6 +563,8 @@ export interface SubagentDetail {
 
 export interface SessionSnapshot {
 	id: string;
+	/** User who owns the session, when a trusted issuer vouched for its creator. */
+	owner?: string;
 	name?: string;
 	cwd: string;
 	workspaceId: string;

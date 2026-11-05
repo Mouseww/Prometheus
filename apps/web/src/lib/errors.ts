@@ -11,6 +11,9 @@ const M = defineMessages({
 
 		sessionNotFound: "会话不存在：{id}",
 		sessionNotOpen: "会话未打开，请先打开会话",
+		sessionForbidden: "你没有权限操作这个会话",
+		policyLocked: "该设置已被管理员锁定：{field}",
+		agentDisabled: "此实例不运行 Agent",
 		workspaceNotFound: "工作区不存在：{id}",
 		workdirNotFound: "工作目录不存在：{dir}",
 		dirNotFound: "目录不存在：{dir}",
@@ -178,6 +181,9 @@ const M = defineMessages({
 
 		sessionNotFound: "Session not found: {id}",
 		sessionNotOpen: "The session is not open; open it first",
+		sessionForbidden: "You may not act on this session",
+		policyLocked: "This setting is locked by your administrator: {field}",
+		agentDisabled: "This instance does not run agents",
 		workspaceNotFound: "Workspace not found: {id}",
 		workdirNotFound: "Working directory not found: {dir}",
 		dirNotFound: "Directory not found: {dir}",

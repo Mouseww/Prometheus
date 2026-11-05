@@ -49,6 +49,8 @@ import {
 	GOAL_MAX_TURNS,
 } from "@prometheus/protocol";
 import { ToolBus } from "./agent/bus/tool-bus.ts";
+import { OwnerStore } from "./agent/session-owners.ts";
+import { canAct, SESSION_WRITE_METHODS } from "./session-access.ts";
 import { bundledClaudeBinary, bundledClaudeVersion, ClaudeCodeRuntime } from "./agent/claude-code/cc-runtime.ts";
 import { CodexRuntime } from "./agent/codex/codex-runtime.ts";
 import { CODEX_CAPABILITIES } from "./agent/codex/codex-session.ts";
@@ -202,6 +204,7 @@ export class PrometheusHost {
 	private readonly worktrees: WorktreeManager;
 	private readonly index: SessionIndex;
 	private readonly permissions: PermissionStore;
+	private readonly owners: OwnerStore;
 	private readonly externalRuntimes = new Map<string, AgentRuntime>();
 	/** Runtimes replaced after a profile edit; what they keep across chats (a shared server) stops with the host. */
 	private readonly retiredRuntimes: AgentRuntime[] = [];
@@ -224,6 +227,7 @@ export class PrometheusHost {
 		this.worktrees = new WorktreeManager(runtime.dataDir);
 		this.index = new SessionIndex(join(runtime.dataDir, "sessions", "index.json"));
 		this.permissions = new PermissionStore(join(runtime.dataDir, "sessions", "permissions.json"));
+		this.owners = new OwnerStore(join(runtime.dataDir, "sessions", "owners.json"));
 		runtime.plugins.reloadSessions = () => this.reloadSessions();
 		runtime.plugins.workspaces = async () => (await this.workspaces.list()).map((w) => ({ id: w.id, path: w.path, name: w.name }));
 		runtime.plugins.hostProviders.push(async (req) => {
@@ -268,6 +272,7 @@ ${extras.map((p) => `- ${p}`).join("
 		await host.index.load();
 		await host.worktrees.load();
 		await host.permissions.load();
+		await host.owners.load();
 		pi?.syncGateways();
 		void pruneUploads().catch(() => {});
 		return host;
@@ -276,7 +281,16 @@ ${extras.map((p) => `- ${p}`).join("
 	async call<M extends RpcMethod>(method: M, params: RpcParams<M>, caller?: Caller): Promise<RpcResult<M>> {
 		const handler = (this.handlers as Partial<Record<RpcMethod, unknown>>)[method] as ((p: RpcParams<M>, caller?: Caller) => Promise<RpcResult<M>> | RpcResult<M>) | undefined;
 		if (!handler) throw new AppError("notFound", { what: method });
+		if (caller?.identity && SESSION_WRITE_METHODS.has(method)) {
+			const sessionId = (params as { sessionId?: unknown } | undefined)?.sessionId;
+			if (typeof sessionId === "string" && !canAct(caller.identity, this.owners.get(sessionId))) throw new AppError("sessionForbidden", { id: sessionId });
+		}
 		return handler(params ?? ({} as RpcParams<M>), caller);
+	}
+
+	/** Who owns the session, when a trusted issuer vouched for its creator. */
+	sessionOwner(sessionId: string): string | undefined {
+		return this.owners.get(sessionId);
 	}
 
 	/** The file a `file.link` ticket stands for (consumed by the HTTP download route). */
@@ -732,6 +746,7 @@ ${extras.map((p) => `- ${p}`).join("
 		void removeSessionUploads(sessionId).catch(() => {});
 		this.goals.erase(sessionId);
 		this.permissions.delete(sessionId);
+		this.owners.delete(sessionId);
 		const entry = this.index.get(sessionId);
 		if (entry && entry.runtime !== "pi") {
 			await this.closeSession(sessionId);
@@ -801,7 +816,7 @@ ${extras.map((p) => `- ${p}`).join("
 			});
 		}
 		await this.workspaces.ensure(external.map((e) => ({ path: this.worktrees.rootOf(e.cwd), modified: e.modified })));
-		return [...external, ...infos
+		const all = [...external, ...infos
 			.map((info) => ({
 				id: info.ref.id,
 				name: info.name,
@@ -817,6 +832,10 @@ ${extras.map((p) => `- ${p}`).join("
 				...this.worktreeField(info.ref.id),
 			})), ...unsaved]
 			.sort((a, b) => b.modified.localeCompare(a.modified));
+		return all.map((s) => {
+			const owner = this.owners.get(s.id);
+			return owner ? { ...s, owner } : s;
+		});
 	}
 
 	private gatewayOf(ref: { id: string; runtime: RuntimeKind }): GatewayChoice | undefined {
@@ -849,6 +868,7 @@ ${extras.map((p) => `- ${p}`).join("
 			...(this.gatewayOf(live.session.ref()) ? { gateway: this.gatewayOf(live.session.ref()) } : {}),
 			...(this.index.get(s.id)?.agent ? { agent: this.index.get(s.id)?.agent } : {}),
 			...(this.goals.get(s.id) ? { goal: this.goals.get(s.id) } : {}),
+			...(this.owners.get(s.id) ? { owner: this.owners.get(s.id) } : {}),
 		};
 	}
 
@@ -982,13 +1002,21 @@ ${extras.map((p) => `- ${p}`).join("
 		return session.unqueue(kind, index, text);
 	}
 
-	private async forkMessage(sessionId: string, ref: MessageRef): Promise<{ snapshot: SessionSnapshot; editorText?: string }> {
+	/** Records the owner of a new session: the vouched caller, else the session it came from. */
+	private assignOwner(id: string, caller: Caller | undefined, from?: string): void {
+		const owner = caller?.identity?.userId ?? (from ? this.owners.get(from) : undefined);
+		if (owner) this.owners.set(id, owner);
+	}
+
+	private async forkMessage(sessionId: string, ref: MessageRef, caller?: Caller): Promise<{ snapshot: SessionSnapshot; editorText?: string }> {
 		const live = this.require(sessionId);
 		if (!live.session.fork) throw new AppError("generic");
 		const { editorText, ...forkRef } = await live.session.fork(ref);
 		const forked = await this.attach((init) => this.needPi.resume(forkRef, init));
 		const baseName = live.session.snapshotState().name;
 		if (baseName) forked.session.setName(`${baseName} (fork)`);
+		// A fork belongs to whoever made it; without an identity it keeps the source's owner.
+		this.assignOwner(forked.session.id, caller, sessionId);
 		this.listener.sessionsChanged();
 		return { snapshot: this.snapshot(forked), editorText };
 	}
@@ -1087,7 +1115,7 @@ ${extras.map((p) => `- ${p}`).join("
 		}),
 
 		"session.list": () => this.listSessions(),
-		"session.create": async ({ cwd, name, runtime: kind, agent, model, gateway, worktree }) => {
+		"session.create": async ({ cwd, name, runtime: kind, agent, model, gateway, worktree }, caller) => {
 			const dir = cwd?.trim() || this.cwd;
 			if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new AppError("workdirNotFound", { dir });
 			await this.workspaces.add(dir);
@@ -1106,13 +1134,14 @@ ${extras.map((p) => `- ${p}`).join("
 			}
 			if (note) live.bridge.context().notify(note, "warning");
 			if (name?.trim()) live.session.setName(name.trim());
+			this.assignOwner(live.session.id, caller);
 			// The configured starting level, if this model offers it; otherwise keep the model's own default.
 			const wanted = this.defaultThinking();
 			if (wanted && live.session.snapshotState().availableThinkingLevels.includes(wanted)) await live.session.setThinking(wanted);
 			this.listener.sessionsChanged();
 			return this.snapshot(live);
 		},
-		"session.switchRuntime": async ({ sessionId, runtime: kind, agent, model, gateway }) => {
+		"session.switchRuntime": async ({ sessionId, runtime: kind, agent, model, gateway }, caller) => {
 			const source = await this.open(sessionId);
 			if (source.session.isStreaming) throw new AppError("generic");
 			const state = source.session.snapshotState();
@@ -1125,6 +1154,7 @@ ${extras.map((p) => `- ${p}`).join("
 			this.guardWorktree(live, live.session.id);
 			if (state.name) live.session.setName(state.name);
 			live.gate.setMode(source.gate.mode);
+			this.assignOwner(live.session.id, caller, sessionId);
 			const handoff = buildHandoff(state.messages, this.agentName(from, this.index.get(sessionId)?.agent));
 			// PI carries the history itself; the others get the transcript as hidden first-turn context.
 			if (handoff && kind !== "pi") live.handoff = handoff;
@@ -1211,7 +1241,7 @@ ${extras.map((p) => `- ${p}`).join("
 			return null;
 		},
 		"chat.unqueue": ({ sessionId, kind, index, text }) => this.takeQueued(sessionId, kind, index, text),
-		"message.fork": ({ sessionId, ref }) => this.forkMessage(sessionId, ref),
+		"message.fork": ({ sessionId, ref }, caller) => this.forkMessage(sessionId, ref, caller),
 
 		"workspace.list": async () => {
 			// Nothing here needs the session index: the store already knows which folders were used. Reading

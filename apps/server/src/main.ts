@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { delimiter, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { builtinPlugins } from "@prometheus/builtin-plugins";
-import { DEFAULT_LAN_PORT, PrometheusHost } from "@prometheus/core";
+import { canAct, DEFAULT_LAN_PORT, PrometheusHost } from "@prometheus/core";
 import { AppError, type ClientFrame, encodeBinaryFrame, encodeError, type Identity, type NetworkPatch, type NetworkStatus, PROTOCOL_VERSION, type RuntimeEnv, type ServerFrame } from "@prometheus/protocol";
 import { WebSocket, WebSocketServer } from "ws";
 import {
@@ -100,6 +100,16 @@ function send(client: Client, frame: ServerFrame): void {
 	if (client.ws.readyState === WebSocket.OPEN) client.ws.send(JSON.stringify(frame));
 }
 
+/** Sends to every signed-in client that may act on the session (all of them when it has no owner). */
+function broadcastToActors(frame: ServerFrame, sessionId: string): void {
+	const data = JSON.stringify(frame);
+	const owner = host.sessionOwner(sessionId);
+	for (const c of clients) {
+		if (!c.authed || c.ws.readyState !== WebSocket.OPEN || !canAct(c.identity, owner)) continue;
+		c.ws.send(data);
+	}
+}
+
 function broadcast(frame: ServerFrame, sessionId?: string): void {
 	const data = JSON.stringify(frame);
 	for (const c of clients) {
@@ -115,8 +125,9 @@ const host = await PrometheusHost.create({
 	builtinPlugins,
 	listener: {
 		event: (sessionId, event) => broadcast({ type: "event", sessionId, event }, sessionId),
-		uiRequest: (sessionId, request) => broadcast({ type: "ui.request", sessionId, request }, request.method === "permission" ? undefined : sessionId),
-		uiResolved: (sessionId, requestId) => broadcast({ type: "ui.resolved", sessionId, requestId }),
+		uiRequest: (sessionId, request) =>
+			request.method === "permission" ? broadcastToActors({ type: "ui.request", sessionId, request }, sessionId) : broadcast({ type: "ui.request", sessionId, request }, sessionId),
+		uiResolved: (sessionId, requestId) => broadcastToActors({ type: "ui.resolved", sessionId, requestId }, sessionId),
 		sessionsChanged: () => broadcast({ type: "sessions.changed" }),
 		gatewaysChanged: () => broadcast({ type: "gateways.changed" }),
 		pluginsChanged: () => broadcast({ type: "plugins.changed" }),

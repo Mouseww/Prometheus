@@ -10,6 +10,9 @@ export const ERROR_PARAMS = {
 	// 会话 / 工作区
 	sessionNotFound: ["id"],
 	sessionNotOpen: [],
+	sessionForbidden: ["id"],
+	policyLocked: ["field"],
+	agentDisabled: [],
 	workspaceNotFound: ["id"],
 	workdirNotFound: ["dir"],
 	dirNotFound: ["dir"],
