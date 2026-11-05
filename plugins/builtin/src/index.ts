@@ -16,6 +16,7 @@ import type { PrometheusPlugin } from "@prometheus/plugin-sdk";
 import skills from "@prometheus/plugin-skills";
 import ssh from "@prometheus/plugin-ssh";
 import subagents from "@prometheus/plugin-subagents";
+import team from "@prometheus/plugin-team";
 import terminal from "@prometheus/plugin-terminal";
 import todos from "@prometheus/plugin-todos";
 import veil from "@prometheus/plugin-veil";
@@ -56,6 +57,8 @@ export const builtinPlugins: PrometheusPlugin[] = [
 	terminal,
 	folder,
 	workbench,
+	// Team collaboration: the Hub role or the member role, depending on how the server was started
+	team,
 	// Rewrites the final system prompt: keep it after everything above.
 	modes,
 ];

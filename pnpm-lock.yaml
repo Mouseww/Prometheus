@@ -346,6 +346,9 @@ importers:
       '@prometheus/plugin-subagents':
         specifier: workspace:*
         version: link:../subagents
+      '@prometheus/plugin-team':
+        specifier: workspace:*
+        version: link:../team
       '@prometheus/plugin-terminal':
         specifier: workspace:*
         version: link:../terminal
@@ -538,6 +541,25 @@ importers:
       '@prometheus/subagents':
         specifier: workspace:*
         version: link:../../packages/subagents
+
+  plugins/team:
+    dependencies:
+      '@prometheus/hub':
+        specifier: workspace:*
+        version: link:../../packages/hub
+      '@prometheus/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      '@prometheus/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+    devDependencies:
+      '@types/ws':
+        specifier: 8.18.2
+        version: 8.18.2
+      ws:
+        specifier: 8.22.0
+        version: 8.22.0
 
   plugins/terminal:
     dependencies:
