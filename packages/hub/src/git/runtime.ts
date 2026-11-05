@@ -34,15 +34,18 @@ export function createGitRuntime(config: HubConfig, log: HubLog, allowLocalRemot
 		allowLocalRemotes,
 		repoPath: (repoDir) => join(config.dataDir, repoDir),
 		networkEnv(token) {
+			// Redirects are off: the URL was checked against the SSRF rules, a redirect target (and the token header) would not be.
+			const config: [string, string][] = [["http.followRedirects", "false"]];
+			if (token) config.push(["http.extraHeader", `Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`]);
 			const env: Record<string, string> = {
 				GIT_ALLOW_PROTOCOL: allowLocalRemotes ? "https:ssh:file" : "https:ssh",
 				GIT_SSH_COMMAND: "ssh -o BatchMode=yes",
+				GIT_CONFIG_COUNT: String(config.length),
 			};
-			if (token) {
-				env.GIT_CONFIG_COUNT = "1";
-				env.GIT_CONFIG_KEY_0 = "http.extraHeader";
-				env.GIT_CONFIG_VALUE_0 = `Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`;
-			}
+			config.forEach(([key, value], i) => {
+				env[`GIT_CONFIG_KEY_${i}`] = key;
+				env[`GIT_CONFIG_VALUE_${i}`] = value;
+			});
 			return env;
 		},
 		async requireGit() {

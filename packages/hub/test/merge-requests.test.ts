@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mergeIntoDefault } from "../src/git/repo.ts";
-import type { UpstreamSync } from "../src/git/upstream.ts";
+import { type UpstreamSync, UPSTREAM_PUSH_FAILED_MESSAGE } from "../src/git/upstream.ts";
 import type { WorkspacesService } from "../src/services/workspaces.ts";
 import { commitAll, git, gitOk, openMr, sessionBranch, setupWorld, showFile, tmp, type Sess, type World, writeFiles } from "./git-helpers.ts";
 
@@ -463,7 +463,8 @@ describe("upstream remote", () => {
 		expect(await mainTip(w)).toBe(merged.data.mergedCommit);
 		const ws = await workspace();
 		expect(ws.upstreamStatus).toBe("push_failed");
-		expect(ws.upstreamError).toEqual(expect.any(String));
+		// The team sees a short fixed message, never git's stderr (which can echo URLs and server paths).
+		expect(ws.upstreamError).toBe(UPSTREAM_PUSH_FAILED_MESSAGE);
 		expect(await notified(w, "upstream.pushFailed")).toEqual(expect.arrayContaining([w.dan.userId]));
 	}, T);
 

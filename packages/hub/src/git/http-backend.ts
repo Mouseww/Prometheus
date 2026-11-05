@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { PassThrough, pipeline, Readable } from "node:stream";
+import { PassThrough, pipeline, Readable, Transform } from "node:stream";
 import { createGunzip } from "node:zlib";
 import { forbidden, HubError, notFound, validationError } from "../errors.ts";
 import { LOG_PREFIX, type HubLog } from "../log.ts";
@@ -21,6 +21,8 @@ export interface GitRequestInfo {
 	/** Path below `<id>.git/`, e.g. `info/refs` or `git-receive-pack`. */
 	rest: string;
 	log: HubLog;
+	/** Largest accepted request body after decompression (default 512 MB, `HUB_GIT_MAX_PUSH_MB`). */
+	maxPushBytes?: number;
 	/** Called with the parsed commands of a push before the backend runs; throws to refuse (403). */
 	onPush?: (commands: readonly RefCommand[]) => void;
 }
@@ -37,14 +39,41 @@ export function classify(method: string, rest: string, query: URLSearchParams): 
 	throw notFound("接口不存在");
 }
 
-/** Request body as a stream, inflated when the client sent `Content-Encoding: gzip`. */
-function bodyStream(req: IncomingMessage): Readable {
+export const DEFAULT_MAX_PUSH_MB = 512;
+
+/** `HUB_GIT_MAX_PUSH_MB` as bytes (positive integer MB, default 512). Anything else falls back to the default. */
+export function maxPushBytes(value: string | undefined): number {
+	const mb = value && /^\d{1,6}$/.test(value.trim()) ? Number(value.trim()) : 0;
+	return (mb > 0 ? mb : DEFAULT_MAX_PUSH_MB) * 1024 * 1024;
+}
+
+const tooLarge = (limit: number): HubError => new HubError(413, "pushTooLarge", `请求体超过上限 ${Math.floor(limit / (1024 * 1024))} MB`);
+
+/** Passes bytes through and fails with 413 once more than `limit` (after decompression) went by. */
+function limitBytes(limit: number): Transform {
+	let seen = 0;
+	return new Transform({
+		transform(chunk: Buffer, _enc, cb) {
+			seen += chunk.length;
+			if (seen > limit) cb(tooLarge(limit));
+			else cb(null, chunk);
+		},
+	});
+}
+
+/** Request body as a stream, inflated when the client sent `Content-Encoding: gzip`, capped at `limit` decompressed bytes. */
+function bodyStream(req: IncomingMessage, limit: number): Readable {
 	const enc = String(req.headers["content-encoding"] ?? "").toLowerCase();
-	if (enc === "" || enc === "identity") return req;
+	const declared = Number(req.headers["content-length"] ?? 0);
+	if (Number.isFinite(declared) && declared > limit) throw tooLarge(limit);
+	const capped = limitBytes(limit);
+	const fail = (err: Error): void => void capped.destroy(err);
+	req.on("error", fail);
+	if (enc === "" || enc === "identity") return req.pipe(capped);
 	if (enc === "gzip" || enc === "x-gzip") {
 		const gunzip = createGunzip();
-		req.on("error", (err) => gunzip.destroy(err));
-		return req.pipe(gunzip);
+		gunzip.on("error", fail);
+		return req.pipe(gunzip).pipe(capped);
 	}
 	throw new HubError(415, "unsupportedEncoding", "不支持的 Content-Encoding");
 }
@@ -106,10 +135,11 @@ export async function serveGitRequest(info: GitRequestInfo): Promise<void> {
 	const { req, res } = info;
 	const url = new URL(req.url ?? "/", "http://hub.local");
 	const kind = classify((req.method ?? "GET").toUpperCase(), info.rest, url.searchParams);
+	const maxBytes = info.maxPushBytes ?? DEFAULT_MAX_PUSH_MB * 1024 * 1024;
 
 	let input: Readable | undefined;
 	if (kind !== "info") {
-		const body = bodyStream(req);
+		const body = bodyStream(req, maxBytes);
 		if (kind === "receive-pack") {
 			let parsed: Awaited<ReturnType<typeof readCommands>>;
 			try {
@@ -139,7 +169,11 @@ export async function serveGitRequest(info: GitRequestInfo): Promise<void> {
 		...baseGitEnv(),
 		GIT_PROJECT_ROOT: info.reposRoot,
 		GIT_HTTP_EXPORT_ALL: "1",
-		GIT_HTTP_MAX_REQUEST_BUFFER: "1g",
+		GIT_HTTP_MAX_REQUEST_BUFFER: `${Math.max(1, Math.floor(maxBytes / (1024 * 1024)))}m`,
+		// Reject malformed or hostile objects at push time instead of letting them into the shared repository.
+		GIT_CONFIG_COUNT: "1",
+		GIT_CONFIG_KEY_0: "receive.fsckObjects",
+		GIT_CONFIG_VALUE_0: "true",
 		PATH_INFO: `/${info.workspaceId}.git/${info.rest}`,
 		REMOTE_USER: info.userId,
 		REMOTE_ADDR: req.socket.remoteAddress ?? "",
@@ -163,8 +197,15 @@ export async function serveGitRequest(info: GitRequestInfo): Promise<void> {
 		if (!finished) child.kill();
 	});
 
+	let limitError: HubError | undefined;
 	if (input) {
-		pipeline(input, child.stdin, () => {});
+		pipeline(input, child.stdin, (err) => {
+			// The size cap tripped while streaming: stop the backend and answer 413 instead of a generic 502.
+			if (err instanceof HubError) {
+				limitError = err;
+				child.kill();
+			}
+		});
 	} else {
 		child.stdin.end();
 	}
@@ -184,7 +225,11 @@ export async function serveGitRequest(info: GitRequestInfo): Promise<void> {
 	if (!head) {
 		const code = await exited;
 		finished = true;
-		info.log.warn(`${LOG_PREFIX} git http-backend 异常退出 (${code}): ${Buffer.concat(stderr).toString("utf8").trim().slice(0, 300)}`);
+		if (limitError) {
+			res.setHeader("connection", "close");
+			throw limitError;
+		}
+		info.log.warn(`${LOG_PREFIX} git http-backend 异常退出 (${code}):${Buffer.concat(stderr).toString("utf8").trim().slice(0, 300)}`);
 		throw new HubError(502, "gitBackendFailed", "git 服务处理请求失败");
 	}
 

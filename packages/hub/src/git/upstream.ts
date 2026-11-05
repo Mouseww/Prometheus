@@ -12,6 +12,16 @@ const ADMIN_ROLES = ["admin"] as const;
 
 const messageOf = (err: unknown): string => (err instanceof Error ? err.message : String(err)).slice(0, 500);
 
+/** Full detail for the server log only: git's own message plus its stderr (never shown to the team, it can echo URLs and server paths). */
+const detailOf = (err: unknown): string => {
+	const stderr = (err as { stderr?: unknown } | undefined)?.stderr;
+	return `${messageOf(err)}${typeof stderr === "string" && stderr ? ` | stderr: ${stderr.slice(0, 2000)}` : ""}`;
+};
+
+/** What the team sees in the workspace status and notifications. */
+export const UPSTREAM_PUSH_FAILED_MESSAGE = "推送到上游失败，请检查上游地址与访问令牌";
+export const UPSTREAM_FETCH_FAILED_MESSAGE = "拉取上游失败，请检查上游地址与访问令牌";
+
 export type SyncResult = "unchanged" | "fastForwarded" | "localAhead" | "diverged" | "noUpstreamBranch" | "failed" | "skipped";
 
 export interface UpstreamSync {
@@ -41,10 +51,9 @@ export function createUpstreamSync(deps: { log: HubLog; workspaces: WorkspacesSe
 				await runGit(["push", "--quiet", "--", ws.upstreamUrl, `${ref}:${ref}`], { gitDir, env: runtime.networkEnv(token), timeoutMs: 5 * 60 * 1000 });
 				await workspaces.recordUpstream(ws.id, "ok", null);
 			} catch (err) {
-				const message = messageOf(err);
-				log.warn(`${LOG_PREFIX} 推送到上游失败 (工作区 ${ws.id}): ${message}`);
-				await workspaces.recordUpstream(ws.id, "push_failed", message).catch(() => {});
-				await notifyAdmins(ws, "upstream.pushFailed", message);
+				log.warn(`${LOG_PREFIX} 推送到上游失败 (工作区 ${ws.id}): ${detailOf(err)}`);
+				await workspaces.recordUpstream(ws.id, "push_failed", UPSTREAM_PUSH_FAILED_MESSAGE).catch(() => {});
+				await notifyAdmins(ws, "upstream.pushFailed", UPSTREAM_PUSH_FAILED_MESSAGE);
 			}
 		},
 
@@ -97,9 +106,8 @@ export function createUpstreamSync(deps: { log: HubLog; workspaces: WorkspacesSe
 				await workspaces.recordUpstream(ws.id, "upstream_diverged", message);
 				return "diverged";
 			} catch (err) {
-				const message = messageOf(err);
-				log.warn(`${LOG_PREFIX} 拉取上游失败 (工作区 ${ws.id}): ${message}`);
-				await workspaces.recordUpstream(ws.id, "fetch_failed", message).catch(() => {});
+				log.warn(`${LOG_PREFIX} 拉取上游失败 (工作区 ${ws.id}): ${detailOf(err)}`);
+				await workspaces.recordUpstream(ws.id, "fetch_failed", UPSTREAM_FETCH_FAILED_MESSAGE).catch(() => {});
 				return "failed";
 			} finally {
 				running.delete(ws.id);

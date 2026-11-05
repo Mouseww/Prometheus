@@ -4,7 +4,7 @@ import { Value } from "typebox/value";
 import { JWT_AUDIENCE } from "../config.ts";
 import type { HubDeps } from "../deps.ts";
 import { HubError, notFound, validationError } from "../errors.ts";
-import { enforcePushRules, serveGitRequest } from "../git/http-backend.ts";
+import { enforcePushRules, maxPushBytes as maxPushBytesFromEnv, serveGitRequest } from "../git/http-backend.ts";
 import { createTeamNotifier } from "../git/notify.ts";
 import { createGitRuntime } from "../git/runtime.ts";
 import { createUpstreamSync, UPSTREAM_POLL_INTERVAL_MS } from "../git/upstream.ts";
@@ -79,6 +79,7 @@ export function registerGitRoutes(router: Router, deps: HubDeps): void {
 	const base = { db, log, now: deps.now };
 	const runtime = createGitRuntime(deps.config, log, deps.config.allowLocalGitRemotes);
 	const notifier = createTeamNotifier(deps);
+	const maxPushBytes = maxPushBytesFromEnv(deps.env.HUB_GIT_MAX_PUSH_MB);
 	const workspaces = deps.registry.register("workspaces", createWorkspacesService(base, services.audit, services.teams, runtime, deps.secretBox));
 	const upstream = deps.registry.register("upstreamSync", createUpstreamSync({ log, workspaces, runtime, notifier }));
 	const mergeRequests = deps.registry.register(
@@ -160,6 +161,7 @@ export function registerGitRoutes(router: Router, deps: HubDeps): void {
 			userId: actor.userId,
 			rest: ctx.params["*"] ?? "",
 			log,
+			maxPushBytes,
 			onPush: (commands) => enforcePushRules(actor.userId, commands),
 		});
 		return HANDLED;
