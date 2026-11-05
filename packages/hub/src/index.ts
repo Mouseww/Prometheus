@@ -1,6 +1,8 @@
 export { type HubConfig, type HubOptions } from "./config.ts";
 export { type Db, type DbScope, type Queryable } from "./db/db.ts";
 export { openPglite } from "./db/pglite.ts";
+export { ALLOW_RESET_ENV } from "./db/pglite-guard.ts";
+export { closeOnSignals } from "./shutdown.ts";
 export { openPostgres } from "./db/postgres.ts";
 export { type HubDeps, type HubServices, ServiceRegistry } from "./deps.ts";
 export { HubError } from "./errors.ts";

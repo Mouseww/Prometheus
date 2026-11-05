@@ -12,7 +12,7 @@ import { openPostgres } from "./db/postgres.ts";
 import { type HubDeps, type HubServices, ServiceRegistry, type UpgradeHandler } from "./deps.ts";
 import { dispatch } from "./http/dispatch.ts";
 import { Router } from "./http/router.ts";
-import { LOG_PREFIX, stderrLog } from "./log.ts";
+import { LOG_PREFIX, type HubLog, stderrLog } from "./log.ts";
 import { RateLimiter } from "./rate-limit.ts";
 import { registerRoutes } from "./routes/index.ts";
 import { createSetupCode } from "./setup-code.ts";
@@ -47,10 +47,10 @@ export interface Hub {
 	publicKeyPem: string;
 }
 
-async function openDb(options: HubOptions, config: HubConfig, env: NodeJS.ProcessEnv): Promise<Db> {
+async function openDb(options: HubOptions, config: HubConfig, env: NodeJS.ProcessEnv, log: HubLog): Promise<Db> {
 	const url = options.databaseUrl ?? env.HUB_DATABASE_URL;
 	if (url) return openPostgres(url, { appRole: config.appRole });
-	return openPglite(options.memory ? "memory" : pgDataDir(config.dataDir), { appRole: config.appRole });
+	return openPglite(options.memory ? "memory" : pgDataDir(config.dataDir), { appRole: config.appRole, log, env });
 }
 
 export async function createHub(options: HubOptions): Promise<Hub> {
@@ -60,10 +60,12 @@ export async function createHub(options: HubOptions): Promise<Hub> {
 	const now = options.now ?? Date.now;
 	await mkdir(config.dataDir, { recursive: true });
 
-	const db = await openDb(options, config, env);
+	const db = await openDb(options, config, env, log);
 	const closers: (() => Promise<void> | void)[] = [];
 	try {
 		await migrate(db, { appRole: config.appRole, log });
+		// Single user PGlite has no background checkpointer: persist the migrations now instead of leaving them only in the WAL.
+		if (!options.memory && !(options.databaseUrl ?? env.HUB_DATABASE_URL)) await db.exec("CHECKPOINT");
 		const secretBox = new SecretBox(await loadMasterKey(config.dataDir, options.secretKey ?? env.HUB_SECRET_KEY));
 		const keys = await loadJwtKeys(config.dataDir);
 		const limiter = new RateLimiter(now);

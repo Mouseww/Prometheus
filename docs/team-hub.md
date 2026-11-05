@@ -115,6 +115,18 @@ server {
 - PGlite：停止 Hub，整体复制数据目录。
 - PostgreSQL：用 `pg_dump` 备份数据库，同时复制 `repos/`、`secret.key` 与 `jwt.key`，四者应来自同一时间点。
 
+#### PGlite 的持久性保证
+
+PGlite 是以单用户模式运行的嵌入式 PostgreSQL，没有后台检查点进程，也没有独立的 postmaster。它给出的保证比真正的 PostgreSQL 弱：
+
+- 正常关闭（`hub.close()`，包括收到 SIGINT、SIGTERM、SIGBREAK 后由 `closeOnSignals` 触发的关闭）会写入最终检查点，数据完整落盘。
+- 强制终止（任务管理器、`taskkill /F`、断电）时，已提交的事务依赖预写日志（WAL）在下次启动时重放恢复。Hub 每 30 秒执行一次 `CHECKPOINT`，并在迁移完成后立即执行一次，把数据写入数据文件，减少对 WAL 重放的依赖。断电时 `fsync` 是关闭的，最近几十秒的提交可能丢失，进程被强制终止则不受此影响。
+- 同一个数据目录只能被一个进程打开。Hub 在数据目录旁创建 `pgdata.lock`（内容为进程号），第二个进程会启动失败并提示占用者。上一个进程被强制终止后留下的锁会被自动接管。
+- 如果数据目录已经初始化、磁盘上有表文件，但迁移记录表缺失或为空，Hub 会拒绝启动并报错，而不是在旧文件上创建一个空库（表现为“还没有任何账号”并出现新的设置码）。遇到这种情况先备份整个数据目录再排查；确认要丢弃旧数据重新开始时，设置 `HUB_ALLOW_DB_RESET=1` 后启动。
+- 嵌入 Hub 的宿主应在进程退出时调用 `hub.close()`，或使用 `@prometheus/hub` 导出的 `closeOnSignals(hub, { log })`。
+
+建议：超过小团队规模，或需要时间点恢复、在线备份、高可用时，使用 PostgreSQL（设置 `HUB_DATABASE_URL`）。PGlite 适合单机、少量用户和试用。无论使用哪种数据库，都应定期备份，且备份前停止 Hub。
+
 ## 环境变量
 
 下表列出 Hub 读取的全部环境变量。默认值以代码为准。服务端通用变量与 Hub 角色相关的变量放在前两组。
@@ -136,6 +148,7 @@ server {
 | --- | --- | --- |
 | `HUB_DATABASE_URL` | 空（使用 PGlite） | PostgreSQL 连接串。设置后不再使用 PGlite |
 | `HUB_DB_APP_ROLE` | `prometheus_app` | 行级安全使用的应用角色名 |
+| `HUB_ALLOW_DB_RESET` | 空 | 设为 `1` 时，允许在迁移记录丢失但仍有旧表文件的 PGlite 目录上重新初始化（会丢弃旧数据），见「备份」 |
 | `HUB_SECRET_KEY` | 自动生成到 `secret.key` | 主密钥，32 字节的 base64。用于加密 API Key |
 | `HUB_PUBLIC_URL` | 空 | 用户访问 Hub 的根地址，如 `https://hub.example.com`。生产环境必须设置 |
 | `HUB_ORG_NAME` | `我的团队` | 首个账号创建时自动生成的企业名称 |
