@@ -20,6 +20,7 @@ import type {
 	PluginToolContext,
 	PrometheusPlugin,
 	RouteHandler,
+	RouteAuth,
 	RpcHandler,
 	StreamPublishOptions,
 	WorkspaceRef,
@@ -32,6 +33,8 @@ export interface PluginRoute {
 	/** Full path, e.g. /plugins/foo/status */
 	path: string;
 	handler: RouteHandler;
+	/** "public": the plugin authenticates the request itself; the host skips its login check. */
+	auth: RouteAuth;
 }
 
 export interface PluginHostOptions {
@@ -758,9 +761,9 @@ export class PluginHost {
 				this.stores.set(id, factory);
 				reg.storeIds.push(id);
 			},
-			route: (method, path, handler) => {
+			route: (method, path, handler, opts) => {
 				if (!path.startsWith("/")) throw new AppError("pluginRoutePath");
-				reg.routes.push({ method, path: `/plugins/${name}${path}`, handler });
+				reg.routes.push({ method, path: `/plugins/${name}${path}`, handler, auth: opts?.auth === "public" ? "public" : "host" });
 			},
 			panel: (panel) => {
 				entry.info.panels.push({ plugin: name, id: panel.id, title: panel.title, icon: panel.icon, url: `/plugins/${name}${panel.path}` });

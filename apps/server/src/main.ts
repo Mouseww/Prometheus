@@ -5,7 +5,7 @@ import { delimiter, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { builtinPlugins } from "@prometheus/builtin-plugins";
 import { DEFAULT_LAN_PORT, PrometheusHost } from "@prometheus/core";
-import { AppError, type ClientFrame, encodeBinaryFrame, encodeError, type NetworkPatch, type NetworkStatus, PROTOCOL_VERSION, type RuntimeEnv, type ServerFrame } from "@prometheus/protocol";
+import { AppError, type ClientFrame, encodeBinaryFrame, encodeError, type Identity, type NetworkPatch, type NetworkStatus, PROTOCOL_VERSION, type RuntimeEnv, type ServerFrame } from "@prometheus/protocol";
 import { WebSocket, WebSocketServer } from "ws";
 import {
 	type Access,
@@ -23,6 +23,7 @@ import {
 	verifyPassword,
 	verifySession,
 } from "./network.ts";
+import { type AuthProvider, type CredentialResult, hubTrustFromEnv, identityAllowed } from "./auth.ts";
 import { isLoopbackAddress, originAllowed, parseCookies, tokensEqual } from "./security.ts";
 import { defaultWebRoot, serveStatic } from "./static.ts";
 import { QuickTunnel } from "./tunnel.ts";
@@ -60,6 +61,8 @@ interface Client {
 	kind: Kind;
 	/** Plugin topics this client watches, as `<plugin>\0<topic>`. */
 	watches: Set<string>;
+	/** Set when a trusted issuer (the team Hub) vouched for this client; absent for the machine's own user. */
+	identity?: Identity;
 }
 
 const clients = new Set<Client>();
@@ -147,20 +150,39 @@ function requestAllowed(req: IncomingMessage, kind: Kind, access: Access): boole
 	return originAllowed(req, { tokenRequired: Boolean(TOKEN), extraOrigins: EXTRA_ORIGINS });
 }
 
+/** Hub-signed tokens are accepted next to the local credentials when a trust key is configured. */
+const authProvider: AuthProvider | undefined = hubTrustFromEnv(process.env);
+
+/** Token and password first; then, if a Hub is trusted, a Hub token (which must belong to the server's owner when the policy names one). */
+function checkCredential(access: Access, secret: string): CredentialResult {
+	if (access.mode === "none") return { ok: true };
+	if (access.mode === "token" && tokensEqual(secret, TOKEN)) return { ok: true };
+	if (access.mode === "password" && verifySession(config.network().secret, secret)) return { ok: true };
+	if (authProvider && access.mode !== "deny") {
+		const identity = authProvider.verify(secret);
+		if (identity && identityAllowed(identity, config.policy()?.serverOwner)) return { ok: true, identity };
+	}
+	return { ok: false };
+}
+
 function validCredential(access: Access, secret: string): boolean {
-	if (access.mode === "none") return true;
-	if (access.mode === "token") return tokensEqual(secret, TOKEN);
-	if (access.mode === "password") return verifySession(config.network().secret, secret);
-	return false;
+	return checkCredential(access, secret).ok;
+}
+
+function httpIdentity(req: IncomingMessage, kind: Kind): CredentialResult {
+	const access = accessOf(req, kind);
+	if (access.mode === "none") return { ok: true };
+	const header = req.headers.authorization;
+	if (header?.startsWith("Bearer ")) {
+		const r = checkCredential(access, header.slice(7));
+		if (r.ok) return r;
+	}
+	const cookie = parseCookies(req.headers.cookie)[COOKIE];
+	return cookie !== undefined ? checkCredential(access, cookie) : { ok: false };
 }
 
 function httpAuthorized(req: IncomingMessage, kind: Kind): boolean {
-	const access = accessOf(req, kind);
-	if (access.mode === "none") return true;
-	const header = req.headers.authorization;
-	if (header?.startsWith("Bearer ") && validCredential(access, header.slice(7))) return true;
-	const cookie = parseCookies(req.headers.cookie)[COOKIE];
-	return cookie !== undefined && validCredential(access, cookie);
+	return httpIdentity(req, kind).ok;
 }
 
 // ---------- login ----------
@@ -280,11 +302,14 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, kind: Kind)
 
 	if (url.pathname.startsWith("/plugins/")) {
 		// A panel page is loaded by a sandboxed iframe that may not carry the cookie; it brings a pass instead.
-		const passed = req.method === "GET" && host.panelTicketValid(url.searchParams.get("pt"));
-		if (!passed && !httpAuthorized(req, kind)) return json(res, 401, { error: "unauthorized" });
 		const route = host.runtime.plugins.routes.find((r) => r.method === req.method && r.path === url.pathname);
+		// A public route authenticates itself; an unknown path still demands a login so its existence is not revealed.
+		if (route?.auth === "public") return void (await route.handler(req, res, {}));
+		const passed = req.method === "GET" && host.panelTicketValid(url.searchParams.get("pt"));
+		const who = passed ? { ok: true } : httpIdentity(req, kind);
+		if (!who.ok) return json(res, 401, { error: "unauthorized" });
 		if (!route) return json(res, 404, { error: "not found" });
-		await route.handler(req, res);
+		await route.handler(req, res, who.identity ? { identity: who.identity } : {});
 		return;
 	}
 
@@ -532,7 +557,7 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage, kind: Kind) => {
 						applyRuntimeEnv(frame.params as RuntimeEnv);
 						data = null;
 					} else {
-						data = await host.call(frame.method, frame.params as never);
+						data = await host.call(frame.method, frame.params as never, client.identity ? { identity: client.identity } : undefined);
 						if (frame.method === "session.create" || frame.method === "session.open") client.sessions.add((data as { id: string }).id);
 					}
 					send(client, { type: "response", id: frame.id, ok: true, data });

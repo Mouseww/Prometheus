@@ -12,6 +12,7 @@ import {
 	withAttachmentNote,
 	type ChatMessage,
 	encodeError,
+	type Caller,
 	type ModelPricing,
 	type CommandInfo,
 	type DirListing,
@@ -182,7 +183,9 @@ interface LiveSession {
 	handoff?: string;
 }
 
-type Handlers = { [M in Exclude<RpcMethod, ServerRpcMethod>]: (params: RpcParams<M>) => Promise<RpcResult<M>> | RpcResult<M> };
+type Handlers = { [M in Exclude<RpcMethod, ServerRpcMethod>]: (params: RpcParams<M>, caller?: Caller) => Promise<RpcResult<M>> | RpcResult<M> };
+
+export type { Caller } from "@prometheus/protocol";
 
 /** Embeddable Prometheus host: one agent runtime, many sessions, all exposed through the RPC surface. */
 export class PrometheusHost {
@@ -270,10 +273,10 @@ ${extras.map((p) => `- ${p}`).join("
 		return host;
 	}
 
-	async call<M extends RpcMethod>(method: M, params: RpcParams<M>): Promise<RpcResult<M>> {
-		const handler = (this.handlers as Partial<Record<RpcMethod, unknown>>)[method] as ((p: RpcParams<M>) => Promise<RpcResult<M>> | RpcResult<M>) | undefined;
+	async call<M extends RpcMethod>(method: M, params: RpcParams<M>, caller?: Caller): Promise<RpcResult<M>> {
+		const handler = (this.handlers as Partial<Record<RpcMethod, unknown>>)[method] as ((p: RpcParams<M>, caller?: Caller) => Promise<RpcResult<M>> | RpcResult<M>) | undefined;
 		if (!handler) throw new AppError("notFound", { what: method });
-		return handler(params ?? ({} as RpcParams<M>));
+		return handler(params ?? ({} as RpcParams<M>), caller);
 	}
 
 	/** The file a `file.link` ticket stands for (consumed by the HTTP download route). */
@@ -1659,11 +1662,11 @@ ${extras.map((p) => `- ${p}`).join("
 			return null;
 		},
 		"panel.link": () => ({ id: issuePanelTicket() }),
-		"plugin.call": async ({ plugin, method, params }) => {
+		"plugin.call": async ({ plugin, method, params }, caller) => {
 			const handler = this.runtime.plugins.rpcs.get(`${plugin}/${method}`);
 			if (!handler) throw new AppError("pluginMethodNotFound", { plugin, method });
 			const isObject = params !== null && typeof params === "object" && !Array.isArray(params);
-			return (await handler(isObject ? (params as Record<string, unknown>) : {})) ?? null;
+			return (await handler(isObject ? (params as Record<string, unknown>) : {}, caller)) ?? null;
 		},
 	};
 }

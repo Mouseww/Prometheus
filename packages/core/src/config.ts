@@ -3,7 +3,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { mergeGatewayUpdate, validateGateway } from "@prometheus/gateway";
-import { type AgentProfile, type AgentServer, AppError, BUILTIN_AGENTS, type GatewayConfig } from "@prometheus/protocol";
+import { type AdminPolicy, type AgentProfile, type AgentServer, AppError, BUILTIN_AGENTS, type GatewayConfig } from "@prometheus/protocol";
 
 export interface NetworkConfig {
 	/** Also listen on all network interfaces. */
@@ -111,6 +111,11 @@ export class ConfigStore {
 
 	get(): Readonly<PrometheusConfig> {
 		return this.config;
+	}
+
+	/** The administrator's policy, when one is configured. */
+	policy(): Readonly<AdminPolicy> | undefined {
+		return undefined;
 	}
 
 	gateways(): GatewayConfig[] {

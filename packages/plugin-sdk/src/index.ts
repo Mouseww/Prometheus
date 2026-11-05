@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
-import type { BlockedCall, GatewayConfig, ModelRef, PermissionMode, RunAccess } from "@prometheus/protocol";
+import type { BlockedCall, Caller, GatewayConfig, Identity, ModelRef, PermissionMode, RunAccess } from "@prometheus/protocol";
 
 export type { ExtensionAPI, ExtensionFactory, ToolDefinition } from "@earendil-works/pi-coding-agent";
 export { createJsonStore, type JsonStore } from "./json-store.ts";
@@ -46,9 +46,12 @@ export type KnowledgeStoreFactory = (options: KnowledgeStoreOptions) => Promise<
 // ---------- Plugin contract ----------
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-export type RouteHandler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
-/** Params arrive straight from clients: validate before use. */
-export type RpcHandler = (params: Record<string, unknown>) => unknown;
+/** `ctx.identity` is set when a trusted issuer vouched for the caller (see `auth`). */
+export type RouteHandler = (req: IncomingMessage, res: ServerResponse, ctx: { identity?: Identity }) => void | Promise<void>;
+/** "host": the host checks the login first (default). "public": the plugin authenticates the request itself. */
+export type RouteAuth = "host" | "public";
+/** Params arrive straight from clients: validate before use. `caller` is absent for internal calls. */
+export type RpcHandler = (params: Record<string, unknown>, caller?: Caller) => unknown;
 
 export interface PanelContribution {
 	id: string;
@@ -315,7 +318,7 @@ export interface PluginContext {
 	/** Register a knowledge store backend under an id (e.g. "qdrant"). */
 	knowledgeStore(id: string, factory: KnowledgeStoreFactory): void;
 	/** Mount an HTTP route at /plugins/<name><path>. Server host only. */
-	route(method: HttpMethod, path: string, handler: RouteHandler): void;
+	route(method: HttpMethod, path: string, handler: RouteHandler, opts?: { auth?: RouteAuth }): void;
 	/** Add a sidebar panel rendered in an iframe. Server host only. */
 	panel(panel: PanelContribution): void;
 	/** Expose a method to clients as `plugin.call({ plugin: <name>, method })`. */

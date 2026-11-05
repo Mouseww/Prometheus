@@ -236,3 +236,15 @@ describe("PluginHost live streams", () => {
 		expect(sent).toHaveLength(1);
 	});
 });
+
+describe("plugin route auth", () => {
+	it("defaults to host auth and honours public", async () => {
+		const { host } = await makeHost();
+		await host.install({
+			name: "beta",
+			files: [plugin("beta", `ctx.route("GET", "/a", () => {}); ctx.route("POST", "/b", () => {}, { auth: "public" }); ctx.route("GET", "/c", () => {}, { auth: "host" });`)],
+		});
+		const auth = Object.fromEntries(host.routes.map((r) => [r.path, r.auth]));
+		expect(auth).toEqual({ "/plugins/beta/a": "host", "/plugins/beta/b": "public", "/plugins/beta/c": "host" });
+	});
+});

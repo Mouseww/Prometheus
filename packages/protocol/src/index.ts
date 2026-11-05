@@ -328,6 +328,38 @@ export interface RuntimeInfo {
 	capabilities: RuntimeCapabilities;
 }
 
+/** Who is calling, when a trusted issuer (the team Hub) vouched for them. Absent in personal use. */
+export interface Identity {
+	userId: string;
+	name?: string;
+	orgId?: string;
+	/** Users this identity may act for (delegation from the Hub). */
+	actsFor?: string[];
+}
+
+/** Settings an administrator fixes for this install; users cannot change what the policy locks. */
+export interface AdminPolicy {
+	/** Only this user (or identities acting for them) may connect with a Hub token. */
+	serverOwner?: string;
+	/** Permission modes nobody may switch to (e.g. ["bypassPermissions", "auto"]). */
+	forbiddenModes?: PermissionMode[];
+	/** Forced default permission mode. */
+	defaultPermission?: PermissionMode;
+	/** "ask": reading outside the session's working folder needs the owner's confirmation. */
+	readOutsideProject?: "allow" | "ask";
+	/** When set, only these plugins load and only these can be installed or enabled. */
+	pluginAllowlist?: string[];
+	/** Gateways supplied by the administrator; when present, users cannot add, edit or delete gateways. */
+	gateways?: GatewayConfig[];
+	/** Free text shown to users explaining who manages this install. */
+	managedBy?: string;
+}
+
+/** Who made an RPC call. No identity means the machine's own user (token, password or loopback). */
+export interface Caller {
+	identity?: Identity;
+}
+
 export interface SessionSummary {
 	id: string;
 	name?: string;
