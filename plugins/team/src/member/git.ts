@@ -27,7 +27,10 @@ export interface GitResult {
 
 function configEnv(token: string | undefined): Record<string, string> {
 	// credential.helper="" stops git from consulting (or storing into) a credential helper; the token travels only as a header.
-	const entries: [string, string][] = [["credential.helper", ""], ["core.longpaths", "true"], ["core.quotepath", "false"]];
+	// core.autocrlf=false: the Hub stores blobs byte for byte and replicas are compared by tree hash, so no machine may rewrite line endings
+	// (Git for Windows defaults to autocrlf=true, which would check out CRLF and make other git tools, or a CRLF file's snapshot, disagree).
+	// Repository .gitattributes still apply; only the per-user conversion is switched off. Command-line config outranks the user's own files.
+	const entries: [string, string][] = [["credential.helper", ""], ["core.longpaths", "true"], ["core.quotepath", "false"], ["core.autocrlf", "false"]];
 	if (token) entries.push(["http.extraHeader", `Authorization: Bearer ${token}`]);
 	const env: Record<string, string> = { GIT_CONFIG_COUNT: String(entries.length) };
 	entries.forEach(([key, value], i) => {
