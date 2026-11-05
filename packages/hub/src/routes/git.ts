@@ -1,6 +1,7 @@
 import type { IncomingMessage } from "node:http";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
+import { TENANT_SCOPE, type TenantCredentials } from "../auth/tenant-credentials.ts";
 import { JWT_AUDIENCE } from "../config.ts";
 import type { HubDeps } from "../deps.ts";
 import { HubError, notFound, validationError } from "../errors.ts";
@@ -145,6 +146,14 @@ export function registerGitRoutes(router: Router, deps: HubDeps): void {
 		const token = gitCredential(ctx.req);
 		const claims = token ? verifyJwt(token, { publicKey: deps.publicKeyPem, issuer: deps.config.issuer, audience: JWT_AUDIENCE }) : undefined;
 		if (!claims) throw new HubError(401, "invalidToken", token ? "访问令牌无效或已过期" : "需要登录", GIT_REALM);
+		// Same rule as the central dispatcher: a scoped (tenant) access token only counts while its credential is live, so revoking a
+		// credential, disabling or banning the user cuts off git too. Any other scope is not accepted here.
+		if (claims.scope !== undefined) {
+			const credentials = deps.registry.get<TenantCredentials>("tenantCredentials");
+			if (claims.scope !== TENANT_SCOPE || !credentials || !(await credentials.accessTokenActive(claims))) {
+				throw new HubError(401, "invalidToken", "访问令牌无效或已过期", GIT_REALM);
+			}
+		}
 		const actor = await services.actors.load(claims.sub);
 		// Visibility check doubles as the team membership check; outsiders see the same 404 as for a missing repository.
 		const ws = await db.tx(scopeOf(actor), (q) => workspaces.require(q, actor, workspaceId)).catch((err: unknown) => {

@@ -18,6 +18,16 @@ describe("WebSocket upgrade", () => {
 		await expect(connectWs(c.t.baseUrl, dave.token)).rejects.toThrow(/401/);
 	});
 
+	it("closes the open sockets of a user as soon as the account is disabled", async () => {
+		const erin = await c.t.createUser(c.root.token, "erin@corp.test", "Erin");
+		const sock = await connectWs(c.t.baseUrl, erin.token);
+		expect(c.realtime.connectionCount(erin.userId)).toBe(1);
+		const closed = new Promise<void>((resolve) => sock.ws.once("close", () => resolve()));
+		await c.t.api("POST", `/api/admin/users/${erin.userId}/disable`, { token: c.root.token });
+		await closed;
+		expect(c.realtime.connectionCount(erin.userId)).toBe(0);
+	});
+
 	it("is not handled for other paths", async () => {
 		const handled = c.t.hub.handleUpgrade({ url: "/somewhere-else", headers: {} } as never, { on() {}, destroy() {} } as never, Buffer.alloc(0));
 		expect(handled).toBe(false);

@@ -1,12 +1,12 @@
 import type { HubConfig } from "../config.ts";
 import { toIso } from "../db/db.ts";
 import { conflict, forbidden } from "../errors.ts";
-import { LOG_PREFIX } from "../log.ts";
 import { type Actor, can } from "../permissions.ts";
 import type { ServiceRegistry } from "../deps.ts";
 import type { AdminUsersService } from "./admin-users.ts";
 import type { AuditService } from "./audit.ts";
 import type { PublicUser, ServiceDeps } from "./common.ts";
+import { lockOutUser } from "./lockout.ts";
 import type { CreateOrgInput, OrgSummary, OrgsService } from "./orgs.ts";
 import type { SettingsService } from "./settings.ts";
 
@@ -18,11 +18,6 @@ export interface AdminOrgView {
 	memberCount: number;
 	teamCount: number;
 	createdAt: string;
-}
-
-/** Whatever the runtime manager registers; looked up lazily because block 3 may be absent. */
-interface TenantStopper {
-	stop?: (userId: string, reason?: string) => Promise<void>;
 }
 
 export interface OrgsPublicService {
@@ -76,16 +71,7 @@ export function createOrgsPublicService(
 			if (!can(actor, "platform.manage")) throw forbidden();
 			const user = await o.adminUsers.disable(actor, userId);
 			await deps.db.tx({ system: true }, (q) => o.audit.write(q, { actorId: actor.userId, action: "user.ban", targetType: "user", targetId: userId }));
-			// Block 3 registers `runtime` as `{ manager, nodes, proxy }`; an explicit `tenants` service wins.
-			const runtime = o.registry.get<TenantStopper & { manager?: TenantStopper }>("runtime");
-			const stopper = o.registry.get<TenantStopper>("tenants") ?? runtime?.manager ?? runtime;
-			if (typeof stopper?.stop === "function") {
-				try {
-					await stopper.stop(userId, "banned");
-				} catch (err) {
-					deps.log.warn(`${LOG_PREFIX} 封禁用户 ${userId} 时停止租户实例失败: ${err instanceof Error ? err.message : String(err)}`);
-				}
-			}
+			await lockOutUser({ registry: o.registry, log: deps.log }, userId, "banned");
 			return user;
 		},
 	};

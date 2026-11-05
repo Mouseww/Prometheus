@@ -139,6 +139,32 @@ describe("tenant credentials", () => {
 		expect((await exchange(s, legacy)).status).toBe(401);
 	});
 
+	it("revokes the credentials of a user when the account is disabled", async () => {
+		const s = await setup();
+		const tenant = await s.creds.issue(s.bob.userId, "tenant", 3600);
+		const gateway = await s.creds.issue(s.bob.userId, "gateway", 3600);
+		const rows = (): Promise<{ jti: string; revoked_at: Date | null }[]> =>
+			s.t.hub.db.query("SELECT jti, revoked_at FROM tenant_credentials WHERE user_id = $1", [s.bob.userId]);
+		expect((await rows()).every((r) => r.revoked_at === null)).toBe(true);
+		expect((await s.t.api("POST", `/api/admin/users/${s.bob.userId}/disable`, { token: s.root.token })).status).toBe(200);
+		const after = await rows();
+		expect(after.map((r) => r.jti).sort()).toEqual([tenant.jti, gateway.jti].sort());
+		expect(after.every((r) => r.revoked_at !== null)).toBe(true);
+	});
+
+	it("stops accepting a scope=tenant access token on git smart HTTP once its credential is revoked", async () => {
+		const s = await setup();
+		const { token } = await s.creds.issue(s.bob.userId, "tenant", 3600);
+		const at = (await exchange(s, token)).accessToken as string;
+		const probe = "/git/nosuchworkspace.git/info/refs?service=git-upload-pack";
+		// Credential live: authentication passes and the unknown repository answers 404.
+		expect((await s.t.api("GET", probe, { token: at })).status).toBe(404);
+		expect(await s.creds.revokeUser(s.bob.userId, "tenant")).toBeGreaterThan(0);
+		expect((await s.t.api("GET", probe, { token: at })).status).toBe(401);
+		// A plain access token is not tied to a credential.
+		expect((await s.t.api("GET", probe, { token: s.bob.token })).status).toBe(404);
+	});
+
 	it("revokes everything when the runtime stops and when a new credential is issued", async () => {
 		const s = await setup();
 		await s.runtime.manager.ensureRunning(s.bob.userId);

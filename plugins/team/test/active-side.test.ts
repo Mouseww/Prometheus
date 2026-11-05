@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import type { TenantCredentials } from "../../../packages/hub/src/auth/tenant-credentials.ts";
 import { actOnSession, readOnlyGuard } from "../src/handoff/index.ts";
 import { executeRelay } from "../src/member/relay.ts";
 import { type Member, startMember, startTeamWorld, type TeamWorld, waitFor } from "./harness.ts";
@@ -10,13 +11,17 @@ let tw: TeamWorld;
 let local: Member;
 let team: Member;
 
-const tenantToken = (): string => tw.world.t.hub.deps.signToken({ sub: tw.world.alice.userId, aud: "prometheus-tenant", tenant: true, exp: Math.floor(Date.now() / 1000) + 3600 });
+// The Hub only accepts tenant credentials it issued (jti recorded), so go through the credential service.
+const tenantToken = async (): Promise<string> => {
+	const creds = tw.world.t.hub.registry.require<TenantCredentials>("tenantCredentials");
+	return (await creds.issue(tw.world.alice.userId, "tenant", 3600)).token;
+};
 
 beforeAll(async () => {
 	tw = await startTeamWorld();
 	local = await startMember(tw, "alice@corp.test");
 	// A tenant instance of alice: connects with the tenant credential as the `tenant` kind.
-	team = await startMember(tw, "alice@corp.test", { login: false, tenant: { hubUrl: tw.hubUrl, token: tenantToken() } });
+	team = await startMember(tw, "alice@corp.test", { login: false, tenant: { hubUrl: tw.hubUrl, token: await tenantToken() } });
 	await waitFor(() => local.api.socket.connected && team.api.socket.connected, "both sockets connected", 20_000);
 }, T);
 afterAll(async () => {
