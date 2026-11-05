@@ -1,0 +1,493 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>Prometheus · 个人空间 / 工作空间 构想</title>
+<style>
+:root {
+	--ink-950: #1c1814; --ink-900: #242019; --ink-850: #2b261f; --ink-800: #342e27; --ink-700: #443c34;
+	--ink-600: #574d43; --ink-500: #7a6d62; --ink-400: #a09387; --ink-300: #c0b4a7; --ink-200: #d7ccbf; --ink-100: #e9e0d5;
+	--ember-600: #e0420f; --ember-500: #ff5a1f; --ember-400: #ff7a2f; --ember-300: #ffa055; --ember-200: #ffc061;
+	--moss: #9bc77a; --sky: #7fb2d9; --rose: #f0767a;
+	--display: "Bricolage Grotesque Variable", "Bricolage Grotesque", "IBM Plex Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+	--sans: "IBM Plex Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+	--mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0f0d0b; color: var(--ink-100); font: 13px/1.5 var(--sans); padding: 20px 24px 40px; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+
+/* ---------- page chrome (not part of the product) ---------- */
+.deck-head { display: flex; align-items: baseline; gap: 16px; margin: 0 auto 14px; max-width: 1280px; }
+.deck-head h1 { font: 600 18px var(--display); }
+.deck-head p { color: var(--ink-500); font-size: 12px; }
+.deck-tabs { display: flex; gap: 6px; margin: 0 auto 14px; max-width: 1280px; flex-wrap: wrap; }
+.deck-tabs button { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--ink-800); color: var(--ink-400); font-size: 12px; }
+.deck-tabs button.on { background: var(--ink-800); color: var(--ink-100); border-color: var(--ink-700); }
+.deck-note { max-width: 1280px; margin: 12px auto 0; color: var(--ink-400); font-size: 12px; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 8px 20px; }
+.deck-note b { color: var(--ember-300); font-weight: 600; margin-right: 4px; }
+
+/* ---------- app frame ---------- */
+.app { max-width: 1280px; height: 780px; margin: 0 auto; display: flex; border-radius: 12px; overflow: hidden; border: 1px solid var(--ink-800); background: var(--ink-950); box-shadow: 0 30px 80px -30px #000; position: relative; }
+.screen { display: none; width: 100%; }
+.screen.on { display: flex; }
+
+/* sidebar */
+.side { width: 264px; flex-shrink: 0; background: var(--ink-900); border-right: 1px solid var(--ink-800); display: flex; flex-direction: column; }
+.titlebar { height: 38px; display: flex; align-items: center; gap: 6px; padding: 0 12px; }
+.dot { width: 11px; height: 11px; border-radius: 50%; background: var(--ink-700); }
+
+.switch { margin: 4px 10px 10px; padding: 3px; border-radius: 10px; background: var(--ink-950); border: 1px solid var(--ink-800); display: grid; grid-template-columns: 1fr 1fr; position: relative; }
+.switch button { position: relative; z-index: 1; padding: 7px 0; border-radius: 7px; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--ink-400); font-size: 12.5px; }
+.switch button.on { color: var(--ink-100); background: var(--ink-800); box-shadow: 0 1px 0 #0006, inset 0 1px 0 #ffffff0d; }
+.switch button.on.personal svg { color: var(--ember-400); }
+.switch button.on.work svg { color: var(--sky); }
+.badge-dot { position: absolute; top: 5px; right: 10px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px; background: var(--ember-500); color: #fff; font: 600 9.5px/15px var(--mono); }
+.kbd { font: 10px var(--mono); color: var(--ink-500); border: 1px solid var(--ink-700); border-radius: 4px; padding: 0 4px; }
+
+.newbtn { margin: 0 10px 8px; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--ink-700); color: var(--ink-200); }
+.newbtn:hover { background: var(--ink-850); }
+.newbtn .kbd { margin-left: auto; }
+
+.nav { padding: 0 6px; }
+.nav a { display: flex; align-items: center; gap: 9px; padding: 6px 8px; border-radius: 7px; color: var(--ink-300); text-decoration: none; font-size: 12.5px; }
+.nav a.on { background: var(--ink-800); color: var(--ink-100); }
+.nav a .n { margin-left: auto; font: 10.5px var(--mono); color: var(--ink-500); }
+.nav a .n.hot { color: var(--ember-300); }
+.sep { height: 1px; background: var(--ink-800); margin: 8px 12px; }
+.group { padding: 10px 14px 4px; font: 600 10.5px var(--sans); letter-spacing: .08em; color: var(--ink-500); text-transform: uppercase; display: flex; align-items: center; }
+.group span { margin-left: auto; font-weight: 400; letter-spacing: 0; text-transform: none; }
+
+.convs { flex: 1; overflow: hidden; padding: 0 6px; }
+.conv { display: flex; align-items: flex-start; gap: 8px; padding: 6px 8px; border-radius: 7px; color: var(--ink-300); }
+.conv.on { background: var(--ink-800); color: var(--ink-100); }
+.conv .t { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.conv .s { font-size: 11px; color: var(--ink-500); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.conv .body { min-width: 0; flex: 1; }
+.conv .ic { margin-top: 2px; color: var(--ink-500); flex-shrink: 0; }
+.conv.pinned { background: linear-gradient(90deg, #ff5a1f14, transparent 70%); border: 1px solid #ff5a1f26; margin-bottom: 4px; }
+.conv.pinned .ic { color: var(--ember-400); }
+.conv .live { width: 6px; height: 6px; border-radius: 50%; background: var(--ember-400); box-shadow: 0 0 0 3px #ff7a2f22; margin-top: 7px; }
+.tagp { font: 10px var(--mono); color: var(--sky); border: 1px solid #7fb2d944; border-radius: 4px; padding: 0 4px; margin-left: 4px; }
+
+.proj { padding: 0 6px; }
+.proj .row { display: flex; align-items: center; gap: 7px; padding: 6px 8px; border-radius: 7px; color: var(--ink-200); font-size: 12.5px; }
+.proj .row .chev { color: var(--ink-500); width: 10px; }
+.proj .row .n { margin-left: auto; font: 10.5px var(--mono); color: var(--ink-500); }
+.proj .sess { padding: 4px 8px 4px 34px; border-radius: 7px; color: var(--ink-400); font-size: 12px; display: flex; gap: 6px; align-items: center; }
+.proj .sess.on { background: var(--ink-800); color: var(--ink-100); }
+.proj .sess .when { margin-left: auto; font: 10px var(--mono); color: var(--ink-600); }
+
+.sidefoot { border-top: 1px solid var(--ink-800); padding: 8px 6px; }
+
+/* main */
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+.mhead { height: 38px; display: flex; align-items: center; gap: 10px; padding: 0 18px; border-bottom: 1px solid var(--ink-800); color: var(--ink-400); font-size: 12px; }
+.mhead .crumb b { color: var(--ink-100); font-weight: 500; }
+.mhead .r { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+.pill { font: 10.5px var(--mono); padding: 1px 7px; border-radius: 10px; border: 1px solid var(--ink-700); color: var(--ink-400); }
+.pill.ember { color: var(--ember-300); border-color: #ff7a2f55; }
+.pill.sky { color: var(--sky); border-color: #7fb2d955; }
+.pill.moss { color: var(--moss); border-color: #9bc77a55; }
+
+.scroll { flex: 1; overflow: hidden; padding: 26px 34px; }
+.hello { display: flex; align-items: flex-end; gap: 14px; margin-bottom: 20px; }
+.hello h2 { font: 600 26px/1.2 var(--display); letter-spacing: -.01em; }
+.hello h2 em { font-style: normal; color: var(--ember-300); }
+.hello p { color: var(--ink-400); margin-top: 4px; }
+.pet { width: 54px; height: 54px; border-radius: 16px; background: radial-gradient(circle at 50% 70%, var(--ember-500), var(--ember-600) 45%, #5a1c06 80%); position: relative; flex-shrink: 0; box-shadow: 0 8px 30px -8px #ff5a1f88; }
+.pet::before, .pet::after { content: ""; position: absolute; top: 22px; width: 6px; height: 8px; border-radius: 3px; background: #1c1814; }
+.pet::before { left: 17px; } .pet::after { right: 17px; }
+
+.grid { display: grid; grid-template-columns: 1.35fr 1fr; gap: 14px; }
+.card { background: var(--ink-900); border: 1px solid var(--ink-800); border-radius: 12px; padding: 14px 16px; }
+.card h3 { font: 600 13px var(--display); display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.card h3 .more { margin-left: auto; font: 400 11px var(--sans); color: var(--ink-500); }
+.brief li { list-style: none; display: flex; gap: 10px; padding: 6px 0; border-top: 1px dashed var(--ink-800); color: var(--ink-200); }
+.brief li:first-child { border-top: 0; }
+.brief .k { font: 10.5px var(--mono); color: var(--ink-500); width: 44px; flex-shrink: 0; padding-top: 2px; }
+.inbox .it { display: flex; gap: 10px; padding: 8px 0; border-top: 1px solid var(--ink-800); }
+.inbox .it:first-of-type { border-top: 0; }
+.src { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; font: 600 11px var(--mono); flex-shrink: 0; }
+.src.pet-s { background: #ff5a1f22; color: var(--ember-300); }
+.src.gh { background: #7fb2d922; color: var(--sky); }
+.src.mail { background: #9bc77a22; color: var(--moss); }
+.inbox .tx { min-width: 0; flex: 1; }
+.inbox .tx b { font-weight: 500; }
+.inbox .tx p { color: var(--ink-400); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.inbox .tm { font: 10.5px var(--mono); color: var(--ink-500); }
+.task { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--ink-800); }
+.task:first-of-type { border-top: 0; }
+.task .nm { flex: 1; min-width: 0; }
+.task .nm p { font-size: 11.5px; color: var(--ink-500); }
+.bar { height: 4px; border-radius: 2px; background: var(--ink-800); width: 70px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--ember-400); }
+.spin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--ink-700); border-top-color: var(--ember-400); }
+.ok { color: var(--moss); }
+
+/* composer */
+.composer { margin: 0 34px 22px; border: 1px solid var(--ink-700); border-radius: 14px; background: var(--ink-900); padding: 12px 14px 8px; }
+.composer .ph { color: var(--ink-500); min-height: 38px; }
+.composer .foot { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--ink-400); }
+.chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 7px; background: var(--ink-850); border: 1px solid var(--ink-800); }
+.send { margin-left: auto; width: 30px; height: 30px; border-radius: 9px; background: var(--ember-500); display: grid; place-items: center; color: #fff; }
+.ring { width: 18px; height: 18px; border-radius: 50%; background: conic-gradient(var(--ember-400) 0 28%, var(--ink-700) 0); position: relative; }
+.ring::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; background: var(--ink-900); }
+
+/* chat */
+.chat { flex: 1; overflow: hidden; padding: 22px 0; }
+.col { max-width: 720px; margin: 0 auto; padding: 0 30px; display: flex; flex-direction: column; gap: 16px; }
+.u { align-self: flex-end; background: var(--ink-800); padding: 9px 13px; border-radius: 14px 14px 4px 14px; max-width: 78%; }
+.a { color: var(--ink-200); line-height: 1.65; }
+.a p + p { margin-top: 6px; }
+.divider { display: flex; align-items: center; gap: 10px; color: var(--ink-500); font-size: 11px; }
+.divider::before, .divider::after { content: ""; height: 1px; background: var(--ink-800); flex: 1; }
+.deleg { border: 1px solid var(--ink-700); border-radius: 12px; overflow: hidden; background: var(--ink-900); }
+.deleg .hd { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--ink-800); }
+.deleg .hd b { font-weight: 500; }
+.deleg .bd { padding: 10px 12px; color: var(--ink-300); font-size: 12.5px; }
+.deleg .bd ul { margin: 6px 0 0 16px; }
+.deleg .ft { display: flex; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--ink-800); background: var(--ink-850); }
+.btn { padding: 5px 10px; border-radius: 7px; border: 1px solid var(--ink-700); font-size: 12px; color: var(--ink-200); display: inline-flex; gap: 6px; align-items: center; }
+.btn.pri { background: var(--ember-500); border-color: var(--ember-500); color: #fff; }
+
+/* new chat (work) */
+.center { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding-bottom: 60px; }
+.center h2 { font: 600 24px var(--display); }
+.center .composer { width: min(640px, 88%); margin: 0; }
+.wspick { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.wspick .chip { cursor: pointer; }
+.wspick .chip.on { border-color: #7fb2d977; color: var(--sky); }
+
+/* popover / ctx menu */
+.pop { position: absolute; background: var(--ink-850); border: 1px solid var(--ink-700); border-radius: 10px; box-shadow: 0 18px 50px -12px #000c; padding: 5px; min-width: 210px; z-index: 5; }
+.pop .mi { display: flex; align-items: center; gap: 9px; padding: 6px 9px; border-radius: 6px; color: var(--ink-200); font-size: 12.5px; }
+.pop .mi:hover, .pop .mi.hl { background: var(--ink-800); }
+.pop .mi .kbd { margin-left: auto; }
+.pop .hr { height: 1px; background: var(--ink-700); margin: 4px 2px; }
+.pop .mi.em { color: var(--ember-300); }
+
+/* mobile */
+.phones { display: flex; gap: 40px; align-items: center; justify-content: center; width: 100%; background: radial-gradient(ellipse at 50% 0%, #2b261f, var(--ink-950) 70%); }
+.phone { width: 300px; height: 640px; border-radius: 36px; border: 8px solid #0b0a08; background: var(--ink-950); overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 30px 60px -20px #000; }
+.phone .top { padding: 14px 16px 8px; display: flex; align-items: center; gap: 10px; }
+.phone .top h4 { font: 600 17px var(--display); }
+.phone .switch { margin: 0 14px 10px; }
+.phone .list { flex: 1; overflow: hidden; padding: 0 8px; }
+.phone .tabbar { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--ink-800); padding: 8px 0 14px; text-align: center; font-size: 10.5px; color: var(--ink-500); }
+.phone .tabbar .on { color: var(--ember-300); }
+.phone .fab { position: absolute; }
+svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+</style>
+</head>
+<body>
+
+<svg style="display:none">
+	<symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></symbol>
+	<symbol id="i-brief" viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
+	<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+	<symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></symbol>
+	<symbol id="i-inbox" viewBox="0 0 24 24"><path d="M3 13l3-8h12l3 8v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><path d="M3 13h5l1 3h6l1-3h5"/></symbol>
+	<symbol id="i-mem" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0-6 6c0 3 2 4 2 7h8c0-3 2-4 2-7a6 6 0 0 0-6-6z"/><path d="M9 20h6"/></symbol>
+	<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+	<symbol id="i-book" viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 21V5"/></symbol>
+	<symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+	<symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></symbol>
+	<symbol id="i-flame" viewBox="0 0 24 24"><path d="M12 3c1 3 5 5 5 10a5 5 0 0 1-10 0c0-2 1-3 2-4 0 2 1 3 2 3 0-3-1-6 1-9z"/></symbol>
+	<symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 17v5M8 3h8l-1 6 3 3H6l3-3z"/></symbol>
+	<symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+	<symbol id="i-git" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="9" r="2"/><path d="M6 8v8M18 11c0 4-6 3-10 6"/></symbol>
+	<symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+	<symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></symbol>
+	<symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></symbol>
+	<symbol id="i-share" viewBox="0 0 24 24"><path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M12 3v12M7 8l5-5 5 5"/></symbol>
+	<symbol id="i-term" viewBox="0 0 24 24"><path d="M4 17l6-5-6-5M12 19h8"/></symbol>
+	<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></symbol>
+</svg>
+
+<div class="deck-head"><h1>个人空间 / 工作空间 · 界面构想</h1><p>静态示意稿，配色与字体沿用 Prometheus 现有主题。点击下方切换画面。</p></div>
+<div class="deck-tabs" id="tabs">
+	<button data-s="s1" class="on">① 个人空间 · 主页</button>
+	<button data-s="s2">② 个人空间 · 对话（含委派卡片）</button>
+	<button data-s="s3">③ 工作空间 · 以项目为项</button>
+	<button data-s="s4">④ 工作 → 个人：发给助理</button>
+	<button data-s="s5">⑤ 手机端</button>
+</div>
+
+<div class="app">
+
+<!-- ====================== ① 个人空间 · 主页 ====================== -->
+<div class="screen on" id="s1">
+	<aside class="side">
+		<div class="titlebar"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+		<div class="switch">
+			<button class="on personal"><svg><use href="#i-user"/></svg>个人</button>
+			<button class="work"><svg><use href="#i-brief"/></svg>工作<span class="badge-dot">2</span></button>
+		</div>
+		<div class="newbtn"><svg><use href="#i-plus"/></svg>新对话<span class="kbd">Ctrl N</span></div>
+		<nav class="nav">
+			<a class="on"><svg><use href="#i-home"/></svg>主页</a>
+			<a><svg><use href="#i-inbox"/></svg>收件<span class="n hot">3</span></a>
+			<a><svg><use href="#i-clock"/></svg>自动化<span class="n">5</span></a>
+			<a><svg><use href="#i-mem"/></svg>记忆</a>
+			<a><svg><use href="#i-book"/></svg>知识库</a>
+		</nav>
+		<div class="group">对话<span><svg style="width:13px;height:13px"><use href="#i-search"/></svg></span></div>
+		<div class="convs">
+			<div class="conv pinned"><svg class="ic"><use href="#i-flame"/></svg><div class="body"><div class="t">主线 · 普罗</div><div class="s">早报已送达 · 2 个委派进行中</div></div></div>
+			<div class="group" style="padding:6px 8px 2px">今天</div>
+			<div class="conv"><svg class="ic"><use href="#i-chat"/></svg><div class="body"><div class="t">地铁项目方案给老板的版本</div><div class="s">已委派到 metro-agent</div></div><span class="live"></span></div>
+			<div class="conv"><svg class="ic"><use href="#i-chat"/></svg><div class="body"><div class="t">下周出差行程</div><div class="s">高铁 G1234 已加入日历</div></div></div>
+			<div class="group" style="padding:6px 8px 2px">本周</div>
+			<div class="conv"><svg class="ic"><use href="#i-chat"/></svg><div class="body"><div class="t">直播间礼物玩法头脑风暴</div><div class="s">3 个候选方案</div></div></div>
+			<div class="conv"><svg class="ic"><use href="#i-chat"/></svg><div class="body"><div class="t">GitHub 未读 PR 汇总</div><div class="s">prometheus-pet #42 等 4 条</div></div></div>
+			<div class="conv"><svg class="ic"><use href="#i-chat"/></svg><div class="body"><div class="t">内网大模型部署选型</div><div class="s">对比 Qwen / DeepSeek</div></div></div>
+		</div>
+		<div class="sidefoot nav"><a><svg><use href="#i-gear"/></svg>设置</a></div>
+	</aside>
+	<main class="main">
+		<div class="mhead"><span class="crumb"><b>主页</b></span><span class="r"><span class="pill ember">个人空间</span><span>周三 · 5月14日</span></span></div>
+		<div class="scroll">
+			<div class="hello">
+				<div class="pet"></div>
+				<div><h2>早上好，主人。今天有 <em>3 件事</em>要你过目。</h2><p>普罗昨晚跑完了 2 个委派，1 个还在进行；收件里有 3 条新消息。</p></div>
+			</div>
+			<div class="grid">
+				<div class="card brief">
+					<h3><svg><use href="#i-flame"/></svg>今日简报<span class="more">08:30 生成 · 存为笔记</span></h3>
+					<ul>
+						<li><span class="k">项目</span><span>metro-agent：CAD 识图模块的测试昨晚全部通过，报告模板还差「施工方案」一节。</span></li>
+						<li><span class="k">待办</span><span>周五前把盾构选型方案发给老板过目（已在「地铁项目方案」对话里起草）。</span></li>
+						<li><span class="k">消息</span><span>GitHub 上有 1 个 PR 等你 review；邮件里客户问了部署时间。</span></li>
+						<li><span class="k">创意</span><span>自动化「AI 落地创意收集」新增 6 条，挑出 2 条值得看。</span></li>
+					</ul>
+				</div>
+				<div class="card inbox">
+					<h3><svg><use href="#i-inbox"/></svg>收件<span class="more">全部 →</span></h3>
+					<div class="it"><div class="src pet-s">普</div><div class="tx"><b>直播间观众</b><p>“笨鱼能不能唱首歌？”—— 等待回复</p></div><span class="tm">09:12</span></div>
+					<div class="it"><div class="src gh">GH</div><div class="tx"><b>prometheus-pet #42</b><p>请求 review：托盘菜单改为主题样式</p></div><span class="tm">08:47</span></div>
+					<div class="it"><div class="src mail">✉</div><div class="tx"><b>王工 · 地铁集团</b><p>内网部署大概什么时候能演示？</p></div><span class="tm">昨天</span></div>
+				</div>
+				<div class="card">
+					<h3><svg><use href="#i-share"/></svg>委派中<span class="more">普罗派到项目里的活</span></h3>
+					<div class="task"><div class="spin"></div><div class="nm">整理盾构选型对比表<p>metro-agent · 只读 · 已运行 6 分钟</p></div><div class="bar"><i style="width:60%"></i></div></div>
+					<div class="task"><svg class="ok"><use href="#i-check"/></svg><div class="nm">修复压缩后历史不可见<p>Prometheus · 可编辑 · 完成，改动 3 个文件</p></div><button class="btn">查看</button></div>
+					<div class="task"><svg class="ok"><use href="#i-check"/></svg><div class="nm">汇总本周 PR<p>prometheus-pet · 只读 · 完成</p></div><button class="btn">查看</button></div>
+				</div>
+				<div class="card">
+					<h3><svg><use href="#i-clock"/></svg>自动化<span class="more">今天</span></h3>
+					<div class="task"><svg class="ok"><use href="#i-check"/></svg><div class="nm">AI 落地创意收集<p>每天 07:00 · 新增 6 条</p></div><span class="pill">个人</span></div>
+					<div class="task"><svg class="ok"><use href="#i-check"/></svg><div class="nm">测试服务器健康检查<p>每 2 小时 · 一切正常</p></div><span class="pill sky">Prometheus</span></div>
+					<div class="task"><div class="spin" style="border-top-color:var(--ink-500)"></div><div class="nm">每日简报<p>明天 08:30</p></div><span class="pill">个人</span></div>
+				</div>
+			</div>
+		</div>
+		<div class="composer">
+			<div class="ph">问普罗任何事，或者让它去某个项目里干活…</div>
+			<div class="foot"><span class="chip"><svg><use href="#i-flame"/></svg>新对话</span><span class="chip">内网 Qwen-72B</span><span class="chip">只读 · 可委派</span><span class="send"><svg><use href="#i-send"/></svg></span></div>
+		</div>
+	</main>
+</div>
+
+<!-- ====================== ② 个人空间 · 对话 ====================== -->
+<div class="screen" id="s2">
+	<aside class="side">
+		<div class="titlebar"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+		<div class="switch">
+			<button class="on personal"><svg><use href="#i-user"/></svg>个人</button>
+			<button class="work"><svg><use href="#i-brief"/></svg>工作<span class="badge-dot">2</span></button>
+		</div>
+		<div class="newbtn"><svg><use href="#i-plus"/></svg>新对话<span class="kbd">Ctrl N</span></div>
+		<nav class="nav">
+			<a><svg><use href="#i-home"/></svg>主页</a>
+			<a><svg><use href="#i-inbox"/></svg>收件<span class="n hot">3</span></a>
+			<a><svg><use href="#i-clock"/></svg>自动化<span class="n">5</span></a>
+			<a><svg><use href="#i-mem"/></svg>记忆</a>
+			<a><svg><use href="#i-book"/></svg>知识库</a>
+		</nav>
+		<div class="group">对话</div>
+		<div class="convs">
+			<div class="conv pinned"><svg class="ic"><use href="#i-flame"/></svg><div class="body"><div class="t">主线 · 普罗</div><div class="s">早报已送达 · 2 个委派进行中</div></div></div>
+			<div class="group" style="padding:6px 8px 2px">今天</div>
+			<div class="conv on"><svg class="ic"><use href="#i-chat"/></svg><div class="body"><div class="t">地铁项目方案给老板的版本</div><div class="s">已委派到 metro-agent</div></div><span class="live"></span></div>
+			<div class="conv"><svg class="ic"><use href="#i-chat"/></svg><div class="body"><div class="t">下周出差行程</div><div class="s">高铁 G1234 已加入日历</div></div></div>
+			<div class="group" style="padding:6px 8px 2px">本周</div>
+			<div class="conv"><svg class="ic"><use href="#i-chat"/></svg><div class="body"><div class="t">直播间礼物玩法头脑风暴</div><div class="s">3 个候选方案</div></div></div>
+			<div class="conv"><svg class="ic"><use href="#i-chat"/></svg><div class="body"><div class="t">GitHub 未读 PR 汇总</div><div class="s">prometheus-pet #42 等 4 条</div></div></div>
+		</div>
+		<div class="sidefoot nav"><a><svg><use href="#i-gear"/></svg>设置</a></div>
+	</aside>
+	<main class="main">
+		<div class="mhead"><span class="crumb">个人 / <b>地铁项目方案给老板的版本</b></span><span class="r"><span class="pill ember">个人空间</span><span class="pill">关联 metro-agent</span></span></div>
+		<div class="chat"><div class="col">
+			<div class="u">把盾构选型那部分整理成给老板看的版本，别提预算，砍掉的功能写成以后可以扩展的方向。</div>
+			<div class="a"><p>好的。选型需要的地质分段和设备参数都在 <b>metro-agent</b> 项目里，我先派一个只读任务过去把对比表整理出来，拿回来再改写成给老板看的语气。</p></div>
+			<div class="deleg">
+				<div class="hd"><svg style="color:var(--ember-400)"><use href="#i-share"/></svg><b>委派到 metro-agent</b><span class="pill">只读</span><span class="pill moss" style="margin-left:auto">已完成 · 4 分 12 秒</span></div>
+				<div class="bd">整理盾构选型对比表（按组段划分 → 盾构选型 → 施工方案）
+					<ul><li>读取 docs/geology/*.md 与 data/segments.csv，共 7 个组段</li><li>输出 reports/tbm-compare.md（土压平衡 vs 泥水平衡，每段一行）</li><li>数值由 calc_tbm.py 计算，未手算</li></ul>
+				</div>
+				<div class="ft"><button class="btn pri"><svg><use href="#i-arrow"/></svg>在项目中打开</button><button class="btn">查看完整报告</button><button class="btn">让它继续</button></div>
+			</div>
+			<div class="a"><p>对比表拿到了。下面是给老板的版本，三段：</p><p><b>一、组段划分</b>　全线按地质条件分 7 段，其中 3 段为富水砂层……</p></div>
+			<div class="divider">上下文已压缩 · 之前的 18 条消息仍可往上翻</div>
+			<div class="u">第二段再精简一点，控制在一屏以内。</div>
+			<div class="a"><p>已压缩到 6 行，关键结论放在第一句……</p></div>
+		</div></div>
+		<div class="composer">
+			<div class="ph">继续说…</div>
+			<div class="foot"><span class="chip">内网 Qwen-72B</span><span class="chip">只读 · 可委派</span><span class="ring"></span><span class="send"><svg><use href="#i-send"/></svg></span></div>
+		</div>
+	</main>
+</div>
+
+<!-- ====================== ③ 工作空间 ====================== -->
+<div class="screen" id="s3">
+	<aside class="side">
+		<div class="titlebar"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+		<div class="switch">
+			<button class="personal"><svg><use href="#i-user"/></svg>个人<span class="badge-dot">3</span></button>
+			<button class="on work"><svg><use href="#i-brief"/></svg>工作</button>
+		</div>
+		<div class="newbtn"><svg><use href="#i-plus"/></svg>新会话<span class="kbd">Ctrl N</span></div>
+		<nav class="nav">
+			<a><svg><use href="#i-clock"/></svg>自动化</a>
+			<a><svg><use href="#i-git"/></svg>Git</a>
+		</nav>
+		<div class="group">项目<span>＋</span></div>
+		<div class="proj">
+			<div class="row"><span class="chev">▾</span><svg style="color:var(--sky)"><use href="#i-folder"/></svg>Prometheus<span class="n">12</span></div>
+			<div class="sess on">修复压缩后历史不可见<span class="when">刚刚</span></div>
+			<div class="sess">日志插件<span class="when">1h</span></div>
+			<div class="sess"><span class="tagp" style="margin:0">委派</span>汇总本周改动<span class="when">昨天</span></div>
+			<div class="row"><span class="chev">▾</span><svg style="color:var(--sky)"><use href="#i-folder"/></svg>metro-agent<span class="n">8</span></div>
+			<div class="sess"><span class="tagp" style="margin:0">委派</span>整理盾构选型对比表<span class="when">6m</span></div>
+			<div class="sess">CAD 识图测试<span class="when">昨天</span></div>
+			<div class="row"><span class="chev">▸</span><svg style="color:var(--sky)"><use href="#i-folder"/></svg>prometheus-pet<span class="n">21</span></div>
+			<div class="row"><span class="chev">▸</span><svg style="color:var(--sky)"><use href="#i-folder"/></svg>novel-lab<span class="n">5</span></div>
+		</div>
+		<div style="flex:1"></div>
+		<div class="sidefoot nav"><a><svg><use href="#i-gear"/></svg>设置</a></div>
+	</aside>
+	<main class="main">
+		<div class="mhead"><span class="crumb">工作 / <b>新会话</b></span><span class="r"><span class="pill sky">工作空间</span></span></div>
+		<div class="center">
+			<h2>在哪个项目里开始？</h2>
+			<div class="wspick">
+				<span class="chip on"><svg><use href="#i-folder"/></svg>Prometheus</span>
+				<span class="chip"><svg><use href="#i-folder"/></svg>metro-agent</span>
+				<span class="chip"><svg><use href="#i-folder"/></svg>prometheus-pet</span>
+				<span class="chip"><svg><use href="#i-folder"/></svg>novel-lab</span>
+				<span class="chip"><svg><use href="#i-plus"/></svg>打开文件夹</span>
+			</div>
+			<div class="composer">
+				<div class="ph">在 Prometheus 里做点什么…</div>
+				<div class="foot"><span class="chip">claude-sonnet</span><span class="chip">思考：中</span><span class="chip">默认权限</span><span class="send"><svg><use href="#i-send"/></svg></span></div>
+			</div>
+			<p style="color:var(--ink-500);font-size:12px">工作空间和现在基本一样：一项是一个项目，展开是会话。普罗委派过来的会话带「委派」标记。<br/>家目录不再出现在项目列表里。</p>
+		</div>
+	</main>
+</div>
+
+<!-- ====================== ④ 工作 → 个人 ====================== -->
+<div class="screen" id="s4">
+	<aside class="side">
+		<div class="titlebar"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+		<div class="switch">
+			<button class="personal"><svg><use href="#i-user"/></svg>个人<span class="badge-dot">3</span></button>
+			<button class="on work"><svg><use href="#i-brief"/></svg>工作</button>
+		</div>
+		<div class="newbtn"><svg><use href="#i-plus"/></svg>新会话<span class="kbd">Ctrl N</span></div>
+		<nav class="nav"><a><svg><use href="#i-clock"/></svg>自动化</a><a><svg><use href="#i-git"/></svg>Git</a></nav>
+		<div class="group">项目</div>
+		<div class="proj">
+			<div class="row"><span class="chev">▾</span><svg style="color:var(--sky)"><use href="#i-folder"/></svg>Prometheus<span class="n">12</span></div>
+			<div class="sess on">日志插件<span class="when">1h</span></div>
+			<div class="sess">修复压缩后历史不可见<span class="when">刚刚</span></div>
+			<div class="row"><span class="chev">▸</span><svg style="color:var(--sky)"><use href="#i-folder"/></svg>metro-agent<span class="n">8</span></div>
+			<div class="row"><span class="chev">▸</span><svg style="color:var(--sky)"><use href="#i-folder"/></svg>prometheus-pet<span class="n">21</span></div>
+		</div>
+		<div style="flex:1"></div>
+		<div class="sidefoot nav"><a><svg><use href="#i-gear"/></svg>设置</a></div>
+	</aside>
+	<main class="main">
+		<div class="mhead"><span class="crumb">Prometheus / <b>日志插件</b></span><span class="r"><span class="pill sky">工作空间</span><button class="btn" style="padding:3px 9px"><svg><use href="#i-flame"/></svg>发给助理</button></span></div>
+		<div class="chat"><div class="col" style="padding-top:300px">
+			<div class="u">添加日志插件，可以在设置里查看错误日志</div>
+			<div class="a"><p>日志插件已加好。类型检查通过，新增的 5 个单元测试也通过……</p><p>需要重启服务端才会生效。</p></div>
+		</div></div>
+		<div class="pop" style="top:44px;right:16px;width:300px">
+			<div style="padding:6px 9px 4px;font:600 12px var(--display)">发给助理（普罗）</div>
+			<div style="padding:0 9px 6px;color:var(--ink-500);font-size:11.5px">把这次会话的结论带到个人空间，由普罗跟进。</div>
+			<div class="hr"></div>
+			<div class="mi hl"><svg><use href="#i-clock"/></svg>重启后提醒我验证日志页</div>
+			<div class="mi"><svg><use href="#i-brief"/></svg>写进明天的简报</div>
+			<div class="mi"><svg><use href="#i-chat"/></svg>开一个个人对话继续聊</div>
+			<div class="mi"><svg><use href="#i-mem"/></svg>记住这里的决定</div>
+			<div class="hr"></div>
+			<div class="mi em"><svg><use href="#i-arrow"/></svg>切到个人空间<span class="kbd">Ctrl 1</span></div>
+		</div>
+		<div class="composer">
+			<div class="ph">继续说…</div>
+			<div class="foot"><span class="chip">claude-sonnet</span><span class="chip">默认权限</span><span class="ring"></span><span class="send"><svg><use href="#i-send"/></svg></span></div>
+		</div>
+	</main>
+</div>
+
+<!-- ====================== ⑤ 手机端 ====================== -->
+<div class="screen" id="s5">
+	<div class="phones">
+		<div class="phone">
+			<div class="top"><div class="pet" style="width:30px;height:30px;border-radius:10px"></div><h4>个人</h4><span style="margin-left:auto;color:var(--ink-400)"><svg><use href="#i-search"/></svg></span></div>
+			<div class="switch"><button class="on personal"><svg><use href="#i-user"/></svg>个人</button><button class="work"><svg><use href="#i-brief"/></svg>工作<span class="badge-dot">2</span></button></div>
+			<div class="list">
+				<div class="card" style="padding:10px 12px;margin:0 6px 10px"><div style="font:600 12px var(--display);margin-bottom:4px;color:var(--ember-300)">今日简报</div><div style="font-size:12px;color:var(--ink-300)">3 件事要过目 · 2 个委派完成 · 收件 3 条</div></div>
+				<div class="conv pinned"><svg class="ic"><use href="#i-flame"/></svg><div class="body"><div class="t">主线 · 普罗</div><div class="s">早报已送达</div></div></div>
+				<div class="conv"><svg class="ic"><use href="#i-chat"/></svg><div class="body"><div class="t">地铁项目方案给老板的版本</div><div class="s">已委派到 metro-agent</div></div><span class="live"></span></div>
+				<div class="conv"><svg class="ic"><use href="#i-chat"/></svg><div class="body"><div class="t">下周出差行程</div><div class="s">高铁 G1234 已加入日历</div></div></div>
+				<div class="conv"><svg class="ic"><use href="#i-chat"/></svg><div class="body"><div class="t">直播间礼物玩法头脑风暴</div><div class="s">3 个候选方案</div></div></div>
+				<div class="conv"><svg class="ic"><use href="#i-chat"/></svg><div class="body"><div class="t">GitHub 未读 PR 汇总</div><div class="s">prometheus-pet #42 等 4 条</div></div></div>
+			</div>
+			<div class="tabbar"><span class="on">对话</span><span>收件 ·3</span><span>自动化</span><span>我的</span></div>
+		</div>
+		<div class="phone">
+			<div class="top"><svg style="color:var(--sky)"><use href="#i-brief"/></svg><h4>工作</h4><span style="margin-left:auto;color:var(--ink-400)"><svg><use href="#i-search"/></svg></span></div>
+			<div class="switch"><button class="personal"><svg><use href="#i-user"/></svg>个人<span class="badge-dot">3</span></button><button class="on work"><svg><use href="#i-brief"/></svg>工作</button></div>
+			<div class="list proj">
+				<div class="row"><span class="chev">▾</span><svg style="color:var(--sky)"><use href="#i-folder"/></svg>Prometheus<span class="n">12</span></div>
+				<div class="sess">修复压缩后历史不可见<span class="when">刚刚</span></div>
+				<div class="sess">日志插件<span class="when">1h</span></div>
+				<div class="row"><span class="chev">▾</span><svg style="color:var(--sky)"><use href="#i-folder"/></svg>metro-agent<span class="n">8</span></div>
+				<div class="sess"><span class="tagp" style="margin:0">委派</span>整理盾构选型对比表<span class="when">6m</span></div>
+				<div class="row"><span class="chev">▸</span><svg style="color:var(--sky)"><use href="#i-folder"/></svg>prometheus-pet<span class="n">21</span></div>
+				<div class="row"><span class="chev">▸</span><svg style="color:var(--sky)"><use href="#i-folder"/></svg>novel-lab<span class="n">5</span></div>
+			</div>
+			<div class="tabbar"><span class="on">项目</span><span>Git</span><span>自动化</span><span>我的</span></div>
+		</div>
+	</div>
+</div>
+
+</div>
+
+<div class="deck-note" id="note"></div>
+
+<script>
+const notes = {
+	s1: [["切换器", "侧栏顶部「个人 / 工作」两段式，Ctrl+1 / Ctrl+2 切换；另一边有待处理事项时显示角标。"], ["一项 = 一条对话", "主线置顶（橙色），其余按今天 / 本周 / 更早分组；正在跑的对话带小火点。"], ["主页", "简报、收件、委派中、自动化四张卡，底部输入框直接开新对话，不用选目录。"]],
+	s2: [["委派卡片", "普罗把活派进项目后，结果以卡片回到个人对话，可一键「在项目中打开」。"], ["关联项目", "顶栏显示这条对话关联过哪些项目，但对话本身仍属于个人空间。"], ["压缩", "压缩只显示一条分隔线，之前的消息往上翻仍在。"]],
+	s3: [["一项 = 一个项目", "和现在基本一致，展开是会话；家目录从项目列表里消失。"], ["委派标记", "普罗派进来的会话带「委派」标签，方便区分。"], ["新会话", "必须先选项目，个人空间则不用。"]],
+	s4: [["发给助理", "工作会话顶栏的按钮：把结论交给普罗跟进（提醒、写进简报、开个人对话、存记忆）。"], ["回到个人", "个人那边有角标时，一键切回。"]],
+	s5: [["手机端", "切换器放在标题下方，底部 Tab 随空间变化：个人是 对话 / 收件 / 自动化，工作是 项目 / Git / 自动化。"]],
+};
+const tabs = document.querySelectorAll("#tabs button");
+function show(id) {
+	tabs.forEach((b) => b.classList.toggle("on", b.dataset.s === id));
+	document.querySelectorAll(".screen").forEach((s) => s.classList.toggle("on", s.id === id));
+	document.getElementById("note").innerHTML = notes[id].map(([k, v]) => `<div><b>${k}</b>${v}</div>`).join("");
+	history.replaceState(null, "", "#" + id);
+}
+tabs.forEach((b) => b.addEventListener("click", () => show(b.dataset.s)));
+show((location.hash || "#s1").slice(1));
+</script>
+</body>
+</html>
