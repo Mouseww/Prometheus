@@ -12,6 +12,8 @@ export const SLOT = {
 	gateways: "admin.gateways",
 	quotas: "admin.quotas",
 	usage: "admin.usage",
+	mySettings: "settings.me",
+	opsBilling: "admin.billing",
 } as const;
 
 export { NotificationsBell } from "./pages/notifications/NotificationsBell.tsx";

@@ -8,6 +8,7 @@ import { type MemberPlugin, type Route, TeamContext, type TeamContextValue } fro
 import { useCommonT } from "./i18n.ts";
 import { ErrorBox, useAsync } from "./kit.tsx";
 import { DEFAULT_ROUTE_ID, findRoute, N, navFor, type TeamRoute } from "./routes.tsx";
+import { probeBilling } from "./logic/billing.ts";
 import { NotificationsBell } from "./slots.tsx";
 
 const M = defineMessages({
@@ -60,7 +61,14 @@ export function TeamShell({ api, mode, plugin, topRight, initialRoute }: TeamShe
 	const reload = me.reload;
 	const reloadMe = useCallback(async () => reload(), [reload]);
 
-	const ctx = useMemo<TeamContextValue | null>(() => (me.data ? { api, plugin, me: me.data, mode, route, navigate, back, reloadMe } : null), [api, plugin, me.data, mode, route, navigate, back, reloadMe]);
+	// One probe per api: user billing routes answer 404 billingDisabled when billing is off, which hides the billing UI.
+	const billing = useAsync(() => probeBilling(() => api.getBillingSummary()), [api]);
+	const billingEnabled = billing.data === "enabled";
+
+	const ctx = useMemo<TeamContextValue | null>(
+		() => (me.data ? { api, plugin, me: me.data, mode, route, navigate, back, reloadMe, billingEnabled } : null),
+		[api, plugin, me.data, mode, route, navigate, back, reloadMe, billingEnabled],
+	);
 
 	if (!ctx) {
 		if (me.error) {
@@ -77,8 +85,8 @@ export function TeamShell({ api, mode, plugin, topRight, initialRoute }: TeamShe
 	const def = findRoute(route.page);
 	const Page = def?.component;
 	const activeNav = NAV_PARENT[route.page] ?? route.page;
-	const main = navFor(ctx.me, "main");
-	const admin = navFor(ctx.me, "admin");
+	const main = navFor(ctx.me, "main", { billing: billingEnabled });
+	const admin = navFor(ctx.me, "admin", { billing: billingEnabled });
 	const teamName = route.params?.teamId ? ctx.me.teams.find((x) => x.id === route.params?.teamId)?.name : undefined;
 	const context = teamName ?? ctx.me.orgs.map((o) => o.name).join(" / ");
 

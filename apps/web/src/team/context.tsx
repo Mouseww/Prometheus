@@ -27,6 +27,8 @@ export interface TeamContextValue {
 	/** Goes to the previous route, or to `fallback` when there is none. */
 	back: (fallback: Route) => void;
 	reloadMe: () => Promise<void>;
+	/** False once the Hub answered billingDisabled; the billing UI is then hidden. Unknown (probe running) counts as false. */
+	billingEnabled: boolean;
 }
 
 export const TeamContext = createContext<TeamContextValue | null>(null);

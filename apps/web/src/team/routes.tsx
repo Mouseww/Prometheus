@@ -1,6 +1,6 @@
 // The team UI route table. The shell (TeamShell) renders the left nav and the page from this list only, so adding a
 // page means adding an entry here. The ids in ./slots.tsx SLOT are the stable contract for navigating to part 2 pages.
-import { Activity, Building2, Cpu, Gauge, LayoutDashboard, type LucideIcon, Mailbox, ScrollText, Settings2, ShieldCheck, UserCog, Users } from "lucide-react";
+import { Activity, Building2, Cpu, Gauge, LayoutDashboard, type LucideIcon, Mailbox, ScrollText, Settings2, ShieldCheck, UserCog, UserRound, Users, Wallet } from "lucide-react";
 import type { ComponentType } from "react";
 import { defineMessages } from "../lib/i18n.ts";
 import { canSeeAdmin, isOperator } from "./context.tsx";
@@ -13,6 +13,8 @@ import { RegistrationPage } from "./pages/admin/RegistrationPage.tsx";
 import { SettingsPage } from "./pages/admin/SettingsPage.tsx";
 import { UsagePage } from "./pages/admin/UsagePage.tsx";
 import { UsersPage } from "./pages/admin/UsersPage.tsx";
+import { OpsBillingPage } from "./pages/billing/OpsBillingPage.tsx";
+import { MySettingsPage } from "./pages/billing/MySettingsPage.tsx";
 import { TeamHomePage } from "./pages/home/TeamHomePage.tsx";
 import { MergeRequestPage } from "./pages/MergeRequestPage.tsx";
 import { NotificationsPage } from "./pages/notifications/NotificationsPage.tsx";
@@ -39,6 +41,8 @@ export const N = defineMessages({
 		usage: "用量统计",
 		session: "会话",
 		notifications: "通知",
+		mySettings: "个人设置",
+		opsBilling: "运营",
 	},
 	en: {
 		teamHome: "Team home",
@@ -55,16 +59,23 @@ export const N = defineMessages({
 		usage: "Usage",
 		session: "Session",
 		notifications: "Notifications",
+		mySettings: "My settings",
+		opsBilling: "Operations",
 	},
 });
 
 export type NavKey = keyof typeof N.zh;
 
+/** Facts beyond the viewer that decide nav visibility. `billing` is false until the one-time probe says billing is on. */
+export interface NavFlags {
+	billing: boolean;
+}
+
 export interface TeamRoute {
 	id: string;
 	component: ComponentType;
 	/** Present when the route has a left nav entry. */
-	nav?: { group: "main" | "admin"; label: NavKey; icon: LucideIcon; visible?: (me: MeResult) => boolean };
+	nav?: { group: "main" | "admin"; label: NavKey; icon: LucideIcon; visible?: (me: MeResult, flags: NavFlags) => boolean };
 	/** Title key for routes without a nav entry (used by the header). */
 	title?: NavKey;
 }
@@ -95,6 +106,10 @@ export const TEAM_ROUTES: readonly TeamRoute[] = [
 	{ id: SLOT.gateways, component: GatewaysPage, nav: { group: "admin", label: "gateways", icon: Cpu, visible: canSeeAdmin } },
 	{ id: SLOT.quotas, component: QuotasPage, nav: { group: "admin", label: "quotas", icon: Gauge, visible: canSeeAdmin } },
 	{ id: SLOT.usage, component: UsagePage, nav: { group: "admin", label: "usage", icon: Activity, visible: canSeeAdmin } },
+
+	// ---- part 4D: personal settings (BYOK models, credits and billing) and the operator billing console ----
+	{ id: SLOT.mySettings, component: MySettingsPage, nav: { group: "main", label: "mySettings", icon: UserRound } },
+	{ id: SLOT.opsBilling, component: OpsBillingPage, nav: { group: "admin", label: "opsBilling", icon: Wallet, visible: operatorOnly } },
 ];
 
 export const DEFAULT_ROUTE_ID = "teams";
@@ -102,6 +117,6 @@ export const DEFAULT_ROUTE_ID = "teams";
 export const findRoute = (id: string): TeamRoute | undefined => TEAM_ROUTES.find((r) => r.id === id);
 
 /** Nav entries the viewer may see, grouped. */
-export function navFor(me: MeResult, group: "main" | "admin"): TeamRoute[] {
-	return TEAM_ROUTES.filter((r) => r.nav?.group === group && (r.nav.visible?.(me) ?? true));
+export function navFor(me: MeResult, group: "main" | "admin", flags: NavFlags = { billing: false }): TeamRoute[] {
+	return TEAM_ROUTES.filter((r) => r.nav?.group === group && (r.nav.visible?.(me, flags) ?? true));
 }
