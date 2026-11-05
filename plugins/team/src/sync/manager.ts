@@ -5,6 +5,7 @@ import { identityOf, localGit, type MemberEnv } from "../member/env.ts";
 import type { HubSocket } from "../member/relay.ts";
 import { errorMessage, LOG, type ReplicaMapping, TeamError } from "../types.ts";
 import { type ApplyResult, applySnapshot, fetchSnapshot } from "./apply.ts";
+import { type ConflictInfo, listConflicts, type RestoreMode, type RestoreResult, restoreConflict } from "./conflicts.ts";
 import { publishSnapshot } from "./publish.ts";
 import { snapshotRef } from "./refs.ts";
 import { currentTree } from "./tree.ts";
@@ -210,6 +211,25 @@ export class SyncManager {
 		const created = this.target(hubSessionId);
 		if (!created) throw new TeamError("syncFailed", "创建对端会话的工作副本失败", 500);
 		return created;
+	}
+
+	/** Conflict snapshots saved on this machine for the session (RPC `sync.conflicts`), newest first. */
+	async conflicts(hubSessionId: string): Promise<ConflictInfo[]> {
+		await this.settle(hubSessionId);
+		const target = this.target(hubSessionId);
+		if (!target) throw new TeamError("notTeamSession", "这台机器上没有该会话的工作副本", 404);
+		return listConflicts(this.env, target.worktree, hubSessionId);
+	}
+
+	/** Restores a saved conflict without overwriting anything (RPC `sync.restoreConflict`); runs after queued publishes and applies, never between them. */
+	restoreConflict(hubSessionId: string, conflictRef: string, mode?: RestoreMode): Promise<RestoreResult> {
+		return this.queue(hubSessionId, async () => {
+			const target = this.target(hubSessionId);
+			if (!target) throw new TeamError("notTeamSession", "这台机器上没有该会话的工作副本", 404);
+			const result = await restoreConflict(this.env, target, hubSessionId, conflictRef, mode, this.opts.now);
+			this.opts.notify("conflictRestored", { hubSessionId, ...result });
+			return result;
+		});
 	}
 
 	/** Makes sure this machine has a worktree for the session (used by the handoff import), at `commit` when it has to be created. */

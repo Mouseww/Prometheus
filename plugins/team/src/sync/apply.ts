@@ -2,6 +2,7 @@ import { LOG } from "../types.ts";
 import { hubGit, identityOf, type MemberEnv, requireUserId } from "../member/env.ts";
 import { runGit } from "../member/git.ts";
 import { createSnapshotCommit } from "../member/snapshot.ts";
+import { BASELINE_TRAILER } from "./conflicts.ts";
 import { conflictRef, legacySnapshotRef, snapshotRef } from "./refs.ts";
 import { applyTree, currentTree, treeOf } from "./tree.ts";
 
@@ -54,7 +55,8 @@ export async function applySnapshot(env: MemberEnv, target: ApplyTarget, hubSess
 	if (cur !== baseline) {
 		const userId = requireUserId(env);
 		const ref = conflictRef(userId, hubSessionId, now());
-		const savedCommit = await createSnapshotCommit(cwd, identity, "Prometheus conflict snapshot");
+		// The baseline trailer lets a later restore merge exactly the edits the user made on top of what the last sync left.
+		const savedCommit = await createSnapshotCommit(cwd, identity, `Prometheus conflict snapshot\n\n${BASELINE_TRAILER}: ${baseline}`);
 		await runGit(["update-ref", ref, savedCommit], { cwd });
 		saved = { ref, commit: savedCommit };
 		env.log.warn(`${LOG} 会话 ${hubSessionId} 的本地改动已另存到 ${ref}，随后用对端快照覆盖`);

@@ -14,5 +14,11 @@ export const snapshotRef = (userId: string, hubSessionId: string): string => `re
 export const conflictRef = (userId: string, hubSessionId: string, timestamp: number): string =>
 	`refs/prometheus/snapshots/${part(userId, "用户 id")}/${part(hubSessionId, "会话 id")}/conflict-${Math.trunc(timestamp)}`;
 
+/** Common start of every conflict ref of one session. */
+export const conflictRefPrefix = (userId: string, hubSessionId: string): string => conflictRef(userId, hubSessionId, 0).replace(/0$/, "");
+
+/** Matches exactly the conflict refs of one session; group 1 is the timestamp. */
+export const conflictRefPattern = (userId: string, hubSessionId: string): RegExp => new RegExp(`^${conflictRefPrefix(userId, hubSessionId).replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&")}(\\d+)$`);
+
 /** The leaf ref older versions pushed (`.../<sessionId>`). It blocks `.../<sessionId>/latest` (a ref cannot be both a file and a directory). */
 export const legacySnapshotRef = (userId: string, hubSessionId: string): string => `refs/prometheus/snapshots/${part(userId, "用户 id")}/${part(hubSessionId, "会话 id")}`;

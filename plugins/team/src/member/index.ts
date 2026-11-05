@@ -153,6 +153,12 @@ export async function setupMember(ctx: MemberCtx, options: MemberOptions = {}): 
 		const result = await checkoutWorkspace(env, str(p, "workspaceId"));
 		return result;
 	});
+	ctx.rpc("sync.conflicts", async (p) => ({ conflicts: await sync.conflicts(str(p, "hubSessionId")) }));
+	ctx.rpc("sync.restoreConflict", (p) => {
+		const mode = p.mode;
+		if (mode !== undefined && mode !== "apply" && mode !== "branch") throw new TeamError("invalidParams", "mode 必须是 apply 或 branch");
+		return sync.restoreConflict(str(p, "hubSessionId"), str(p, "conflictRef"), mode);
+	});
 	ctx.rpc("session.act", (p) => actOnSession(env, ctx.sessions, p));
 	ctx.rpc("session.start", (p) => startSession(env, p));
 	ctx.rpc("session.fork", (p) => forkSession(env, p));
