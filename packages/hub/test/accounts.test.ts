@@ -177,14 +177,70 @@ describe("tokens: refresh rotation and logout", () => {
 		expect(second.status).toBe(200);
 		expect(second.data.refreshToken).not.toBe(first.refreshToken);
 		expect(second.data.accessToken).toBeTruthy();
+		await ageRotations();
 		const reuse = await t.api("POST", "/api/auth/refresh", { body: { refreshToken: first.refreshToken } });
 		expect(reuse.status).toBe(401);
 		expect(reuse.code).toBe("invalidRefreshToken");
-		// Reuse is a theft signal: the whole family, including the newest token, is revoked.
+		// Reuse after the grace window is a theft signal: the whole family, including the newest token, is revoked.
 		const third = await t.api("POST", "/api/auth/refresh", { body: { refreshToken: second.data.refreshToken } });
 		expect(third.status).toBe(401);
 		const audit = await t.hub.db.query("SELECT 1 FROM audit_log WHERE action = 'auth.refresh.reuse' AND target_id = $1", [root.userId]);
 		expect(audit.length).toBeGreaterThanOrEqual(1);
+	});
+
+	// Pushes every rotation further into the past than the reuse grace window.
+	const ageRotations = (): Promise<unknown> => t.hub.db.query("UPDATE refresh_tokens SET rotated_at = rotated_at - interval '5 minutes' WHERE rotated_at IS NOT NULL");
+	const refresh = (refreshToken: string) => t.api("POST", "/api/auth/refresh", { body: { refreshToken } });
+
+	it("two tabs refreshing with the same stored token both succeed inside the grace window", async () => {
+		const login = await t.createUser(root.token, "tabs@corp.test");
+		const [a, b] = await Promise.all([refresh(login.refreshToken), refresh(login.refreshToken)]);
+		expect([a.status, b.status]).toEqual([200, 200]);
+		expect(a.data.refreshToken).not.toBe(b.data.refreshToken);
+		// Neither tab was logged out: both new tokens keep rotating, and so does a retry with the original token.
+		expect((await refresh(a.data.refreshToken)).status).toBe(200);
+		expect((await refresh(b.data.refreshToken)).status).toBe(200);
+		expect((await refresh(login.refreshToken)).status).toBe(200);
+		// All of it stayed in the one family of that login.
+		const families = await t.hub.db.query<{ family_id: string }>("SELECT DISTINCT family_id FROM refresh_tokens WHERE user_id = $1", [login.userId]);
+		expect(families).toHaveLength(1);
+	});
+
+	it("a replay inside the grace window gets nothing once the family was logged out", async () => {
+		const login = await t.createUser(root.token, "tabs2@corp.test");
+		const next = await refresh(login.refreshToken);
+		expect(next.status).toBe(200);
+		await t.api("POST", "/api/auth/logout", { body: { refreshToken: next.data.refreshToken } });
+		// The original token was rotated a moment ago, but the family's live token was revoked on purpose: the replay must not revive it.
+		expect((await refresh(login.refreshToken)).status).toBe(401);
+		expect((await refresh(next.data.refreshToken)).status).toBe(401);
+	});
+
+	it("reuse after the grace window revokes only that login's family, other devices stay signed in", async () => {
+		const laptop = await t.createUser(root.token, "devices@corp.test");
+		const phone = await t.login("devices@corp.test");
+		const laptop2 = await refresh(laptop.refreshToken);
+		expect(laptop2.status).toBe(200);
+		const rows = await t.hub.db.query<{ family_id: string }>("SELECT DISTINCT family_id FROM refresh_tokens WHERE user_id = $1", [laptop.userId]);
+		await ageRotations();
+		expect((await refresh(laptop.refreshToken)).status).toBe(401);
+		// The laptop's family is gone, including its newest token.
+		expect((await refresh(laptop2.data.refreshToken)).status).toBe(401);
+		// The phone has a family of its own and is untouched.
+		expect((await refresh(phone.refreshToken)).status).toBe(200);
+		expect(rows.length).toBeGreaterThanOrEqual(2);
+	});
+
+	it("tokens of one login share a family and every login starts its own", async () => {
+		const a = await t.createUser(root.token, "families@corp.test");
+		const b = await t.login("families@corp.test");
+		const a2 = await refresh(a.refreshToken);
+		const familyOf = async (token: string): Promise<string> => {
+			const { sha256Hex } = await import("../src/crypto.ts");
+			return (await t.hub.db.query<{ family_id: string }>("SELECT family_id FROM refresh_tokens WHERE token_hash = $1", [sha256Hex(token)]))[0]?.family_id as string;
+		};
+		expect(await familyOf(a2.data.refreshToken)).toBe(await familyOf(a.refreshToken));
+		expect(await familyOf(a.refreshToken)).not.toBe(await familyOf(b.refreshToken));
 	});
 
 

@@ -87,15 +87,20 @@ describe("refresh token reuse", () => {
 		expect((await t.api("POST", "/api/auth/refresh", { body: { refreshToken: keep.refreshToken } })).status).toBe(200);
 	});
 
-	it("reuse of a rotated token ends the other live sessions of that account too", async () => {
+	it("reuse of a rotated token after the grace window ends that login's family only, not the account's other logins", async () => {
 		const t = await startHub();
 		hubs.push(t);
 		await t.bootstrap();
 		const a = await t.login("root@corp.test");
 		const b = await t.login("root@corp.test");
+		const a2 = await t.api("POST", "/api/auth/refresh", { body: { refreshToken: a.refreshToken } });
+		expect(a2.status).toBe(200);
+		// Inside the grace window the replay is a second tab, not theft.
 		expect((await t.api("POST", "/api/auth/refresh", { body: { refreshToken: a.refreshToken } })).status).toBe(200);
+		await t.hub.db.query("UPDATE refresh_tokens SET rotated_at = rotated_at - interval '5 minutes' WHERE rotated_at IS NOT NULL");
 		expect((await t.api("POST", "/api/auth/refresh", { body: { refreshToken: a.refreshToken } })).status).toBe(401);
-		expect((await t.api("POST", "/api/auth/refresh", { body: { refreshToken: b.refreshToken } })).status).toBe(401);
+		expect((await t.api("POST", "/api/auth/refresh", { body: { refreshToken: a2.data.refreshToken } })).status).toBe(401);
+		expect((await t.api("POST", "/api/auth/refresh", { body: { refreshToken: b.refreshToken } })).status).toBe(200);
 	});
 });
 

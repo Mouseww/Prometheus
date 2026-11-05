@@ -1,4 +1,4 @@
-import { ACCESS_TOKEN_TTL_SEC, type HubConfig, JWT_AUDIENCE, RATE_LIMIT_PER_ACCOUNT, RATE_LIMIT_PER_IP, REFRESH_TOKEN_TTL_MS } from "../config.ts";
+import { ACCESS_TOKEN_TTL_SEC, type HubConfig, JWT_AUDIENCE, RATE_LIMIT_PER_ACCOUNT, RATE_LIMIT_PER_IP, REFRESH_REUSE_GRACE_MS, REFRESH_TOKEN_TTL_MS } from "../config.ts";
 import { dummyPasswordCheck, hashPassword, randomToken, sha256Hex, verifyPassword } from "../crypto.ts";
 import type { Queryable } from "../db/db.ts";
 import { isUniqueViolation } from "../db/db.ts";
@@ -118,7 +118,8 @@ export function createAccountsService(deps: ServiceDeps, a: AccountsDeps): Accou
 		}
 	};
 
-	const issueTokens = async (q: Queryable, user: UserRow, userAgent: string | undefined): Promise<TokenPair> => {
+	/** `familyId` continues an existing refresh family (rotation); without it a new family starts (login). */
+	const issueTokens = async (q: Queryable, user: UserRow, userAgent: string | undefined, familyId?: string): Promise<TokenPair> => {
 		const nowMs = deps.now();
 		const defaultOrg = await a.settings.defaultOrgId(q);
 		const orgs = await q.query<{ org_id: string }>("SELECT org_id FROM org_members WHERE user_id = $1 AND status = 'active' ORDER BY created_at", [user.id]);
@@ -129,12 +130,14 @@ export function createAccountsService(deps: ServiceDeps, a: AccountsDeps): Accou
 			a.privateKey,
 		);
 		const refreshToken = randomToken();
-		await q.query("INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, user_agent) VALUES ($1,$2,$3,$4,$5)", [
-			ulid(nowMs),
+		const tokenId = ulid(nowMs);
+		await q.query("INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, user_agent, family_id) VALUES ($1,$2,$3,$4,$5,$6)", [
+			tokenId,
 			user.id,
 			sha256Hex(refreshToken),
 			new Date(nowMs + REFRESH_TOKEN_TTL_MS),
 			userAgent?.slice(0, 300) ?? null,
+			familyId ?? tokenId,
 		]);
 		return { accessToken, refreshToken, expiresIn: ACCESS_TOKEN_TTL_SEC, user: toPublicUser(user) };
 	};
@@ -255,30 +258,41 @@ export function createAccountsService(deps: ServiceDeps, a: AccountsDeps): Accou
 				const nowDate = new Date(deps.now());
 				const tokenHash = sha256Hex(refreshToken);
 				// Revoke-and-read in one statement so a token can be redeemed only once.
-				const revoked = await q.query<{ user_id: string }>(
-					"UPDATE refresh_tokens SET revoked_at = $2 WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > $2 RETURNING user_id",
+				const revoked = await q.query<{ user_id: string; family_id: string }>(
+					"UPDATE refresh_tokens SET revoked_at = $2, rotated_at = $2 WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > $2 RETURNING user_id, family_id",
 					[tokenHash, nowDate],
 				);
-				const userId = revoked[0]?.user_id;
+				let userId = revoked[0]?.user_id;
+				let familyId = revoked[0]?.family_id;
 				if (!userId) {
-					// Rotation leaves `expires_at` in the future of `revoked_at`; logout pins them together, so those are not replays.
-					const replayed = await q.query<{ user_id: string }>(
-						"SELECT user_id FROM refresh_tokens WHERE token_hash = $1 AND revoked_at IS NOT NULL AND expires_at > revoked_at AND expires_at > $2",
+					// Only a token that was exchanged for a successor (`rotated_at`) can be a replay; logout, disable, password reset and an
+					// earlier reuse detection revoke without it.
+					const replayed = await q.query<{ user_id: string; family_id: string; rotated_at: Date | string }>(
+						"SELECT user_id, family_id, rotated_at FROM refresh_tokens WHERE token_hash = $1 AND rotated_at IS NOT NULL AND expires_at > $2",
 						[tokenHash, nowDate],
 					);
-					const victim = replayed[0]?.user_id;
-					if (victim) {
-						// Whoever presents a rotated token is either the thief or the victim holding a stale copy: end every session of the account.
-						await q.query("UPDATE refresh_tokens SET revoked_at = $2 WHERE user_id = $1 AND revoked_at IS NULL", [victim, nowDate]);
-						await a.audit.write(q, { actorId: victim, action: "auth.refresh.reuse", targetType: "user", targetId: victim, detail: { ip: client.ip } });
-						deps.log.warn(`${LOG_PREFIX} 检测到刷新令牌被重复使用，已撤销用户 ${victim} 的全部会话`);
+					const old = replayed[0];
+					if (!old) return "invalid";
+					if (nowDate.getTime() - new Date(old.rotated_at).getTime() > REFRESH_REUSE_GRACE_MS) {
+						// Past the grace window the presenter is either the thief or the victim holding a stale copy: end this login's family
+						// (other devices keep their own families and stay signed in).
+						await q.query("UPDATE refresh_tokens SET revoked_at = $2 WHERE family_id = $1 AND revoked_at IS NULL", [old.family_id, nowDate]);
+						await a.audit.write(q, { actorId: old.user_id, action: "auth.refresh.reuse", targetType: "user", targetId: old.user_id, detail: { ip: client.ip, familyId: old.family_id } });
+						deps.log.warn(`${LOG_PREFIX} 检测到刷新令牌被重复使用，已撤销用户 ${old.user_id} 该登录的全部令牌`);
+						return "invalid";
 					}
-					return "invalid";
+					// Just rotated: a second tab or a retry after a lost response. Not if the family was revoked in the meantime (logout,
+					// password reset, disable, reuse detection): those revoke live tokens without marking a rotation.
+					const stopped = await q.query("SELECT 1 FROM refresh_tokens WHERE family_id = $1 AND revoked_at IS NOT NULL AND rotated_at IS NULL LIMIT 1", [old.family_id]);
+					if (stopped.length > 0) return "invalid";
+					// Hand out a fresh token of the same family and leave the token the first caller received valid, so neither side is logged out.
+					userId = old.user_id;
+					familyId = old.family_id;
 				}
 				const users = await q.query<UserRow>(`SELECT ${USER_COLUMNS} FROM users WHERE id = $1`, [userId]);
 				const user = users[0];
 				if (!user || user.status !== "active") throw unauthorized("账号不可用", "accountUnavailable");
-				return issueTokens(q, user, client.userAgent);
+				return issueTokens(q, user, client.userAgent, familyId);
 			});
 			if (outcome === "invalid") throw unauthorized("刷新令牌无效或已过期", "invalidRefreshToken");
 			return outcome;

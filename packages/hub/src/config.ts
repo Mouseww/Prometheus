@@ -86,6 +86,8 @@ export function parseRuntimeOrigin(raw: string | undefined): string | undefined 
 export const JWT_AUDIENCE = "prometheus";
 export const ACCESS_TOKEN_TTL_SEC = 15 * 60;
 export const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+/** A just-rotated refresh token presented again within this window (two tabs sharing one stored token) is not theft: it gets a fresh token of the same family. */
+export const REFRESH_REUSE_GRACE_MS = 20 * 1000;
 export const RATE_LIMIT_PER_IP = 10;
 export const RATE_LIMIT_PER_ACCOUNT = 5;
 

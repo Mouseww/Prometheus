@@ -15,8 +15,8 @@ async function seed(db: Awaited<ReturnType<typeof migratedDb>>): Promise<void> {
 		INSERT INTO team_members (team_id, user_id, role) VALUES ('tp', 'ub', 'admin');
 		INSERT INTO workspaces (id, team_id, name, repo_dir) VALUES ('wp', 'tp', 'w', 'repos/wp.git');
 		INSERT INTO sessions (id, workspace_id, owner_user_id) VALUES ('sp', 'wp', 'ub');
-		INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at) VALUES
-			('r1', 'ua', 'h1', now() + interval '1 day'), ('r2', 'ub', 'h2', now() + interval '1 day');
+		INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, family_id) VALUES
+			('r1', 'ua', 'h1', now() + interval '1 day', 'r1'), ('r2', 'ub', 'h2', now() + interval '1 day', 'r2');
 		INSERT INTO invitations (id, scope, scope_id, email, role, token_hash, expires_at, created_by)
 			VALUES ('i1', 'team', 'tp', 'c@c.test', 'member', 'ih1', now() + interval '1 day', 'ub');
 		INSERT INTO executor_nodes (id, name, docker_url) VALUES ('n1', 'node', 'tcp://x:2376');
