@@ -42,6 +42,8 @@ docker run -p 7420:7420 -e PROMETHEUS_TOKEN=<至少16位随机串> \
 
 公网部署请置于 HTTPS 反向代理之后。
 
+多人共用一个服务（团队模式）的部署见 [团队 Hub](team-hub.md)，面向公众的在线服务（`HUB_MODE=public`）见 [团队 Hub 在线服务](team-hub-online.md)。
+
 ### 局域网与域名访问（桌面 / 本机模式）
 
 默认只监听本机。在「设置 → 网络访问」里可以：

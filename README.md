@@ -140,6 +140,8 @@ export default definePlugin({
 
 - [架构](docs/architecture.md)
 - [部署](docs/deployment.md)
+- [团队 Hub](docs/team-hub.md)
+- [团队 Hub 在线服务](docs/team-hub-online.md)
 - [Agent 运行时](docs/agent-runtime.md)
 - [连接器](docs/connectors.md)
 - [Computer Use](docs/computer-use.md)

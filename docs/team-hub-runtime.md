@@ -35,10 +35,11 @@ Hub 为每个用户按需拉起一个隔离的 Prometheus server（租户实例�
 
 ```powershell
 # 以管理员身份运行 PowerShell，用运行 Hub 的账号
-pwsh scripts/hub-setup-sandbox.ps1 -DataDir D:\prometheus-hub
+# -DataDir 必须是 Hub 的数据目录：<PROMETHEUS_HOME>\plugin-data\team\hub（默认 %USERPROFILE%\.prometheus-hub\plugin-data\team\hub）
+pwsh scripts/hub-setup-sandbox.ps1 -DataDir "$env:USERPROFILE\.prometheus-hub\plugin-data\team\hub"
 ```
 
-脚本创建组 `prometheus-tenants`，拒绝该组读取 Hub 主人的用户目录与 Hub 数据目录，创建 `<DataDir>\tenants`，并写入标记文件 `<DataDir>\sandbox-setup.json`。没有标记文件时 sandbox 驱动不可用，`auto` 模式会落到 restricted，显式指定 `HUB_RUNTIME=sandbox` 则返回 `adminRequired`。
+脚本创建组 `prometheus-tenants`，拒绝该组读取 Hub 主人的用户目录与 Hub 数据目录，创建 `<DataDir>\tenants`，并写入标记文件 `<DataDir>\sandbox-setup.json`。Hub 从自己的数据目录读取这个标记文件，所以 `-DataDir` 必须与 Hub 的数据目录一致。没有标记文件时 sandbox 驱动不可用，`auto` 模式会落到 restricted，显式指定 `HUB_RUNTIME=sandbox` 则返回 `adminRequired`。Hub 的数据目录见[团队 Hub](team-hub.md)。
 
 注意：
 
@@ -48,7 +49,7 @@ pwsh scripts/hub-setup-sandbox.ps1 -DataDir D:\prometheus-hub
 
 ### Restricted
 
-与 sandbox 一样直接 spawn Node，但不加沙箱。策略对 Hub 主人（operator）是正常策略；对其他用户去掉 `terminal` 插件，并在 core 支持 `disabledTools` 时加上 `disabledTools: ["bash", "powershell"]`。core 尚不认识该字段时（它会拒绝未知策略键）Hub 自动不写这个键，由 `HUB_TENANT_DISABLED_TOOLS=1|0` 可强制开关。
+与 sandbox 一样直接 spawn Node，但不加沙箱。策略对 Hub 主人（operator）是正常策略；对其他用户去掉 `terminal` 插件，并在 core 支持 `disabledTools` 时加上 `disabledTools: ["bash", "powershell"]`。core 不认识该字段时（它会拒绝未知策略键，当前仓库的 core 已认识该字段，旧版 core 才会如此）Hub 自动不写这个键，由 `HUB_TENANT_DISABLED_TOOLS=1|0` 可强制开关。
 
 ## 环境变量
 
