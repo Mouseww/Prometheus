@@ -11,6 +11,7 @@ import type { ServiceDeps } from "../services/common.ts";
 import { createNotificationsService } from "../services/notifications.ts";
 import { createReportsService } from "../services/reports.ts";
 import { createSessionsService, MAX_EVENTS_PER_BATCH, MAX_TRANSCRIPT_CHARS } from "../services/sessions.ts";
+import type { WorkspacesService } from "../services/workspaces.ts";
 import { createWsGateway } from "../ws.ts";
 import { registerCollabRoutes } from "./collab.ts";
 import { optionalJson, sharedUsage } from "./collab-util.ts";
@@ -54,6 +55,7 @@ const ActionBody = Type.Object({
 const ForkBody = Type.Object({ title: Type.Optional(Type.String({ maxLength: 300 })) });
 
 const ListQuery = Type.Object({ status: Type.Optional(StatusSchema), owner: Type.Optional(IdSchema), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 500 })) });
+const SessionFilesQuery = Type.Object({ path: Type.Optional(Type.String({ maxLength: 1000 })) });
 const EventsQuery = Type.Object({ after: Type.Optional(Type.Integer({ minimum: -1 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000 })) });
 
 /** JSON body with an explicit size limit (the shared reader stops at 1MB, a transcript may be 20MB). */
@@ -106,6 +108,16 @@ export function registerSessionRoutes(router: Router, deps: HubDeps): void {
 	router.get("/api/workspaces/:id/sessions", async (ctx) => sessions.list(await ctx.actor(), ctx.params.id as string, ctx.query(ListQuery)));
 	router.get("/api/sessions/:id", async (ctx) => sessions.get(await ctx.actor(), ctx.params.id as string));
 	router.patch("/api/sessions/:id", async (ctx) => sessions.patch(await ctx.actor(), ctx.params.id as string, await ctx.json(PatchBody)));
+
+	// Files of a session as of its latest snapshot (including uncommitted work), or of its branch head before the first snapshot.
+	// Reuses the workspace file reader (registered by `registerGitRoutes`, hence the lazy lookup), which also checks team membership.
+	router.get("/api/sessions/:id/files", async (ctx) => {
+		const actor = await ctx.actor();
+		const detail = await sessions.get(actor, ctx.params.id as string);
+		const q = ctx.query(SessionFilesQuery);
+		const ref = detail.snapshotCommit ?? `refs/heads/${detail.branch}`;
+		return deps.registry.require<WorkspacesService>("workspaces").browse(actor, detail.workspaceId, ref, q.path);
+	});
 
 	router.post("/api/sessions/:id/events", async (ctx) => {
 		const body = await ctx.json(EventsBody);

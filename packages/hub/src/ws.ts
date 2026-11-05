@@ -27,6 +27,11 @@ export interface WsHandlers {
 
 export interface WsGateway extends Realtime {
 	handleUpgrade: UpgradeHandler;
+	/**
+	 * Takes over a socket the host already upgraded (the plugin host owns the HTTP server). The access token comes from
+	 * the `token` query parameter of `req.url`, like in `handleUpgrade`; a missing or bad token closes the socket with 4401.
+	 */
+	attach(ws: WebSocket, req: IncomingMessage): void;
 	setHandlers(handlers: WsHandlers): void;
 	/** Flags sessions of owners that have had no connection for longer than the grace period. Runs every 10 seconds; exposed for tests. */
 	sweep(): Promise<number>;
@@ -164,21 +169,51 @@ export function createWsGateway(deps: HubDeps, options: { offlineGraceMs?: numbe
 		}
 	};
 
+	/** The user id behind the `token` query parameter, or undefined when it is missing, invalid, or the account is gone. */
+	const authenticate = async (url: URL): Promise<string | undefined> => {
+		const token = url.searchParams.get("token");
+		const claims = token ? verifyJwt(token, { publicKey: deps.publicKeyPem, issuer: deps.config.issuer, audience: JWT_AUDIENCE }) : undefined;
+		if (!claims) return undefined;
+		try {
+			await deps.services.actors.load(claims.sub);
+		} catch {
+			return undefined;
+		}
+		return claims.sub;
+	};
+
+	const attach = (ws: WebSocket, req: IncomingMessage): void => {
+		const url = new URL(req.url ?? "/", "http://hub.local");
+		// The socket is already open: whatever the client sends while the token is being checked is replayed once it is accepted.
+		const early: RawData[] = [];
+		const hold = (raw: RawData): void => void early.push(raw);
+		const noop = (): void => {};
+		ws.on("message", hold);
+		ws.on("error", noop);
+		void authenticate(url)
+			.then((userId) => {
+				ws.off("message", hold);
+				ws.off("error", noop);
+				if (!userId) return ws.close(4401, "Unauthorized");
+				if (ws.readyState !== 1) return;
+				accept(ws, userId);
+				for (const raw of early) ws.emit("message", raw, false);
+			})
+			.catch((err: unknown) => {
+				deps.log.error(`${LOG_PREFIX} WebSocket 接入失败: ${err instanceof Error ? err.message : String(err)}`);
+				ws.close(1011, "Internal Server Error");
+			});
+	};
+
 	const handleUpgrade: UpgradeHandler = (req: IncomingMessage, socket: Duplex, head: Buffer) => {
 		const url = new URL(req.url ?? "/", "http://hub.local");
 		if (relativePath(deps.config, url.pathname) !== WS_PATH) return false;
 		socket.on("error", () => {});
 		void (async () => {
-			const token = url.searchParams.get("token");
-			const claims = token ? verifyJwt(token, { publicKey: deps.publicKeyPem, issuer: deps.config.issuer, audience: JWT_AUDIENCE }) : undefined;
-			if (!claims) return rejectUpgrade(socket, 401, "Unauthorized");
-			try {
-				await deps.services.actors.load(claims.sub);
-			} catch {
-				return rejectUpgrade(socket, 401, "Unauthorized");
-			}
+			const userId = await authenticate(url);
+			if (!userId) return rejectUpgrade(socket, 401, "Unauthorized");
 			if (socket.destroyed) return;
-			wss.handleUpgrade(req, socket, head, (ws) => accept(ws, claims.sub));
+			wss.handleUpgrade(req, socket, head, (ws) => accept(ws, userId));
 		})().catch((err: unknown) => {
 			deps.log.error(`${LOG_PREFIX} WebSocket 升级失败: ${err instanceof Error ? err.message : String(err)}`);
 			rejectUpgrade(socket, 500, "Internal Server Error");
@@ -223,6 +258,7 @@ export function createWsGateway(deps: HubDeps, options: { offlineGraceMs?: numbe
 
 	return {
 		handleUpgrade,
+		attach,
 		setHandlers(h) {
 			handlers = h;
 		},

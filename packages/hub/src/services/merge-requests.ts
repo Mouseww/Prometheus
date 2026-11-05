@@ -218,6 +218,12 @@ export function createMergeRequestsService(deps: MergeRequestsDeps): MergeReques
 		);
 	};
 
+	/** Tells everyone watching the workspace (`workspace:<id>`) that a merge request changed. */
+	const publishChange = (view: MergeRequestView): MergeRequestView => {
+		notifier.publish(`workspace:${view.workspaceId}`, { kind: "mergeRequest", mergeRequest: view });
+		return view;
+	};
+
 	const requireOpenish = (row: MrRow): void => {
 		if (row.status !== "open" && row.status !== "conflict") throw conflict(`合并请求已是 ${row.status} 状态`, "invalidState");
 	};
@@ -270,7 +276,7 @@ export function createMergeRequestsService(deps: MergeRequestsDeps): MergeReques
 				);
 				return toView(await loadRow(q, id));
 			});
-			return { view, merged: false };
+			return { view: publishChange(view), merged: false };
 		}
 
 		const mergedCommit = outcome.commit;
@@ -298,7 +304,7 @@ export function createMergeRequestsService(deps: MergeRequestsDeps): MergeReques
 			skippedReview: skipped,
 			mergedBy: actor.userId,
 		});
-		return { view, merged: true };
+		return { view: publishChange(view), merged: true };
 	};
 
 	return {
@@ -358,7 +364,7 @@ export function createMergeRequestsService(deps: MergeRequestsDeps): MergeReques
 			if (input.skipReview && result.clean) return (await executeMerge(actor, id, true)).view;
 			const reviewers = await notifier.teamUsers(ws.teamId, ["admin", "reviewer"]);
 			await notifier.send(ws.orgId, reviewers.filter((u) => u !== actor.userId), "mr.created", { mergeRequestId: id, workspaceId: ws.id, title: input.title, status: created.status });
-			return created;
+			return publishChange(created);
 		},
 
 		async list(actor, workspaceId, filter = {}) {
@@ -411,7 +417,7 @@ export function createMergeRequestsService(deps: MergeRequestsDeps): MergeReques
 				return { view: toView(await loadRow(q, id)), row, ws };
 			});
 			await notifier.send(ws.orgId, [row.author_id].filter((u) => u !== actor.userId), "mr.rejected", { mergeRequestId: id, workspaceId: ws.id, title: row.title, reason: reason ?? null });
-			return view;
+			return publishChange(view);
 		},
 
 		async refresh(actor, id) {
@@ -427,20 +433,22 @@ export function createMergeRequestsService(deps: MergeRequestsDeps): MergeReques
 			const head = await resolveCommit(gitDir, `refs/heads/${row.branch}`);
 			if (!head) throw conflict("会话分支已不存在", "branchMissing");
 			const result = await check(ws, head);
-			return db.tx(scopeOf(actor), async (q) => {
+			const refreshed = await db.tx(scopeOf(actor), async (q) => {
 				await setCheckResult(q, id, head, result);
 				return toView(await loadRow(q, id));
 			});
+			return publishChange(refreshed);
 		},
 
 		async close(actor, id) {
-			return db.tx(scopeOf(actor), async (q) => {
+			const closed = await db.tx(scopeOf(actor), async (q) => {
 				const { row, ws } = await load(q, actor, id);
 				if (row.author_id !== actor.userId && !can(actor, "mr.review", { teamId: ws.teamId, orgId: ws.orgId })) throw forbidden();
 				requireOpenish(row);
 				await q.query("UPDATE merge_requests SET status = 'closed', decided_at = $2, updated_at = now() WHERE id = $1", [id, new Date(base.now())]);
 				return toView(await loadRow(q, id));
 			});
+			return publishChange(closed);
 		},
 
 		async diff(actor, id) {
