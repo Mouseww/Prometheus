@@ -13,6 +13,20 @@ export const canStartRuntime = (status: RuntimeStatus): boolean => status === "s
 /** An admin can stop an instance that runs or is coming up. */
 export const canStopRuntime = (status: RuntimeStatus): boolean => status === "running" || status === "starting";
 
+/**
+ * The address to open the workbench at: the Hub's `workbenchUrl` when it sent a usable one (absolute http(s), or host-relative
+ * and resolved against `origin`), else `fallback`. A protocol-relative or script URL is never trusted. The one-time access
+ * token goes in `?token=`; the proxy turns it into an HttpOnly cookie, also across origins.
+ */
+export function workbenchTarget(hubUrl: string | undefined, fallback: string, origin: string, token: string): string {
+	let base = fallback;
+	if (hubUrl) {
+		if (hubUrl.startsWith("/") && !hubUrl.startsWith("//") && !hubUrl.startsWith("/\\")) base = `${origin}${hubUrl}`;
+		else if (/^https?:\/\//i.test(hubUrl)) base = hubUrl;
+	}
+	return `${base}${base.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
+}
+
 export const statusTone = (status: RuntimeStatus): "moss" | "sky" | "rose" | "muted" => (status === "running" ? "moss" : status === "failed" ? "rose" : status === "starting" || status === "stopping" ? "sky" : "muted");
 
 /** "512 MB", "1.5 GB". */

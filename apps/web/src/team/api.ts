@@ -122,7 +122,8 @@ export interface TeamApi {
 	listMergeRequests(workspaceId: string, filter?: { status?: MergeRequestStatus }): Promise<MergeRequestView[]>;
 	getMergeRequest(id: string): Promise<MergeRequestView>;
 	getMergeRequestDiff(id: string): Promise<MergeRequestDiff>;
-	approveMergeRequest(id: string): Promise<MergeRequestView>;
+	/** `expectedHeadCommit` is the head the reviewer saw; the Hub answers 409 `headChanged` when the branch moved since. */
+	approveMergeRequest(id: string, expectedHeadCommit: string): Promise<MergeRequestView>;
 	rejectMergeRequest(id: string, reason?: string): Promise<MergeRequestView>;
 	refreshMergeRequest(id: string): Promise<MergeRequestView>;
 	closeMergeRequest(id: string): Promise<MergeRequestView>;
@@ -282,7 +283,7 @@ export interface HubApi extends TeamApi {
 	resetPassword(token: string, password: string): Promise<void>;
 	logout(): Promise<void>;
 	/** Address that opens the caller's tenant runtime (`<hub>/rt/`) with a fresh access token for the proxy; undefined when signed out. */
-	workbenchUrl(): Promise<string | undefined>;
+	workbenchUrl(hubUrl?: string): Promise<string | undefined>;
 	/** True when an access or refresh token is stored (it may still be expired). */
 	hasSession(): boolean;
 	/** Called once when the session ends for good (refresh failed or logout). */
@@ -346,7 +347,7 @@ export function createApiMethods(r: Requester): Omit<TeamApi, "subscribe"> {
 		listMergeRequests: (workspaceId, filter) => get(`/api/workspaces/${seg(workspaceId)}/merge-requests`, { status: filter?.status }),
 		getMergeRequest: (id) => get(`/api/merge-requests/${seg(id)}`),
 		getMergeRequestDiff: (id) => get(`/api/merge-requests/${seg(id)}/diff`),
-		approveMergeRequest: (id) => send("POST", `/api/merge-requests/${seg(id)}/approve`),
+		approveMergeRequest: (id, expectedHeadCommit) => send("POST", `/api/merge-requests/${seg(id)}/approve`, { expectedHeadCommit }),
 		rejectMergeRequest: (id, reason) => send("POST", `/api/merge-requests/${seg(id)}/reject`, reason ? { reason } : {}),
 		refreshMergeRequest: (id) => send("POST", `/api/merge-requests/${seg(id)}/refresh`),
 		closeMergeRequest: (id) => send("POST", `/api/merge-requests/${seg(id)}/close`),

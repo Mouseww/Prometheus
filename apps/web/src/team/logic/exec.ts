@@ -135,6 +135,8 @@ export interface HandItem {
 	/** Hub session id of the session that asks. */
 	session: string;
 	insideProject: boolean;
+	/** False for tools that always ask (exec): the "allow for this session" answer is not offered. */
+	allowSession: boolean;
 }
 
 export function parseHandRequest(data: unknown): HandItem | undefined {
@@ -143,7 +145,20 @@ export function parseHandRequest(data: unknown): HandItem | undefined {
 	const tool = str(data.tool);
 	const session = str(data.session);
 	if (!callId || !tool || !session) return undefined;
-	return { callId, tool, input: data.input, session, insideProject: data.insideProject === true };
+	// A missing flag (older plugin) counts as false: hiding the broader grant is the safe default.
+	return { callId, tool, input: data.input, session, insideProject: data.insideProject === true, allowSession: data.allowSession === true };
+}
+
+/** The `hand.answer` RPC refuses a `callId` that was already answered; the request is stale and can be dropped. */
+export function isDuplicateCallId(err: unknown): boolean {
+	if (isRecord(err) && err.code === "duplicateCallId") return true;
+	const message = err instanceof Error ? err.message : typeof err === "string" ? err : "";
+	return message.includes("duplicateCallId");
+}
+
+/** Removes a request without a `handResolved` event (answered elsewhere). */
+export function dropHand(hands: readonly HandItem[], callId: string): HandItem[] {
+	return hands.filter((h) => h.callId !== callId);
 }
 
 /** `hand.pending` answers `{ items: [...] }`; malformed entries are dropped. */

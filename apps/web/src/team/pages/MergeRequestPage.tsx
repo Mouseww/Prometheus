@@ -5,6 +5,7 @@ import { defineMessages, useT } from "../../lib/i18n.ts";
 import { usePrefs } from "../../lib/prefs.ts";
 import { canReview, useTeam } from "../context.tsx";
 import { AsyncView, Body, Card, ConfirmButton, Notice, shortDate, useAction, useAsync } from "../kit.tsx";
+import { isHeadChanged } from "../logic/mergeRequest.ts";
 import type { ConflictFile, MergeRequestView } from "../types.ts";
 import { DiffView } from "./DiffView.tsx";
 import { MergeRequestStatusBadge } from "./mrStatus.tsx";
@@ -124,7 +125,7 @@ function ConflictList({ mr, files, onChanged }: { mr: MergeRequestView; files: C
 	);
 }
 
-function Actions({ mr, role, onChanged }: { mr: MergeRequestView; role: string | undefined; onChanged: (mr: MergeRequestView) => void }) {
+function Actions({ mr, role, onChanged, onStale }: { mr: MergeRequestView; role: string | undefined; onChanged: (mr: MergeRequestView) => void; onStale: () => void }) {
 	const { api, me } = useTeam();
 	const t = useT(M);
 	const { busy, error, run } = useAction();
@@ -143,11 +144,22 @@ function Actions({ mr, role, onChanged }: { mr: MergeRequestView; role: string |
 		}
 	};
 
+	// Approve exactly the head the reviewer is looking at. When the branch moved, reload the head and the diff and keep the error visible.
+	const approve = () =>
+		act(async () => {
+			try {
+				return await api.approveMergeRequest(mr.id, mr.headCommit);
+			} catch (e) {
+				if (isHeadChanged(e)) onStale();
+				throw e;
+			}
+		});
+
 	return (
 		<div className="space-y-3">
 			<div className="flex flex-wrap items-center gap-2">
 				{reviewer && mr.status === "open" && (
-					<Button variant="primary" disabled={busy} onClick={() => void act(() => api.approveMergeRequest(mr.id))}>
+					<Button variant="primary" disabled={busy} onClick={() => void approve()}>
 						<Check className="size-4" aria-hidden /> {t("approve")}
 					</Button>
 				)}
@@ -195,6 +207,7 @@ export function MergeRequestPage() {
 	const teams = useAsync(() => api.listTeams(), [api]);
 	const role = teams.data?.find((x) => x.id === teamId)?.role;
 	const { reload: reloadMr } = mr;
+	const { reload: reloadDiff } = diff;
 	const wsId = mr.data?.workspaceId ?? workspaceId;
 	useEffect(() => (wsId ? api.subscribe(`workspace:${wsId}`, () => reloadMr()) : undefined), [api, wsId, reloadMr]);
 
@@ -235,7 +248,7 @@ export function MergeRequestPage() {
 								<h3 className="mt-3 mb-1 text-xs font-medium tracking-wide text-ink-300">{t("description")}</h3>
 								<p className="whitespace-pre-wrap break-words text-sm text-ink-200">{m.description || <span className="text-ink-500">{t("noDescription")}</span>}</p>
 							</Card>
-							<Actions mr={m} role={role} onChanged={mr.setData} />
+							<Actions mr={m} role={role} onChanged={mr.setData} onStale={() => { reloadMr(); reloadDiff(); }} />
 							{m.conflictFiles && m.conflictFiles.length > 0 && <ConflictList mr={m} files={m.conflictFiles} onChanged={mr.setData} />}
 							<h2 className="font-display text-sm font-semibold tracking-wide text-ink-200">{t("changes")}</h2>
 							<AsyncView state={diff}>{(d) => <DiffView diff={d} />}</AsyncView>

@@ -2,6 +2,7 @@
 // Access token in sessionStorage; refresh token in localStorage only when "remember me" was ticked
 // (otherwise sessionStorage, so a reload inside the same tab keeps the login but closing the tab ends it).
 import { appOrigin, withBase, wsUrlFor } from "../lib/basePath.ts";
+import { workbenchTarget } from "./logic/runtime.ts";
 import {
 	createApiMethods,
 	HUB_API_BASE,
@@ -290,7 +291,7 @@ export function createHubApi(options: HubApiOptions = {}): HubApi {
 			if (refreshToken) await raw("POST", "/api/auth/logout", { refreshToken }, null);
 			endSession();
 		},
-		async workbenchUrl(): Promise<string | undefined> {
+		async workbenchUrl(hubUrl?: string): Promise<string | undefined> {
 			let token = getAccess();
 			const exp = token ? jwtExpiry(token) : undefined;
 			if ((!token || (exp !== undefined && exp * 1000 < Date.now() + 30_000)) && getRefresh()) {
@@ -298,7 +299,8 @@ export function createHubApi(options: HubApiOptions = {}): HubApi {
 				token = getAccess();
 			}
 			// The proxy turns the one-time `?token=` into an HttpOnly cookie and redirects to the clean address.
-			return token ? `${appOrigin()}${HUB_API_BASE}/rt/?token=${encodeURIComponent(token)}` : undefined;
+			// `hubUrl` is the runtime's own `workbenchUrl` (possibly on a separate origin); without it the address is computed here.
+			return token ? workbenchTarget(hubUrl, `${appOrigin()}${HUB_API_BASE}/rt/`, appOrigin(), token) : undefined;
 		},
 		hasSession: () => getAccess() !== null || getRefresh() !== null,
 		onSessionEnd(cb) {

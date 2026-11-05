@@ -9,6 +9,7 @@ import {
 	applySessionLink,
 	applySnapshot,
 	dismissConflict,
+	dropHand,
 	type HandItem,
 	linkFromStartResult,
 	linkSession,
@@ -53,6 +54,8 @@ export interface TeamExecState {
 	setExecState(localSessionId: string, state: Pick<ExecState, "location" | "mode">): void;
 	dismissConflict(hubSessionId: string): void;
 	dropTimedOut(callId: string): void;
+	/** Drops a request that turned out to be answered already. */
+	dropHand(callId: string): void;
 }
 
 function loadLinks(): SessionLinks {
@@ -100,6 +103,7 @@ export const useTeamExec = create<TeamExecState>((set, get) => {
 			set({ conflicts: dismissConflict(get().conflicts, hubSessionId), ...(shown ? { dismissed: { ...get().dismissed, [hubSessionId]: shown.conflictRef } } : {}) });
 		},
 		dropTimedOut: (callId) => set({ timedOut: get().timedOut.filter((h) => h.callId !== callId) }),
+		dropHand: (callId) => set({ hands: dropHand(get().hands, callId) }),
 	};
 });
 

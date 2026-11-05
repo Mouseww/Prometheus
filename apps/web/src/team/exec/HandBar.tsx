@@ -7,7 +7,7 @@ import { defineMessages, useT } from "../../lib/i18n.ts";
 import { useStore } from "../../lib/store.ts";
 import { TIMEOUT_NOTE_MS, useTeamExec } from "../execStore.ts";
 import { errorText } from "../i18n.ts";
-import { handsForSession, type HandItem, summarizeInput } from "../logic/exec.ts";
+import { handsForSession, type HandItem, isDuplicateCallId, summarizeInput } from "../logic/exec.ts";
 import { memberPlugin } from "../memberTransport.ts";
 
 const M = defineMessages({
@@ -41,6 +41,7 @@ type Decision = "once" | "session" | "deny";
 
 function HandCard({ item }: { item: HandItem }) {
 	const t = useT(M);
+	const dropHand = useTeamExec((s) => s.dropHand);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | undefined>(undefined);
 	const summary = summarizeInput(item.input);
@@ -50,7 +51,14 @@ function HandCard({ item }: { item: HandItem }) {
 		setError(undefined);
 		memberPlugin()
 			.call("hand.answer", { callId: item.callId, decision })
-			.catch((e: unknown) => setError(errorText(e)))
+			.catch((e: unknown) => {
+				// Answered already (another window, or a repeated click): the question is stale, so remove it quietly.
+				if (isDuplicateCallId(e)) {
+					dropHand(item.callId);
+					return;
+				}
+				setError(errorText(e));
+			})
 			.finally(() => setBusy(false));
 	};
 
@@ -73,9 +81,11 @@ function HandCard({ item }: { item: HandItem }) {
 				<Button variant="primary" disabled={busy} onClick={() => answer("once")} className="h-8 text-xs">
 					{t("once")}
 				</Button>
-				<Button variant="outline" disabled={busy} onClick={() => answer("session")} className="h-8 text-xs">
-					{t("session")}
-				</Button>
+				{item.allowSession && (
+					<Button variant="outline" disabled={busy} onClick={() => answer("session")} className="h-8 text-xs">
+						{t("session")}
+					</Button>
+				)}
 				<Button variant="ghost" disabled={busy} onClick={() => answer("deny")} className="h-8 text-xs">
 					{t("deny")}
 				</Button>

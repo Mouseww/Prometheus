@@ -48,7 +48,7 @@ const TEAM_ROLES = ["member", "reviewer", "admin"] as const;
 /** The Hub may return a path (`/invite/<token>`) or an absolute URL. */
 export const absoluteLink = (link: string): string => (link.startsWith("/") ? `${location.origin}${link}` : link);
 
-function LinkBox({ created }: { created: CreatedInvitation }) {
+export function InvitationLinkBox({ created }: { created: CreatedInvitation }) {
 	const t = useT(M);
 	const c = useCommonT();
 	const lang = usePrefs((s) => s.lang);
@@ -153,7 +153,7 @@ export function InvitationsPage() {
 						</div>
 					</form>
 				</Card>
-				{created && <LinkBox created={created} />}
+				{created && <InvitationLinkBox created={created} />}
 			</Body>
 		</>
 	);

@@ -12,7 +12,7 @@ import { createHubApi } from "./hubApi.ts";
 import { inviteTokenFromPath } from "./hubMode.ts";
 import { errorText, roleLabel, useCommonT } from "./i18n.ts";
 import { ErrorBox, Notice, useAction } from "./kit.tsx";
-import { APP_ROOT, type AuthLink, authLinkFromLocation, isPublicMode, needsTurnstile } from "./logic/publicMode.ts";
+import { APP_ROOT, type AuthLink, authLinkFromLocation, needsTurnstile, registerOutcome } from "./logic/publicMode.ts";
 import { TeamShell } from "./TeamShell.tsx";
 import type { InvitationView, MetaInfo } from "./types.ts";
 import { Turnstile } from "./Turnstile.tsx";
@@ -216,7 +216,9 @@ function AuthScreen({ api, meta, inviteToken, startMode, onAuthed, onPending }: 
 			setTurnstileRun((n) => n + 1);
 		}
 		if (!res) return;
-		if (res.status === "pending") return onPending(isPublicMode(meta) && !res.bootstrap && res.user.emailVerifiedAt === null ? { kind: "verify", email: email.trim() } : { kind: "approval" });
+		const outcome = registerOutcome(res, meta);
+		if (outcome === "verify") return onPending({ kind: "verify", email: email.trim() });
+		if (outcome === "approval") return onPending({ kind: "approval" });
 		await signIn();
 	};
 

@@ -1,5 +1,5 @@
 // Pure helpers for the Hub's public online-service mode: what /api/meta says, link pages, context scoping and transfers.
-import type { MeResult, MetaInfo, TeamView, TransferView } from "../types.ts";
+import type { MeResult, MetaInfo, RegisterResult, TeamView, TransferView } from "../types.ts";
 
 // ---- /api/meta ----
 
@@ -8,6 +8,17 @@ export const isPublicMode = (meta: MetaInfo | undefined): boolean => meta?.mode 
 /** The sign-up form must carry a Turnstile token: required by the Hub, with a site key, and not the bootstrap account. */
 export function needsTurnstile(meta: MetaInfo | undefined): boolean {
 	return Boolean(meta && meta.turnstileRequired === true && meta.turnstileSiteKey && !meta.needsSetup);
+}
+
+export type RegisterOutcome = "signIn" | "verify" | "approval";
+
+/**
+ * What to show after a successful sign-up. In public mode a non-bootstrap account (invitees included) stays pending until the
+ * email is verified, so it gets the "check your email" state and is not signed in. Private mode invitees are active and sign in.
+ */
+export function registerOutcome(res: RegisterResult, meta: MetaInfo | undefined): RegisterOutcome {
+	if (isPublicMode(meta) && !res.bootstrap && res.user.emailVerifiedAt === null) return "verify";
+	return res.status === "pending" ? "approval" : "signIn";
 }
 
 /**

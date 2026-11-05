@@ -819,6 +819,8 @@ export interface RuntimeView {
 /** `GET /api/runtime`: the caller's own tenant. `restricted` drives the restricted-mode badge. */
 export interface MyRuntime extends RuntimeView {
 	restricted: boolean;
+	/** Absolute `<origin>/rt/` with a separate runtime origin, else host-relative `<basePath>/rt/`. Absent on an older Hub. */
+	workbenchUrl?: string;
 }
 
 export interface DriverStatus {

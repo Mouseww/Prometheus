@@ -26,7 +26,7 @@ import {
 	summarizeInput,
 } from "../src/team/logic/exec.ts";
 
-const hand = (callId: string, session = "h1", extra: Partial<HandItem> = {}): HandItem => ({ callId, tool: "bash", input: { command: "ls" }, session, insideProject: true, ...extra });
+const hand = (callId: string, session = "h1", extra: Partial<HandItem> = {}): HandItem => ({ callId, tool: "bash", input: { command: "ls" }, session, insideProject: true, allowSession: true, ...extra });
 
 describe("exec events", () => {
 	it("parses execChanged and rejects broken payloads", () => {
@@ -82,7 +82,8 @@ describe("exec events", () => {
 
 describe("hand queue", () => {
 	it("parses requests and the pending list defensively", () => {
-		expect(parseHandRequest({ callId: "c", tool: "bash", input: { command: "ls" }, session: "h", insideProject: false })).toEqual({ callId: "c", tool: "bash", input: { command: "ls" }, session: "h", insideProject: false });
+		expect(parseHandRequest({ callId: "c", tool: "bash", input: { command: "ls" }, session: "h", insideProject: false })).toEqual({ callId: "c", tool: "bash", input: { command: "ls" }, session: "h", insideProject: false, allowSession: false });
+		expect(parseHandRequest({ callId: "c", tool: "write", input: {}, session: "h", insideProject: true, allowSession: true })?.allowSession).toBe(true);
 		expect(parseHandRequest({ callId: "c", tool: "bash" })).toBeUndefined();
 		expect(parsePendingHands({ items: [hand("a"), { junk: true }, hand("b")] }).map((h) => h.callId)).toEqual(["a", "b"]);
 		expect(parsePendingHands(undefined)).toEqual([]);

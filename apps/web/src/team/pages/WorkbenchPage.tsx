@@ -96,7 +96,7 @@ export function WorkbenchPage() {
 		// The tab opens inside the click so the browser allows it; the address follows once the token is fresh.
 		const win = window.open("about:blank", "_blank");
 		if (!win) return setNote({ kind: "error", text: t("popupBlocked") });
-		const url = await api.workbenchUrl().catch(() => undefined);
+		const url = await api.workbenchUrl(runtime.data?.workbenchUrl).catch(() => undefined);
 		if (!url) {
 			win.close();
 			return setNote({ kind: "error", text: t("noUrl") });

@@ -1,4 +1,4 @@
-import { FolderGit2, Plus, UserPlus } from "lucide-react";
+import { FolderGit2, Link2, Plus, UserPlus } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { Badge, Button, Empty, Field, Input, PageHeader, Select } from "../../components/ui.tsx";
 import { defineMessages, useT } from "../../lib/i18n.ts";
@@ -6,7 +6,9 @@ import { usePrefs } from "../../lib/prefs.ts";
 import { isTeamAdmin, useTeam } from "../context.tsx";
 import { roleLabel, useCommonT } from "../i18n.ts";
 import { AsyncView, Body, Card, ConfirmButton, ErrorBox, Notice, shortDate, Table, Tabs, Td, useAction, useAsync } from "../kit.tsx";
+import { canAddDirectly, isIneligibleMember } from "../logic/members.ts";
 import type { TeamRole, TeamView, WorkspaceView } from "../types.ts";
+import { TeamInviteForm } from "./TeamInviteForm.tsx";
 import { TransferCard } from "./TransferCard.tsx";
 
 const M = defineMessages({
@@ -15,6 +17,10 @@ const M = defineMessages({
 		workspaces: "工作区",
 		tabs: "团队内容",
 		addMember: "添加成员",
+		inviteMember: "邀请成员",
+		personalInviteOnly: "个人团队只能通过邀请链接添加成员。生成链接后发给对方，对方注册或登录后即可加入。",
+		noEligible: "这个企业里没有该邮箱对应的可添加用户，请改为发送邀请。",
+		sendInvitation: "改为发送邀请",
 		email: "邮箱",
 		role: "角色",
 		add: "添加",
@@ -41,6 +47,10 @@ const M = defineMessages({
 		workspaces: "Workspaces",
 		tabs: "Team content",
 		addMember: "Add member",
+		inviteMember: "Invite a member",
+		personalInviteOnly: "Personal teams add members by invitation only. Create a link and send it; the invitee joins after signing up or signing in.",
+		noEligible: "No eligible user with that email in this organization. Send an invitation instead.",
+		sendInvitation: "Send an invitation instead",
 		email: "Email",
 		role: "Role",
 		add: "Add",
@@ -88,10 +98,26 @@ function Members({ team }: { team: TeamView }) {
 	const { busy, error, run } = useAction();
 	const [email, setEmail] = useState("");
 	const [role, setRole] = useState<TeamRole>("member");
+	const [ineligible, setIneligible] = useState(false);
+	const [inviting, setInviting] = useState(false);
+	const direct = canAddDirectly(team);
 
 	const add = async (e: FormEvent) => {
 		e.preventDefault();
-		if (await run(() => api.addTeamMember(team.id, { email: email.trim(), role }))) {
+		setIneligible(false);
+		const added = await run(async () => {
+			try {
+				return await api.addTeamMember(team.id, { email: email.trim(), role });
+			} catch (err) {
+				// One uniform 404 for every ineligible user: say nothing about which case it is.
+				if (isIneligibleMember(err)) {
+					setIneligible(true);
+					return undefined;
+				}
+				throw err;
+			}
+		});
+		if (added) {
 			setEmail("");
 			members.reload();
 		}
@@ -99,7 +125,13 @@ function Members({ team }: { team: TeamView }) {
 
 	return (
 		<div className="space-y-4">
-			{admin && (
+			{admin && !direct && (
+				<Card title={t("inviteMember")}>
+					<p className="mb-3 text-sm text-ink-300">{t("personalInviteOnly")}</p>
+					<TeamInviteForm team={team} />
+				</Card>
+			)}
+			{admin && direct && (
 				<Card title={t("addMember")}>
 					<form onSubmit={add} className="grid gap-3 @xl:grid-cols-[1fr_12rem_auto] @xl:items-end">
 						<Field label={t("email")}>
@@ -121,6 +153,23 @@ function Members({ team }: { team: TeamView }) {
 					{error && (
 						<div className="mt-3">
 							<Notice kind="error">{error}</Notice>
+						</div>
+					)}
+					{ineligible && (
+						<div className="mt-3 space-y-3">
+							<p role="status" className="rounded-lg bg-ink-800/60 px-3 py-2 text-sm text-ink-200">
+								{t("noEligible")}
+							</p>
+							{!inviting && (
+								<Button variant="outline" onClick={() => setInviting(true)} aria-expanded={inviting}>
+									<Link2 className="size-4" aria-hidden /> {t("sendInvitation")}
+								</Button>
+							)}
+						</div>
+					)}
+					{inviting && (
+						<div className="mt-3 border-t hairline pt-3">
+							<TeamInviteForm team={team} initialEmail={email.trim()} initialRole={role} />
 						</div>
 					)}
 				</Card>

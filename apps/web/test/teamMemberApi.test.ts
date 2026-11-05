@@ -27,7 +27,7 @@ describe("createMemberApi", () => {
 
 	it("throws TeamApiError for an error envelope", async () => {
 		const api = createMemberApi(async () => ({ ok: false, error: { code: "mergeConflict", message: "conflict" } }));
-		await expect(api.approveMergeRequest("m1")).rejects.toMatchObject({ code: "mergeConflict", message: "conflict" });
+		await expect(api.approveMergeRequest("m1", "h1")).rejects.toMatchObject({ code: "mergeConflict", message: "conflict" });
 	});
 
 	it("wraps a rejected plugin call and an empty reply", async () => {
