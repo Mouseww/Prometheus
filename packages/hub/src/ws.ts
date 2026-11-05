@@ -2,17 +2,23 @@ import { randomUUID } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import { type RawData, type WebSocket, WebSocketServer } from "ws";
+import { TENANT_SCOPE, type TenantCredentials } from "./auth/tenant-credentials.ts";
 import { JWT_AUDIENCE } from "./config.ts";
 import type { HubDeps, UpgradeHandler } from "./deps.ts";
-import { relativePath } from "./http/dispatch.ts";
+import { HubError } from "./errors.ts";
+import { hostMatchesOrigin, relativePath } from "./http/dispatch.ts";
 import { verifyJwt } from "./jwt.ts";
 import { LOG_PREFIX } from "./log.ts";
 import { type ConnKind, type HandPeer, HandRouter, type HandRouterOptions } from "./services/hands.ts";
 import { RELAY_TIMEOUT_MS, type Realtime, type RelayMessage, type RelayOutcome } from "./services/realtime.ts";
 
-/** Audience of the long-lived credential a tenant instance's team plugin presents (see runtime/tenant-env.ts). */
-const TENANT_TOKEN_AUDIENCE = "prometheus-tenant";
 const COMMAND_TIMEOUT_MS = 60_000;
+/** How often every open connection is re-validated (account still active, credential not revoked). */
+export const REVALIDATE_INTERVAL_MS = 60_000;
+/** How long a subscriber's ACL check for a workspace or session topic is trusted before a publish re-checks it. */
+export const ACL_TTL_MS = 15_000;
+/** A topic whose audience is restricted: every delivery re-checks the subscriber's rights (cached per connection). */
+const GUARDED_TOPIC = /^(workspace|session):/;
 const SNAPSHOT_REF_FIELD = /^[A-Za-z0-9_.-]{1,200}$/;
 
 export type CommandOutcome = { kind: "ok"; data: unknown } | { kind: "offline" } | { kind: "timeout" } | { kind: "failed"; error?: string; code?: string };
@@ -51,6 +57,10 @@ export interface WsGateway extends Realtime {
 	/** Flags sessions of owners that have had no connection for longer than the grace period. Runs every 10 seconds; exposed for tests. */
 	sweep(): Promise<number>;
 	connectionCount(userId?: string, kind?: ConnKind): number;
+	/** Closes every connection of the user (optionally one kind) with 4401; used when an account is disabled or a credential revoked. Returns how many were closed. */
+	disconnectUser(userId: string, kind?: ConnKind): number;
+	/** Re-validates every open connection now (runs every 60 seconds) and closes the ones that no longer qualify; exposed for tests. Returns how many were closed. */
+	revalidate(): Promise<number>;
 	close(): Promise<void>;
 }
 
@@ -58,6 +68,10 @@ interface Conn extends HandPeer {
 	ws: WebSocket;
 	topics: Set<string>;
 	alive: boolean;
+	/** False once the account is disabled or the credential the connection authenticated with is revoked or expired. */
+	check(): Promise<boolean>;
+	/** Guarded topic -> time its ACL was last confirmed. */
+	acl: Map<string, number>;
 }
 
 interface PendingCommand {
@@ -72,6 +86,13 @@ interface PendingRelay {
 	timer: NodeJS.Timeout;
 }
 
+/** An authenticated connection: who it is, what kind, and how to re-validate it later. */
+interface Identity {
+	userId: string;
+	kind: ConnKind;
+	check(): Promise<boolean>;
+}
+
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 function rejectUpgrade(socket: Duplex, status: number, text: string): void {
@@ -79,8 +100,9 @@ function rejectUpgrade(socket: Duplex, status: number, text: string): void {
 	socket.destroy();
 }
 
-export function createWsGateway(deps: HubDeps, options: { offlineGraceMs?: number } = {}): WsGateway {
+export function createWsGateway(deps: HubDeps, options: { offlineGraceMs?: number; revalidateMs?: number; aclTtlMs?: number } = {}): WsGateway {
 	const grace = options.offlineGraceMs ?? OFFLINE_GRACE_MS;
+	const aclTtl = options.aclTtlMs ?? ACL_TTL_MS;
 	const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
 	const conns = new Set<Conn>();
 	const byUser = new Map<string, Conn[]>();
@@ -171,11 +193,15 @@ export function createWsGateway(deps: HubDeps, options: { offlineGraceMs?: numbe
 					return;
 				}
 				conn.topics.add(topic);
+				if (GUARDED_TOPIC.test(topic)) conn.acl.set(topic, deps.now());
 				send(conn.ws, { type: "subscribed", topic });
 				return;
 			}
 			case "unsubscribe":
-				if (typeof msg.topic === "string") conn.topics.delete(msg.topic);
+				if (typeof msg.topic === "string") {
+					conn.topics.delete(msg.topic);
+					conn.acl.delete(msg.topic);
+				}
 				return;
 			case "relayResult": {
 				const relayId = msg.relayId;
@@ -221,9 +247,9 @@ export function createWsGateway(deps: HubDeps, options: { offlineGraceMs?: numbe
 		}
 	};
 
-	const accept = (ws: WebSocket, who: { userId: string; kind: ConnKind }): void => {
+	const accept = (ws: WebSocket, who: Identity): void => {
 		const { userId, kind } = who;
-		const conn: Conn = { ws, userId, kind, topics: new Set(), alive: true, send: (frame) => send(ws, frame) };
+		const conn: Conn = { ws, userId, kind, topics: new Set(), alive: true, send: (frame) => send(ws, frame), check: who.check, acl: new Map() };
 		conns.add(conn);
 		const list = byUser.get(userId) ?? [];
 		const first = list.length === 0;
@@ -247,33 +273,58 @@ export function createWsGateway(deps: HubDeps, options: { offlineGraceMs?: numbe
 		}
 	};
 
+	const accountActive = (userId: string): Promise<boolean> =>
+		deps.services.actors.load(userId).then(
+			() => true,
+			(err: unknown) => {
+				// Only an unusable account counts as gone; a database hiccup must not drop every connection.
+				if (err instanceof HubError && err.status === 401) return false;
+				deps.log.warn(`${LOG_PREFIX} 重新校验账号失败: ${err instanceof Error ? err.message : String(err)}`);
+				return true;
+			},
+		);
+
+	const credentials = (): TenantCredentials | undefined => deps.registry.get<TenantCredentials>("tenantCredentials");
+
 	/**
 	 * Who the `token` query parameter belongs to, or undefined when it is missing, invalid, or the account is gone. A user
-	 * access token makes a `local` connection; a tenant credential (aud `prometheus-tenant`, `tenant: true`) makes a `tenant`
-	 * one. The `kind` parameter may only repeat what the token already says, so a user cannot pose as a tenant instance.
+	 * access token makes a `local` connection; a tenant credential (aud `prometheus-tenant`, `tenant: true`, live jti) or an
+	 * access token minted from one (`scope: "tenant"`) makes a `tenant` one. The `kind` parameter may only repeat what the
+	 * token already says, so a user cannot pose as a tenant instance. `check` is run again every minute for the open connection.
 	 */
-	const authenticate = async (url: URL): Promise<{ userId: string; kind: ConnKind } | undefined> => {
+	const authenticate = async (url: URL): Promise<Identity | undefined> => {
 		const token = url.searchParams.get("token");
 		if (!token) return undefined;
 		const base = { publicKey: deps.publicKeyPem, issuer: deps.config.issuer };
 		let kind: ConnKind = "local";
 		let claims = verifyJwt(token, { ...base, audience: JWT_AUDIENCE });
+		let credentialJti: string | undefined;
+		if (claims?.scope === TENANT_SCOPE) {
+			// An access token minted for a tenant instance never makes a `local` connection.
+			if (!(await credentials()?.accessTokenActive(claims))) return undefined;
+			kind = "tenant";
+			credentialJti = claims.cid;
+		} else if (claims?.scope !== undefined) {
+			return undefined;
+		}
 		if (!claims) {
-			const tenantClaims = verifyJwt(token, { ...base, audience: TENANT_TOKEN_AUDIENCE });
-			if (tenantClaims && (tenantClaims as { tenant?: unknown }).tenant === true) {
+			const tenantClaims = await credentials()?.verify(token, "tenant");
+			if (tenantClaims) {
 				claims = tenantClaims;
 				kind = "tenant";
+				credentialJti = tenantClaims.jti;
 			}
 		}
 		if (!claims) return undefined;
 		const declared = url.searchParams.get("kind");
 		if (declared !== null && declared !== kind) return undefined;
-		try {
-			await deps.services.actors.load(claims.sub);
-		} catch {
-			return undefined;
-		}
-		return { userId: claims.sub, kind };
+		const userId = claims.sub;
+		if (!(await accountActive(userId))) return undefined;
+		const check = async (): Promise<boolean> => {
+			if (credentialJti !== undefined && !(await credentials()?.isActive(credentialJti))) return false;
+			return accountActive(userId);
+		};
+		return { userId, kind, check };
 	};
 
 	const attach = (ws: WebSocket, req: IncomingMessage): void => {
@@ -302,6 +353,8 @@ export function createWsGateway(deps: HubDeps, options: { offlineGraceMs?: numbe
 	const handleUpgrade: UpgradeHandler = (req: IncomingMessage, socket: Duplex, head: Buffer) => {
 		const url = new URL(req.url ?? "/", "http://hub.local");
 		if (relativePath(deps.config, url.pathname) !== WS_PATH) return false;
+		// The dedicated workbench origin serves `/rt` only.
+		if (deps.config.runtimeOrigin && hostMatchesOrigin(req, deps.config.runtimeOrigin)) return false;
 		socket.on("error", () => {});
 		void (async () => {
 			const who = await authenticate(url);
@@ -350,6 +403,67 @@ export function createWsGateway(deps: HubDeps, options: { offlineGraceMs?: numbe
 	}, HEARTBEAT_INTERVAL_MS);
 	heartbeat.unref();
 
+	const kick = (conn: Conn): void => {
+		conn.ws.close(4401, "Unauthorized");
+		// A client that ignores the close handshake must not keep the connection open.
+		const timer = setTimeout(() => conn.ws.terminate(), 2000);
+		timer.unref();
+		removeConn(conn);
+	};
+
+	/** Sends an event to the subscribers of a topic. Guarded topics re-check the subscriber's rights when the cached check is stale. */
+	function deliver(topic: string, data: unknown): void {
+		const guarded = GUARDED_TOPIC.test(topic);
+		for (const conn of [...conns]) {
+			if (!conn.topics.has(topic)) continue;
+			const frame = { type: "event", topic, data };
+			const checkedAt = conn.acl.get(topic);
+			if (!guarded || (checkedAt !== undefined && deps.now() - checkedAt < aclTtl)) {
+				send(conn.ws, frame);
+				continue;
+			}
+			void (handlers ? handlers.canSubscribe(conn.userId, topic) : Promise.resolve(false))
+				.then((ok) => {
+					if (!ok) {
+						conn.topics.delete(topic);
+						conn.acl.delete(topic);
+						send(conn.ws, { type: "error", code: "forbidden", topic, message: "没有权限订阅该主题" });
+						return;
+					}
+					conn.acl.set(topic, deps.now());
+					if (conn.topics.has(topic)) send(conn.ws, frame);
+				})
+				.catch((err: unknown) => {
+					deps.log.warn(`${LOG_PREFIX} 重新校验订阅权限失败: ${err instanceof Error ? err.message : String(err)}`);
+				});
+		}
+	}
+
+	let revalidating = false;
+	const revalidate = async (): Promise<number> => {
+		if (revalidating) return 0;
+		revalidating = true;
+		try {
+			let closed = 0;
+			for (const conn of [...conns]) {
+				if (await conn.check()) continue;
+				deps.log.info(`${LOG_PREFIX} WebSocket 连接已失效，关闭 user=${conn.userId} kind=${conn.kind}`);
+				kick(conn);
+				closed += 1;
+			}
+			return closed;
+		} finally {
+			revalidating = false;
+		}
+	};
+
+	const revalidateTimer = setInterval(() => {
+		void revalidate().catch((err: unknown) => {
+			deps.log.warn(`${LOG_PREFIX} 重新校验 WebSocket 连接失败: ${err instanceof Error ? err.message : String(err)}`);
+		});
+	}, options.revalidateMs ?? REVALIDATE_INTERVAL_MS);
+	revalidateTimer.unref();
+
 	return {
 		handleUpgrade,
 		attach,
@@ -357,6 +471,12 @@ export function createWsGateway(deps: HubDeps, options: { offlineGraceMs?: numbe
 			handlers = h;
 		},
 		sweep,
+		revalidate,
+		disconnectUser(userId, kind) {
+			const targets = (byUser.get(userId) ?? []).filter((c) => kind === undefined || c.kind === kind);
+			for (const conn of targets) kick(conn);
+			return targets.length;
+		},
 		connectionCount: (userId, kind) => (userId ? (byUser.get(userId) ?? []).filter((c) => kind === undefined || c.kind === kind).length : conns.size),
 		setWake(wake) {
 			wakeTenant = wake;
@@ -377,7 +497,7 @@ export function createWsGateway(deps: HubDeps, options: { offlineGraceMs?: numbe
 		},
 
 		publish(topic, data) {
-			for (const conn of conns) if (conn.topics.has(topic)) send(conn.ws, { type: "event", topic, data });
+			deliver(topic, data);
 		},
 		publishUser(userId, data) {
 			for (const conn of byUser.get(userId) ?? []) if (conn.topics.has("user")) send(conn.ws, { type: "event", topic: "user", data });
@@ -403,6 +523,7 @@ export function createWsGateway(deps: HubDeps, options: { offlineGraceMs?: numbe
 		async close() {
 			clearInterval(sweepTimer);
 			clearInterval(heartbeat);
+			clearInterval(revalidateTimer);
 			for (const [id, p] of pending) {
 				clearTimeout(p.timer);
 				pending.delete(id);

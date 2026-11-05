@@ -1,10 +1,12 @@
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { join } from "node:path";
 import type { Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
 import type { HubOptions } from "../src/config.ts";
 import type { RuntimeDriver, TenantHandle, TenantSpec } from "../src/runtime/driver.ts";
 import type { RuntimeOverrides } from "../src/runtime/options.ts";
+import { tempDir } from "./helpers.ts";
 import { startHub, type TestHub } from "./hub-helpers.ts";
 
 export interface SeenRequest {
@@ -134,7 +136,9 @@ export interface RtHub extends TestHub {
 }
 
 export async function startRtHub(runtime: RuntimeOverrides, options: Partial<HubOptions> = {}): Promise<RtHub> {
-	const th = await startHub({ runtime: { healthIntervalMs: 0, ...runtime }, ...options });
+	// Without an explicit root, restricted tenants would go to a sibling of the data directory (outside the temp dir that gets cleaned up).
+	const tenantRoot = runtime.tenantRoot ?? join(await tempDir(), "tenants");
+	const th = await startHub({ runtime: { healthIntervalMs: 0, tenantRoot, ...runtime }, ...options });
 	th.server.on("upgrade", (req, socket, head) => {
 		if (!th.hub.handleUpgrade(req, socket, head)) socket.destroy();
 	});

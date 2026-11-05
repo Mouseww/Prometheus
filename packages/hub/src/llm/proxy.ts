@@ -1,6 +1,8 @@
 import { once } from "node:events";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { TenantCredentials } from "../auth/tenant-credentials.ts";
 import { JWT_AUDIENCE } from "../config.ts";
+import type { JwtClaims } from "../jwt.ts";
 import type { HubDeps } from "../deps.ts";
 import { badRequest, forbidden, HubError, notFound, unauthorized } from "../errors.ts";
 import type { RouteContext } from "../http/context.ts";
@@ -10,8 +12,9 @@ import { verifyJwt } from "../jwt.ts";
 import { LOG_PREFIX } from "../log.ts";
 import type { BillingService } from "../billing/index.ts";
 import type { Subject } from "../billing/providers/provider.ts";
-import { type ModelPrice, requestedMaxTokens } from "../billing/wallet.ts";
+import { computeCost, DEFAULT_MAX_TOKENS, type ModelPrice, requestedMaxTokens } from "../billing/wallet.ts";
 import { pinnedRequest, resolveSafeTarget } from "../net/safe-url.ts";
+import { estimateInputTokens } from "./estimate.ts";
 import { type ByokService, safeUrlPolicyOf } from "../services/byok.ts";
 import type { GatewayFormat } from "../services/models.ts";
 import type { QuotasService } from "../services/quotas.ts";
@@ -70,13 +73,26 @@ export interface LlmProxy {
 
 /** `<base>/llm/:format/*`: authenticates with the Hub access token, picks a gateway, checks quota, streams the upstream response through and books usage. */
 export function createLlmProxy(deps: HubDeps, quotas: QuotasService, usage: UsageService): LlmProxy {
+	/**
+	 * Two kinds of caller: a tenant's server with its gateway token (aud `prometheus-llm`, revocable, accepted nowhere else),
+	 * and a member's own server with a normal access token. A `scope: "tenant"` access token is not an LLM credential.
+	 */
+	async function authenticate(token: string): Promise<JwtClaims | undefined> {
+		const credentials = deps.registry.get<TenantCredentials>("tenantCredentials");
+		const gateway = credentials ? await credentials.verify(token, "gateway") : undefined;
+		if (gateway) return gateway;
+		const claims = verifyJwt(token, { publicKey: deps.publicKeyPem, issuer: deps.config.issuer, audience: JWT_AUDIENCE });
+		if (claims?.scope !== undefined) throw forbidden("租户访问令牌不能调用模型接口，请使用网关令牌", "tenantScope");
+		return claims;
+	}
+
 	return {
 		async handle(ctx) {
 			const format = ctx.params.format as string;
 			if (!FORMATS.includes(format)) throw notFound("不支持的接口格式");
 
 			const token = clientToken(ctx.req, ctx.searchParams);
-			const claims = token ? verifyJwt(token, { publicKey: deps.publicKeyPem, issuer: deps.config.issuer, audience: JWT_AUDIENCE }) : undefined;
+			const claims = token ? await authenticate(token) : undefined;
 			if (!claims) throw unauthorized(token ? "访问令牌无效或已过期" : "需要登录", "invalidToken");
 			const actor = await deps.services.actors.load(claims.sub);
 
@@ -126,7 +142,12 @@ export function createLlmProxy(deps: HubDeps, quotas: QuotasService, usage: Usag
 			if (billing && gateway.scope === "platform") {
 				const subject: Subject = billingOrg ? { type: "org", id: billingOrg } : { type: "user", id: actor.userId };
 				const price = await billing.wallet.priceFor(model ?? "unknown", gateway.id);
-				await billing.wallet.precheck(subject, price, requestedMaxTokens(parsed));
+				// Free calls through the operator's own gateways would let anyone run up the operator's bill.
+				if (!price) throw new HubError(403, "modelNotPriced", `模型 ${model ?? "unknown"} 尚未定价，不能通过平台网关调用`);
+				// The estimate counts the prompt as well as the output cap: a huge prompt with a tiny max_tokens used to pass.
+				const estimate = computeCost(price, estimateInputTokens(parsed, raw.length), requestedMaxTokens(parsed) ?? DEFAULT_MAX_TOKENS);
+				await billing.wallet.ensureGrants(subject);
+				if (estimate > 0 && (await billing.wallet.balance(subject)) < estimate) throw new HubError(402, "insufficientCredits", "额度不足，请充值或升级套餐");
 				charge = { subject, price };
 			}
 

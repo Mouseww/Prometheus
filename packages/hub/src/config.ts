@@ -33,6 +33,8 @@ export interface HubOptions {
 	mode?: "private" | "public";
 	/** Overrides HUB_BILLING: credits billing for the LLM proxy; always on in public mode. */
 	billing?: boolean;
+	/** Overrides HUB_RUNTIME_ORIGIN: the separate origin (e.g. https://rt.example.com) that serves the tenant workbench under `/rt`. */
+	runtimeOrigin?: string;
 }
 
 export interface HubConfig {
@@ -57,6 +59,28 @@ export interface HubConfig {
 	stripeWebhookSecret: string | undefined;
 	/** HUB_STRIPE_API_BASE: points the stripe provider at a mock (tests, local development); default https://api.stripe.com. */
 	stripeApiBase: string | undefined;
+	/**
+	 * HUB_RUNTIME_ORIGIN: the tenant workbench proxies a user-directed agent's web UI, so it must not share the Hub UI's origin
+	 * (cookies, storage, same-origin requests). When set, `/rt` is served only to requests whose Host is this origin, the
+	 * Hub UI host refuses `/rt`, and the origin serves nothing but `/rt`. Undefined: same-origin proxy (private deployments).
+	 */
+	runtimeOrigin: string | undefined;
+}
+
+/** `https://rt.example.com` -> the origin; anything with a path, query or non-http(s) scheme is rejected at startup. */
+export function parseRuntimeOrigin(raw: string | undefined): string | undefined {
+	const text = raw?.trim();
+	if (!text) return undefined;
+	let url: URL;
+	try {
+		url = new URL(text);
+	} catch {
+		throw new Error(`HUB_RUNTIME_ORIGIN 无效: ${text}（需要形如 https://rt.example.com 的源）`);
+	}
+	if ((url.protocol !== "http:" && url.protocol !== "https:") || (url.pathname !== "/" && url.pathname !== "") || url.search || url.hash || url.username) {
+		throw new Error(`HUB_RUNTIME_ORIGIN 无效: ${text}（只能是 http(s) 源，不能带路径、查询或账号）`);
+	}
+	return url.origin;
 }
 
 export const JWT_AUDIENCE = "prometheus";
@@ -91,6 +115,7 @@ export function resolveConfig(options: HubOptions): HubConfig {
 		stripeSecret: env.HUB_STRIPE_SECRET || undefined,
 		stripeWebhookSecret: env.HUB_STRIPE_WEBHOOK_SECRET || undefined,
 		stripeApiBase: env.HUB_STRIPE_API_BASE || undefined,
+		runtimeOrigin: parseRuntimeOrigin(options.runtimeOrigin ?? env.HUB_RUNTIME_ORIGIN),
 	};
 }
 

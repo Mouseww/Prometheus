@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { TenantCredentials } from "../src/auth/tenant-credentials.ts";
 import { createExecService, type ExecService } from "../src/services/exec.ts";
 import { silentLog } from "../src/log.ts";
 import type { WsGateway } from "../src/ws.ts";
@@ -14,7 +15,8 @@ afterAll(async () => {
 	await c.stop();
 });
 
-const tenantToken = (userId: string): string => c.t.hub.deps.signToken({ sub: userId, aud: "prometheus-tenant", tenant: true, exp: Math.floor(Date.now() / 1000) + 3600 });
+/** A live, revocable tenant credential, issued the way the runtime manager issues it. */
+const tenantToken = async (userId: string): Promise<string> => (await c.t.hub.registry.require<TenantCredentials>("tenantCredentials").issue(userId, "tenant", 3600)).token;
 
 type Answer = { ok: true; data?: unknown } | { ok: false; error?: string; code?: string };
 interface Side {
@@ -42,7 +44,7 @@ const connectSides = async (
 	team: Record<string, (p: any) => Answer>,
 ): Promise<{ local: Side; team: Side; close(): Promise<void> }> => {
 	const lc = await connectWs(c.t.baseUrl, token);
-	const tc = await connectWs(c.t.baseUrl, tenantToken(userId));
+	const tc = await connectWs(c.t.baseUrl, await tenantToken(userId));
 	return { local: side(lc, local), team: side(tc, team), close: async () => void (await lc.close(), await tc.close()) };
 };
 
@@ -146,7 +148,7 @@ describe("handoff", () => {
 
 	it("reports an offline source and leaves the session where it was", async () => {
 		const s = await c.registerSession();
-		const tenant = side(await connectWs(c.t.baseUrl, tenantToken(c.alice.userId)), {});
+		const tenant = side(await connectWs(c.t.baseUrl, await tenantToken(c.alice.userId)), {});
 		await expect(service({ ensureTenant: async () => {} }).handoff(await actorOf(c.alice.userId), s.id, "team")).rejects.toMatchObject({ status: 409, code: "sourceOffline" });
 		expect((await rowOf(s.id)).exec_location).toBe("local");
 		await tenant.client.close();
@@ -167,7 +169,7 @@ describe("handoff", () => {
 		await sides.close();
 
 		const lc = await connectWs(c.t.baseUrl, c.alice.token);
-		const tc = await connectWs(c.t.baseUrl, tenantToken(c.alice.userId));
+		const tc = await connectWs(c.t.baseUrl, await tenantToken(c.alice.userId));
 		await expect(service({ ...ensure, commandTimeoutMs: 100 }).handoff(alice, s.id, "team")).rejects.toMatchObject({ status: 504, code: "handoffTimeout" });
 		await lc.close();
 		await tc.close();
@@ -197,7 +199,7 @@ describe("actions follow the active side", () => {
 		const s = await c.registerSession();
 		await c.t.api("POST", `/api/sessions/${s.id}/grants`, { token: c.alice.token, body: { userId: c.bob.userId } });
 		const lc = await connectWs(c.t.baseUrl, c.alice.token);
-		const tc = await connectWs(c.t.baseUrl, tenantToken(c.alice.userId));
+		const tc = await connectWs(c.t.baseUrl, await tenantToken(c.alice.userId));
 		const localSeen: any[] = [];
 		const teamSeen: any[] = [];
 		lc.autoRelay((f) => (localSeen.push(f), { ok: true }));
@@ -251,7 +253,7 @@ describe("actions follow the active side", () => {
 
 		// Team side active but never linked to a tenant session.
 		await setLocation(s.id, "team", null);
-		const tc = await connectWs(c.t.baseUrl, tenantToken(c.alice.userId));
+		const tc = await connectWs(c.t.baseUrl, await tenantToken(c.alice.userId));
 		expect((await act(c.alice.token, s.id, { type: "prompt", text: "x" })).code).toBe("sessionNotLinked");
 		await tc.close();
 		await setLocation(s.id, "local", null);
@@ -260,7 +262,7 @@ describe("actions follow the active side", () => {
 
 describe("tenant token exchange", () => {
 	it("trades a tenant credential for a user access token and refuses everything else", async () => {
-		const res = await fetch(`${c.t.baseUrl}/api/auth/tenant-token`, { method: "POST", headers: { authorization: `Bearer ${tenantToken(c.alice.userId)}` } });
+		const res = await fetch(`${c.t.baseUrl}/api/auth/tenant-token`, { method: "POST", headers: { authorization: `Bearer ${await tenantToken(c.alice.userId)}` } });
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as { data: { accessToken: string; user: { id: string } } };
 		expect(body.data.user.id).toBe(c.alice.userId);

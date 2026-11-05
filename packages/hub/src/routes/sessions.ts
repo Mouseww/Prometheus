@@ -5,7 +5,8 @@ import { ACCESS_TOKEN_TTL_SEC, JWT_AUDIENCE } from "../config.ts";
 import type { HubDeps } from "../deps.ts";
 import { badRequest, HubError, unauthorized, validationError } from "../errors.ts";
 import { Reply, type Router } from "../http/router.ts";
-import { verifyJwt } from "../jwt.ts";
+import type { TenantCredentials } from "../auth/tenant-credentials.ts";
+import type { JwtClaims } from "../jwt.ts";
 import { createInternalLlm } from "../llm/internal.ts";
 import type { TenantManager } from "../runtime/manager.ts";
 import { createReportScheduler } from "../scheduler.ts";
@@ -59,9 +60,6 @@ const ActionBody = Type.Object({
 const ForkBody = Type.Object({ title: Type.Optional(Type.String({ maxLength: 300 })) });
 const ExecModeBody = Type.Object({ mode: Type.Union([Type.Literal("local-first"), Type.Literal("team-first")]) });
 const HandoffBody = Type.Object({ to: Type.Union([Type.Literal("team"), Type.Literal("local")]), force: Type.Optional(Type.Boolean()) });
-
-/** Audience of the long-lived credential a tenant instance's team plugin holds (see runtime/tenant-env.ts). */
-const TENANT_TOKEN_AUDIENCE = "prometheus-tenant";
 
 const ListQuery = Type.Object({ status: Type.Optional(StatusSchema), owner: Type.Optional(IdSchema), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 500 })) });
 const SessionFilesQuery = Type.Object({ path: Type.Optional(Type.String({ maxLength: 1000 })) });
@@ -118,17 +116,19 @@ export function registerSessionRoutes(router: Router, deps: HubDeps): void {
 	if (deps.env.HUB_HAND_WAKE_TENANT === "1") realtime.setWake(ensureTenant);
 
 	/** The tenant credential in `Authorization: Bearer` -> verified user id (the same user must still be active). */
-	const tenantUser = async (req: IncomingMessage): Promise<string> => {
+	const credentials = (): TenantCredentials => deps.registry.require<TenantCredentials>("tenantCredentials");
+	const tenantCredential = async (req: IncomingMessage): Promise<JwtClaims> => {
 		const header = req.headers.authorization;
 		const token = typeof header === "string" && /^Bearer /i.test(header) ? header.slice(7).trim() : "";
-		const claims = token ? verifyJwt(token, { publicKey: deps.publicKeyPem, issuer: deps.config.issuer, audience: TENANT_TOKEN_AUDIENCE }) : undefined;
-		if (!claims || (claims as { tenant?: unknown }).tenant !== true) throw unauthorized("租户凭证无效或已过期", "invalidToken");
+		// Signature, audience, expiry and the credential record (revoked on stop, on a new credential, or when the account is disabled).
+		const claims = token ? await credentials().verify(token, "tenant") : undefined;
+		if (!claims) throw unauthorized("租户凭证无效或已过期", "invalidToken");
 		try {
 			await actors.load(claims.sub);
 		} catch {
 			throw unauthorized("账号不可用", "accountUnavailable");
 		}
-		return claims.sub;
+		return claims;
 	};
 	const board = deps.registry.register("board", createBoardService(base, realtime));
 	const reports = deps.registry.register("reports", createReportsService(base, createInternalLlm(deps, sharedUsage(deps)), realtime));
@@ -158,11 +158,12 @@ export function registerSessionRoutes(router: Router, deps: HubDeps): void {
 	router.post(
 		"/api/auth/tenant-token",
 		async (ctx) => {
-			const userId = await tenantUser(ctx.req);
-			const rows = await deps.db.tx({ system: true }, (q) => q.query<{ id: string; email: string; display_name: string }>("SELECT id, email, display_name FROM users WHERE id = $1", [userId]));
+			const credential = await tenantCredential(ctx.req);
+			const rows = await deps.db.tx({ system: true }, (q) => q.query<{ id: string; email: string; display_name: string }>("SELECT id, email, display_name FROM users WHERE id = $1", [credential.sub]));
 			const user = rows[0];
 			if (!user) throw unauthorized("账号不可用", "accountUnavailable");
-			const accessToken = deps.signToken({ sub: user.id, name: user.display_name, aud: JWT_AUDIENCE, exp: Math.floor(deps.now() / 1000) + ACCESS_TOKEN_TTL_SEC });
+			// scope "tenant": the dispatcher accepts this token on the tenant allowlist only, and only while the credential is live.
+			const accessToken = deps.signToken({ sub: user.id, name: user.display_name, aud: JWT_AUDIENCE, exp: Math.floor(deps.now() / 1000) + ACCESS_TOKEN_TTL_SEC, ...credentials().accessTokenClaims(credential) });
 			return { accessToken, expiresIn: ACCESS_TOKEN_TTL_SEC, user: { id: user.id, email: user.email, displayName: user.display_name } };
 		},
 		{ auth: "public" },

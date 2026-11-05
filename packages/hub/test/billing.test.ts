@@ -314,7 +314,7 @@ describe("LLM proxy billing", () => {
 		await b.t.api("DELETE", `/api/admin/gateways/${org.data.id}`, { token: b.root.token });
 	});
 
-	it("looks prices up by gateway, then model, then the * fallback, and lets unpriced models through", async () => {
+	it("looks prices up by gateway, then model, then the * fallback, and refuses unpriced models on platform gateways", async () => {
 		const billing = b.t.hub.registry.require<BillingService>("billing");
 		const price = (model: string, gw: string | null) => billing.wallet.priceFor(model, gw);
 		expect(await price("gpt-x", platformGw)).toEqual({ inputPrice: 10_000, outputPrice: 30_000 });
@@ -329,14 +329,31 @@ describe("LLM proxy billing", () => {
 		expect(await price("other-model", platformGw)).toBeUndefined();
 
 		await clean();
-		// A model without any price costs nothing and is not blocked by an empty wallet.
 		const r = await b.llm("openai/v1/chat/completions", { token: b.alice.token, body: { model: "gpt-x" } });
 		expect(r.status).toBe(402);
+		// A model without any price is refused on the operator's gateway (it would be free for everyone), even with a full wallet.
+		await b.grant("user", b.alice.userId, 1000);
 		await b.t.api("PUT", `/api/admin/gateways/${platformGw}`, { token: b.root.token, body: { models: ["gpt-x", "free-model"] } });
 		const free = await b.llm("openai/v1/chat/completions", { token: b.alice.token, body: { model: "free-model" } });
-		expect(free.status).toBe(200);
-		const rows = await b.ledger(1);
-		expect(Number(rows[0].cost_credits)).toBe(0);
+		expect(free.status).toBe(403);
+		expect(((await free.json()) as any).error.code).toBe("modelNotPriced");
+		expect(upstreamCalls).toBe(0);
+		expect(await b.t.hub.db.query("SELECT 1 FROM usage_ledger")).toHaveLength(0);
+	});
+
+	it("counts the prompt in the pre-check, not only the output cap", async () => {
+		await clean();
+		// 40000 characters is about 10000 input tokens = 100 credits at 10000/1M, plus 1 for max_tokens 10: far above 50.
+		await b.grant("user", b.alice.userId, 50);
+		const big = "a".repeat(40_000);
+		const refused = await chat(b.alice.token, { max_tokens: 10, messages: [{ role: "user", content: big }] });
+		expect(refused.status).toBe(402);
+		expect(((await refused.json()) as any).error.code).toBe("insufficientCredits");
+		expect(upstreamCalls).toBe(0);
+		// A short prompt with the same cap is fine, and an inline image counts as a flat amount rather than its base64 length.
+		expect((await chat(b.alice.token, { max_tokens: 10, messages: [{ role: "user", content: "hi" }] })).status).toBe(200);
+		const image = `data:image/png;base64,${"A".repeat(2_000_000)}`;
+		expect((await chat(b.alice.token, { max_tokens: 10, messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: image } }] }] })).status).toBe(200);
 	});
 
 	it("summarizes balance, grants, plan and the month's usage for a user and for an organization admin only", async () => {

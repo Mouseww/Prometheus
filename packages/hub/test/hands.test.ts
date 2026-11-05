@@ -1,5 +1,6 @@
 import WebSocket from "ws";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { TenantCredentials } from "../src/auth/tenant-credentials.ts";
 import { HandRouter, type HandPeer } from "../src/services/hands.ts";
 import type { WsGateway } from "../src/ws.ts";
 import { type Collab, connectWs, sleep, startCollab, type WsClient, wsUrl } from "./s-helpers.ts";
@@ -14,10 +15,10 @@ afterAll(async () => {
 	await c.stop();
 });
 
-const tenantToken = (userId: string, extra: Record<string, unknown> = {}): string =>
-	c.t.hub.deps.signToken({ sub: userId, aud: "prometheus-tenant", tenant: true, exp: Math.floor(Date.now() / 1000) + 3600, ...extra });
+/** A live, revocable tenant credential, issued the way the runtime manager issues it. */
+const tenantToken = async (userId: string): Promise<string> => (await c.t.hub.registry.require<TenantCredentials>("tenantCredentials").issue(userId, "tenant", 3600)).token;
 
-const connectTenant = (userId: string): Promise<WsClient> => connectWs(c.t.baseUrl, tenantToken(userId));
+const connectTenant = async (userId: string): Promise<WsClient> => connectWs(c.t.baseUrl, await tenantToken(userId));
 
 const call = (over: Record<string, unknown> = {}): Record<string, unknown> => ({ type: "hand.call", callId: "c1", fromSession: "s1", tool: "local_read", input: { path: "a.txt" }, target: "local", ...over });
 

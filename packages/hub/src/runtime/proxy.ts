@@ -2,8 +2,8 @@ import { request as httpRequest, type IncomingHttpHeaders, type IncomingMessage,
 import type { Duplex } from "node:stream";
 import { JWT_AUDIENCE } from "../config.ts";
 import type { HubDeps, UpgradeHandler } from "../deps.ts";
-import { HubError, unauthorized } from "../errors.ts";
-import { bearerToken, relativePath } from "../http/dispatch.ts";
+import { HubError, notFound, unauthorized } from "../errors.ts";
+import { bearerToken, hostMatchesOrigin, relativePath } from "../http/dispatch.ts";
 import type { RouteContext } from "../http/context.ts";
 import { HANDLED } from "../http/router.ts";
 import { verifyJwt } from "../jwt.ts";
@@ -76,7 +76,19 @@ export interface RuntimeProxy {
 }
 
 export function createRuntimeProxy(deps: HubDeps, manager: TenantManager): RuntimeProxy {
-	const secure = deps.config.publicUrl.startsWith("https://");
+	const secure = (deps.config.runtimeOrigin ?? deps.config.publicUrl).startsWith("https://");
+	const onWorkbenchHost = (req: IncomingMessage): boolean => !deps.config.runtimeOrigin || hostMatchesOrigin(req, deps.config.runtimeOrigin);
+
+	/**
+	 * Headers every workbench response carries: nosniff, and a CSP that only restricts who may frame it (the tenant UI keeps its own
+	 * policy; both apply when it sends one). The Hub UI may frame the workbench, which with a dedicated origin lives elsewhere.
+	 */
+	function hardenedHeaders(upstreamCsp: string | string[] | undefined): OutgoingHttpHeaders {
+		const ancestors = ["'self'", ...(deps.config.runtimeOrigin && deps.config.publicUrl ? [new URL(deps.config.publicUrl).origin] : [])].join(" ");
+		const ours = `frame-ancestors ${ancestors}`;
+		const existing = upstreamCsp === undefined ? [] : Array.isArray(upstreamCsp) ? upstreamCsp : [upstreamCsp];
+		return { "x-content-type-options": "nosniff", "content-security-policy": [...existing, ours].join(", ") };
+	}
 
 	/** Hub access token from the Authorization header, the cookie, or `?token=`, in that order. */
 	async function authenticate(req: IncomingMessage, search: URLSearchParams): Promise<RtAuth> {
@@ -88,7 +100,8 @@ export function createRuntimeProxy(deps: HubDeps, manager: TenantManager): Runti
 		for (const { token, source } of candidates) {
 			if (!token) continue;
 			const claims = verifyJwt(token, { publicKey: deps.publicKeyPem, issuer: deps.config.issuer, audience: JWT_AUDIENCE });
-			if (!claims) continue;
+			// Tokens minted for a tenant instance never open the workbench (it is the tenant's own UI).
+			if (!claims || claims.scope !== undefined) continue;
 			// Disabled accounts lose access at once instead of when the token expires.
 			await deps.services.actors.load(claims.sub);
 			return { userId: claims.sub, exp: claims.exp, source };
@@ -100,7 +113,7 @@ export function createRuntimeProxy(deps: HubDeps, manager: TenantManager): Runti
 
 	function authCookie(token: string, exp: number): string {
 		const maxAge = Math.max(0, exp - Math.floor(deps.now() / 1000));
-		return `${RT_COOKIE}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=${deps.config.basePath}${RT_PREFIX}; Max-Age=${maxAge}${secure ? "; Secure" : ""}`;
+		return `${RT_COOKIE}=${encodeURIComponent(token)}; HttpOnly; SameSite=${deps.config.runtimeOrigin ? "Lax" : "Strict"}; Path=${deps.config.basePath}${RT_PREFIX}; Max-Age=${maxAge}${secure ? "; Secure" : ""}`;
 	}
 
 	/** The raw token a request carried, for turning it into a cookie. */
@@ -121,6 +134,8 @@ export function createRuntimeProxy(deps: HubDeps, manager: TenantManager): Runti
 
 	async function handle(ctx: RouteContext): Promise<typeof HANDLED> {
 		const { req, res } = ctx;
+		// With a dedicated workbench origin the Hub UI host does not serve `/rt` at all.
+		if (!onWorkbenchHost(req)) throw notFound("接口不存在");
 		const auth = await authenticate(req, ctx.searchParams);
 		const cleanSearch = stripTokenParam(ctx.searchParams);
 		const sets: string[] = [];
@@ -130,7 +145,7 @@ export function createRuntimeProxy(deps: HubDeps, manager: TenantManager): Runti
 		}
 		// First load with ?token=: set the cookie and come back without the token in the address bar.
 		if (auth.source === "query" && ctx.method === "GET") {
-			res.writeHead(302, { location: `${deps.config.basePath}${ctx.path}${cleanSearch}`, "set-cookie": sets, "cache-control": "no-store" });
+			res.writeHead(302, { location: `${deps.config.basePath}${ctx.path}${cleanSearch}`, "set-cookie": sets, "cache-control": "no-store", ...hardenedHeaders(undefined) });
 			res.end();
 			return HANDLED;
 		}
@@ -146,6 +161,7 @@ export function createRuntimeProxy(deps: HubDeps, manager: TenantManager): Runti
 					headers[k] = k === "location" && typeof v === "string" ? rewriteLocation(v, target) : v;
 				}
 				if (sets.length > 0) headers["set-cookie"] = sets;
+				Object.assign(headers, hardenedHeaders(up.headers["content-security-policy"]));
 				res.writeHead(up.statusCode ?? 502, headers);
 				up.pipe(res);
 				up.on("error", () => res.destroy());
@@ -173,6 +189,10 @@ export function createRuntimeProxy(deps: HubDeps, manager: TenantManager): Runti
 		const rel = relativePath(deps.config, url.pathname);
 		if (!isRtPath(rel) || rel === undefined) return false;
 		socket.on("error", () => {});
+		if (!onWorkbenchHost(req)) {
+			reject(socket, 404, "Not Found");
+			return true;
+		}
 		void (async () => {
 			let auth: RtAuth;
 			try {

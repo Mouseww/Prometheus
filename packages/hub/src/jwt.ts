@@ -12,6 +12,12 @@ export interface JwtClaims {
 	iat: number;
 	nbf?: number;
 	jti?: string;
+	/** `tenant` marks a token minted for a tenant instance: it may only reach the endpoints in `http/tenant-scope.ts`. */
+	scope?: string;
+	/** Tenant credential (`jti`) an access token with `scope: "tenant"` was minted from; revoking the credential revokes it. */
+	cid?: string;
+	/** Legacy marker of the long-lived tenant credential (`aud: prometheus-tenant`). */
+	tenant?: boolean;
 }
 
 export interface VerifyOptions {

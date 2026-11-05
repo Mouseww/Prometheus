@@ -5,8 +5,8 @@ import type { PolicyGateway } from "./policy.ts";
 
 /** Audience the tenant's own server checks (`PROMETHEUS_TRUST_AUDIENCE`). */
 export const TENANT_AUDIENCE = "prometheus";
-/** Audience of the long-lived credential the tenant's team plugin presents to the Hub. */
-export const TENANT_TOKEN_AUDIENCE = "prometheus-tenant";
+/** Audience of the long-lived credential the tenant's team plugin presents to the Hub; tokens for the LLM proxy use `LLM_AUDIENCE`. */
+export { LLM_AUDIENCE, TENANT_TOKEN_AUDIENCE } from "../auth/tenant-credentials.ts";
 export const TENANT_TOKEN_TTL_SEC = 30 * 24 * 60 * 60;
 export const GATEWAY_TOKEN_TTL_SEC = 7 * 24 * 60 * 60;
 

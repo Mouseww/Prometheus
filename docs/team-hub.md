@@ -180,7 +180,10 @@ server {
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `HUB_RUNTIME` | `auto` | 驱动：`auto`、`docker`、`sandbox`、`restricted`。显式指定的驱动不可用时直接报错，不会降级 |
-| `HUB_TENANT_ROOT` | `<数据目录>/tenants` | 租户目录根 |
+| `HUB_TENANT_ROOT` | `<数据目录>/tenants`；restricted 驱动为与数据目录同级的 `<数据目录名>-restricted-tenants` | 租户目录根。restricted 租户的根目录必须在存放 `jwt.key`、`secret.key` 与 `pgdata` 的目录之外 |
+| `HUB_ALLOW_RESTRICTED` | 空 | `HUB_MODE=public` 下默认拒绝 restricted 驱动，设为 `1` 才允许。auto 在公开模式永远不会选 restricted，找不到 docker 或 sandbox 时报错并写日志 |
+| `HUB_RUNTIME_ORIGIN` | 空 | 工作台专用来源，如 `https://rt.example.com`。设置后 `/rt` 只在该 Host 上提供，Hub 主界面所在 Host 拒绝 `/rt`，`GET /api/runtime` 与 `POST /api/runtime/start` 返回该来源下的 `workbenchUrl`。反向代理必须保留 Host 头。公开模式未设置时启动会输出警告 |
+| `HUB_TENANT_READ_DENY` | 自动检测 | 强制 restricted 策略是否写入 `readOutsideProject: "deny"`，`1` 或 `0` |
 | `HUB_TENANT_IMAGE` | `prometheus:local` | docker 驱动使用的镜像，可用仓库根目录的 `Dockerfile` 构建 |
 | `HUB_DOCKER_RUNTIME` | 空 | Docker 运行时，如 `runsc`（gVisor） |
 | `HUB_TENANT_NETWORK` | `bridge` | docker 网络 |
@@ -381,7 +384,11 @@ server {
 
 - **行级安全（RLS）**：团队相关的表启用了行级安全。每个请求的事务先切换到应用角色，再把当前用户与运营方标志写入会话变量，策略据此决定用户能看到哪些企业、团队与会话。后台任务使用系统身份，不受这些限制。
 - **密钥只写**：模型网关与 BYOK 的 API Key 只能写入，接口只返回掩码。主密钥来自 `HUB_SECRET_KEY`，未设置时自动生成到 `secret.key`。
-- **令牌有效期**：访问令牌 15 分钟，刷新令牌 30 天。租户访问 Hub 的凭据 30 天（受众 `prometheus-tenant`）。租户访问模型网关的令牌 7 天。令牌不能单独吊销，但账号被禁用或封禁后，Hub 会在下一次请求时拒绝该账号。
+- **令牌有效期与吊销**：访问令牌 15 分钟，刷新令牌 30 天。租户凭据（`TEAM_TENANT_TOKEN`，受众 `prometheus-tenant`，30 天）与租户网关令牌（受众 `prometheus-llm`，7 天）都带 `jti` 并记录在 `tenant_credentials` 表中。租户停止、用户被禁用或封禁、签发新凭据时，旧凭据立即吊销。网关令牌只被 `/llm` 代理接受。用租户凭据换取的访问令牌带 `scope: "tenant"`，只能访问白名单内的接口（会话、工作区、合并请求、模型列表等），其余接口返回 403 `tenantScope`。
+- **WebSocket 复核**：每个连接约每 60 秒重新校验账号与凭据是否仍有效，失败则关闭连接（4401）。向 `workspace:` 与 `session:` 主题推送时按连接重新检查订阅权限（缓存 15 秒），权限被收回后不再收到事件。
+- **工作台同源风险**：默认 `/rt` 与 Hub 同源，租户里运行的页面可以读取 Hub 页面的数据。公开部署应设置 `HUB_RUNTIME_ORIGIN` 把工作台放到独立来源。`/rt` 响应带 `Content-Security-Policy: frame-ancestors` 与 `X-Content-Type-Options: nosniff`。
+- **restricted 不是安全边界**：restricted 驱动直接 spawn Node，租户代码以 Hub 同一系统账号运行。Hub 对非主人租户去掉 `terminal` 与 `mcp` 插件，并把租户根放在密钥目录之外，但这只能防误操作。不信任的用户必须使用 docker 或 sandbox。
+- **数据库授权**：应用角色只对启用了行级安全的表有权限。没有策略的新表对用户事务不可访问（默认拒绝），只供系统事务使用。`email_verifications`、`password_resets`、`disposable_email_domains` 与 `tenant_credentials` 不对应用角色授权。个人团队（`org_id` 为空）及其下的工作区、会话、合并请求只对团队成员和运营方可见。
 - **文件权限**：`secret.key`、`jwt.key` 与 `setup-code.txt` 以 0600 创建。数据目录只应允许运行 Hub 的账号访问。
 - **审计**：封禁、授权、合并、计费、邀请等操作都会写入审计日志。
 - **策略文件**：Hub 为每个租户生成 Prometheus 策略文件（`policy.json`）。常用的键如下：
@@ -407,6 +414,8 @@ server {
 - **Windows 沙箱**：Windows 沙箱运行时尚未在真实机器上端到端验证，目前只有命令构造的单元测试。
 - **Docker 运行时**：尚未对真实 Docker 守护进程验证。
 - **PI 运行时的工具禁用**：PI 运行时无法把被禁用的工具从模型的工具列表中隐藏，只能在调用时拦截。模型仍可能看到这些工具并尝试调用。
-- **租户网关令牌**：租户访问模型网关的 JWT 有效期为 7 天。账号禁用或封禁后，Hub 会拒绝该账号的请求，但令牌本身不能单独吊销。
+- **租户网关令牌**：有效期 7 天，租户停止、账号禁用或签发新凭据时立即吊销（见「安全说明」）。
+- **预扣余额**：模型代理在请求前按输入估算加最大输出检查余额，但并发请求仍可能同时通过检查。严格防超支需要钱包预留接口（先预留、结算后释放）。
+- **审计与配额表**：`audit_log`、`quotas`、`usage_ledger` 与 `model_gateways` 中 `org_id` 为空的行对所有登录用户可见。
 - **空闲检测**：空闲判断只看经代理的请求与 WebSocket 连接，不考虑正在运行的 Agent。Agent 在后台长时间运行时，租户仍可能被判定为闲置而停止。
 - **管理界面**：租户实例与执行节点只有接口，没有管理后台页面。

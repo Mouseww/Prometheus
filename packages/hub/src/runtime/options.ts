@@ -23,6 +23,8 @@ export interface RuntimeOverrides {
 	queueTimeoutMs?: number;
 	/** Force or forbid `disabledTools` in restricted policies (default: detect from core). */
 	supportsDisabledTools?: boolean;
+	/** Force or forbid `readOutsideProject: "deny"` in restricted policies (default: detect from core). */
+	supportsReadOutsideDeny?: boolean;
 	/** URL tenants use to reach this Hub (including the base path); default `publicUrl` + `basePath`. */
 	tenantHubUrl?: string;
 }

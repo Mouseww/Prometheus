@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { mkdir } from "node:fs/promises";
 import type { Duplex } from "node:stream";
+import { createTenantCredentials } from "./auth/tenant-credentials.ts";
 import { type HubConfig, type HubOptions, pgDataDir, resolveConfig } from "./config.ts";
 import { loadJwtKeys, loadMasterKey, SecretBox } from "./crypto.ts";
 import { type JwtClaims, signJwt } from "./jwt.ts";
@@ -126,12 +127,14 @@ export async function createHub(options: HubOptions): Promise<Hub> {
 				upgradeHandlers.push(fn);
 			},
 		};
-		const router = new Router();
+		const tenantCredentials = createTenantCredentials({ db, publicKey: keys.publicKey, issuer: config.issuer, now, signToken: deps.signToken });
+			registry.register("tenantCredentials", tenantCredentials);
+			const router = new Router();
 		registerRoutes(router, deps);
 
 		let closed = false;
 		return {
-			handle: (req, res) => dispatch({ router, config, log, publicKey: keys.publicKey, loadActor: (id) => actors.load(id) }, req, res),
+			handle: (req, res) => dispatch({ router, config, log, publicKey: keys.publicKey, loadActor: (id) => actors.load(id), tenantCredentials }, req, res),
 			handleUpgrade: (req, socket, head) => upgradeHandlers.some((fn) => fn(req, socket, head)),
 			async close() {
 				if (closed) return;

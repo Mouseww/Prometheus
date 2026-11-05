@@ -28,16 +28,36 @@ export async function driverStatuses(drivers: readonly RuntimeDriver[]): Promise
 	);
 }
 
+export interface SelectOptions {
+	/** HUB_MODE=public: tenants run code of strangers, so `restricted` (same OS user as the Hub, not a security boundary) is refused. */
+	publicMode?: boolean;
+	/** HUB_ALLOW_RESTRICTED=1: the operator explicitly accepts `restricted` in public mode. */
+	allowRestricted?: boolean;
+	log?: (message: string) => void;
+}
+
+const RESTRICTED_REFUSED = "公开模式下没有可用的隔离运行时（docker 或 sandbox），restricted 与 Hub 使用同一个系统账号，不是安全边界，已拒绝。请配置 docker 或 sandbox；确需使用时显式设置 HUB_ALLOW_RESTRICTED=1";
+
 /**
  * `auto`: docker if usable, else sandbox, else restricted. An explicit mode must be usable: silently running a user's agent
- * without the isolation the operator asked for would be worse than refusing.
+ * without the isolation the operator asked for would be worse than refusing. In public mode `restricted` is never chosen
+ * (neither by `auto` nor explicitly) unless `allowRestricted` is set.
  */
-export async function selectDriver(mode: RuntimeMode, drivers: readonly RuntimeDriver[]): Promise<RuntimeDriver> {
+export async function selectDriver(mode: RuntimeMode, drivers: readonly RuntimeDriver[], options: SelectOptions = {}): Promise<RuntimeDriver> {
 	const byKind = new Map(drivers.map((d) => [d.kind, d]));
-	const order = mode === "auto" ? AUTO_ORDER : [mode];
+	const restrictedOk = !options.publicMode || options.allowRestricted === true;
+	if (mode === "restricted" && !restrictedOk) {
+		options.log?.(RESTRICTED_REFUSED);
+		throw new HubError(503, "runtimeUnavailable", RESTRICTED_REFUSED);
+	}
+	const order = (mode === "auto" ? AUTO_ORDER : [mode]).filter((k) => k !== "restricted" || restrictedOk);
 	for (const kind of order) {
 		const driver = byKind.get(kind);
 		if (driver && (await driver.available().catch(() => false))) return driver;
+	}
+	if (mode === "auto" && !restrictedOk) {
+		options.log?.(RESTRICTED_REFUSED);
+		throw new HubError(503, "runtimeUnavailable", RESTRICTED_REFUSED);
 	}
 	const reason = mode === "auto" ? undefined : byKind.get(mode)?.unavailableReason?.();
 	const code = reason === "adminRequired" ? "adminRequired" : "runtimeUnavailable";

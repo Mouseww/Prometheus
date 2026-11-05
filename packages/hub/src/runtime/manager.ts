@@ -1,5 +1,6 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { TenantCredentials } from "../auth/tenant-credentials.ts";
 import type { Queryable } from "../db/db.ts";
 import { toIso } from "../db/db.ts";
 import type { HubDeps } from "../deps.ts";
@@ -10,9 +11,10 @@ import type { ModelsService } from "../services/models.ts";
 import type { NotificationsService } from "../services/notifications.ts";
 import { scopeOf } from "../services/common.ts";
 import { LOG_PREFIX } from "../log.ts";
+import type { WsGateway } from "../ws.ts";
 import { hostLayout, type RuntimeDriver, type RuntimeKind, type TenantHandle } from "./driver.ts";
 import type { NodesService, Placement } from "./nodes.ts";
-import { buildTenantPolicy, detectDisabledToolsSupport } from "./policy.ts";
+import { buildTenantPolicy, detectDisabledToolsSupport, detectReadOutsideDenySupport } from "./policy.ts";
 import { type DriverStatus, driverStatuses, parseRuntimeMode, type RuntimeMode, selectDriver } from "./select.ts";
 import {
 	buildPolicyGateways,
@@ -20,8 +22,6 @@ import {
 	GATEWAY_TOKEN_TTL_SEC,
 	layoutFor,
 	newServerToken,
-	TENANT_AUDIENCE,
-	TENANT_TOKEN_AUDIENCE,
 	TENANT_TOKEN_TTL_SEC,
 } from "./tenant-env.ts";
 
@@ -67,7 +67,7 @@ export interface TenantManager {
 	openConnection(userId: string): () => void;
 	stop(userId: string, reason?: string): Promise<void>;
 	/** The caller's own tenant status (any signed-in user); `restricted` drives the UI's restricted-mode badge. */
-	me(actor: Actor): Promise<RuntimeView & { restricted: boolean }>;
+	me(actor: Actor): Promise<RuntimeView & { restricted: boolean; workbenchUrl: string }>;
 	list(actor: Actor): Promise<RuntimeView[]>;
 	adminStop(actor: Actor, userId: string): Promise<RuntimeView>;
 	setLimits(actor: Actor, userId: string, limits: { cpuLimit?: number | null | undefined; memLimitMb?: number | null | undefined }): Promise<RuntimeView>;
@@ -137,6 +137,8 @@ export interface TenantManagerParts {
 	drivers: RuntimeDriver[];
 	nodes: NodesService;
 	tenantRoot: string;
+	/** Where `restricted` tenants live: outside the directory with jwt.key, secret.key and pgdata (they share the Hub's OS user). Defaults to `tenantRoot`. */
+	restrictedTenantRoot?: string;
 }
 
 export function createTenantManager(deps: HubDeps, parts: TenantManagerParts): TenantManager {
@@ -151,7 +153,13 @@ export function createTenantManager(deps: HubDeps, parts: TenantManagerParts): T
 	const queueTimeoutMs = ov.queueTimeoutMs ?? DEFAULT_QUEUE_TIMEOUT_MS;
 	const sleep = ov.sleep ?? wait;
 	const supportsDisabledTools = ov.supportsDisabledTools ?? detectDisabledToolsSupport(env);
+	const supportsReadOutsideDeny = ov.supportsReadOutsideDeny ?? detectReadOutsideDenySupport(env);
+	const publicMode = deps.config.mode === "public";
+	const allowRestricted = env.HUB_ALLOW_RESTRICTED?.trim() === "1";
 	const baseHubUrl = (ov.tenantHubUrl ?? `${deps.config.publicUrl}${deps.config.basePath}`).replace(/\/+$/, "");
+
+	/** Where the tenant workbench is opened: the dedicated origin when HUB_RUNTIME_ORIGIN is set, else the Hub's own host (relative). The caller appends `?token=`. */
+	const workbenchUrl = `${deps.config.runtimeOrigin ?? ""}${deps.config.basePath}/rt/`;
 
 	const entries = new Map<string, Entry>();
 	const reserve = new Mutex();
@@ -188,9 +196,11 @@ export function createTenantManager(deps: HubDeps, parts: TenantManagerParts): T
 
 	// A previous Hub process may have left rows marked running; its tenants are not ours any more (containers are replaced by name on start).
 	const ready: Promise<void> = deps.db
-		.tx({ system: true }, (q) =>
-			q.query("UPDATE tenant_runtimes SET status = 'stopped', port = NULL, container_id = NULL, pid = NULL WHERE status IN ('starting', 'running', 'stopping')"),
-		)
+		.tx({ system: true }, async (q) => {
+			await q.query("UPDATE tenant_runtimes SET status = 'stopped', port = NULL, container_id = NULL, pid = NULL WHERE status IN ('starting', 'running', 'stopping')");
+			// The credentials of those tenants die with them; a restarted tenant gets fresh ones.
+			await q.query("UPDATE tenant_credentials SET revoked_at = now() WHERE revoked_at IS NULL");
+		})
 		.then(() => undefined)
 		.catch((err: unknown) => {
 			deps.log.warn(`${LOG_PREFIX} 重置租户运行状态失败: ${errText(err)}`);
@@ -220,18 +230,38 @@ export function createTenantManager(deps: HubDeps, parts: TenantManagerParts): T
 		await notifications.notify(userId, "tenant.failed", { reason }, orgId).catch(() => {});
 	}
 
+	const credentials = (): TenantCredentials => deps.registry.require<TenantCredentials>("tenantCredentials");
+
+	/**
+	 * Credential files are private to the Hub's OS user (0600; best effort on Windows). Docker is the exception: the container
+	 * runs as another uid and reads them through a bind mount, so they stay world readable on the host (the tenant root is the guard).
+	 */
+	async function writePrivate(file: string, content: string, kind: RuntimeKind): Promise<void> {
+		const mode = kind === "docker" ? 0o644 : 0o600;
+		await writeFile(file, content, { mode });
+		await chmod(file, mode).catch(() => {});
+	}
+
 	async function writeTenantFiles(userId: string, root: string, kind: RuntimeKind, restricted: boolean, actor: Actor): Promise<{ tenantToken: string; serverToken: string }> {
 		const host = hostLayout(root, join);
 		for (const dir of [host.data, host.work, host.policyDir, join(host.data, "tmp")]) await mkdir(dir, { recursive: true });
-		const nowSec = Math.floor(deps.now() / 1000);
 		const hubUrl = hubUrlFor(kind);
-		const gatewayToken = deps.signToken({ sub: userId, aud: TENANT_AUDIENCE, exp: nowSec + GATEWAY_TOKEN_TTL_SEC });
+		// A new credential replaces every earlier one of this user.
+		await credentials().revokeUser(userId);
+		const gatewayToken = (await credentials().issue(userId, "gateway", GATEWAY_TOKEN_TTL_SEC)).token;
 		const models = deps.registry.get<ModelsService>("models");
 		const visible = models ? await models.visibleModels(actor).catch(() => []) : [];
-		const policy = buildTenantPolicy({ userId, restricted, supportsDisabledTools, gateways: buildPolicyGateways(visible, hubUrl, gatewayToken), managedBy: `prometheus-hub:${deps.config.orgName}` });
-		await writeFile(host.policyFile, `${JSON.stringify(policy, null, "\t")}\n`, { mode: 0o644 });
-		await writeFile(host.keyFile, deps.publicKeyPem, { mode: 0o644 });
-		const tenantToken = deps.signToken({ sub: userId, aud: TENANT_TOKEN_AUDIENCE, tenant: true, exp: nowSec + TENANT_TOKEN_TTL_SEC });
+		const policy = buildTenantPolicy({
+			userId,
+			restricted,
+			supportsDisabledTools,
+			supportsReadOutsideDeny,
+			gateways: buildPolicyGateways(visible, hubUrl, gatewayToken),
+			managedBy: `prometheus-hub:${deps.config.orgName}`,
+		});
+		await writePrivate(host.policyFile, `${JSON.stringify(policy, null, "\t")}\n`, kind);
+		await writePrivate(host.keyFile, deps.publicKeyPem, kind);
+		const tenantToken = (await credentials().issue(userId, "tenant", TENANT_TOKEN_TTL_SEC)).token;
 		return { tenantToken, serverToken: newServerToken() };
 	}
 
@@ -251,7 +281,7 @@ export function createTenantManager(deps: HubDeps, parts: TenantManagerParts): T
 	async function startEntry(entry: Entry): Promise<TenantHandle> {
 		const { userId } = entry;
 		const actor = await deps.services.actors.load(userId);
-		const driver = await selectDriver(mode, parts.drivers);
+		const driver = await selectDriver(mode, parts.drivers, { publicMode, allowRestricted, log: (m) => deps.log.warn(`${LOG_PREFIX} ${m}`) });
 		lastSelected = driver.kind;
 		const limits = await limitsRow(userId);
 		const started = deps.now();
@@ -267,7 +297,7 @@ export function createTenantManager(deps: HubDeps, parts: TenantManagerParts): T
 		}
 		entry.driver = driver;
 		const node = placement.kind === "node" ? placement.node : undefined;
-		const root = join(parts.tenantRoot, userId);
+		const root = join(driver.kind === "restricted" ? (parts.restrictedTenantRoot ?? parts.tenantRoot) : parts.tenantRoot, userId);
 		const restricted = driver.kind === "restricted" && !actor.operator;
 		try {
 			const { tenantToken, serverToken } = await writeTenantFiles(userId, root, driver.kind, restricted, actor);
@@ -318,6 +348,7 @@ export function createTenantManager(deps: HubDeps, parts: TenantManagerParts): T
 		} catch (err) {
 			entries.delete(userId);
 			await persist(userId, { status: "failed", port: null, container_id: null, pid: null, last_error: errText(err).slice(0, 500) });
+				await credentials().revokeUser(userId).catch(() => {});
 			if (err instanceof HubError) throw err;
 			if ((err as { code?: unknown }).code === "adminRequired") throw new HubError(503, "adminRequired", errText(err));
 			throw new HubError(502, "tenantStartFailed", `租户实例启动失败: ${errText(err)}`);
@@ -346,6 +377,7 @@ export function createTenantManager(deps: HubDeps, parts: TenantManagerParts): T
 			if (entry.crashes.length > MAX_CRASHES) {
 				entries.delete(userId);
 				await persist(userId, { status: "failed", port: null, container_id: null, pid: null, last_error: `连续崩溃: ${reason}`.slice(0, 500) });
+					await credentials().revokeUser(userId).catch(() => {});
 				const rows = await deps.db.tx({ system: true }, (q) => q.query<{ org_id: string | null }>("SELECT org_id FROM tenant_runtimes WHERE user_id = $1", [userId])).catch(() => []);
 				await notifyFailure(userId, rows[0]?.org_id ?? null, `租户实例连续崩溃，已停止自动重启: ${reason}`);
 				throw new HubError(503, "tenantFailed", "租户实例连续崩溃，已停止自动重启");
@@ -373,6 +405,9 @@ export function createTenantManager(deps: HubDeps, parts: TenantManagerParts): T
 			if (entry.handle) await entry.driver?.stop(entry.handle).catch((err: unknown) => deps.log.warn(`${LOG_PREFIX} 停止租户实例出错 user=${userId}: ${errText(err)}`));
 			entries.delete(userId);
 			await persist(userId, { status: "stopped", port: null, container_id: null, pid: null });
+				// Whatever the stopped instance still holds (credential, gateway token, minted access tokens) stops working now.
+				await credentials().revokeUser(userId).catch((err: unknown) => deps.log.warn(`${LOG_PREFIX} 吊销租户凭证失败 user=${userId}: ${errText(err)}`));
+				deps.registry.get<WsGateway>("realtime")?.disconnectUser(userId, "tenant");
 			log(`租户实例已停止 user=${userId}（${reason}）`);
 		})();
 		return entry.stopPromise;
@@ -472,7 +507,7 @@ export function createTenantManager(deps: HubDeps, parts: TenantManagerParts): T
 			const view: RuntimeView = row
 				? toView(row)
 				: { userId: actor.userId, orgId: null, driver: null, nodeId: null, status: "stopped", port: null, containerId: null, pid: null, startedAt: null, lastSeenAt: null, cpuLimit: null, memLimitMb: null, lastError: null, activeConnections: 0, restartRequired: false };
-			return { ...view, restricted: view.driver === "restricted" && !actor.operator };
+			return { ...view, restricted: view.driver === "restricted" && !actor.operator, workbenchUrl };
 		},
 
 		async list(actor) {
@@ -527,6 +562,12 @@ export function createTenantManager(deps: HubDeps, parts: TenantManagerParts): T
 		async sweepHealth() {
 			for (const e of [...entries.values()]) {
 				if (e.status !== "running" || !e.handle) continue;
+				// A disabled or banned account must not keep a running instance.
+				const active = await deps.services.actors.load(e.userId).then(() => true, (err: unknown) => !(err instanceof HubError && err.status === 401));
+				if (!active) {
+					await stopEntry(e, "账号不可用");
+					continue;
+				}
 				if (await healthOk(e.handle)) {
 					e.healthFails = 0;
 					void persist(e.userId, { last_seen_at: new Date(deps.now()).toISOString() });

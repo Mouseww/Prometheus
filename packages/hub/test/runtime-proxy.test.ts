@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
@@ -162,8 +162,17 @@ describe("tenant files and environment", () => {
 		expect(policy.pluginAllowlist).not.toContain("terminal");
 		expect(policy.gateways).toHaveLength(1);
 		expect(policy.gateways[0]).toMatchObject({ id: "hub-openai", format: "openai-completions", baseUrl: "http://hub.test/llm/openai", models: [{ id: "gpt-x", name: "gpt-x" }] });
-		const gwToken = verifyJwt(policy.gateways[0].apiKey, { publicKey: s.t.hub.publicKeyPem, audience: "prometheus" });
+		// The model gateway token has its own audience: it is no API access token (the dispatcher refuses it) and the LLM proxy takes it.
+		expect(verifyJwt(policy.gateways[0].apiKey, { publicKey: s.t.hub.publicKeyPem, audience: "prometheus" })).toBeUndefined();
+		const gwToken = verifyJwt(policy.gateways[0].apiKey, { publicKey: s.t.hub.publicKeyPem, audience: "prometheus-llm" });
 		expect(gwToken?.sub).toBe(s.bob.userId);
+		expect(gwToken?.jti).toBeTruthy();
+		expect(tenantToken?.jti).toBeTruthy();
+		// A restricted tenant has no OS boundary: nothing that spawns arbitrary commands.
+		expect(policy.pluginAllowlist).not.toContain("mcp");
+		if (process.platform !== "win32") {
+			expect((await stat(env.PROMETHEUS_POLICY as string)).mode & 0o777).toBe(0o600);
+		}
 		expect(JSON.stringify(policy)).not.toContain("sk-secret");
 	});
 

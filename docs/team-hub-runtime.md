@@ -49,14 +49,17 @@ pwsh scripts/hub-setup-sandbox.ps1 -DataDir "$env:USERPROFILE\.prometheus-hub\pl
 
 ### Restricted
 
-与 sandbox 一样直接 spawn Node，但不加沙箱。策略对 Hub 主人（operator）是正常策略；对其他用户去掉 `terminal` 插件，并在 core 支持 `disabledTools` 时加上 `disabledTools: ["bash", "powershell"]`。core 不认识该字段时（它会拒绝未知策略键，当前仓库的 core 已认识该字段，旧版 core 才会如此）Hub 自动不写这个键，由 `HUB_TENANT_DISABLED_TOOLS=1|0` 可强制开关。
+**restricted 不是安全边界**：它与 sandbox 一样直接 spawn Node，但不加沙箱，租户代码与 Hub 同一系统账号运行。`HUB_MODE=public` 默认拒绝该驱动，需 `HUB_ALLOW_RESTRICTED=1`；auto 在公开模式不会选它。租户根默认放在数据目录同级的 `<数据目录名>-restricted-tenants`，不能与 `jwt.key`、`secret.key`、`pgdata` 同目录（可用 `HUB_TENANT_ROOT` 指定）。策略对 Hub 主人（operator）是正常策略；对其他用户去掉 `terminal` 与 `mcp` 插件，并在 core 支持时写入 `readOutsideProject: "deny"`（core 当前只认 `allow` 与 `ask`，此时保持 `ask`，可用 `HUB_TENANT_READ_DENY=1|0` 覆盖），并在 core 支持 `disabledTools` 时加上 `disabledTools: ["bash", "powershell"]`。core 不认识该字段时（它会拒绝未知策略键，当前仓库的 core 已认识该字段，旧版 core 才会如此）Hub 自动不写这个键，由 `HUB_TENANT_DISABLED_TOOLS=1|0` 可强制开关。
 
 ## 环境变量
 
 | 变量 | 默认 | 含义 |
 |---|---|---|
 | `HUB_RUNTIME` | `auto` | 驱动选择 |
-| `HUB_TENANT_ROOT` | `<dataDir>/tenants` | 租户目录根 |
+| `HUB_TENANT_ROOT` | `<dataDir>/tenants`（restricted 为同级 `-restricted-tenants`） | 租户目录根 |
+| `HUB_ALLOW_RESTRICTED` | 空 | 公开模式下允许 restricted |
+| `HUB_RUNTIME_ORIGIN` | 空 | 工作台专用来源，`/rt` 只在该 Host 提供 |
+| `HUB_TENANT_READ_DENY` | 自动检测 | 强制 `readOutsideProject` 是否为 `deny` |
 | `HUB_TENANT_IMAGE` | `prometheus:local` | docker 镜像 |
 | `HUB_DOCKER_RUNTIME` | 空 | 例如 `runsc` |
 | `HUB_TENANT_NETWORK` | `bridge` | docker 网络 |
@@ -69,9 +72,9 @@ pwsh scripts/hub-setup-sandbox.ps1 -DataDir "$env:USERPROFILE\.prometheus-hub\pl
 
 ## 租户实例的环境
 
-`PROMETHEUS_HOME`、`PROMETHEUS_CWD`、`PROMETHEUS_HOST`、`PROMETHEUS_PORT`、`PROMETHEUS_TOKEN`（随机，仅 Hub 持有）、`PROMETHEUS_TRUST_KEY`（`@<policy 目录>/hub-trust.pem`，Hub 公钥）、`PROMETHEUS_TRUST_ISSUER`、`PROMETHEUS_TRUST_AUDIENCE=prometheus`、`PROMETHEUS_POLICY`、`TEAM_HUB_URL`、`TEAM_TENANT_TOKEN`（`aud=prometheus-tenant`，30 天）。
+`PROMETHEUS_HOME`、`PROMETHEUS_CWD`、`PROMETHEUS_HOST`、`PROMETHEUS_PORT`、`PROMETHEUS_TOKEN`（随机，仅 Hub 持有）、`PROMETHEUS_TRUST_KEY`（`@<policy 目录>/hub-trust.pem`，Hub 公钥）、`PROMETHEUS_TRUST_ISSUER`、`PROMETHEUS_TRUST_AUDIENCE=prometheus`、`PROMETHEUS_POLICY`、`TEAM_HUB_URL`、`TEAM_TENANT_TOKEN`（`aud=prometheus-tenant`，30 天，带 `jti`，租户停止时吊销）。
 
-`policy.json` 由 Hub 生成：`serverOwner`、`forbiddenModes=["bypassPermissions","auto"]`、`readOutsideProject="ask"`、`pluginAllowlist`（`team`、`git`、`memory`、`skills`、`todos`、`subagents`、`modes`、`mcp`、`knowledge-lancedb`、`terminal`）、指向 Hub 模型代理 `/llm/<format>` 的 `gateways`（密钥是该用户的 7 天 JWT，不含任何上游 API Key）、`managedBy`。
+`policy.json` 由 Hub 生成：`serverOwner`、`forbiddenModes=["bypassPermissions","auto"]`、`readOutsideProject="ask"`、`pluginAllowlist`（`team`、`git`、`memory`、`skills`、`todos`、`subagents`、`modes`、`knowledge-lancedb`、`terminal`、`mcp`，restricted 非主人租户去掉 `terminal` 与 `mcp`）、指向 Hub 模型代理 `/llm/<format>` 的 `gateways`（密钥是该用户的 7 天网关令牌，`aud=prometheus-llm`，仅 `/llm` 接受，不含任何上游 API Key）。`policy.json` 与凭据文件权限为 0600（Windows 尽力而为；docker 驱动因容器内另一 uid 需读取而保持 0644）、`managedBy`。
 
 ## 生命周期
 
@@ -83,7 +86,7 @@ pwsh scripts/hub-setup-sandbox.ps1 -DataDir "$env:USERPROFILE\.prometheus-hub\pl
 
 ## 反向代理
 
-`<base>/rt/*` 代理 HTTP 与 WebSocket 到调用者自己的租户实例，永远不会到别人的实例。认证三选一：`Authorization: Bearer <Hub 访问令牌>`、cookie `prometheus_hub_rt`、首次加载的 `?token=`（设置 cookie 后 302 去掉 token）。代理把 `Authorization` 换成 Hub 现签的 15 分钟 JWT（`aud=prometheus`、`sub=userId`），去掉所有 cookie 与 `X-Forwarded-*`，并丢弃租户的 `Set-Cookie`。租户的重定向 `Location` 会补上 `<base>/rt` 前缀。
+`<base>/rt/*` 代理 HTTP 与 WebSocket 到调用者自己的租户实例，永远不会到别人的实例。设置 `HUB_RUNTIME_ORIGIN` 后，`/rt` 只在该 Host 上服务，主界面 Host 返回 404，工作台地址由 `workbenchUrl` 给出，cookie 为 `SameSite=Lax`；响应带 `frame-ancestors` CSP 与 `nosniff`。带 `scope: "tenant"` 的令牌不能用于工作台。认证三选一：`Authorization: Bearer <Hub 访问令牌>`、cookie `prometheus_hub_rt`、首次加载的 `?token=`（设置 cookie 后 302 去掉 token）。代理把 `Authorization` 换成 Hub 现签的 15 分钟 JWT（`aud=prometheus`、`sub=userId`），去掉所有 cookie 与 `X-Forwarded-*`，并丢弃租户的 `Set-Cookie`。租户的重定向 `Location` 会补上 `<base>/rt` 前缀。
 
 ## 管理接口
 
