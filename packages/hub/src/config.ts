@@ -54,6 +54,8 @@ export interface HubConfig {
 	/** HUB_STRIPE_SECRET / HUB_STRIPE_WEBHOOK_SECRET; the stripe provider is available when both are set. */
 	stripeSecret: string | undefined;
 	stripeWebhookSecret: string | undefined;
+	/** HUB_STRIPE_API_BASE: points the stripe provider at a mock (tests, local development); default https://api.stripe.com. */
+	stripeApiBase: string | undefined;
 }
 
 export const JWT_AUDIENCE = "prometheus";
@@ -87,6 +89,7 @@ export function resolveConfig(options: HubOptions): HubConfig {
 		byokBlockPrivate: ["1", "true", "on"].includes((env.HUB_BYOK_BLOCK_PRIVATE ?? "").toLowerCase()),
 		stripeSecret: env.HUB_STRIPE_SECRET || undefined,
 		stripeWebhookSecret: env.HUB_STRIPE_WEBHOOK_SECRET || undefined,
+		stripeApiBase: env.HUB_STRIPE_API_BASE || undefined,
 	};
 }
 

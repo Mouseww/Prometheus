@@ -1,8 +1,8 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { migrate } from "../src/db/migrate.ts";
+import { defaultMigrationsDir, migrate } from "../src/db/migrate.ts";
 import { openPglite } from "../src/db/pglite.ts";
 import { ulid } from "../src/ids.ts";
 import { migratedDb } from "./helpers.ts";
@@ -35,8 +35,8 @@ describe("migrations", () => {
 		const db = await migratedDb();
 		expect(await migrate(db, { appRole: "prometheus_app" })).toEqual([]);
 		const rows = await db.query<{ version: string }>("SELECT version FROM schema_migrations");
-		// Later blocks add 002_git, 003_sessions, 004_models; every one is recorded exactly once, in order.
-		expect(rows.map((r) => r.version).sort()).toEqual(["001_core", "002_git", "003_sessions", "004_models"]);
+		// Later blocks add 002_git, 003_sessions, 004_models, 005_runtime, 006_billing; every one is recorded exactly once, in order.
+		expect(rows.map((r) => r.version).sort()).toEqual(["001_core", "002_git", "003_sessions", "004_models", "005_runtime", "006_billing"]);
 		const policy = await db.query<{ scope: string; closed: boolean; require_approval: boolean }>("SELECT * FROM registration_policies");
 		expect(policy).toHaveLength(1);
 		expect(policy[0]).toMatchObject({ scope: "platform", closed: false, require_approval: true });

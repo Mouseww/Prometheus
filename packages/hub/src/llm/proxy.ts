@@ -2,17 +2,20 @@ import { once } from "node:events";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { JWT_AUDIENCE } from "../config.ts";
 import type { HubDeps } from "../deps.ts";
-import { badRequest, HubError, notFound, unauthorized } from "../errors.ts";
+import { badRequest, forbidden, HubError, notFound, unauthorized } from "../errors.ts";
 import type { RouteContext } from "../http/context.ts";
 import { bearerToken, relativePath } from "../http/dispatch.ts";
 import { HANDLED } from "../http/router.ts";
 import { verifyJwt } from "../jwt.ts";
 import { LOG_PREFIX } from "../log.ts";
+import type { BillingService } from "../billing/index.ts";
+import type { Subject } from "../billing/providers/provider.ts";
+import { type ModelPrice, requestedMaxTokens } from "../billing/wallet.ts";
 import { pinnedRequest, resolveSafeTarget } from "../net/safe-url.ts";
 import { type ByokService, safeUrlPolicyOf } from "../services/byok.ts";
 import type { GatewayFormat } from "../services/models.ts";
 import type { QuotasService } from "../services/quotas.ts";
-import type { UsageService } from "../services/usage.ts";
+import type { UsageEntry, UsageService } from "../services/usage.ts";
 import { type SelectedGateway, selectGateway } from "./select.ts";
 import { hasDotSegment, joinUpstreamUrl } from "./url.ts";
 import { createUsageExtractor } from "./usage-extract.ts";
@@ -96,6 +99,17 @@ export function createLlmProxy(deps: HubDeps, quotas: QuotasService, usage: Usag
 			const model = requestedModel(format as GatewayFormat, rest, parsed);
 
 			const orgIds = Object.keys(actor.orgRoles);
+			// With billing on, `X-Prometheus-Org` picks the organization whose wallet pays (it must be one the user belongs to).
+			const billing = deps.config.billingEnabled ? deps.registry.get<BillingService>("billing") : undefined;
+			let billingOrg: string | undefined;
+			if (billing) {
+				const wanted = ctx.req.headers["x-prometheus-org"];
+				const orgHeader = (Array.isArray(wanted) ? wanted[0] : wanted)?.trim();
+				if (orgHeader) {
+					if (!actor.orgRoles[orgHeader]) throw forbidden("你不是该企业的成员", "forbidden");
+					billingOrg = orgHeader;
+				}
+			}
 			// Personal gateways are selectable only while BYOK is allowed for this user.
 			const byok = deps.registry.get<ByokService>("byok");
 			const ownAllowed = byok ? await byok.isAllowed(orgIds) : false;
@@ -106,6 +120,15 @@ export function createLlmProxy(deps: HubDeps, quotas: QuotasService, usage: Usag
 				throw new HubError(404, "noGateway", "没有可用的模型网关");
 			}
 			await quotas.check(actor.userId, orgIds);
+
+			// Credits (block 4B): only the operator's own gateways cost credits, and only while billing is on.
+			let charge: { subject: Subject; price: ModelPrice | undefined } | undefined;
+			if (billing && gateway.scope === "platform") {
+				const subject: Subject = billingOrg ? { type: "org", id: billingOrg } : { type: "user", id: actor.userId };
+				const price = await billing.wallet.priceFor(model ?? "unknown", gateway.id);
+				await billing.wallet.precheck(subject, price, requestedMaxTokens(parsed));
+				charge = { subject, price };
+			}
 
 			let body: Buffer | undefined = hasBody ? raw : undefined;
 			if (format === "openai" && rest.replace(/\/+$/, "").endsWith("chat/completions") && typeof parsed === "object" && parsed !== null) {
@@ -175,17 +198,19 @@ export function createLlmProxy(deps: HubDeps, quotas: QuotasService, usage: Usag
 
 			const used = extractor?.end();
 			if (used) {
-				const claimedOrg = claims.org && actor.orgRoles[claims.org] ? claims.org : (orgIds[0] ?? null);
+				const claimedOrg = billingOrg ?? (claims.org && actor.orgRoles[claims.org] ? claims.org : (orgIds[0] ?? null));
+				const entry: UsageEntry = {
+					userId: actor.userId,
+					orgId: gateway.scope === "org" ? gateway.orgId : claimedOrg,
+					gatewayId: gateway.id,
+					model: model ?? "unknown",
+					inputTokens: used.inputTokens,
+					outputTokens: used.outputTokens,
+					source: gateway.scope === "user" ? "byok" : gateway.scope,
+				};
 				try {
-					await usage.record({
-						userId: actor.userId,
-						orgId: gateway.scope === "org" ? gateway.orgId : claimedOrg,
-						gatewayId: gateway.id,
-						model: model ?? "unknown",
-						inputTokens: used.inputTokens,
-						outputTokens: used.outputTokens,
-						source: gateway.scope === "user" ? "byok" : gateway.scope,
-					});
+					if (billing && charge) await billing.wallet.chargeAndRecord(charge.subject, entry, charge.price);
+					else await usage.record(entry);
 				} catch (err) {
 					deps.log.error(`${LOG_PREFIX} 记录模型用量失败: ${err instanceof Error ? err.message : String(err)}`);
 				}
