@@ -345,6 +345,9 @@ export interface SessionDetail extends SessionView {
 	canAct: boolean;
 	/** User ids holding a grant; only filled for the owner. */
 	grants: string[];
+	/** Hybrid execution preference (block 3). Absent on an older Hub. */
+	execMode?: ExecMode;
+	tenantSessionId?: string | null;
 }
 
 export interface SessionEvent {
@@ -774,4 +777,92 @@ export interface GrantCreditsInput {
 	subjectId: string;
 	credits: number;
 	expiresAt?: string | null;
+}
+
+// ---- Block 3: hybrid execution (where a session runs) and tenant runtimes (packages/hub services/exec.ts, runtime/*) ----
+
+export type ExecLocation = "local" | "team";
+export type ExecMode = "local-first" | "team-first";
+
+/** `GET/PATCH /api/sessions/:id/exec` and the answer of a handoff. */
+export interface ExecState {
+	sessionId: string;
+	location: ExecLocation;
+	mode: ExecMode;
+	/** Id of the session inside the owner's tenant instance, once it was handed to the team side. */
+	tenantSessionId: string | null;
+}
+
+export type RuntimeStatus = "stopped" | "starting" | "running" | "stopping" | "failed";
+export type RuntimeKind = "docker" | "sandbox" | "restricted";
+
+export interface RuntimeView {
+	userId: string;
+	orgId: string | null;
+	driver: RuntimeKind | null;
+	nodeId: string | null;
+	status: RuntimeStatus;
+	port: number | null;
+	containerId: string | null;
+	pid: number | null;
+	startedAt: string | null;
+	lastSeenAt: string | null;
+	cpuLimit: number | null;
+	memLimitMb: number | null;
+	lastError: string | null;
+	/** Open proxied requests and WebSockets right now. */
+	activeConnections: number;
+	/** True while the tenant runs with limits older than the stored ones. */
+	restartRequired: boolean;
+}
+
+/** `GET /api/runtime`: the caller's own tenant. `restricted` drives the restricted-mode badge. */
+export interface MyRuntime extends RuntimeView {
+	restricted: boolean;
+}
+
+export interface DriverStatus {
+	kind: RuntimeKind;
+	available: boolean;
+	reason?: string;
+}
+
+/** `GET /api/admin/runtimes`. */
+export interface RuntimesListing {
+	items: RuntimeView[];
+	mode: "auto" | RuntimeKind;
+	selected: RuntimeKind | null;
+	drivers: DriverStatus[];
+}
+
+export type NodeStatus = "active" | "draining" | "offline";
+
+export interface NodeView {
+	id: string;
+	name: string;
+	dockerUrl: string;
+	tlsDir?: string;
+	cpuCapacity: number;
+	memCapacityMb: number;
+	status: NodeStatus;
+	lastPingAt: string | null;
+	createdAt: string;
+	/** CPU and memory promised to tenants that are starting or running there. */
+	allocatedCpu: number;
+	allocatedMemMb: number;
+	tenants: string[];
+}
+
+export interface NodeInput {
+	name: string;
+	dockerUrl: string;
+	tlsDir?: string | null;
+	cpuCapacity?: number;
+	memCapacityMb?: number;
+	status?: NodeStatus;
+}
+
+export interface RuntimeLimitsInput {
+	cpuLimit?: number | null;
+	memLimitMb?: number | null;
 }

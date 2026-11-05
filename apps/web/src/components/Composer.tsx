@@ -24,11 +24,13 @@ import { BranchPicker } from "./BranchPicker.tsx";
 import { SessionChanges } from "./SessionChanges.tsx";
 import { WorktreePanel, WorktreeSwitch } from "./WorktreePanel.tsx";
 import { PersonalChip, WorkspaceChip, WorkspacePicker } from "./WorkspacePicker.tsx";
+import { useReadOnlyCopy } from "../team/execStore.ts";
 
 const M = defineMessages({
 	zh: {
 		placeholder: "向 Agent 下达任务，输入 / 查看命令",
 		placeholderStreaming: "回复中… 按“{mode}”发送  (Esc 中断)",
+		placeholderMirror: "这个会话已移交到另一端执行，请在那一端继续对话",
 		steer: "插队",
 		followUp: "排队",
 		steerHint: "在当前工具调用结束后立即插入",
@@ -82,6 +84,7 @@ const M = defineMessages({
 	en: {
 		placeholder: "Give the agent a task, type / for commands",
 		placeholderStreaming: "Replying… sends as \"{mode}\"  (Esc to stop)",
+		placeholderMirror: "This session moved to the other side. Continue the conversation there.",
 		steer: "Steer",
 		followUp: "Queue",
 		steerHint: "Insert right after the current tool call",
@@ -494,6 +497,8 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 	const t = useT(M);
 	const personalSpace = useSpace() === "personal";
 	const session = useStore((s) => s.session);
+	// A team session whose brain moved to the other side only mirrors here: its prompts would be refused anyway.
+	const mirrored = useReadOnlyCopy(session?.id) !== undefined;
 	const commands = useStore((s) => s.commands);
 	const editorText = useStore((s) => s.editorText);
 	// The unsent text, pictures and files belong to the conversation on screen, not to this component (which is
@@ -539,7 +544,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 		requestAnimationFrame(() => ref.current?.focus());
 	};
 	const sheet = useVisualViewport();
-	const canSend = (!!text.trim() || images.length > 0 || docs.length > 0) && reading === 0 && !!session && !session.preview;
+	const canSend = (!!text.trim() || images.length > 0 || docs.length > 0) && reading === 0 && !!session && !session.preview && !mirrored;
 
 	// A view (settings, git, ...) is drawn under the sheet's portal: step aside rather than hide it.
 	useEffect(() => {
@@ -642,7 +647,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 		const value = text.trim();
 		if ((!value && !images.length && !docs.length) || reading > 0) return false;
 		// The copy from the last visit is on screen and not followed yet; sending waits the moment until the real one is in.
-		if (session?.preview) return false;
+		if (session?.preview || mirrored) return false;
 		if (!session) {
 			toast(t("needWorkspace"), "warning");
 			return false;
@@ -945,7 +950,8 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 					onKeyDown={onKeyDown}
 					onPaste={onPaste}
 					rows={1}
-					placeholder={streaming ? t("placeholderStreaming", { mode: t(sendMode) }) : t("placeholder")}
+					disabled={mirrored}
+					placeholder={mirrored ? t("placeholderMirror") : streaming ? t("placeholderStreaming", { mode: t(sendMode) }) : t("placeholder")}
 					className="block max-h-64 w-full resize-none bg-transparent py-3.5 pr-9 pb-2 pl-4 text-[15px] text-ink-100 placeholder:text-ink-500 focus:outline-none"
 				/>
 				</div>

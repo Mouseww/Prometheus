@@ -99,7 +99,7 @@ export function TeamShell({ api, mode, plugin, topRight, initialRoute, hubMeta, 
 	const def = findRoute(route.page);
 	const Page = def?.component;
 	const activeNav = NAV_PARENT[route.page] ?? route.page;
-	const flags = { billing: billingEnabled, publicMode: isPublicMode(hubMeta) };
+	const flags = { billing: billingEnabled, publicMode: isPublicMode(hubMeta), hubMode: mode === "hub" };
 	const main = navFor(ctx.me, "main", flags);
 	const admin = navFor(ctx.me, "admin", flags);
 	const teamName = route.params?.teamId ? ctx.me.teams.find((x) => x.id === route.params?.teamId)?.name : undefined;

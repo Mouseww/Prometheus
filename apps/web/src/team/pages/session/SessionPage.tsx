@@ -7,6 +7,7 @@ import { defineMessages, relativeTime, useT } from "../../../lib/i18n.ts";
 import { usePrefs } from "../../../lib/prefs.ts";
 import { type Route, useTeam } from "../../context.tsx";
 import { AsyncView, Body, Card, Notice, Tabs, useAction, useAsync } from "../../kit.tsx";
+import { rememberTeamSession } from "../../execStore.ts";
 import { localSessionIdOf } from "../../logic/pluginResult.ts";
 import type { SessionDetail, SessionStatus } from "../../types.ts";
 import { StatusDot } from "../home/status.tsx";
@@ -78,6 +79,7 @@ function Header({ session, onChanged }: { session: SessionDetail; onChanged: () 
 			if (mode === "member" && plugin) {
 				const res = await plugin.call("session.fork", { hubSessionId: session.id });
 				const id = localSessionIdOf(res);
+				rememberTeamSession(res);
 				if (id) {
 					plugin.openLocalSession(id);
 					return t("forkedLocal");

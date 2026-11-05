@@ -74,6 +74,15 @@ import type {
 	VisibleModel,
 	WorkspaceView,
 	SessionStatus,
+	ExecMode,
+	ExecLocation,
+	ExecState,
+	MyRuntime,
+	NodeInput,
+	NodeView,
+	RuntimeLimitsInput,
+	RuntimesListing,
+	RuntimeView,
 } from "./types.ts";
 
 /** The Hub is mounted under this prefix; every request path below is Hub-relative and starts with `/api/`. */
@@ -173,6 +182,26 @@ export interface TeamApi {
 	/** Relay an action to the owner's machine. Fails with notGranted, ownerOffline, relayFailed or relayTimeout. */
 	sendSessionAction(sessionId: string, action: SessionAction): Promise<unknown>;
 	forkSession(sessionId: string, input?: { title?: string }): Promise<ForkResult>;
+	// ---- hybrid execution (owner only) ----
+	getSessionExec(sessionId: string): Promise<ExecState>;
+	setSessionExecMode(sessionId: string, mode: ExecMode): Promise<ExecState>;
+	/** Moves the session's brain to the other side. `force` interrupts a running agent (the Hub answers `agentBusy` otherwise). */
+	handoffSession(sessionId: string, to: ExecLocation, force?: boolean): Promise<ExecState>;
+
+	// ---- tenant runtimes and executor nodes ----
+	/** The caller's own tenant runtime (status for the workbench entry). */
+	getMyRuntime(): Promise<MyRuntime>;
+	/** Warms the caller's tenant up; resolves with the status right after the start was requested. */
+	startMyRuntime(): Promise<MyRuntime>;
+	listRuntimes(): Promise<RuntimesListing>;
+	stopRuntime(userId: string): Promise<RuntimeView>;
+	setRuntimeLimits(userId: string, limits: RuntimeLimitsInput): Promise<RuntimeView>;
+	listNodes(): Promise<NodeView[]>;
+	createNode(input: NodeInput): Promise<NodeView>;
+	updateNode(id: string, patch: Partial<NodeInput>): Promise<NodeView>;
+	drainNode(id: string): Promise<NodeView>;
+	pingNode(id: string): Promise<{ ok: boolean }>;
+	deleteNode(id: string): Promise<void>;
 
 	// ---- board, daily reports, notifications ----
 	getBoard(workspaceId: string): Promise<Board>;
@@ -252,6 +281,8 @@ export interface HubApi extends TeamApi {
 	forgotPassword(email: string): Promise<void>;
 	resetPassword(token: string, password: string): Promise<void>;
 	logout(): Promise<void>;
+	/** Address that opens the caller's tenant runtime (`<hub>/rt/`) with a fresh access token for the proxy; undefined when signed out. */
+	workbenchUrl(): Promise<string | undefined>;
 	/** True when an access or refresh token is stored (it may still be expired). */
 	hasSession(): boolean;
 	/** Called once when the session ends for good (refresh failed or logout). */
@@ -365,6 +396,21 @@ export function createApiMethods(r: Requester): Omit<TeamApi, "subscribe"> {
 		revokeSessionGrant: (id, userId) => empty("DELETE", `/api/sessions/${seg(id)}/grants/${seg(userId)}`),
 		sendSessionAction: (id, action) => send("POST", `/api/sessions/${seg(id)}/actions`, action),
 		forkSession: (id, input) => send("POST", `/api/sessions/${seg(id)}/fork`, input?.title ? { title: input.title } : {}),
+		getSessionExec: (id) => get(`/api/sessions/${seg(id)}/exec`),
+		setSessionExecMode: (id, mode) => send("PATCH", `/api/sessions/${seg(id)}/exec`, { mode }),
+		handoffSession: (id, to, force) => send("POST", `/api/sessions/${seg(id)}/handoff`, force ? { to, force: true } : { to }),
+
+		getMyRuntime: () => get("/api/runtime"),
+		startMyRuntime: () => send("POST", "/api/runtime/start"),
+		listRuntimes: () => get("/api/admin/runtimes"),
+		stopRuntime: (userId) => send("POST", `/api/admin/runtimes/${seg(userId)}/stop`),
+		setRuntimeLimits: (userId, limits) => send("PUT", `/api/admin/runtimes/${seg(userId)}/limits`, limits),
+		listNodes: () => get("/api/admin/nodes"),
+		createNode: (input) => send("POST", "/api/admin/nodes", input),
+		updateNode: (id, patch) => send("PUT", `/api/admin/nodes/${seg(id)}`, patch),
+		drainNode: (id) => send("POST", `/api/admin/nodes/${seg(id)}/drain`),
+		pingNode: (id) => send("POST", `/api/admin/nodes/${seg(id)}/ping`),
+		deleteNode: (id) => empty("DELETE", `/api/admin/nodes/${seg(id)}`),
 
 		getBoard: (workspaceId) => get(`/api/workspaces/${seg(workspaceId)}/board`),
 		getReport: (workspaceId, date) => get(`/api/workspaces/${seg(workspaceId)}/reports`, { date }),

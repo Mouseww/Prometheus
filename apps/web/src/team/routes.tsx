@@ -1,6 +1,6 @@
 // The team UI route table. The shell (TeamShell) renders the left nav and the page from this list only, so adding a
 // page means adding an entry here. The ids in ./slots.tsx SLOT are the stable contract for navigating to part 2 pages.
-import { Activity, ArrowRightLeft, Building2, Cpu, Gauge, LayoutDashboard, type LucideIcon, Mailbox, MailX, ScrollText, Settings2, ShieldCheck, UserCog, UserRound, Users, Wallet } from "lucide-react";
+import { Activity, ArrowRightLeft, Boxes, Building2, Cpu, Gauge, LayoutDashboard, type LucideIcon, Mailbox, MailX, MonitorCog, ScrollText, Server, Settings2, ShieldCheck, UserCog, UserRound, Users, Wallet } from "lucide-react";
 import type { ComponentType } from "react";
 import { defineMessages } from "../lib/i18n.ts";
 import { canSeeAdmin, isOperator } from "./context.tsx";
@@ -23,7 +23,10 @@ import { NotificationsPage } from "./pages/notifications/NotificationsPage.tsx";
 import { SessionPage } from "./pages/session/SessionPage.tsx";
 import { TeamDetailPage } from "./pages/TeamDetailPage.tsx";
 import { TeamsPage } from "./pages/TeamsPage.tsx";
+import { WorkbenchPage } from "./pages/WorkbenchPage.tsx";
 import { WorkspacePage } from "./pages/WorkspacePage.tsx";
+import { NodesPage } from "./pages/admin/NodesPage.tsx";
+import { RuntimesPage } from "./pages/admin/RuntimesPage.tsx";
 import { SLOT } from "./slots.tsx";
 import type { MeResult } from "./types.ts";
 
@@ -47,6 +50,9 @@ export const N = defineMessages({
 		opsBilling: "运营",
 		transfers: "团队转入",
 		domains: "邮箱黑名单",
+			workbench: "我的工作台",
+			nodes: "执行节点",
+			runtimes: "租户实例",
 	},
 	en: {
 		teamHome: "Team home",
@@ -67,6 +73,9 @@ export const N = defineMessages({
 		opsBilling: "Operations",
 		transfers: "Team transfers",
 		domains: "Blocked email domains",
+			workbench: "My workbench",
+			nodes: "Executor nodes",
+			runtimes: "Tenant instances",
 	},
 });
 
@@ -77,6 +86,8 @@ export interface NavFlags {
 	billing: boolean;
 	/** The Hub runs in public (online service) mode. */
 	publicMode?: boolean;
+	/** The page is the Hub's own web UI (not the embedded member view): only there can the tenant workbench be opened. */
+	hubMode?: boolean;
 }
 
 export interface TeamRoute {
@@ -124,6 +135,11 @@ export const TEAM_ROUTES: readonly TeamRoute[] = [
 	// ---- part 4D-2: online service (team transfer inbox, operator disposable-domain list) ----
 	{ id: SLOT.transfers, component: TransfersPage, nav: { group: "main", label: "transfers", icon: ArrowRightLeft, visible: (me) => canUseTransfers(me) } },
 	{ id: SLOT.domains, component: DisposableDomainsPage, nav: { group: "admin", label: "domains", icon: MailX, visible: (me, flags) => isOperator(me) && flags.publicMode === true } },
+
+	// ---- block 3C: tenant runtimes ----
+	{ id: "workbench", component: WorkbenchPage, nav: { group: "main", label: "workbench", icon: MonitorCog, visible: (_me, flags) => flags.hubMode === true } },
+	{ id: "admin.nodes", component: NodesPage, nav: { group: "admin", label: "nodes", icon: Server, visible: operatorOnly } },
+	{ id: "admin.runtimes", component: RuntimesPage, nav: { group: "admin", label: "runtimes", icon: Boxes, visible: operatorOnly } },
 ];
 
 export const DEFAULT_ROUTE_ID = "teams";

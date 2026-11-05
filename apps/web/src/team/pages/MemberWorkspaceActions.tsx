@@ -7,6 +7,7 @@ import { defineMessages, useT } from "../../lib/i18n.ts";
 import { useTeam } from "../context.tsx";
 import { useCommonT } from "../i18n.ts";
 import { Notice, useAction } from "../kit.tsx";
+import { rememberTeamSession } from "../execStore.ts";
 import { localSessionIdOf } from "../logic/pluginResult.ts";
 
 const M = defineMessages({
@@ -57,6 +58,7 @@ export function MemberWorkspaceActions({ workspaceId }: { workspaceId: string })
 		setDialog(false);
 		setTitle("");
 		const id = localSessionIdOf(r);
+		rememberTeamSession(r);
 		if (id) {
 			setDone(t("started"));
 			plugin.openLocalSession(id);

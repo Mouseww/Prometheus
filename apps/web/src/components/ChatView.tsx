@@ -3,6 +3,9 @@ import clsx from "clsx";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { loadEarlier, useStore } from "../lib/store.ts";
+import { HandBar } from "../team/exec/HandBar.tsx";
+import { SyncStatus } from "../team/exec/SyncStatus.tsx";
+import { TeamSessionBar } from "../team/exec/TeamSessionBar.tsx";
 import { ChatWidthControls } from "./ChatWidthControls.tsx";
 import { Composer } from "./Composer.tsx";
 import { MessageList } from "./MessageList.tsx";
@@ -156,6 +159,8 @@ function ChatBody() {
 					<span className="truncate">{session.banner.text}</span>
 				</div>
 			)}
+			<TeamSessionBar />
+			<SyncStatus />
 			<div
 				ref={attach}
 				onWheel={(e) => {
@@ -199,6 +204,7 @@ function ChatBody() {
 			</div>
 			<Widgets placement="aboveEditor" />
 			<TaskPanel />
+			<HandBar />
 			<Composer />
 			<Widgets placement="belowEditor" />
 		</>

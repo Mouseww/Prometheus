@@ -1,6 +1,7 @@
 // Hub mode transport: the browser talks to the Hub itself and holds its own tokens.
 // Access token in sessionStorage; refresh token in localStorage only when "remember me" was ticked
 // (otherwise sessionStorage, so a reload inside the same tab keeps the login but closing the tab ends it).
+import { appOrigin, withBase, wsUrlFor } from "../lib/basePath.ts";
 import {
 	createApiMethods,
 	HUB_API_BASE,
@@ -86,7 +87,7 @@ export function createHubApi(options: HubApiOptions = {}): HubApi {
 	const doFetch: typeof fetch = options.fetch ?? ((...a) => fetch(...a));
 	const session = options.session ?? safeStore(() => sessionStorage);
 	const local = options.local ?? safeStore(() => localStorage);
-	const base = options.baseUrl ?? HUB_API_BASE;
+	const base = options.baseUrl ?? withBase(HUB_API_BASE);
 	const maxBackoff = options.maxBackoffMs ?? 30_000;
 	const endListeners = new Set<() => void>();
 
@@ -184,8 +185,7 @@ export function createHubApi(options: HubApiOptions = {}): HubApi {
 	let pingTimer: ReturnType<typeof setInterval> | undefined;
 
 	const defaultSocket = (token: string): SocketLike => {
-		const proto = location.protocol === "https:" ? "wss" : "ws";
-		return new WebSocket(`${proto}://${location.host}${HUB_WS_PATH}?token=${encodeURIComponent(token)}`) as unknown as SocketLike;
+		return new WebSocket(`${wsUrlFor(HUB_WS_PATH)}?token=${encodeURIComponent(token)}`) as unknown as SocketLike;
 	};
 	const openSocket = options.openSocket ?? defaultSocket;
 
@@ -289,6 +289,16 @@ export function createHubApi(options: HubApiOptions = {}): HubApi {
 			stopSocket();
 			if (refreshToken) await raw("POST", "/api/auth/logout", { refreshToken }, null);
 			endSession();
+		},
+		async workbenchUrl(): Promise<string | undefined> {
+			let token = getAccess();
+			const exp = token ? jwtExpiry(token) : undefined;
+			if ((!token || (exp !== undefined && exp * 1000 < Date.now() + 30_000)) && getRefresh()) {
+				await refreshTokens();
+				token = getAccess();
+			}
+			// The proxy turns the one-time `?token=` into an HttpOnly cookie and redirects to the clean address.
+			return token ? `${appOrigin()}${HUB_API_BASE}/rt/?token=${encodeURIComponent(token)}` : undefined;
 		},
 		hasSession: () => getAccess() !== null || getRefresh() !== null,
 		onSessionEnd(cb) {
