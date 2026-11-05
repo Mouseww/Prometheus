@@ -3,6 +3,7 @@ import type { HubDeps } from "../deps.ts";
 import { forbidden } from "../errors.ts";
 import { Reply, type Router } from "../http/router.ts";
 import { can } from "../permissions.ts";
+import type { OrgsPublicService } from "../services/orgs-public.ts";
 import { DisplayNameSchema, EmailSchema, IdSchema, NameSchema, OrgRoleSchema, PasswordSchema, RegistrationPolicySchema } from "./schemas.ts";
 
 const UserListQuery = Type.Object({
@@ -27,7 +28,7 @@ const AuditQuery = Type.Object({
 	before: Type.Optional(IdSchema),
 	limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
 });
-const SettingsBody = Type.Object({ allowPersonalTeams: Type.Boolean() });
+const SettingsBody = Type.Object({ allowPersonalTeams: Type.Optional(Type.Boolean()), allowSelfCreateOrg: Type.Optional(Type.Boolean()) });
 
 /** Admin console: users, registration policy, invitations, organizations and members, audit log, platform settings. */
 export function registerAdminRoutes(router: Router, deps: HubDeps): void {
@@ -47,23 +48,24 @@ export function registerAdminRoutes(router: Router, deps: HubDeps): void {
 	router.get("/api/admin/settings", async (ctx) => {
 		const actor = await ctx.actor();
 		if (!can(actor, "platform.manage")) throw forbidden();
-		return { allowPersonalTeams: await settings.allowPersonalTeams() };
+		return { allowPersonalTeams: await settings.allowPersonalTeams(), allowSelfCreateOrg: await settings.allowSelfCreateOrg() };
 	});
 	router.put("/api/admin/settings", async (ctx) => {
 		const actor = await ctx.actor();
 		if (!can(actor, "platform.manage")) throw forbidden();
 		const body = await ctx.json(SettingsBody);
 		await deps.db.tx({ system: true }, async (q) => {
-			await settings.set(q, "allow_personal_teams", body.allowPersonalTeams);
+			if (body.allowPersonalTeams !== undefined) await settings.set(q, "allow_personal_teams", body.allowPersonalTeams);
+			if (body.allowSelfCreateOrg !== undefined) await settings.set(q, "allow_self_create_org", body.allowSelfCreateOrg);
 			await audit.write(q, { actorId: actor.userId, action: "settings.update", targetType: "platform", targetId: "platform", detail: { ...body } });
 		});
-		return body;
+		return { allowPersonalTeams: await settings.allowPersonalTeams(), allowSelfCreateOrg: await settings.allowSelfCreateOrg() };
 	});
 
 	router.post("/api/invitations", async (ctx) => new Reply(201, await invitations.create(await ctx.actor(), await ctx.json(InvitationBody))));
 
 	router.get("/api/orgs", async (ctx) => orgs.list(await ctx.actor()));
-	router.post("/api/orgs", async (ctx) => new Reply(201, await orgs.create(await ctx.actor(), await ctx.json(CreateOrgBody))));
+	router.post("/api/orgs", async (ctx) => new Reply(201, await deps.registry.require<OrgsPublicService>("orgsPublic").create(await ctx.actor(), await ctx.json(CreateOrgBody))));
 	router.get("/api/orgs/:id/members", async (ctx) => orgs.listMembers(await ctx.actor(), ctx.params.id as string));
 	router.put("/api/orgs/:id/members/:userId", async (ctx) =>
 		orgs.setMember(await ctx.actor(), ctx.params.id as string, ctx.params.userId as string, (await ctx.json(MemberRoleBody)).role),

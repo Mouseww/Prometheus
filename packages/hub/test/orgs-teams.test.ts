@@ -268,7 +268,7 @@ describe("teams", () => {
 		expect(denied.status).toBe(403);
 		expect(denied.code).toBe("personalTeamsDisabled");
 		expect((await t.api("PUT", "/api/admin/settings", { token: orgAdmin.token, body: { allowPersonalTeams: true } })).status).toBe(403);
-		expect((await t.api("PUT", "/api/admin/settings", { token: root.token, body: { allowPersonalTeams: true } })).data).toEqual({ allowPersonalTeams: true });
+		expect((await t.api("PUT", "/api/admin/settings", { token: root.token, body: { allowPersonalTeams: true } })).data).toMatchObject({ allowPersonalTeams: true });
 
 		const mine = await t.api("POST", "/api/teams", { token: plain.token, body: { name: "Mine", orgId: null } });
 		expect(mine.status).toBe(201);

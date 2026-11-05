@@ -32,7 +32,8 @@ export interface CreateOrgInput {
 
 export interface OrgsService {
 	list(actor: Actor): Promise<OrgSummary[]>;
-	create(actor: Actor, input: CreateOrgInput): Promise<OrgSummary>;
+	/** `selfService` skips the operator-only check; the caller (orgs-public) has already applied the self-create rules. */
+	create(actor: Actor, input: CreateOrgInput, opts?: { selfService?: boolean }): Promise<OrgSummary>;
 	listMembers(actor: Actor, orgId: string): Promise<OrgMemberView[]>;
 	/** Changes the role of a member, or adds an active user to the organization. */
 	setMember(actor: Actor, orgId: string, userId: string, role: OrgRole): Promise<OrgMemberView>;
@@ -75,13 +76,14 @@ export function createOrgsService(deps: ServiceDeps, audit: AuditService): OrgsS
 			return rows.map((r) => toSummary(r, actor));
 		},
 
-		async create(actor, input) {
-			if (!can(actor, "org.create")) throw forbidden();
+		async create(actor, input, opts) {
+			if (!opts?.selfService && !can(actor, "org.create")) throw forbidden();
 			const ownerId = input.ownerUserId ?? actor.userId;
 			const id = ulid(deps.now());
 			const base = input.slug ?? slugify(input.name);
 			try {
-				const row = await deps.db.tx(scopeOf(actor), async (q) => {
+				// A self-service creator is not a member yet, so RLS would reject the new organization row.
+				const row = await deps.db.tx(opts?.selfService ? { system: true } : scopeOf(actor), async (q) => {
 					const owner = await q.query<{ status: string }>("SELECT status FROM users WHERE id = $1", [ownerId]);
 					if (owner.length === 0) throw notFound("所有者用户不存在");
 					if (owner[0]?.status !== "active") throw conflict("所有者账号未启用", "userNotActive");
