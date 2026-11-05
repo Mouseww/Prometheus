@@ -121,10 +121,16 @@ export function createTeamsService(deps: ServiceDeps, audit: AuditService, setti
 		},
 
 		async addMember(actor, teamId, input) {
+			// Authorization first, under the actor's own scope. Then the target lookup and the insert run as the system: under row level
+			// security the actor only sees users they share an organization or team with, so a not-yet-visible user (or a member of the
+			// team's organization the actor cannot see) would otherwise be indistinguishable from an unknown one.
+			const team = await deps.db.tx(scopeOf(actor), async (q) => {
+				const found = await requireTeam(q, actor, teamId);
+				if (!can(actor, "team.manage", { teamId, orgId: found.orgId })) throw forbidden();
+				return found;
+			});
 			return deps.db
-				.tx(scopeOf(actor), async (q) => {
-					const team = await requireTeam(q, actor, teamId);
-					if (!can(actor, "team.manage", { teamId, orgId: team.orgId })) throw forbidden();
+				.tx({ system: true }, async (q) => {
 					const users = input.userId
 						? await q.query<{ id: string; status: string }>("SELECT id, status FROM users WHERE id = $1", [input.userId])
 						: await q.query<{ id: string; status: string }>("SELECT id, status FROM users WHERE email = $1", [normalizeEmail(input.email ?? "")]);

@@ -333,7 +333,12 @@ describe("teams", () => {
 		// No direct add on a personal team (even for an active user); members join through the invitation flow.
 		const direct = await t.api("POST", `/api/teams/${personalId}/members`, { token: plain.token, body: { userId: reviewer.userId, role: "member" } });
 		expect(direct.status).toBe(404);
-		const inv = await t.api("POST", "/api/invitations", { token: plain.token, body: { scope: "team", scopeId: personalId, email: "reviewer@corp.test", role: "member" } });
+		// By email, an existing user the owner cannot see under row level security answers exactly like an unknown email.
+		const byEmailExisting = await t.api("POST", `/api/teams/${personalId}/members`, { token: plain.token, body: { email: "reviewer@corp.test", role: "member" } });
+		const byEmailUnknown = await t.api("POST", `/api/teams/${personalId}/members`, { token: plain.token, body: { email: "nobody@corp.test", role: "member" } });
+		expect(byEmailExisting.status).toBe(404);
+		expect(byEmailExisting.body).toEqual(byEmailUnknown.body);
+		const inv =await t.api("POST", "/api/invitations", { token: plain.token, body: { scope: "team", scopeId: personalId, email: "reviewer@corp.test", role: "member" } });
 		expect(inv.status).toBe(201);
 		expect((await t.api("POST", `/api/invitations/${inv.data.token}/accept`, { token: reviewer.token })).status).toBe(200);
 		// The owner cannot be demoted or removed.

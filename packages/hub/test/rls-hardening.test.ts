@@ -50,6 +50,17 @@ describe("rls hardening", () => {
 		await db.close();
 	});
 
+	it("does not show unaffiliated (orphan) accounts to organization admins", async () => {
+		const db = await migratedDb();
+		await seed(db);
+		await db.exec("INSERT INTO users (id, email, display_name, password_hash, status) VALUES ('uorph', 'pending@x.test', 'P', 'x', 'pending')");
+		const ids = async (userId: string): Promise<string[]> => (await db.tx({ userId }, (q) => q.query<{ id: string }>("SELECT id FROM users ORDER BY id"))).map((r) => r.id);
+		expect(await ids("uadm")).toEqual(["ua", "uadm"]);
+		expect(await ids("uorph")).toEqual(["uorph"]);
+		expect((await db.tx({ userId: "uadm" }, (q) => q.query("SELECT 1 FROM users WHERE id = 'uorph'"))).length).toBe(0);
+		await db.close();
+	});
+
 	it("keeps refresh tokens and invitations to the people involved", async () => {
 		const db = await migratedDb();
 		await seed(db);

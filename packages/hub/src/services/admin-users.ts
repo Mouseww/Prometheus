@@ -151,7 +151,10 @@ export function createAdminUsersService(deps: ServiceDeps, audit: AuditService, 
 			if (!can(actor, "org.users.manage", { orgId })) throw forbidden();
 			const email = normalizeEmail(input.email);
 			const passwordHash = await hashPassword(input.password);
-			return deps.db.tx(scopeOf(actor), async (q) => {
+			// Authorization (org.users.manage on this org) was decided above. The new account belongs to nothing until the membership row
+			// below exists, so under the actor's scope it would be invisible to `INSERT ... RETURNING`; run as the system instead of
+			// letting org admins see unaffiliated accounts (pending self-registrations) at the database layer.
+			return deps.db.tx({ system: true }, async (q) => {
 				const org = await q.query("SELECT 1 FROM organizations WHERE id = $1", [orgId]);
 				if (org.length === 0) throw notFound("企业不存在");
 				const user = await accounts.insertUser(q, { email, displayName: input.displayName, passwordHash, status: "active" });
