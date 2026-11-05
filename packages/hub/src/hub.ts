@@ -70,7 +70,7 @@ export async function createHub(options: HubOptions): Promise<Hub> {
 
 		const base: ServiceDeps = { db, log, now };
 		const audit = createAuditService(base);
-		const settings = createSettingsService(base);
+		const settings = createSettingsService(base, { mode: config.mode });
 		const actors = createActorService(base);
 		const registration = createRegistrationService(base, audit);
 		const orgs = createOrgsService(base, audit);

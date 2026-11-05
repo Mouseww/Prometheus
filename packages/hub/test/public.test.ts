@@ -228,7 +228,7 @@ describe("self-service organizations", () => {
 		// The operator is unaffected, and the other setting is untouched by a partial update.
 		expect((await t.api("POST", "/api/orgs", { token: t.operator.token, body: { name: "Ops" } })).status).toBe(201);
 		const on = await t.api("PUT", "/api/admin/settings", { token: t.operator.token, body: { allowSelfCreateOrg: true } });
-		expect(on.data).toMatchObject({ allowSelfCreateOrg: true, allowPersonalTeams: false });
+		expect(on.data).toMatchObject({ allowSelfCreateOrg: true, allowPersonalTeams: true });
 		expect((await t.api("POST", "/api/orgs", { token: u.token, body: { name: "Yes" } })).status).toBe(201);
 	});
 

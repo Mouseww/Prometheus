@@ -164,10 +164,13 @@ export function createAccountsService(deps: ServiceDeps, a: AccountsDeps): Accou
 			const orgPolicy = await a.registration.orgPolicy(orgId, q);
 			if (orgPolicy && !orgPolicy.allowInvite) throw forbidden("该企业不允许通过邀请注册", "inviteDisabled");
 		}
-		const user = await insertUser(q, { email, displayName: input.displayName, passwordHash, status: "active", verified: true });
+		// Public mode: any team admin can invite an arbitrary address, so the invite proves nothing about ownership of the mailbox.
+		// The account is active and joined (approval, Turnstile and disposable checks are skipped) but must still verify its email.
+		const isPublic = config.mode === "public";
+		const user = await insertUser(q, { email, displayName: input.displayName, passwordHash, status: "active", verified: !isPublic });
 		await a.invitations.apply(q, inv, user.id);
 		await a.audit.write(q, { actorId: user.id, orgId, action: "user.register.invite", targetType: "user", targetId: user.id, detail: { invitationId: inv.id } });
-		return { user: toPublicUser(user), status: "active", bootstrap: false };
+		return { user: toPublicUser(user), status: "active", bootstrap: false, ...(isPublic ? { verificationRequired: true } : {}) };
 	};
 
 	const registerSelf = async (q: Queryable, input: RegisterInput, email: string, passwordHash: string): Promise<RegisterResult> => {

@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import type { HubLog } from "./log.ts";
+import { parseTrustProxy, type TrustProxy } from "./net/trusted-proxy.ts";
 
 export interface HubOptions {
 	/** Hub data directory: secret.key, jwt.key, setup-code.txt, pgdata, repos. */
@@ -22,8 +23,8 @@ export interface HubOptions {
 	orgName?: string;
 	/** Initial value of the platform setting; changed later through the admin API. */
 	allowPersonalTeams?: boolean;
-	/** Trust X-Forwarded-For for rate limiting (behind a reverse proxy). */
-	trustProxy?: boolean;
+	/** Trust X-Forwarded-For for rate limiting (behind a reverse proxy). Overrides HUB_TRUST_PROXY: `true` trusts the immediate peer, a list restricts it to those proxy IPs/CIDRs. */
+	trustProxy?: TrustProxy;
 	/** Tests only: let workspace import and upstream remotes be local paths or file:// URLs. Never set in production. */
 	allowLocalGitRemotes?: boolean;
 	version?: string;
@@ -41,7 +42,7 @@ export interface HubConfig {
 	basePath: string;
 	appRole: string;
 	orgName: string;
-	trustProxy: boolean;
+	trustProxy: TrustProxy;
 	allowLocalGitRemotes: boolean;
 	version: string;
 	mode: "private" | "public";
@@ -80,7 +81,7 @@ export function resolveConfig(options: HubOptions): HubConfig {
 		basePath,
 		appRole: options.appRole ?? env.HUB_DB_APP_ROLE ?? "prometheus_app",
 		orgName: options.orgName ?? env.HUB_ORG_NAME ?? "我的团队",
-		trustProxy: options.trustProxy ?? false,
+		trustProxy: options.trustProxy ?? parseTrustProxy(env.HUB_TRUST_PROXY),
 		allowLocalGitRemotes: options.allowLocalGitRemotes ?? false,
 		version: options.version ?? "0.1.0",
 		mode,

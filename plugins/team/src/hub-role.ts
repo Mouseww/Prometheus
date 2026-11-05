@@ -45,6 +45,8 @@ export async function setupHubRole(ctx: HubRoleCtx, options: HubRoleOptions = {}
 		publicUrl: env.HUB_PUBLIC_URL || undefined,
 		basePath: HUB_BASE_PATH,
 		log: ctx.log,
+		// The Hub reads HUB_TRUST_PROXY (and the other HUB_* settings) from this env; a bad value fails startup.
+		env,
 	});
 
 	const handler = (req: IncomingMessage, res: ServerResponse): void => {

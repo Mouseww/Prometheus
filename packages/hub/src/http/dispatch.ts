@@ -3,6 +3,7 @@ import { type HubConfig, JWT_AUDIENCE } from "../config.ts";
 import { unauthorized } from "../errors.ts";
 import { type JwtClaims, verifyJwt } from "../jwt.ts";
 import type { HubLog } from "../log.ts";
+import { resolveClientIp, type TrustProxy } from "../net/trusted-proxy.ts";
 import type { Actor } from "../permissions.ts";
 import { createContext } from "./context.ts";
 import { writeError, writeOk, writeThrown } from "./envelope.ts";
@@ -24,13 +25,8 @@ export function relativePath(config: HubConfig, pathname: string): string | unde
 	return pathname.startsWith(`${base}/`) ? pathname.slice(base.length) : undefined;
 }
 
-export function clientIp(req: IncomingMessage, trustProxy: boolean): string {
-	if (trustProxy) {
-		const forwarded = req.headers["x-forwarded-for"];
-		const first = (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(",")[0]?.trim();
-		if (first) return first;
-	}
-	return req.socket.remoteAddress ?? "unknown";
+export function clientIp(req: IncomingMessage, trustProxy: TrustProxy): string {
+	return resolveClientIp(req.socket.remoteAddress, req.headers["x-forwarded-for"], trustProxy);
 }
 
 export function bearerToken(req: IncomingMessage): string | undefined {
