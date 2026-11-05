@@ -1,13 +1,17 @@
 import type { IncomingMessage } from "node:http";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
+import { ACCESS_TOKEN_TTL_SEC, JWT_AUDIENCE } from "../config.ts";
 import type { HubDeps } from "../deps.ts";
-import { badRequest, HubError, validationError } from "../errors.ts";
+import { badRequest, HubError, unauthorized, validationError } from "../errors.ts";
 import { Reply, type Router } from "../http/router.ts";
+import { verifyJwt } from "../jwt.ts";
 import { createInternalLlm } from "../llm/internal.ts";
+import type { TenantManager } from "../runtime/manager.ts";
 import { createReportScheduler } from "../scheduler.ts";
 import { createBoardService } from "../services/board.ts";
 import type { ServiceDeps } from "../services/common.ts";
+import { createExecService } from "../services/exec.ts";
 import { createNotificationsService } from "../services/notifications.ts";
 import { createReportsService } from "../services/reports.ts";
 import { createSessionsService, MAX_EVENTS_PER_BATCH, MAX_TRANSCRIPT_CHARS } from "../services/sessions.ts";
@@ -53,6 +57,11 @@ const ActionBody = Type.Object({
 	response: Type.Optional(Type.Unknown()),
 });
 const ForkBody = Type.Object({ title: Type.Optional(Type.String({ maxLength: 300 })) });
+const ExecModeBody = Type.Object({ mode: Type.Union([Type.Literal("local-first"), Type.Literal("team-first")]) });
+const HandoffBody = Type.Object({ to: Type.Union([Type.Literal("team"), Type.Literal("local")]), force: Type.Optional(Type.Boolean()) });
+
+/** Audience of the long-lived credential a tenant instance's team plugin holds (see runtime/tenant-env.ts). */
+const TENANT_TOKEN_AUDIENCE = "prometheus-tenant";
 
 const ListQuery = Type.Object({ status: Type.Optional(StatusSchema), owner: Type.Optional(IdSchema), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 500 })) });
 const SessionFilesQuery = Type.Object({ path: Type.Optional(Type.String({ maxLength: 1000 })) });
@@ -96,6 +105,31 @@ export function registerSessionRoutes(router: Router, deps: HubDeps): void {
 	deps.setUpgradeHandler(realtime.handleUpgrade);
 	deps.onClose(() => realtime.close());
 
+	// Block 3A registers `runtime` after this module runs, so it is looked up when needed.
+	const tenantManager = (): TenantManager | undefined => deps.registry.get<{ manager: TenantManager }>("runtime")?.manager;
+	const ensureTenant = async (userId: string): Promise<unknown> => {
+		const manager = tenantManager();
+		if (!manager) throw new HubError(503, "runtimeUnavailable", "这个 Hub 没有启用租户运行时，无法在团队 server 上执行");
+		return manager.ensureRunning(userId);
+	};
+	const waitMs = Number(deps.env.HUB_HANDOFF_TENANT_WAIT_MS);
+	const exec = deps.registry.register("exec", createExecService({ ...base, gateway: realtime, realtime, canView: (actor, id) => sessions.get(actor, id), ensureTenant, tenantWaitMs: waitMs > 0 ? waitMs : undefined }));
+	// Opt-in (HUB_HAND_WAKE_TENANT=1): a hand call aimed at an idle-stopped tenant starts it instead of answering handOffline at once.
+	if (deps.env.HUB_HAND_WAKE_TENANT === "1") realtime.setWake(ensureTenant);
+
+	/** The tenant credential in `Authorization: Bearer` -> verified user id (the same user must still be active). */
+	const tenantUser = async (req: IncomingMessage): Promise<string> => {
+		const header = req.headers.authorization;
+		const token = typeof header === "string" && /^Bearer /i.test(header) ? header.slice(7).trim() : "";
+		const claims = token ? verifyJwt(token, { publicKey: deps.publicKeyPem, issuer: deps.config.issuer, audience: TENANT_TOKEN_AUDIENCE }) : undefined;
+		if (!claims || (claims as { tenant?: unknown }).tenant !== true) throw unauthorized("租户凭证无效或已过期", "invalidToken");
+		try {
+			await actors.load(claims.sub);
+		} catch {
+			throw unauthorized("账号不可用", "accountUnavailable");
+		}
+		return claims.sub;
+	};
 	const board = deps.registry.register("board", createBoardService(base, realtime));
 	const reports = deps.registry.register("reports", createReportsService(base, createInternalLlm(deps, sharedUsage(deps)), realtime));
 	const scheduler = deps.registry.register("reportScheduler", createReportScheduler(deps, reports));
@@ -106,7 +140,33 @@ export function registerSessionRoutes(router: Router, deps: HubDeps): void {
 		return new Reply(created ? 201 : 200, session);
 	});
 	router.get("/api/workspaces/:id/sessions", async (ctx) => sessions.list(await ctx.actor(), ctx.params.id as string, ctx.query(ListQuery)));
-	router.get("/api/sessions/:id", async (ctx) => sessions.get(await ctx.actor(), ctx.params.id as string));
+	router.get("/api/sessions/:id", async (ctx) => {
+		const actor = await ctx.actor();
+		const detail = await sessions.get(actor, ctx.params.id as string);
+		if (!detail.isOwner) return detail;
+		const state = await exec.state(actor, detail.id);
+		return { ...detail, execMode: state.mode, tenantSessionId: state.tenantSessionId };
+	});
+	router.get("/api/sessions/:id/exec", async (ctx) => exec.state(await ctx.actor(), ctx.params.id as string));
+	router.patch("/api/sessions/:id/exec", async (ctx) => exec.setMode(await ctx.actor(), ctx.params.id as string, (await ctx.json(ExecModeBody)).mode));
+	router.post("/api/sessions/:id/handoff", async (ctx) => {
+		const body = await ctx.json(HandoffBody);
+		return exec.handoff(await ctx.actor(), ctx.params.id as string, body.to, { force: body.force });
+	});
+
+	// A tenant instance trades its long-lived credential for a normal access token (it has no password or refresh token).
+	router.post(
+		"/api/auth/tenant-token",
+		async (ctx) => {
+			const userId = await tenantUser(ctx.req);
+			const rows = await deps.db.tx({ system: true }, (q) => q.query<{ id: string; email: string; display_name: string }>("SELECT id, email, display_name FROM users WHERE id = $1", [userId]));
+			const user = rows[0];
+			if (!user) throw unauthorized("账号不可用", "accountUnavailable");
+			const accessToken = deps.signToken({ sub: user.id, name: user.display_name, aud: JWT_AUDIENCE, exp: Math.floor(deps.now() / 1000) + ACCESS_TOKEN_TTL_SEC });
+			return { accessToken, expiresIn: ACCESS_TOKEN_TTL_SEC, user: { id: user.id, email: user.email, displayName: user.display_name } };
+		},
+		{ auth: "public" },
+	);
 	router.patch("/api/sessions/:id", async (ctx) => sessions.patch(await ctx.actor(), ctx.params.id as string, await ctx.json(PatchBody)));
 
 	// Files of a session as of its latest snapshot (including uncommitted work), or of its branch head before the first snapshot.

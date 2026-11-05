@@ -1,11 +1,14 @@
 import WebSocket from "ws";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { HandRouter, type HandPeer } from "../src/services/hands.ts";
+import type { WsGateway } from "../src/ws.ts";
 import { type Collab, connectWs, sleep, startCollab, type WsClient, wsUrl } from "./s-helpers.ts";
 
 let c: Collab;
+let gateway: WsGateway;
 beforeAll(async () => {
 	c = await startCollab();
+	gateway = c.t.hub.registry.require<WsGateway>("realtime");
 });
 afterAll(async () => {
 	await c.stop();
@@ -25,8 +28,8 @@ describe("connection kinds", () => {
 		expect(tenant.frames.find((f) => f.type === "ready")?.kind).toBe("tenant");
 		const local = await connectWs(c.t.baseUrl, c.alice.token);
 		expect(local.frames.find((f) => f.type === "ready")?.kind).toBe("local");
-		expect(c.realtime.connectionCount(c.alice.userId, "tenant")).toBe(1);
-		expect(c.realtime.connectionCount(c.alice.userId, "local")).toBe(1);
+		expect(gateway.connectionCount(c.alice.userId, "tenant")).toBe(1);
+		expect(gateway.connectionCount(c.alice.userId, "local")).toBe(1);
 		await tenant.close();
 		await local.close();
 	});
@@ -146,17 +149,17 @@ describe("snapshot messages", () => {
 describe("commands", () => {
 	it("sends a command to one kind and resolves with its cmdResult", async () => {
 		const tenant = await connectTenant(c.alice.userId);
-		const pending = c.realtime.command(c.alice.userId, "tenant", "handoff.import", { x: 1 });
+		const pending = gateway.command(c.alice.userId, "tenant", "handoff.import", { x: 1 });
 		const frame = await tenant.waitFor((f) => f.type === "cmd");
 		expect(frame).toMatchObject({ cmd: "handoff.import", params: { x: 1 } });
 		tenant.send({ type: "cmdResult", cmdId: frame.cmdId, ok: true, data: { sessionId: "t1" } });
 		expect(await pending).toEqual({ kind: "ok", data: { sessionId: "t1" } });
-		expect(await c.realtime.command(c.alice.userId, "local", "x", {})).toEqual({ kind: "offline" });
-		const failing = c.realtime.command(c.alice.userId, "tenant", "x", {});
+		expect(await gateway.command(c.alice.userId, "local", "x", {})).toEqual({ kind: "offline" });
+		const failing = gateway.command(c.alice.userId, "tenant", "x", {});
 		const f2 = await tenant.waitFor((f) => f.type === "cmd");
 		tenant.send({ type: "cmdResult", cmdId: f2.cmdId, ok: false, error: "boom", code: "agentBusy" });
 		expect(await failing).toEqual({ kind: "failed", error: "boom", code: "agentBusy" });
-		const slow = c.realtime.command(c.alice.userId, "tenant", "x", {}, 40);
+		const slow = gateway.command(c.alice.userId, "tenant", "x", {}, 40);
 		expect(await slow).toEqual({ kind: "timeout" });
 		await tenant.close();
 	});
