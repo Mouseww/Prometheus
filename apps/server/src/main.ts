@@ -5,7 +5,7 @@ import type { Duplex } from "node:stream";
 import { delimiter, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { builtinPlugins } from "@prometheus/builtin-plugins";
-import { canAct, DEFAULT_LAN_PORT, matchPluginRoute, PrometheusHost, serverRole } from "@prometheus/core";
+import { DEFAULT_LAN_PORT, matchPluginRoute, PrometheusHost, serverRole } from "@prometheus/core";
 import { AppError, type ClientFrame, encodeBinaryFrame, encodeError, type Identity, type NetworkPatch, type NetworkStatus, PROTOCOL_VERSION, type RuntimeEnv, type ServerFrame } from "@prometheus/protocol";
 import { WebSocket, WebSocketServer } from "ws";
 import {
@@ -24,7 +24,7 @@ import {
 	verifyPassword,
 	verifySession,
 } from "./network.ts";
-import { type AuthProvider, type CredentialResult, hubTrustFromEnv, identityAllowed } from "./auth.ts";
+import { actors, type AuthProvider, type CredentialResult, hubTrustFromEnv, identityAllowed, msUntilExpiry, requireServerOwner } from "./auth.ts";
 import { resolveRole } from "./cli.ts";
 import { isLoopbackAddress, originAllowed, parseCookies, tokensEqual } from "./security.ts";
 import { defaultWebRoot, serveStatic } from "./static.ts";
@@ -47,6 +47,8 @@ const AUTH_TIMEOUT_MS = 15_000;
 /** Protocol-level ping interval; a client that never answers the next one is dropped so it can reconnect cleanly. */
 const HEARTBEAT_MS = 25_000;
 const MAX_FRAME_BYTES = 32 * 1024 * 1024;
+/** setTimeout fires at once for delays beyond 2^31-1 ms; a token that outlives this is closed then and signs in again. */
+const MAX_TIMER_MS = 2 ** 31 - 1;
 const COOKIE = "prometheus_token";
 /** An operator who binds a non-loopback HOST manages exposure themselves; a token on loopback (the desktop app) still allows these settings. */
 const MANAGED = !isLoopbackAddress(HOST);
@@ -113,10 +115,8 @@ function send(client: Client, frame: ServerFrame): void {
 /** Sends to every signed-in client that may act on the session (all of them when it has no owner). */
 function broadcastToActors(frame: ServerFrame, sessionId: string): void {
 	const data = JSON.stringify(frame);
-	const owner = host.sessionOwner(sessionId);
-	for (const c of clients) {
-		if (!c.authed || c.ws.readyState !== WebSocket.OPEN || !canAct(c.identity, owner)) continue;
-		c.ws.send(data);
+	for (const c of actors(clients, host.sessionOwner(sessionId))) {
+		if (c.ws.readyState === WebSocket.OPEN) c.ws.send(data);
 	}
 }
 
@@ -172,16 +172,28 @@ function requestAllowed(req: IncomingMessage, kind: Kind, access: Access): boole
 }
 
 /** Hub-signed tokens are accepted next to the local credentials when a trust key is configured. */
-const authProvider: AuthProvider | undefined = hubTrustFromEnv(process.env);
+let authProvider: AuthProvider | undefined;
+try {
+	authProvider = hubTrustFromEnv(process.env);
+	// A trusted Hub without a named owner would admit every Hub user, so the pair is required together.
+	requireServerOwner(Boolean(authProvider), config.policy()?.serverOwner);
+} catch (err) {
+	console.error(`[prometheus] ${err instanceof Error ? err.message : String(err)}`);
+	process.exit(1);
+}
 
-/** Token and password first; then, if a Hub is trusted, a Hub token (which must belong to the server's owner when the policy names one). */
+/**
+ * Token and password first; then, if a Hub is trusted, a Hub token (which must belong to the server's owner when the
+ * policy names one). The policy file lives in the data folder unless PROMETHEUS_POLICY points elsewhere: a user who can
+ * write that folder can rewrite the policy, so a deployment that relies on it (a Hub tenant) should mount the file read-only.
+ */
 function checkCredential(access: Access, secret: string): CredentialResult {
 	if (access.mode === "none") return { ok: true };
 	if (access.mode === "token" && tokensEqual(secret, TOKEN)) return { ok: true };
 	if (access.mode === "password" && verifySession(config.network().secret, secret)) return { ok: true };
 	if (authProvider && access.mode !== "deny") {
-		const identity = authProvider.verify(secret);
-		if (identity && identityAllowed(identity, config.policy()?.serverOwner)) return { ok: true, identity };
+		const verified = authProvider.verifyToken(secret);
+		if (verified && identityAllowed(verified.identity, config.policy()?.serverOwner)) return { ok: true, identity: verified.identity, exp: verified.exp };
 	}
 	return { ok: false };
 }
@@ -326,8 +338,9 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, kind: Kind)
 		const route = matchPluginRoute(host.runtime.plugins.routes, req.method, url.pathname);
 		// A public route authenticates itself; an unknown path still demands a login so its existence is not revealed.
 		if (route?.auth === "public") return void (await route.handler(req, res, {}));
-		const passed = req.method === "GET" && host.panelTicketValid(url.searchParams.get("pt"));
-		const who = passed ? { ok: true } : httpIdentity(req, kind);
+		// The pass carries the identity of the client that asked for it, so the page does not run with more rights than that client.
+		const ticket = req.method === "GET" ? host.panelTicket(url.searchParams.get("pt")) : undefined;
+		const who: CredentialResult = ticket ? { ok: true, ...(ticket.identity ? { identity: ticket.identity } : {}) } : httpIdentity(req, kind);
 		if (!who.ok) return json(res, 401, { error: "unauthorized" });
 		if (!route) return json(res, 404, { error: "not found" });
 		await route.handler(req, res, who.identity ? { identity: who.identity } : {});
@@ -507,6 +520,8 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage, kind: Kind) => {
 	const login = access.mode === "password" ? "password" : access.mode === "token" ? "token" : undefined;
 	send(client, { type: "hello", protocol: PROTOCOL_VERSION, authRequired: access.mode !== "none", ...(login ? { login } : {}), local: access.local });
 	const authTimer = client.authed ? undefined : setTimeout(() => ws.close(4001, "auth timeout"), AUTH_TIMEOUT_MS);
+	/** Closes a connection a Hub token signed in once that token has expired (plus the clock skew). */
+	let expiryTimer: ReturnType<typeof setTimeout> | undefined;
 
 	let alive = true;
 	ws.on("pong", () => {
@@ -530,6 +545,7 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage, kind: Kind) => {
 
 	ws.on("close", () => {
 		clearTimeout(authTimer);
+		clearTimeout(expiryTimer);
 		clearInterval(heartbeat);
 		clients.delete(client);
 		try {
@@ -556,9 +572,17 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage, kind: Kind) => {
 		}
 
 		if (!client.authed) {
-			if (frame.type === "auth" && typeof frame.token === "string" && validCredential(access, frame.token)) {
+			const checked = frame.type === "auth" && typeof frame.token === "string" ? checkCredential(access, frame.token) : undefined;
+			if (checked?.ok) {
 				client.authed = true;
 				clearTimeout(authTimer);
+				// A Hub token vouches for a user: remember who, so every call is checked against what that user may do, and drop the connection when the token runs out.
+				if (checked.identity) {
+					client.identity = checked.identity;
+					if (checked.exp !== undefined && authProvider) {
+						expiryTimer = setTimeout(() => ws.close(4003, "token expired"), Math.min(msUntilExpiry(checked.exp, authProvider.skewSec), MAX_TIMER_MS));
+					}
+				}
 				return send(client, { type: "auth_ok" });
 			}
 			if (frame.type === "login" && access.mode === "password") {
@@ -601,14 +625,14 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage, kind: Kind) => {
 			case "rpc": {
 				try {
 					let data: unknown;
-					if (frame.method === "network.get") data = networkStatus(access.local);
+					if (frame.method === "network.get") data = networkStatus(access.local && !client.identity);
 					else if (frame.method === "network.set") {
-						// Only the machine itself, with nothing in between, may open or reshape network access.
-						if (!access.local) throw new AppError("networkLocalOnly");
+						// Only the machine itself, with nothing in between, may open or reshape network access; a Hub user is never the machine itself.
+						if (!access.local || client.identity) throw new AppError("networkLocalOnly");
 						data = await updateNetwork(frame.params as NetworkPatch);
 					} else if (frame.method === "runtime.env") {
 						// Changes what every command the agent runs inherits, so only the machine itself may do it.
-						if (!access.local) throw new AppError("networkLocalOnly");
+						if (!access.local || client.identity) throw new AppError("networkLocalOnly");
 						applyRuntimeEnv(frame.params as RuntimeEnv);
 						data = null;
 					} else {
