@@ -42,6 +42,10 @@ export async function bootstrap(options: BootstrapOptions): Promise<Runtime> {
 		gateways: () => config.gateways(),
 		isDisabled: (id) => config.get().disabledPlugins.includes(id),
 		setDisabled: (id, disabled) => config.setPluginDisabled(id, disabled),
+		allowPlugin: (name) => {
+			const list = config.policy()?.pluginAllowlist;
+			return !list || list.includes(name);
+		},
 	});
 
 	const knowledge = new KnowledgeService({

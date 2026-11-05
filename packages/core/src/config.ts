@@ -3,7 +3,8 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { mergeGatewayUpdate, validateGateway } from "@prometheus/gateway";
-import { type AdminPolicy, type AgentProfile, type AgentServer, AppError, BUILTIN_AGENTS, type GatewayConfig } from "@prometheus/protocol";
+import { allowedMode, loadPolicy, mergeGateways, modeForbidden } from "./policy.ts";
+import { type AdminPolicy, type AgentProfile, type AgentServer, AppError, BUILTIN_AGENTS, type GatewayConfig, type PermissionMode } from "@prometheus/protocol";
 
 export interface NetworkConfig {
 	/** Also listen on all network interfaces. */
@@ -70,6 +71,7 @@ const EMPTY: PrometheusConfig = { gateways: [], agents: [], plugins: [], disable
 export class ConfigStore {
 	private config: PrometheusConfig = structuredClone(EMPTY);
 	private writing: Promise<void> = Promise.resolve();
+	private adminPolicy: Readonly<AdminPolicy> | undefined;
 	readonly path: string;
 	readonly dataDir: string;
 
@@ -80,6 +82,8 @@ export class ConfigStore {
 
 	async load(): Promise<void> {
 		await mkdir(this.dataDir, { recursive: true });
+		// A broken policy must stop the start: running without the locks the administrator meant would be worse.
+		this.adminPolicy = await loadPolicy(this.dataDir);
 		try {
 			const raw = JSON.parse(await readFile(this.path, "utf8")) as Partial<PrometheusConfig>;
 			this.config = {
@@ -109,17 +113,29 @@ export class ConfigStore {
 		}
 	}
 
+	/** The settings in force: what the user saved, with the administrator's policy laid over it. */
 	get(): Readonly<PrometheusConfig> {
-		return this.config;
+		const policy = this.adminPolicy;
+		if (!policy) return this.config;
+		const stored = this.config.defaultPermission as PermissionMode | "";
+		// "" means "default" in the file.
+		const wanted = policy.defaultPermission ?? (stored || "default");
+		const effective = allowedMode(policy, wanted as PermissionMode);
+		return { ...this.config, defaultPermission: effective === "default" ? "" : effective };
 	}
 
 	/** The administrator's policy, when one is configured. */
 	policy(): Readonly<AdminPolicy> | undefined {
-		return undefined;
+		return this.adminPolicy;
 	}
 
+	/** The user's gateways, with the administrator's on top when a policy supplies them. */
 	gateways(): GatewayConfig[] {
-		return this.config.gateways;
+		return mergeGateways(this.config.gateways, this.adminPolicy);
+	}
+
+	private lockedGateways(): void {
+		if (this.adminPolicy?.gateways) throw new AppError("policyLocked", { field: "gateways" });
 	}
 
 	network(): Readonly<NetworkConfig> {
@@ -172,11 +188,14 @@ export class ConfigStore {
 	/** Empty string (or "default") goes back to asking first. */
 	async setDefaultPermission(mode: string): Promise<void> {
 		const next = mode.trim();
+		if (this.adminPolicy?.defaultPermission !== undefined) throw new AppError("policyLocked", { field: "defaultPermission" });
+		if (modeForbidden(this.adminPolicy, (next || "default") as PermissionMode)) throw new AppError("policyLocked", { field: "defaultPermission" });
 		this.config.defaultPermission = next === "default" ? "" : next;
 		await this.persist();
 	}
 
 	async saveGateway(incoming: GatewayConfig): Promise<GatewayConfig> {
+		this.lockedGateways();
 		const existing = this.config.gateways.find((g) => g.id === incoming.id);
 		const merged = mergeGatewayUpdate(incoming, existing);
 		const errors = validateGateway(merged);
@@ -225,6 +244,7 @@ export class ConfigStore {
 	}
 
 	async deleteGateway(id: string): Promise<void> {
+		this.lockedGateways();
 		this.config.gateways = this.config.gateways.filter((g) => g.id !== id);
 		await this.persist();
 	}

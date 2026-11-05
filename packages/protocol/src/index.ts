@@ -355,6 +355,11 @@ export interface AdminPolicy {
 	managedBy?: string;
 }
 
+/** The policy as clients see it: gateways without keys, headers or model lists. */
+export interface PublicAdminPolicy extends Omit<AdminPolicy, "gateways"> {
+	gateways?: Pick<GatewayConfig, "id" | "name" | "format" | "baseUrl">[];
+}
+
 /** Who made an RPC call. No identity means the machine's own user (token, password or loopback). */
 export interface Caller {
 	identity?: Identity;
@@ -491,6 +496,8 @@ export interface HostSettings {
 	worktreeDefault?: boolean;
 	/** How a merge lands in the project folder. `squash` when unset. */
 	worktreeStrategy?: WorktreeStrategy;
+	/** Locks the administrator set; absent when nobody manages this install. Older servers omit it. */
+	policy?: PublicAdminPolicy;
 }
 
 // ---------- Subagents ----------

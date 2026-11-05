@@ -50,6 +50,7 @@ import {
 } from "@prometheus/protocol";
 import { ToolBus } from "./agent/bus/tool-bus.ts";
 import { OwnerStore } from "./agent/session-owners.ts";
+import { allowedMode, modeForbidden, publicPolicy } from "./policy.ts";
 import { canAct, SESSION_WRITE_METHODS } from "./session-access.ts";
 import { bundledClaudeBinary, bundledClaudeVersion, ClaudeCodeRuntime } from "./agent/claude-code/cc-runtime.ts";
 import { CodexRuntime } from "./agent/codex/codex-runtime.ts";
@@ -76,7 +77,7 @@ import { checkImages, imageOnlyTitle, titleWithoutNote } from "./images.ts";
 import { extraRoots, issuePanelTicket, issueTicket, panelTicketValid, readChunk, resolveDownload, takeTicket } from "./downloads.ts";
 import { UPLOAD_ROOT, pruneUploads, removeSessionUploads, saveAttachments } from "./uploads.ts";
 import { fullResultContent, slimMessage, slimMessages } from "./slim.ts";
-import { PermissionGate } from "./permission-gate.ts";
+import { type GatePolicy, PermissionGate } from "./permission-gate.ts";
 import { PermissionStore } from "./permission-store.ts";
 import { AGENT_PACKAGES, agentEntry, agentStatuses, cliVersion, compareVersions, installAgentCli, isManaged, latestVersion, npmAvailable, npmPrefixOf, uninstallAgentCli, withAgentBin } from "./agent/install.ts";
 import { bootstrap, type Runtime } from "./runtime.ts";
@@ -509,6 +510,7 @@ ${extras.map((p) => `- ${p}`).join("
 	/** Builds the per-session Prometheus services, starts the session through `start`, and registers it as live. */
 	private async attach(start: (init: ResumeInit) => Promise<RuntimeSession>, gateway?: GatewayChoice): Promise<LiveSession> {
 		const gate = new PermissionGate();
+		gate.policy = this.gatePolicy();
 		let session: RuntimeSession | undefined;
 		let id = "";
 		const subagents = new SubagentRuntime({
@@ -603,7 +605,8 @@ ${extras.map((p) => `- ${p}`).join("
 				const live = await this.openFresh(sessionId);
 				this.guardWorktree(live, sessionId);
 				// Back to the mode it was left in; a chat from before modes were remembered gets the default setting.
-				live.gate.setMode(this.permissions.get(sessionId) ?? this.defaultPermission());
+				// A mode the policy has banned since (or that was saved before it) is not restored.
+				live.gate.setMode(allowedMode(this.runtime.config.policy(), this.permissions.get(sessionId) ?? this.defaultPermission()));
 				return live;
 			})();
 			pending.finally(() => this.opening.delete(sessionId)).catch(() => {});
@@ -1050,8 +1053,19 @@ ${extras.map((p) => `- ${p}`).join("
 		return { path: dir, parent: parent === dir ? null : parent, dirs, roots, home, ...(configured ? { workspaceRoot: configured } : {}) };
 	}
 
+	/** What each permission gate enforces from the administrator policy. */
+	private gatePolicy(): GatePolicy | undefined {
+		const policy = this.runtime.config.policy();
+		if (!policy) return undefined;
+		return {
+			...(policy.forbiddenModes ? { forbiddenModes: policy.forbiddenModes } : {}),
+			...(policy.readOutsideProject ? { readOutsideProject: policy.readOutsideProject } : {}),
+		};
+	}
+
 	private hostSettings(): HostSettings {
-		return { autoCompaction: this.pi?.autoCompaction() ?? true, workspaceRoot: this.workspaceRoot(), defaultAgent: this.defaultAgent(), defaultPermission: this.defaultPermission(), defaultThinking: this.defaultThinking(), goalTurns: this.runtime.config.get().goalTurns || GOAL_DEFAULT_TURNS, compactPercent: this.compactPercent(), worktreeMode: this.worktreeMode(), worktreeDefault: this.runtime.config.get().worktreeDefault, worktreeStrategy: this.worktreeStrategy() };
+		const policy = this.runtime.config.policy();
+		return { ...(policy ? { policy: publicPolicy(policy) } : {}), autoCompaction: this.pi?.autoCompaction() ?? true, workspaceRoot: this.workspaceRoot(), defaultAgent: this.defaultAgent(), defaultPermission: this.defaultPermission(), defaultThinking: this.defaultThinking(), goalTurns: this.runtime.config.get().goalTurns || GOAL_DEFAULT_TURNS, compactPercent: this.compactPercent(), worktreeMode: this.worktreeMode(), worktreeDefault: this.runtime.config.get().worktreeDefault, worktreeStrategy: this.worktreeStrategy() };
 	}
 
 	/** The permission mode new chats start in; unknown values (a hand-edited config) fall back to asking first. */

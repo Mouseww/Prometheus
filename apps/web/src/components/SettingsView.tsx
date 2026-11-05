@@ -78,6 +78,8 @@ const M = defineMessages({
 		goalTurns: "目标（/goal）默认轮数",
 		goalTurnsHint: "用 /goal 设定目标时，没有写 --turns 的话最多自动跑多少轮（1–1000）。到上限后可点「再给 N 轮」继续。",
 		defaultPermission: "默认权限模式",
+		lockedByPolicy: "已被管理员锁定",
+		managedBy: "由 {who} 管理",
 		defaultPermissionHint: "新对话一开始使用的权限模式，对话里仍可随时用输入框下方的选择器或 Shift+Tab 切换。选择「完全放行」或 Auto 后，新对话不再询问就会执行所有操作，请谨慎。",
 		perm_default: "默认：编辑文件、执行命令前先询问",
 		perm_acceptEdits: "自动编辑：项目内的文件编辑自动通过",
@@ -190,6 +192,8 @@ const M = defineMessages({
 		goalTurns: "Default /goal turns",
 		goalTurnsHint: "How many turns a /goal may run on its own when you do not pass a limit (1-1000). At the limit you can give it more turns and carry on.",
 		defaultPermission: "Default permission mode",
+		lockedByPolicy: "Locked by your administrator",
+		managedBy: "Managed by {who}",
 		defaultPermissionHint: "The permission mode a new chat starts in. You can still change it any time from the picker under the input box or with Shift+Tab. With Bypass or Auto, new chats run everything without asking, so be careful.",
 		perm_default: "Default: ask before editing files or running commands",
 		perm_acceptEdits: "Accept edits: edits inside the project pass",
@@ -498,16 +502,19 @@ function GoalTurnsRow() {
 function DefaultPermissionRow() {
 	const t = useT(M);
 	const host = useStore((s) => s.hostSettings);
+	const policy = host?.policy;
+	const locked = policy?.defaultPermission !== undefined;
+	const hint = locked ? `${t("lockedByPolicy")}${policy?.managedBy ? ` · ${t("managedBy", { who: policy.managedBy })}` : ""}` : t("defaultPermissionHint");
 	return (
-		<Row label={t("defaultPermission")} hint={t("defaultPermissionHint")}>
+		<Row label={t("defaultPermission")} hint={hint}>
 			<Select
 				className="max-w-80"
 				value={host?.defaultPermission ?? "default"}
-				disabled={!host}
+				disabled={!host || locked}
 				onChange={(e) => void updateHostSettings({ defaultPermission: e.target.value as PermissionMode })}
 			>
 				{PERMISSION_MODES.map((m) => (
-					<option key={m} value={m}>
+					<option key={m} value={m} disabled={policy?.forbiddenModes?.includes(m)}>
 						{t(`perm_${m}`)}
 					</option>
 				))}

@@ -1,7 +1,8 @@
 import { Type } from "typebox";
 import type { InlineExtension } from "@earendil-works/pi-coding-agent";
 import type { PluginTool } from "@prometheus/plugin-sdk";
-import type { PermissionMode, PermissionPrompt, RunAccess } from "@prometheus/protocol";
+import { type AdminPolicy, AppError, type PermissionMode, type PermissionPrompt, type RunAccess } from "@prometheus/protocol";
+import { modeForbidden } from "./policy.ts";
 import { escapesWorktree } from "./worktree.ts";
 import { decide, EXIT_PLAN_MODE, INSTALL_PLUGIN_TOOL, isProjectPath, ruleKey, toolKind } from "./permissions.ts";
 
@@ -77,6 +78,9 @@ export function applyPermissionPrompt(
 	}
 }
 
+/** The parts of the administrator policy a permission gate enforces. */
+export type GatePolicy = Pick<AdminPolicy, "forbiddenModes" | "readOutsideProject">;
+
 const ACCESS_MODE: Record<RunAccess, PermissionMode> = { readonly: "plan", edits: "acceptEdits", full: "bypassPermissions" };
 
 /** Calls an unattended run was refused because its access level did not cover them. Reported back with the run. */
@@ -105,9 +109,13 @@ export class PermissionGate {
 	guard: { repo: string; keep: string } | undefined;
 	ask: ((prompt: PermissionPrompt, signal?: AbortSignal) => Promise<string | undefined>) | undefined;
 	onModeChange: ((mode: PermissionMode) => void) | undefined;
+	/** What the administrator (or the user's own setting) fixed; filled in by the host when the session is attached. */
+	policy: GatePolicy | undefined;
+	private policyNoted = false;
 
 	setMode(mode: PermissionMode): void {
 		if (mode === this.mode) return;
+		if (modeForbidden(this.policy, mode)) throw new AppError("policyLocked", { field: "permissionMode" });
 		this.mode = mode;
 		this.onModeChange?.(mode);
 	}
@@ -140,7 +148,16 @@ export class PermissionGate {
 			return { block: true, reason: `Blocked: this chat works in its own git worktree (${this.guard.keep}). Do not write the project folder directly; use a path inside the worktree.` };
 		}
 		if (this.unattended) {
-			const v = decide(ACCESS_MODE[this.unattended], { toolName, input, readOnly }, { cwd: call.cwd, allowed: this.allowed });
+			let mode = ACCESS_MODE[this.unattended];
+			// An unattended run may not use a mode the policy bans: it falls back to asking first, which nobody answers, so only reads pass.
+			if (modeForbidden(this.policy, mode)) {
+				mode = "default";
+				if (!this.policyNoted && this.blocked.length < MAX_BLOCKED) {
+					this.policyNoted = true;
+					this.blocked.push({ tool: "policy", reason: `The access level "${this.unattended}" maps to a permission mode the administrator forbids; this run fell back to "default".` });
+				}
+			}
+			const v = decide(mode, { toolName, input, readOnly }, { cwd: call.cwd, allowed: this.allowed });
 			if (v.type === "allow" && toolName !== INSTALL_PLUGIN_TOOL) return;
 			const reason = `Blocked by permissions: ${this.refusal(toolName, input, call.cwd)}. Skip it and mention it in your report.`;
 			if (this.blocked.length < MAX_BLOCKED) this.blocked.push({ tool: toolName, reason });

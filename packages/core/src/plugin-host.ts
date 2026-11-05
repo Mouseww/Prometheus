@@ -46,6 +46,8 @@ export interface PluginHostOptions {
 	gateways: () => GatewayConfig[];
 	isDisabled?: (id: string) => boolean;
 	setDisabled?: (id: string, disabled: boolean) => Promise<void>;
+	/** Whether a plugin of this name may load, be installed or be enabled (the administrator's allowlist). Absent means all. */
+	allowPlugin?: (name: string) => boolean;
 	/** How long one context provider may take before it is skipped. Default `CONTEXT_PROVIDER_TIMEOUT_MS`; tests lower it. */
 	contextTimeoutMs?: number;
 }
@@ -503,6 +505,7 @@ export class PluginHost {
 			const plugin = await entry.fetch();
 			if (!plugin || typeof plugin.setup !== "function") throw new AppError("pluginSetupShape");
 			if (!NAME_PATTERN.test(plugin.name)) throw new AppError("pluginNameInvalid", { name: plugin.name, detail: "lowercase letters, digits, - _ . — at most 64 characters" });
+			if (!this.allows(plugin.name)) throw new AppError("policyLocked", { field: "pluginAllowlist" });
 			if (this.entries.some((e) => e !== entry && e.reg && e.info.name === plugin.name)) throw new AppError("pluginNameDuplicate", { name: plugin.name });
 			info.name = plugin.name;
 			info.version = plugin.version;
@@ -535,7 +538,13 @@ export class PluginHost {
 		}
 	}
 
+	private allows(name: string): boolean {
+		return this.options.allowPlugin?.(name) ?? true;
+	}
+
 	async load(plugin: PrometheusPlugin, source: PluginInfo["source"]): Promise<void> {
+		// A plugin the policy leaves out is not even listed.
+		if (!this.allows(plugin?.name ?? "unknown")) return;
 		const entry = this.newEntry(source, plugin?.name ?? "unknown", async () => plugin, plugin?.optional === true);
 		await this.startEntry(entry);
 	}
@@ -557,6 +566,7 @@ export class PluginHost {
 		let added = 0;
 		for (const name of names.sort()) {
 			if (name.startsWith(".") || this.entries.some((e) => e.id === `directory:${name}`)) continue;
+			if (!this.allows(name)) continue;
 			if (!(await stat(join(this.pluginsDir, name, "package.json")).catch(() => undefined))) continue;
 			await this.startEntry(this.directoryEntry(name));
 			added++;
@@ -591,6 +601,7 @@ export class PluginHost {
 	async setEnabled(id: string, enabled: boolean): Promise<PluginInfo> {
 		const entry = this.find(id);
 		if (!entry.info.toggleable) throw new AppError("pluginBuiltinLocked");
+		if (enabled && !this.allows(entry.info.name)) throw new AppError("policyLocked", { field: "pluginAllowlist" });
 		await this.options.setDisabled?.(id, !enabled);
 		await this.teardown(entry);
 		if (enabled) await this.activate(entry);
@@ -633,6 +644,7 @@ export class PluginHost {
 		const { name } = input;
 		const problem = folderNameProblem(name);
 		if (problem) throw new Error(problem);
+		if (!this.allows(name)) throw new AppError("policyLocked", { field: "pluginAllowlist" });
 		const files = validateFiles(input.files);
 		const clash = this.entries.find((e) => e.info.name === name && e.source !== "directory");
 		if (clash) throw new AppError("pluginNameClash", { kind: clash.source === "builtin" ? "built-in" : "config", name });
