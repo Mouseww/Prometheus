@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import type { Duplex } from "node:stream";
 import { type HubConfig, type HubOptions, pgDataDir, resolveConfig } from "./config.ts";
 import { loadJwtKeys, loadMasterKey, SecretBox } from "./crypto.ts";
+import { type JwtClaims, signJwt } from "./jwt.ts";
 import type { Db } from "./db/db.ts";
 import { migrate } from "./db/migrate.ts";
 import { openPglite } from "./db/pglite.ts";
@@ -90,7 +91,7 @@ export async function createHub(options: HubOptions): Promise<Hub> {
 		const userCount = await db.query<{ n: string | number }>("SELECT count(*) AS n FROM users");
 		if (Number(userCount[0]?.n ?? 0) === 0) await setupCode.ensure(log);
 
-		let upgrade: UpgradeHandler | undefined;
+		const upgradeHandlers: UpgradeHandler[] = [];
 		const registry = new ServiceRegistry();
 		const deps: HubDeps = {
 			db,
@@ -102,9 +103,12 @@ export async function createHub(options: HubOptions): Promise<Hub> {
 			secretBox,
 			limiter,
 			publicKeyPem: keys.publicKey,
+			env,
+			signToken: (claims) => signJwt({ ...claims, iss: config.issuer, iat: Math.floor(now() / 1000) } as JwtClaims, keys.privateKey),
+			runtimeOptions: options.runtime,
 			onClose: (fn) => void closers.push(fn),
 			setUpgradeHandler: (fn) => {
-				upgrade = fn;
+				upgradeHandlers.push(fn);
 			},
 		};
 		const router = new Router();
@@ -113,7 +117,7 @@ export async function createHub(options: HubOptions): Promise<Hub> {
 		let closed = false;
 		return {
 			handle: (req, res) => dispatch({ router, config, log, publicKey: keys.publicKey, loadActor: (id) => actors.load(id) }, req, res),
-			handleUpgrade: (req, socket, head) => upgrade?.(req, socket, head) ?? false,
+			handleUpgrade: (req, socket, head) => upgradeHandlers.some((fn) => fn(req, socket, head)),
 			async close() {
 				if (closed) return;
 				closed = true;

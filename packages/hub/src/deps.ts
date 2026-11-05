@@ -3,7 +3,9 @@ import type { Duplex } from "node:stream";
 import type { HubConfig } from "./config.ts";
 import type { SecretBox } from "./crypto.ts";
 import type { Db } from "./db/db.ts";
+import type { JwtClaims } from "./jwt.ts";
 import type { HubLog } from "./log.ts";
+import type { RuntimeOverrides } from "./runtime/options.ts";
 import type { RateLimiter } from "./rate-limit.ts";
 import type { AccountsService } from "./services/accounts.ts";
 import type { ActorService } from "./services/actors.ts";
@@ -65,8 +67,14 @@ export interface HubDeps {
 	secretBox: SecretBox;
 	limiter: RateLimiter;
 	publicKeyPem: string;
+	/** Environment the Hub was created with (`options.env ?? process.env`); blocks read their HUB_* settings from here. */
+	env: NodeJS.ProcessEnv;
+	/** Signs a Hub JWT (EdDSA) with the Hub key; `iss` and `iat` are filled in. */
+	signToken(claims: Omit<JwtClaims, "iss" | "iat"> & Record<string, unknown>): string;
+	/** Runtime overrides from `HubOptions.runtime` (tests and embedding). */
+	runtimeOptions: RuntimeOverrides | undefined;
 	/** Runs on `hub.close()`, in reverse registration order (schedulers, sockets). */
 	onClose(fn: () => Promise<void> | void): void;
-	/** Block 2C installs the WebSocket upgrade handler here; `hub.handleUpgrade` delegates to it. */
+	/** Installs a WebSocket upgrade handler. Handlers are tried in registration order; the first to return true owns the socket. */
 	setUpgradeHandler(fn: UpgradeHandler): void;
 }
