@@ -7,7 +7,8 @@ import { errorMessage, LOG, TeamError } from "../types.ts";
 import { checkoutWorkspace } from "./checkout.ts";
 import type { MemberEnv } from "./env.ts";
 import { HubClient, jwtSubject, normalizeHubUrl } from "./hub-client.ts";
-import { LocalHub, type LocalHubOptions } from "./local-hub.ts";
+import { linkOfSession } from "./link.ts";
+import { LocalHub,type LocalHubOptions } from "./local-hub.ts";
 import { SessionMirror } from "./mirror.ts";
 import { TeamProvider } from "./provider.ts";
 import { HubSocket, type HubSocketOptions } from "./relay.ts";
@@ -159,6 +160,7 @@ export async function setupMember(ctx: MemberCtx, options: MemberOptions = {}): 
 		if (mode !== undefined && mode !== "apply" && mode !== "branch") throw new TeamError("invalidParams", "mode 必须是 apply 或 branch");
 		return sync.restoreConflict(str(p, "hubSessionId"), str(p, "conflictRef"), mode);
 	});
+	ctx.rpc("session.link", (p) => linkOfSession(env, str(p, "sessionId")));
 	ctx.rpc("session.act", (p) => actOnSession(env, ctx.sessions, p));
 	ctx.rpc("session.start", (p) => startSession(env, p));
 	ctx.rpc("session.fork", (p) => forkSession(env, p));

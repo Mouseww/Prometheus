@@ -60,7 +60,7 @@ describe("listing and restoring saved sync conflicts", () => {
 		try {
 			const items = await m.b.conflicts(s.hubSessionId);
 			expect(items).toHaveLength(1);
-			expect(items[0]).toMatchObject({ conflictRef, commit: expect.stringMatching(/^[0-9a-f]{40}$/), savedAt: expect.any(Number) });
+			expect(items[0]).toMatchObject({ conflictRef, commit: expect.stringMatching(/^[0-9a-f]{40}$/), savedAt: expect.any(Number), worktree: m.b.target(s.hubSessionId)!.worktree });
 			expect([...items[0]!.files].sort()).toEqual(["doc.txt", "mine.txt"]);
 			// The writer saved nothing, and the RPC answers with the same shape.
 			expect(await m.a.conflicts(s.hubSessionId)).toEqual([]);

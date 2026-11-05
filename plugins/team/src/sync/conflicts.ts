@@ -19,6 +19,8 @@ export interface ConflictInfo {
 	savedAt: number;
 	/** Paths the user changed here compared with what the last sync left (capped). */
 	files: string[];
+	/** The session worktree the ref lives in, so a client can rebuild the `git -C` command after a reload. */
+	worktree: string;
 }
 
 export interface RestoreTarget {
@@ -65,7 +67,7 @@ export async function listConflicts(env: MemberEnv, worktree: string, hubSession
 		const match = ref ? pattern.exec(ref) : null;
 		if (!ref || !commit || !match) continue;
 		const base = await baseTreeOf(env, worktree, commit);
-		items.push({ conflictRef: ref, commit, savedAt: Number(match[1]), files: await changedFiles(env, worktree, base, await treeOf(worktree, identityOf(env), commit)) });
+		items.push({ conflictRef: ref, commit, savedAt: Number(match[1]), files: await changedFiles(env, worktree, base, await treeOf(worktree, identityOf(env), commit)), worktree });
 	}
 	return items.sort((a, b) => b.savedAt - a.savedAt);
 }
