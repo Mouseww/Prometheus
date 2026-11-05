@@ -24,6 +24,8 @@ export interface HubOptions {
 	allowPersonalTeams?: boolean;
 	/** Trust X-Forwarded-For for rate limiting (behind a reverse proxy). */
 	trustProxy?: boolean;
+	/** Tests only: let workspace import and upstream remotes be local paths or file:// URLs. Never set in production. */
+	allowLocalGitRemotes?: boolean;
 	version?: string;
 	now?: () => number;
 }
@@ -36,6 +38,7 @@ export interface HubConfig {
 	appRole: string;
 	orgName: string;
 	trustProxy: boolean;
+	allowLocalGitRemotes: boolean;
 	version: string;
 }
 
@@ -59,6 +62,7 @@ export function resolveConfig(options: HubOptions): HubConfig {
 		appRole: options.appRole ?? env.HUB_DB_APP_ROLE ?? "prometheus_app",
 		orgName: options.orgName ?? env.HUB_ORG_NAME ?? "我的团队",
 		trustProxy: options.trustProxy ?? false,
+		allowLocalGitRemotes: options.allowLocalGitRemotes ?? false,
 		version: options.version ?? "0.1.0",
 	};
 }
