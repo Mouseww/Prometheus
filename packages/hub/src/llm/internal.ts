@@ -134,7 +134,7 @@ export function createInternalLlm(deps: HubDeps, usage: UsageService): InternalL
 				model,
 				inputTokens: used.input ?? 0,
 				outputTokens: used.output ?? 0,
-				source: gateway.scope,
+				source: gateway.scope === "user" ? "byok" : gateway.scope,
 			});
 			return extractJson(textOf(gateway, data));
 		},

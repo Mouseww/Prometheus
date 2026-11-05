@@ -1,3 +1,4 @@
+import type { Queryable } from "../db/db.ts";
 import { forbidden } from "../errors.ts";
 import { ulid } from "../ids.ts";
 import type { Actor } from "../permissions.ts";
@@ -15,6 +16,12 @@ export interface UsageEntry {
 	inputTokens: number;
 	outputTokens: number;
 	source: "platform" | "org" | "byok";
+	/** Billing (block 4B): credits charged for this call and who paid. Absent when billing is off or the call is free (byok). */
+	costCredits?: number;
+	subjectType?: "user" | "org";
+	subjectId?: string;
+	/** Credits the subject could not cover. */
+	overdraftCredits?: number;
 }
 
 export interface UsageRow {
@@ -26,7 +33,8 @@ export interface UsageRow {
 }
 
 export interface UsageService {
-	record(entry: UsageEntry): Promise<void>;
+	/** Pass `q` to write inside the caller's transaction (the charge and its ledger row commit together). */
+	record(entry: UsageEntry, q?: Queryable): Promise<void>;
 	report(actor: Actor, query: { groupBy: UsageGroup; from?: string; to?: string }): Promise<UsageRow[]>;
 }
 
@@ -57,20 +65,29 @@ const KEY_SQL: Record<UsageGroup, { key: string; join: string; label: string }> 
 
 export function createUsageService(deps: ServiceDeps): UsageService {
 	return {
-		async record(e) {
-			await deps.db.tx({ system: true }, (q) =>
-				q.query("INSERT INTO usage_ledger (id, user_id, org_id, gateway_id, model, input_tokens, output_tokens, source, at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::timestamptz)", [
-					ulid(deps.now()),
-					e.userId,
-					e.orgId,
-					e.gatewayId,
-					e.model,
-					Math.max(0, Math.round(e.inputTokens)),
-					Math.max(0, Math.round(e.outputTokens)),
-					e.source,
-					new Date(deps.now()).toISOString(),
-				]),
-			);
+		async record(e, existing) {
+			const insert = (q: Queryable): Promise<unknown> =>
+				q.query(
+					`INSERT INTO usage_ledger (id, user_id, org_id, gateway_id, model, input_tokens, output_tokens, source, at, cost_credits, subject_type, subject_id, overdraft_credits)
+					 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::timestamptz,$10,$11,$12,$13)`,
+					[
+						ulid(deps.now()),
+						e.userId,
+						e.orgId,
+						e.gatewayId,
+						e.model,
+						Math.max(0, Math.round(e.inputTokens)),
+						Math.max(0, Math.round(e.outputTokens)),
+						e.source,
+						new Date(deps.now()).toISOString(),
+						Math.max(0, Math.round(e.costCredits ?? 0)),
+						e.subjectType ?? null,
+						e.subjectId ?? null,
+						Math.max(0, Math.round(e.overdraftCredits ?? 0)),
+					],
+				);
+			if (existing) await insert(existing);
+			else await deps.db.tx({ system: true }, insert);
 		},
 
 		async report(actor, query) {

@@ -8,6 +8,8 @@ import { bearerToken, relativePath } from "../http/dispatch.ts";
 import { HANDLED } from "../http/router.ts";
 import { verifyJwt } from "../jwt.ts";
 import { LOG_PREFIX } from "../log.ts";
+import { pinnedRequest, resolveSafeTarget } from "../net/safe-url.ts";
+import { type ByokService, safeUrlPolicyOf } from "../services/byok.ts";
 import type { GatewayFormat } from "../services/models.ts";
 import type { QuotasService } from "../services/quotas.ts";
 import type { UsageService } from "../services/usage.ts";
@@ -94,7 +96,10 @@ export function createLlmProxy(deps: HubDeps, quotas: QuotasService, usage: Usag
 			const model = requestedModel(format as GatewayFormat, rest, parsed);
 
 			const orgIds = Object.keys(actor.orgRoles);
-			const selection = await selectGateway(deps.db, deps.secretBox, deps.log, { orgIds, format: format as GatewayFormat, model });
+			// Personal gateways are selectable only while BYOK is allowed for this user.
+			const byok = deps.registry.get<ByokService>("byok");
+			const ownAllowed = byok ? await byok.isAllowed(orgIds) : false;
+			const selection = await selectGateway(deps.db, deps.secretBox, deps.log, { orgIds, format: format as GatewayFormat, model, ...(ownAllowed ? { userId: actor.userId } : {}) });
 			const gateway = selection.chosen;
 			if (!gateway) {
 				if (selection.candidates > 0) throw new HubError(400, "modelNotAvailable", `模型 ${model ?? ""} 不在可用网关的模型列表中`);
@@ -129,9 +134,20 @@ export function createLlmProxy(deps: HubDeps, quotas: QuotasService, usage: Usag
 
 			let upstream: Response;
 			try {
-				upstream = await fetch(joinUpstreamUrl(gateway.baseUrl, rest, query), { method: ctx.method, headers, body, signal: abort.signal, redirect: "manual" });
+				const upstreamUrl = joinUpstreamUrl(gateway.baseUrl, rest, query);
+				if (gateway.scope === "user") {
+					// User supplied address: vet it again now (DNS may have changed since it was saved) and connect to exactly the vetted IP.
+					const target = await resolveSafeTarget(upstreamUrl, safeUrlPolicyOf(deps.config));
+					upstream = await pinnedRequest(target, { method: ctx.method, headers, body, signal: abort.signal });
+				} else {
+					upstream = await fetch(upstreamUrl, { method: ctx.method, headers, body, signal: abort.signal, redirect: "manual" });
+				}
 			} catch (err) {
 				if (abort.signal.aborted) return HANDLED;
+				if (err instanceof HubError) {
+					deps.log.warn(`${LOG_PREFIX} 个人网关 ${gateway.id} 的上游请求被拒绝: ${err.message}`);
+					throw new HubError(502, err.code === "unsafeUrl" ? "unsafeUpstream" : err.code, err.code === "unsafeUrl" ? "个人网关的地址不被允许" : err.message);
+				}
 				deps.log.warn(`${LOG_PREFIX} 上游模型服务请求失败 (网关 ${gateway.id}): ${err instanceof Error ? err.message : String(err)}`);
 				throw new HubError(502, "upstreamError", "无法连接上游模型服务");
 			}
@@ -168,7 +184,7 @@ export function createLlmProxy(deps: HubDeps, quotas: QuotasService, usage: Usag
 						model: model ?? "unknown",
 						inputTokens: used.inputTokens,
 						outputTokens: used.outputTokens,
-						source: gateway.scope,
+						source: gateway.scope === "user" ? "byok" : gateway.scope,
 					});
 				} catch (err) {
 					deps.log.error(`${LOG_PREFIX} 记录模型用量失败: ${err instanceof Error ? err.message : String(err)}`);

@@ -3,6 +3,7 @@ import type { HubDeps } from "../deps.ts";
 import { validationError } from "../errors.ts";
 import { Reply, type Router } from "../http/router.ts";
 import { createLlmProxy } from "../llm/proxy.ts";
+import type { ByokService } from "../services/byok.ts";
 import { createModelsService } from "../services/models.ts";
 import { createQuotasService } from "../services/quotas.ts";
 import { parseRange } from "../services/usage.ts";
@@ -81,7 +82,12 @@ export function registerModelRoutes(router: Router, deps: HubDeps): void {
 		return usage.report(await ctx.actor(), { groupBy: q.groupBy, ...range });
 	});
 
-	router.get("/api/models", async (ctx) => models.visibleModels(await ctx.actor()));
+	router.get("/api/models", async (ctx) => {
+		const actor = await ctx.actor();
+		// Personal gateways (block 4C) appear while BYOK is allowed for the user.
+		const byok = deps.registry.get<ByokService>("byok");
+		return models.visibleModels(actor, { includeOwn: byok ? await byok.isAllowed(Object.keys(actor.orgRoles)) : false });
+	});
 
 	// The proxy authenticates itself (it also accepts x-api-key and x-goog-api-key, which the Anthropic and Gemini SDKs send).
 	const proxy = createLlmProxy(deps, quotas, usage);

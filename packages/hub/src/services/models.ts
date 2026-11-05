@@ -59,7 +59,7 @@ export interface VisibleModel {
 	format: GatewayFormat;
 	gatewayId: string;
 	gatewayName: string;
-	source: "org" | "platform";
+	source: "user" | "org" | "platform";
 }
 
 export interface ModelsService {
@@ -67,13 +67,14 @@ export interface ModelsService {
 	create(actor: Actor, input: CreateGatewayInput): Promise<GatewayView>;
 	update(actor: Actor, id: string, input: UpdateGatewayInput): Promise<GatewayView>;
 	remove(actor: Actor, id: string): Promise<void>;
-	/** Models the user can call: enabled gateways of their organizations, then platform gateways. */
-	visibleModels(actor: Actor): Promise<VisibleModel[]>;
+	/** Models the user can call: their own gateways (when `includeOwn`), enabled gateways of their organizations, then platform gateways. */
+	visibleModels(actor: Actor, opts?: { includeOwn?: boolean }): Promise<VisibleModel[]>;
 }
 
 export interface GatewayRow {
 	id: string;
-	scope: GatewayScope;
+	/** `user` rows are personal (BYOK) gateways, managed by the byok service. */
+	scope: GatewayScope | "user";
 	scope_id: string;
 	org_id: string | null;
 	name: string;
@@ -164,6 +165,8 @@ export function createModelsService(deps: ServiceDeps, secretBox: SecretBox, aud
 			};
 			if (filter.scope === "platform" && !can(actor, "platform.manage")) throw forbidden();
 			if (filter.orgId && !can(actor, "org.manage", { orgId: filter.orgId })) throw forbidden();
+			// Personal gateways belong to their owners and never show up in the admin list.
+			where.push("scope <> 'user'");
 			if (filter.scope) add("scope = ?", filter.scope);
 			if (filter.orgId) add("org_id = ?", filter.orgId);
 			if (!actor.operator) {
@@ -240,17 +243,18 @@ export function createModelsService(deps: ServiceDeps, secretBox: SecretBox, aud
 			});
 		},
 
-		async visibleModels(actor) {
+		async visibleModels(actor, opts = {}) {
 			const orgs = Object.keys(actor.orgRoles);
 			const rows = await deps.db.tx({ system: true }, (q) =>
 				q.query<GatewayRow>(
-					`SELECT ${GATEWAY_COLUMNS} FROM model_gateways WHERE enabled AND ((scope = 'org' AND org_id = ANY($1::text[])) OR scope = 'platform')
-					 ORDER BY (scope = 'org') DESC, created_at, id`,
-					[orgs],
+					`SELECT ${GATEWAY_COLUMNS} FROM model_gateways
+					 WHERE enabled AND ((scope = 'org' AND org_id = ANY($1::text[])) OR scope = 'platform' OR (scope = 'user' AND scope_id = $2::text))
+					 ORDER BY CASE scope WHEN 'user' THEN 0 WHEN 'org' THEN 1 ELSE 2 END, created_at, id`,
+					[orgs, opts.includeOwn ? actor.userId : null],
 				),
 			);
 			return rows.flatMap((r) =>
-				normalizeModels(r.models).map((m) => ({ id: m.id, name: m.name ?? m.id, format: r.format, gatewayId: r.id, gatewayName: r.name, source: r.scope === "org" ? ("org" as const) : ("platform" as const) })),
+				normalizeModels(r.models).map((m) => ({ id: m.id, name: m.name ?? m.id, format: r.format, gatewayId: r.id, gatewayName: r.name, source: r.scope === "org" || r.scope === "user" ? r.scope : ("platform" as const) })),
 			);
 		},
 	};
