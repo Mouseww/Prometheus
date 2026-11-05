@@ -1,5 +1,7 @@
+import { appOrigin, basePath } from "./basePath.ts";
 import type { BackendTarget } from "./client.ts";
 import { localizeError } from "./errors.ts";
+import { targetFromUrl } from "./target.ts";
 import { defineMessages, tr } from "./i18n.ts";
 
 const M = defineMessages({
@@ -45,11 +47,7 @@ export function isDesktopShell(): boolean {
 	return isTauri() && !isAndroid();
 }
 
-export function targetFromUrl(url: string, token?: string): BackendTarget {
-	const u = new URL(url);
-	const wsProtocol = u.protocol === "https:" ? "wss:" : "ws:";
-	return { wsUrl: `${wsProtocol}//${u.host}/ws`, httpBase: u.origin, token: token || undefined, label: u.host };
-}
+export { targetFromUrl };
 
 export function loadRemote(): RemoteConfig | null {
 	try {
@@ -91,7 +89,7 @@ export function saveRemote(config: RemoteConfig | null): void {
 }
 
 export function saveSameOriginToken(token: string | null): void {
-	if (token && !isTauri() && location.protocol.startsWith("http")) rememberServer({ url: location.origin, token });
+	if (token && !isTauri() && location.protocol.startsWith("http")) rememberServer({ url: appOrigin(), token });
 	if (token) localStorage.setItem(TOKEN_KEY, token);
 	else localStorage.removeItem(TOKEN_KEY);
 }
@@ -171,7 +169,7 @@ export async function discoverBackend(): Promise<BackendTarget | null> {
 	const remote = loadRemote();
 	if (remote) return targetFromUrl(remote.url, remote.token);
 	if (location.protocol.startsWith("http")) {
-		return targetFromUrl(location.origin, localStorage.getItem(TOKEN_KEY) ?? undefined);
+		return targetFromUrl(location.origin, localStorage.getItem(TOKEN_KEY) ?? undefined, basePath());
 	}
 	return null;
 }
@@ -211,13 +209,13 @@ export function passwordLogin(target: BackendTarget, secret: string): Promise<Pa
 
 /** Remember a signed-in session for the page's own server or a saved remote one. */
 export function saveSession(target: BackendTarget, token: string): void {
-	if (!isTauri() && target.httpBase === location.origin && !loadRemote()) saveSameOriginToken(token);
+	if (!isTauri() && target.httpBase === appOrigin() && !loadRemote()) saveSameOriginToken(token);
 	else saveRemote({ url: target.httpBase, token });
 }
 
 /** Forget the saved session of the server this page is connected to. */
 export function clearSession(target: BackendTarget): void {
-	if (target.httpBase === location.origin) saveSameOriginToken(null);
+	if (target.httpBase === appOrigin()) saveSameOriginToken(null);
 	localStorage.setItem(HISTORY_KEY, JSON.stringify(loadServerHistory().map((x) => (x.url === target.httpBase ? { url: x.url } : x))));
 	const remote = loadRemote();
 	if (remote && new URL(remote.url).origin === target.httpBase) saveRemote({ url: remote.url });
@@ -225,7 +223,7 @@ export function clearSession(target: BackendTarget): void {
 
 /** Exchange the token for an HttpOnly cookie so plugin panel iframes can load protected routes. */
 export async function establishCookie(target: BackendTarget): Promise<void> {
-	if (!target.token || target.httpBase !== location.origin) return;
+	if (!target.token || target.httpBase !== appOrigin()) return;
 	await fetch(`${target.httpBase}/api/login`, {
 		method: "POST",
 		headers: { "content-type": "application/json" },

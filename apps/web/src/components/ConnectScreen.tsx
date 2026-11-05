@@ -2,6 +2,7 @@ import clsx from "clsx";
 import { Globe, LoaderCircle, Monitor, ScanLine, Server } from "lucide-react";
 import { useEffect, useState } from "react";
 import { QrScanner } from "./QrScanner.tsx";
+import { appOrigin } from "../lib/basePath.ts";
 import { isTauri, localSupported, parseSetupNeeded, passwordLogin, forgetServer, loadServerHistory, saveMode, saveRemote, saveSameOriginToken, saveSession, type SetupComponent, startLocal, targetFromUrl } from "../lib/backend.ts";
 import type { BackendTarget } from "../lib/client.ts";
 import { localizeError } from "../lib/errors.ts";
@@ -62,7 +63,7 @@ export function ConnectScreen({ unauthorized, error, onConnect, onSetup, wantsPa
 	const sameOrigin = !isTauri() && location.protocol.startsWith("http");
 	const [canLocal, setCanLocal] = useState(false);
 	const [mode, setMode] = useState<"choose" | "remote">(isTauri() ? "choose" : "remote");
-	const [url, setUrl] = useState(() => loadServerHistory()[0]?.url ?? (sameOrigin ? location.origin : "https://"));
+	const [url, setUrl] = useState(() => loadServerHistory()[0]?.url ?? (sameOrigin ? appOrigin() : "https://"));
 	const [history, setHistory] = useState(loadServerHistory);
 	const [token, setToken] = useState(() => loadServerHistory()[0]?.token ?? "");
 	const [login, setLogin] = useState("");
@@ -124,7 +125,7 @@ export function ConnectScreen({ unauthorized, error, onConnect, onSetup, wantsPa
 			setLogin("");
 			target = { ...target, token: result.token };
 			saveSession(target, result.token);
-		} else if (sameOrigin && target.httpBase === location.origin) {
+		} else if (sameOrigin && target.httpBase === appOrigin()) {
 			saveSameOriginToken(token.trim() || null);
 			saveRemote(null);
 		} else {

@@ -1,4 +1,5 @@
 // Hub mode: the same web bundle is served by a Hub (`--role hub`). /api/health says which role this server has.
+import { withBase } from "../lib/basePath.ts";
 
 export interface HealthLike {
 	role?: unknown;
@@ -11,7 +12,7 @@ export async function detectHubMode(fetchImpl: typeof fetch = (...a) => fetch(..
 	const ctrl = new AbortController();
 	const timer = setTimeout(() => ctrl.abort(), timeoutMs);
 	try {
-		const res = await fetchImpl("/api/health", { signal: ctrl.signal, headers: { accept: "application/json" } });
+		const res = await fetchImpl(withBase("/api/health"), { signal: ctrl.signal, headers: { accept: "application/json" } });
 		if (!res.ok) return false;
 		return isHubRole(await res.json());
 	} catch {

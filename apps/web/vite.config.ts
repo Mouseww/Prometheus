@@ -20,6 +20,9 @@ const noLookbehind = {
 };
 
 export default defineConfig({
+	// Relative asset URLs: the same build runs at the site root, under a tenant proxy prefix and inside the desktop shell.
+	// index.html pins a <base href> first (see the inline script there), so deep addresses such as /invite/<token> still resolve.
+	base: "./",
 	plugins: [noLookbehind, react(), tailwindcss()],
 	define: { __APP_VERSION__: JSON.stringify(version) },
 	clearScreen: false,

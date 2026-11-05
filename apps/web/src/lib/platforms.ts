@@ -1,3 +1,4 @@
+import { appOrigin } from "./basePath.ts";
 import { isTauri, loadRemote, passwordLogin, saveMode, saveRemote, saveSameOriginToken, startLocal, targetFromUrl } from "./backend.ts";
 import type { BackendTarget } from "./client.ts";
 
@@ -57,7 +58,7 @@ export async function switchPlatform(p: Platform): Promise<void> {
 		}
 	}
 	const target = targetFromUrl(p.url, p.token);
-	if (!isTauri() && samePlatform(p.url, location.origin)) {
+	if (!isTauri() && samePlatform(p.url, appOrigin())) {
 		// The page's own server is the default; no saved remote needed.
 		saveRemote(null);
 		saveSameOriginToken(p.token ?? null);

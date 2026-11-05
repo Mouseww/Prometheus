@@ -2,6 +2,17 @@
 <html lang="zh-CN" class="dark">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      // The build uses relative asset URLs ("./assets/..."). Behind the Hub's tenant proxy the page lives under "<prefix>/rt/",
+      // and a deep address would resolve them against the wrong directory, so pin the base first.
+      // Same rule as basePathFromPathname in src/lib/basePath.ts (test/basePath.test.ts keeps them equal); outside the proxy it is "/".
+      (function () {
+        var m = /^(\/.*?\/rt)(?:\/|$)/.exec(location.pathname);
+        var b = document.createElement("base");
+        b.href = (m ? m[1] : "") + "/";
+        document.head.appendChild(b);
+      })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#1c1814" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
