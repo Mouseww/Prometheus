@@ -382,11 +382,11 @@ export function createWsGateway(deps: HubDeps, options: { offlineGraceMs?: numbe
 		publishUser(userId, data) {
 			for (const conn of byUser.get(userId) ?? []) if (conn.topics.has("user")) send(conn.ws, { type: "event", topic: "user", data });
 		},
-		isOnline: (userId) => byUser.has(userId),
+		isOnline: (userId, target) => (target ? (byUser.get(userId) ?? []).some((c) => c.kind === target) : byUser.has(userId)),
 
-		relay(userId, msg: RelayMessage, timeoutMs = RELAY_TIMEOUT_MS) {
-			// Relays go to the owner's own machine; a tenant instance only serves hand calls and commands.
-			const list = byUser.get(userId)?.filter((c) => c.kind === "local");
+		relay(userId, msg: RelayMessage, timeoutMs = RELAY_TIMEOUT_MS, target = "local") {
+			// By default relays go to the owner's own machine; once a session's brain moved to the team side they go to the tenant instance.
+			const list = byUser.get(userId)?.filter((c) => c.kind === target);
 			const conn = list?.[list.length - 1];
 			if (!conn) return Promise.resolve<RelayOutcome>({ kind: "offline" });
 			const relayId = randomUUID();

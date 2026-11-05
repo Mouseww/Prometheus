@@ -190,6 +190,74 @@ describe("handoff", () => {
 	});
 });
 
+describe("actions follow the active side", () => {
+	const act = (token: string, id: string, body: Record<string, unknown>) => c.t.api("POST", `/api/sessions/${id}/actions`, { token, body });
+
+	it("relays to the tenant instance with its own session id while the team side is active, and back to local afterwards", async () => {
+		const s = await c.registerSession();
+		await c.t.api("POST", `/api/sessions/${s.id}/grants`, { token: c.alice.token, body: { userId: c.bob.userId } });
+		const lc = await connectWs(c.t.baseUrl, c.alice.token);
+		const tc = await connectWs(c.t.baseUrl, tenantToken(c.alice.userId));
+		const localSeen: any[] = [];
+		const teamSeen: any[] = [];
+		lc.autoRelay((f) => (localSeen.push(f), { ok: true }));
+		tc.autoRelay((f) => (teamSeen.push(f), { ok: true }));
+		try {
+			// Local is active: only the local connection hears it.
+			expect((await act(c.alice.token, s.id, { type: "prompt", text: "while local" })).data).toEqual({ relayed: true });
+			expect(localSeen).toHaveLength(1);
+			expect(localSeen[0]).toMatchObject({ sessionId: s.localSessionId, serverId: s.serverId });
+			expect(teamSeen).toHaveLength(0);
+
+			// Team is active: prompt, respond and abort reach the tenant session, for the owner and for a grantee alike.
+			await setLocation(s.id, "team", "tenant-sess-1");
+			expect((await act(c.alice.token, s.id, { type: "prompt", text: "while team" })).status).toBe(200);
+			expect((await act(c.bob.token, s.id, { type: "respond", requestId: "q1", response: { allow: true } })).status).toBe(200);
+			expect((await act(c.alice.token, s.id, { type: "abort" })).status).toBe(200);
+			expect(localSeen).toHaveLength(1);
+			expect(teamSeen.map((f) => f.action.type)).toEqual(["prompt", "respond", "abort"]);
+			expect(teamSeen[0]).toMatchObject({ type: "relay", hubSessionId: s.id, sessionId: "tenant-sess-1", action: { text: "while team" }, actor: { userId: c.alice.userId } });
+			expect(teamSeen[0].serverId).toBeUndefined();
+			expect(teamSeen[1]).toMatchObject({ actor: { userId: c.bob.userId } });
+
+			// Handed back: local again.
+			await setLocation(s.id, "local", "tenant-sess-1");
+			expect((await act(c.alice.token, s.id, { type: "prompt", text: "home again" })).status).toBe(200);
+			expect(localSeen).toHaveLength(2);
+			expect(teamSeen).toHaveLength(3);
+		} finally {
+			await lc.close();
+			await tc.close();
+			await setLocation(s.id, "local", null);
+		}
+	});
+
+	it("keeps the grant checks and refuses clearly when the active side is not there", async () => {
+		const s = await c.registerSession();
+		await setLocation(s.id, "team", "tenant-sess-2");
+		// No grant, outsiders: same answers as for a local session.
+		expect((await act(c.bob.token, s.id, { type: "prompt", text: "x" })).code).toBe("notGranted");
+		expect((await act(c.carol.token, s.id, { type: "prompt", text: "x" })).status).toBe(404);
+
+		// The owner's own machine is online but the team side is not: nothing is delivered to the wrong side.
+		const lc = await connectWs(c.t.baseUrl, c.alice.token);
+		const localSeen: any[] = [];
+		lc.autoRelay((f) => (localSeen.push(f), { ok: true }));
+		const offline = await act(c.alice.token, s.id, { type: "prompt", text: "x" });
+		expect(offline.status).toBe(409);
+		expect(offline.code).toBe("ownerOffline");
+		expect(localSeen).toHaveLength(0);
+		await lc.close();
+
+		// Team side active but never linked to a tenant session.
+		await setLocation(s.id, "team", null);
+		const tc = await connectWs(c.t.baseUrl, tenantToken(c.alice.userId));
+		expect((await act(c.alice.token, s.id, { type: "prompt", text: "x" })).code).toBe("sessionNotLinked");
+		await tc.close();
+		await setLocation(s.id, "local", null);
+	});
+});
+
 describe("tenant token exchange", () => {
 	it("trades a tenant credential for a user access token and refuses everything else", async () => {
 		const res = await fetch(`${c.t.baseUrl}/api/auth/tenant-token`, { method: "POST", headers: { authorization: `Bearer ${tenantToken(c.alice.userId)}` } });

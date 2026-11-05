@@ -2,21 +2,35 @@ import type { ExtensionFactory, PluginContext } from "@prometheus/plugin-sdk";
 import type { MemberEnv } from "../member/env.ts";
 import type { HubSocket } from "../member/relay.ts";
 import { errorMessage, LOG, TeamError } from "../types.ts";
+import { forwardToActiveSide } from "./forward.ts";
 import { Handoff, type HandoffDeps } from "./handoff.ts";
 
+export { actOnSession, forwardToActiveSide } from "./forward.ts";
 export { Handoff, type HandoffDeps } from "./handoff.ts";
 
 export type HandoffCtx = Pick<PluginContext, "extension">;
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** Refuses prompts to a session whose brain moved to the other side; the UI routes the user to the active copy (`execChanged`). */
+/**
+ * A prompt typed into a session whose brain moved to the other side is not run here: it is forwarded through the Hub to the active
+ * copy (`execChanged` tells the UI which one that is), and the user is told where it went or why it did not arrive.
+ */
 export function readOnlyGuard(env: MemberEnv): ExtensionFactory {
 	return (pi) => {
-		pi.on("input", (_event, ectx) => {
+		pi.on("input", (event, ectx) => {
 			const mapping = env.state.get().sessions[ectx.sessionManager.getSessionId()];
 			if (!mapping?.readOnly) return { action: "continue" as const };
-			ectx.ui.notify(`这个会话已经${mapping.readOnly.to === "team" ? "移交到团队 server" : "移回本机"}执行，请在那一端继续对话`, "warning");
+			const where = mapping.readOnly.to === "team" ? "团队 server" : "本机";
+			const text = typeof (event as { text?: unknown }).text === "string" ? (event as { text: string }).text : "";
+			if (!text.trim()) {
+				ectx.ui.notify(`这个会话已经${mapping.readOnly.to === "team" ? "移交到团队 server" : "移回本机"}执行，请在那一端继续对话`, "warning");
+				return { action: "handled" as const };
+			}
+			void forwardToActiveSide(env, mapping.hubSessionId, { type: "prompt", text }).then(
+				() => ectx.ui.notify(`这个会话在${where}执行，消息已转发过去`, "info"),
+				(err: unknown) => ectx.ui.notify(`这个会话已经在${where}执行，消息转发失败（${errorMessage(err)}），请在那一端继续对话`, "warning"),
+			);
 			return { action: "handled" as const };
 		});
 	};

@@ -23,22 +23,28 @@ export async function executeRelay(env: MemberEnv, sessions: PluginContext["sess
 	const state = env.state.get();
 	const mapping = typeof msg.sessionId === "string" ? state.sessions[msg.sessionId] : undefined;
 	if (!mapping) throw new TeamError("notTeamSession", "该会话不是团队会话");
-	if (msg.hubSessionId !== undefined && msg.hubSessionId !== mapping.hubSessionId) throw new TeamError("sessionMismatch", "Hub 会话与本地映射不一致");
+	if (msg.hubSessionId !== undefined && msg.hubSessionId !== mapping.hubSessionId) throw new TeamError("sessionMismatch","Hub 会话与本地映射不一致");
 	if (msg.serverId !== undefined && msg.serverId !== state.serverId) throw new TeamError("serverMismatch", "该操作不是发给这台服务器的");
-	const action = msg.action;
-	if (!isRecord(action)) throw new TeamError("invalidAction", "缺少操作内容");
+	// A copy whose brain moved to the other side only mirrors: an action addressed to it is a stale route, never a prompt for this agent.
+	if (mapping.readOnly) throw new TeamError("sessionReadOnly", "这个会话已经移交到另一端，请在那一端继续", 409);
 	const actor = typeof msg.actor?.name === "string" && msg.actor.name.trim() ? msg.actor.name.trim() : "团队成员";
+	await applyAction(sessions, msg.sessionId, msg.action, actor);
+}
+
+/** Validates one prompt/respond/abort action and runs it on a session of this server. `actor` labels the prompt's author (teammates); omit it for the owner's own. */
+export async function applyAction(sessions: PluginContext["sessions"], sessionId: string, action: unknown, actor?: string): Promise<void> {
+	if (!isRecord(action)) throw new TeamError("invalidAction", "缺少操作内容");
 	switch (action.type) {
 		case "prompt":
 			if (typeof action.text !== "string" || !action.text.trim()) throw new TeamError("invalidAction", "prompt 需要非空的 text");
-			await sessions.prompt(msg.sessionId, action.text, { actor });
+			await sessions.prompt(sessionId, action.text, actor ? { actor } : undefined);
 			return;
 		case "respond":
 			if (typeof action.requestId !== "string" || !isRecord(action.response)) throw new TeamError("invalidAction", "respond 需要 requestId 和 response");
-			await sessions.respond(msg.sessionId, action.requestId, action.response as UIResponse);
+			await sessions.respond(sessionId, action.requestId, action.response as UIResponse);
 			return;
 		case "abort":
-			await sessions.abort(msg.sessionId);
+			await sessions.abort(sessionId);
 			return;
 		default:
 			throw new TeamError("invalidAction", `不支持的操作 ${String(action.type)}`);

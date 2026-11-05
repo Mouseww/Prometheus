@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import type { PluginContext } from "@prometheus/plugin-sdk";
 import { type HandsApi, type HandsOptions, setupHands } from "../hands/index.ts";
-import { setupHandoff } from "../handoff/index.ts";
+import { actOnSession, setupHandoff } from "../handoff/index.ts";
 import { SyncManager } from "../sync/manager.ts";
 import { errorMessage, LOG, TeamError } from "../types.ts";
 import { checkoutWorkspace } from "./checkout.ts";
@@ -153,6 +153,7 @@ export async function setupMember(ctx: MemberCtx, options: MemberOptions = {}): 
 		const result = await checkoutWorkspace(env, str(p, "workspaceId"));
 		return result;
 	});
+	ctx.rpc("session.act", (p) => actOnSession(env, ctx.sessions, p));
 	ctx.rpc("session.start", (p) => startSession(env, p));
 	ctx.rpc("session.fork", (p) => forkSession(env, p));
 	ctx.rpc("session.submit", (p) => submitSession(env, p));

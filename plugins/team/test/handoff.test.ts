@@ -188,9 +188,12 @@ describe("read-only guard", () => {
 
 		expect(handlers.input!({ text: "hi" }, ectx(s.sessionId))).toEqual({ action: "continue" });
 		await local.api.state.update((st) => ({ ...st, sessions: { ...st.sessions, [s.sessionId]: { ...st.sessions[s.sessionId]!, readOnly: { to: "team", activeSessionId: "x" } } } }));
-		expect(handlers.input!({ text: "hi" }, ectx(s.sessionId))).toEqual({ action: "handled" });
+		// An empty prompt has nothing to forward: refused with a pointer to the active side.
+		expect(handlers.input!({ text: "  " }, ectx(s.sessionId))).toEqual({ action: "handled" });
 		expect(notices).toHaveLength(1);
 		expect(notices[0]).toContain("团队 server");
+		// A real prompt is handled (not run here) and forwarded asynchronously; see active-side.test.ts.
+		expect(handlers.input!({ text: "hi" }, ectx(s.sessionId))).toEqual({ action: "handled" });
 		expect(handlers.input!({ text: "hi" }, ectx("not-a-team-session"))).toEqual({ action: "continue" });
 	});
 });

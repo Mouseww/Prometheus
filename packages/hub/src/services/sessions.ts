@@ -8,7 +8,7 @@ import type { ActorService } from "./actors.ts";
 import type { AuditService } from "./audit.ts";
 import { type ServiceDeps, scopeOf } from "./common.ts";
 import type { NotificationsService } from "./notifications.ts";
-import { RELAY_TIMEOUT_MS, type Realtime, type RelayAction } from "./realtime.ts";
+import { RELAY_TIMEOUT_MS, type Realtime, type RelayAction, type RelayTarget } from "./realtime.ts";
 import { applyEvent, deriveStatus, type SessionStatus, type StatusState } from "./session-status.ts";
 import { requireWorkspace } from "./workspace-access.ts";
 
@@ -133,6 +133,7 @@ interface SessionRow {
 	base_commit: string;
 	forked_from_session_id: string | null;
 	exec_location: string;
+	tenant_session_id: string | null;
 	last_activity_at: Date | string;
 	snapshot_commit: string | null;
 	created_at: Date | string;
@@ -140,7 +141,7 @@ interface SessionRow {
 }
 
 const SESSION_SELECT = `SELECT s.id, s.workspace_id, s.org_id, s.owner_user_id, u.display_name AS owner_name, s.local_session_id, s.server_id, s.title, s.status,
-	s.agent_running, s.pending_requests, s.branch, s.base_commit, s.forked_from_session_id, s.exec_location, s.last_activity_at, s.snapshot_commit, s.created_at, w.team_id
+	s.agent_running, s.pending_requests, s.branch, s.base_commit, s.forked_from_session_id, s.exec_location, s.tenant_session_id, s.last_activity_at, s.snapshot_commit, s.created_at, w.team_id
 	FROM sessions s JOIN workspaces w ON w.id = s.workspace_id LEFT JOIN users u ON u.id = s.owner_user_id`;
 
 const toView = (r: SessionRow, viewerId: string | null): SessionView => ({
@@ -474,13 +475,20 @@ export function createSessionsService(
 				const users = await q.query<{ display_name: string }>("SELECT display_name FROM users WHERE id = $1", [actor.userId]);
 				return { session: row, name: users[0]?.display_name ?? actor.userId };
 			});
-			if (!realtime.isOnline(session.owner_user_id)) throw conflict("会话所有者当前不在线", "ownerOffline");
-			if (session.local_session_id === "") throw conflict("会话尚未关联到所有者的本地会话", "sessionNotLinked");
+			// The side that runs the session gets the action: the owner's machine, or their tenant instance after a handoff to the team side.
+			const onTeam = session.exec_location === "team";
+			const target: RelayTarget = onTeam ? "tenant" : "local";
+			if (!realtime.isOnline(session.owner_user_id, target)) {
+				throw conflict(onTeam ? "会话正在团队 server 上执行，但它当前不在线" : "会话所有者当前不在线", "ownerOffline");
+			}
+			const sideSessionId = onTeam ? (session.tenant_session_id ?? "") : session.local_session_id;
+			if (sideSessionId === "") throw conflict(onTeam ? "会话尚未关联到团队 server 上的会话" : "会话尚未关联到所有者的本地会话", "sessionNotLinked");
 
 			const outcome = await realtime.relay(
 				session.owner_user_id,
-				{ hubSessionId: session.id, sessionId: session.local_session_id, serverId: session.server_id, action, actor: { userId: actor.userId, name } },
+				{ hubSessionId: session.id, sessionId: sideSessionId, ...(onTeam ? {} : { serverId: session.server_id }), action, actor: { userId: actor.userId, name } },
 				RELAY_TIMEOUT_MS,
+				target,
 			);
 			const result = outcome.kind === "ok" ? "ok" : outcome.kind === "failed" ? "failed" : outcome.kind;
 			await deps.db.tx({ system: true }, (q) =>
