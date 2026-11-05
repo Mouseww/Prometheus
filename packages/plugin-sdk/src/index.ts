@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
-import type { BlockedCall, Caller, GatewayConfig, Identity, ModelRef, PermissionMode, RunAccess } from "@prometheus/protocol";
+import type { BlockedCall, Caller, GatewayConfig, Identity, ModelRef, PermissionMode, RunAccess, SessionEvent, SessionSummary } from "@prometheus/protocol";
 
 export type { ExtensionAPI, ExtensionFactory, ToolDefinition } from "@earendil-works/pi-coding-agent";
 export { createJsonStore, type JsonStore } from "./json-store.ts";
@@ -306,6 +306,18 @@ export interface PluginContext {
 	sessionExists(sessionId: string): Promise<boolean>;
 	/** What the session may hand on to a delegated run right now (see `parentSessionId`). Unknown sessions: read-only. */
 	sessionAccess(sessionId: string): RunAccess;
+
+	/** Session events as the host emits them, for plugins that mirror or react to conversations. Server host only. */
+	events: {
+		/** Every session event after it is emitted to clients. Listener errors are logged and swallowed. */
+		onSession(listener: (sessionId: string, event: SessionEvent, info: { owner?: string; cwd: string }) => void): () => void;
+		/** The session list changed (created, renamed, deleted, archived). */
+		onSessionsChanged(listener: () => void): () => void;
+	};
+	sessions: {
+		/** The session's list entry, or undefined when there is none. */
+		info(sessionId: string): Promise<SessionSummary | undefined>;
+	};
 
 	/** Contribute a PI extension: tools, commands, providers, lifecycle hooks. */
 	extension(factory: ExtensionFactory): void;

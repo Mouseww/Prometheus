@@ -215,7 +215,7 @@ export class PrometheusHost {
 	private readonly goals = new GoalTracker({
 		prompt: (id, text) => this.prompt(id, text, undefined, undefined),
 		view: (id) => this.goalView(id),
-		emit: (id, goal) => this.listener.event(id, { type: "goal_update", goal }),
+		emit: (id, goal) => this.emitEvent(id, { type: "goal_update", goal }),
 		defaultTurns: () => this.runtime.config.get().goalTurns || GOAL_DEFAULT_TURNS,
 		file: () => join(this.runtime.dataDir, "goals.json"),
 	});
@@ -243,6 +243,7 @@ ${extras.map((p) => `- ${p}`).join("
 		runtime.plugins.openSession = (opts) => this.openSession(opts);
 		runtime.plugins.sessionAccess = (id) => this.sessionAccess(id);
 		runtime.plugins.sessionExists = (id) => this.sessionExists(id);
+		runtime.plugins.sessionInfo = async (id) => (await this.listSessions()).find((x) => x.id === id);
 		runtime.plugins.onChanged = () => this.listener.pluginsChanged();
 		runtime.plugins.notifyPlugin = (name) => this.listener.pluginNotify(name);
 		runtime.plugins.publishPlugin = (name, topic, data, opts) => this.listener.pluginEvent?.(name, topic, data, opts);
@@ -289,6 +290,21 @@ ${extras.map((p) => `- ${p}`).join("
 			if (typeof sessionId === "string" && !canAct(caller.identity, this.owners.get(sessionId))) throw new AppError("sessionForbidden", { id: sessionId });
 		}
 		return handler(params ?? ({} as RpcParams<M>), caller);
+	}
+
+	/** Every session event goes to the clients first, then to plugins; nothing a plugin does can disturb the stream. */
+	private emitEvent(sessionId: string, event: SessionEvent): void {
+		this.listener.event(sessionId, event);
+		const plugins = this.runtime.plugins;
+		if (!plugins.hasSessionListeners) return;
+		const owner = this.owners.get(sessionId);
+		const cwd = this.live.get(sessionId)?.session.cwd ?? this.index.get(sessionId)?.cwd ?? "";
+		plugins.emitSession(sessionId, event, { ...(owner ? { owner } : {}), cwd });
+	}
+
+	private emitSessionsChanged(): void {
+		this.listener.sessionsChanged();
+		this.runtime.plugins.emitSessionsChanged();
 	}
 
 	/** Who owns the session, when a trusted issuer vouched for its creator. */
@@ -518,7 +534,7 @@ ${extras.map((p) => `- ${p}`).join("
 		const subagents = new SubagentRuntime({
 			store: new AgentStore(this.pi?.agentDir ?? piAgentDir()),
 			cwd: () => session?.cwd ?? this.cwd,
-			emit: (runs) => this.listener.event(id, { type: "subagents_update", runs }),
+			emit: (runs) => this.emitEvent(id, { type: "subagents_update", runs }),
 			runners: {
 				// Reads the chat's model and thinking level lazily: the session does not exist yet.
 				pi: this.pi ? this.pi.subagentRunner(() => session) : async () => { throw new AppError("piNotInstalled"); },
@@ -536,7 +552,7 @@ ${extras.map((p) => `- ${p}`).join("
 				id = s.id;
 			},
 			event: (e) => {
-				this.listener.event(id, e.type === "message_start" || e.type === "message_end" ? { ...e, message: slimMessage(e.message) } : e);
+				this.emitEvent(id, e.type === "message_start" || e.type === "message_end" ? { ...e, message: slimMessage(e.message) } : e);
 				if (e.type === "agent_settled") {
 					this.goals.settled(id, e.aborted);
 					if (this.worktrees.get(id)) void this.worktrees.checkpoint(id).catch(() => {});
@@ -545,7 +561,7 @@ ${extras.map((p) => `- ${p}`).join("
 			sessionsChanged: () => {
 				const current = this.live.get(id);
 				if (current) this.syncIndex(id, current);
-				this.listener.sessionsChanged();
+				this.emitSessionsChanged();
 			},
 			// Compaction replaces the context; clients rebuild their message list from events and would otherwise keep the old one.
 			contextReplaced: () => {
@@ -565,7 +581,7 @@ ${extras.map((p) => `- ${p}`).join("
 			bridge.auto = mode === "auto";
 			if (bridge.auto) bridge.autoResolvePending();
 			// PI announces this itself; the others change the gate (also when a plan is approved) and the picker must follow.
-			this.listener.event(started.id, { type: "permission_mode_changed", mode });
+			this.emitEvent(started.id, { type: "permission_mode_changed", mode });
 		};
 		// Remember every change, so the chat comes back in the same mode when it is opened again.
 		const announce = gate.onModeChange;
@@ -683,7 +699,7 @@ ${extras.map((p) => `- ${p}`).join("
 			case "show": {
 				// Re-announce the goal so every client shows it again; nothing to show tells the user how to set one.
 				const goal = this.goals.get(sessionId);
-				if (goal) this.listener.event(sessionId, { type: "goal_update", goal });
+				if (goal) this.emitEvent(sessionId, { type: "goal_update", goal });
 				else this.listener.uiRequest(sessionId, { id: `goal-${Date.now()}`, method: "notify", message: "/goal <objective> [--max N] · /goal pause · /goal resume · /goal clear", level: "info" });
 				return "handled";
 			}
@@ -759,7 +775,7 @@ ${extras.map((p) => `- ${p}`).join("
 			await rt.deleteNative({ runtime: entry.runtime, id: entry.id, nativeId: entry.nativeId }).catch(() => {});
 			this.index.delete(sessionId);
 			await this.workspaces.setArchived(sessionId, false);
-			this.listener.sessionsChanged();
+			this.emitSessionsChanged();
 			return;
 		}
 		const live = this.live.get(sessionId);
@@ -768,7 +784,7 @@ ${extras.map((p) => `- ${p}`).join("
 		if (path && this.pi) await this.pi.deleteNative({ runtime: "pi", id: sessionId, nativeId: sessionId, path });
 		this.paths.delete(sessionId);
 		await this.workspaces.setArchived(sessionId, false);
-		this.listener.sessionsChanged();
+		this.emitSessionsChanged();
 	}
 
 	private async listSessions(): Promise<SessionSummary[]> {
@@ -896,7 +912,7 @@ ${extras.map((p) => `- ${p}`).join("
 		const live = await this.attach((init) => this.needPi.create({ ...init, cwd: normalizeDir(dir) }));
 		if (options.name?.trim()) live.session.setName(options.name.trim());
 		if (options.model) await live.session.setModel(options.model);
-		this.listener.sessionsChanged();
+		this.emitSessionsChanged();
 		const id = live.session.id;
 		if (options.prompt?.trim()) void this.prompt(id, options.prompt, undefined, undefined).catch(() => {});
 		return { sessionId: id };
@@ -932,7 +948,7 @@ ${extras.map((p) => `- ${p}`).join("
 		} catch {
 			// a recording hook must never break the run
 		}
-		this.listener.sessionsChanged();
+		this.emitSessionsChanged();
 
 		const stop = () => void session.abort().catch(() => {});
 		const timeout = setTimeout(stop, options.timeoutMs ?? 30 * 60_000);
@@ -964,7 +980,7 @@ ${extras.map((p) => `- ${p}`).join("
 				// Nobody is subscribed to this session; release it once saved. It stays in the sidebar from disk.
 				await this.closeSession(id).catch(() => {});
 			}
-			this.listener.sessionsChanged();
+			this.emitSessionsChanged();
 		}
 	}
 
@@ -981,8 +997,8 @@ ${extras.map((p) => `- ${p}`).join("
 	private resetMessages(id: string, live: LiveSession): void {
 		const all = live.session.snapshotState().messages;
 		const page = tailPage(all, all.length, OPEN_TURNS);
-		this.listener.event(id, { type: "messages_reset", messages: page.messages, ...(page.offset > 0 ? { offset: page.offset } : {}) });
-		this.listener.sessionsChanged();
+		this.emitEvent(id, { type: "messages_reset", messages: page.messages, ...(page.offset > 0 ? { offset: page.offset } : {}) });
+		this.emitSessionsChanged();
 	}
 
 	private async deleteMessage(sessionId: string, ref: MessageRef): Promise<void> {
@@ -1022,7 +1038,7 @@ ${extras.map((p) => `- ${p}`).join("
 		if (baseName) forked.session.setName(`${baseName} (fork)`);
 		// A fork belongs to whoever made it; without an identity it keeps the source's owner.
 		this.assignOwner(forked.session.id, caller, sessionId);
-		this.listener.sessionsChanged();
+		this.emitSessionsChanged();
 		return { snapshot: this.snapshot(forked), editorText };
 	}
 
@@ -1155,7 +1171,7 @@ ${extras.map((p) => `- ${p}`).join("
 			// The configured starting level, if this model offers it; otherwise keep the model's own default.
 			const wanted = this.defaultThinking();
 			if (wanted && live.session.snapshotState().availableThinkingLevels.includes(wanted)) await live.session.setThinking(wanted);
-			this.listener.sessionsChanged();
+			this.emitSessionsChanged();
 			return this.snapshot(live);
 		},
 		"session.switchRuntime": async ({ sessionId, runtime: kind, agent, model, gateway }, caller) => {
@@ -1178,7 +1194,7 @@ ${extras.map((p) => `- ${p}`).join("
 			// A goal in progress carries on with the new agent.
 			this.goals.move(sessionId, live.session.id);
 			await this.deleteSession(sessionId);
-			this.listener.sessionsChanged();
+			this.emitSessionsChanged();
 			return this.snapshot(live);
 		},
 		"session.open": async ({ sessionId, tail }) => {
@@ -1226,18 +1242,18 @@ ${extras.map((p) => `- ${p}`).join("
 		},
 		"session.rename": async ({ sessionId, name }) => {
 			(await this.open(sessionId)).session.setName(name.trim());
-			this.listener.sessionsChanged();
+			this.emitSessionsChanged();
 			return null;
 		},
 		"session.close": async ({ sessionId }) => {
 			await this.closeSession(sessionId);
-			this.listener.sessionsChanged();
+			this.emitSessionsChanged();
 			return null;
 		},
 		"session.archive": async ({ sessionId, archived }) => {
 			await this.workspaces.setArchived(sessionId, archived);
 			if (archived) await this.closeSession(sessionId);
-			this.listener.sessionsChanged();
+			this.emitSessionsChanged();
 			return null;
 		},
 		"session.delete": async ({ sessionId }) => {
@@ -1267,17 +1283,17 @@ ${extras.map((p) => `- ${p}`).join("
 		},
 		"workspace.add": async ({ path, name, extraPaths }) => {
 			const w = await this.workspaces.add(path, name, extraPaths);
-			this.listener.sessionsChanged();
+			this.emitSessionsChanged();
 			return w;
 		},
 		"workspace.setFolders": async ({ id, extraPaths }) => {
 			const w = await this.workspaces.setFolders(id, extraPaths);
-			this.listener.sessionsChanged();
+			this.emitSessionsChanged();
 			return w;
 		},
 		"workspace.rename": async ({ id, name }) => {
 			const w = await this.workspaces.rename(id, name);
-			this.listener.sessionsChanged();
+			this.emitSessionsChanged();
 			return w;
 		},
 		"workspace.open": async ({ id }) => {
@@ -1289,13 +1305,13 @@ ${extras.map((p) => `- ${p}`).join("
 		},
 		"workspace.remove": async ({ id }) => {
 			await this.workspaces.remove(id);
-			this.listener.sessionsChanged();
+			this.emitSessionsChanged();
 			return null;
 		},
 		"workspace.setWorktree": async ({ id, mode }) => {
 			if (!["inherit", "off", "on"].includes(mode)) throw new AppError("generic");
 			const w = await this.workspaces.setWorktree(id, mode);
-			this.listener.sessionsChanged();
+			this.emitSessionsChanged();
 			return w;
 		},
 		"worktree.status": ({ sessionId }) => this.worktrees.status(sessionId),
@@ -1306,7 +1322,7 @@ ${extras.map((p) => `- ${p}`).join("
 		"worktree.merge": async ({ sessionId, strategy, message }) => {
 			this.refuseWhileRunning(sessionId);
 			const result = await this.worktrees.merge(sessionId, strategy ?? this.worktreeStrategy(), message);
-			this.listener.sessionsChanged();
+			this.emitSessionsChanged();
 			return result;
 		},
 		"worktree.discard": async ({ sessionId }) => {
@@ -1314,7 +1330,7 @@ ${extras.map((p) => `- ${p}`).join("
 			await this.worktrees.discard(sessionId);
 			const live = this.live.get(sessionId);
 			if (live) live.gate.guard = undefined;
-			this.listener.sessionsChanged();
+			this.emitSessionsChanged();
 			return null;
 		},
 		"worktree.diff": ({ sessionId, path }) => this.worktrees.diff(sessionId, path),
@@ -1475,7 +1491,7 @@ ${extras.map((p) => `- ${p}`).join("
 				added++;
 			}
 			await this.index.flush();
-			if (added) this.listener.sessionsChanged();
+			if (added) this.emitSessionsChanged();
 			return { found: native.length, added, workspaces: (await this.workspaces.list()).length - before };
 		},
 		"agent.save": async ({ agent }) => {
@@ -1544,8 +1560,8 @@ ${extras.map((p) => `- ${p}`).join("
 			const target = this.needPi.getModel(model.provider, model.id);
 			if (!target) throw new AppError("modelNotFound", { provider: model.provider, id: model.id });
 			await session.setModel(model);
-			this.listener.event(sessionId, { type: "model_changed", model: toModelRef(target) });
-			this.listener.event(sessionId, { type: "thinking_level_changed", level: session.snapshotState().thinkingLevel });
+			this.emitEvent(sessionId, { type: "model_changed", model: toModelRef(target) });
+			this.emitEvent(sessionId, { type: "thinking_level_changed", level: session.snapshotState().thinkingLevel });
 			return null;
 		},
 		"thinking.set": async ({ sessionId, level }) => {

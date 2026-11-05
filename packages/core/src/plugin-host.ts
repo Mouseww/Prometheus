@@ -25,7 +25,7 @@ import type {
 	StreamPublishOptions,
 	WorkspaceRef,
 } from "@prometheus/plugin-sdk";
-import { AppError, encodeError, type GatewayConfig, type PanelInfo, type PluginFile, type PluginInfo, type PluginInstallResult, type RunAccess } from "@prometheus/protocol";
+import { AppError, encodeError, type GatewayConfig, type PanelInfo, type PluginFile, type PluginInfo, type PluginInstallResult, type RunAccess, type SessionEvent, type SessionSummary } from "@prometheus/protocol";
 import { type Captured, type CapturedCommand, captureExtension, type Handler, HOOK_NAMES, type HookName } from "./agent/facade/pi-facade.ts";
 
 export interface PluginRoute {
@@ -108,6 +108,8 @@ export const TOPIC_PATTERN = /^[a-zA-Z0-9_.:-]{1,64}$/;
 const MAX_FILES = 40;
 const MAX_FILE_BYTES = 400_000;
 const MAX_TOTAL_BYTES = 1_000_000;
+
+type SessionListener = (sessionId: string, event: SessionEvent, info: { owner?: string; cwd: string }) => void;
 
 /** Everything one active plugin contributed, so unloading removes exactly that. */
 interface Registration {
@@ -212,6 +214,10 @@ export class PluginHost {
 	};
 	sessionAccess: (sessionId: string) => RunAccess = () => "readonly";
 	sessionExists: (sessionId: string) => Promise<boolean> = async () => false;
+	/** Wired by the session host: the list entry of one session. */
+	sessionInfo: (sessionId: string) => Promise<SessionSummary | undefined> = async () => undefined;
+	private readonly sessionListeners = new Set<SessionListener>();
+	private readonly changedListeners = new Set<() => void>();
 	onChanged: () => void = () => {};
 	/** Wired by the server: pushes a `plugin.notify` frame for one plugin. */
 	notifyPlugin: (plugin: string) => void = () => {};
@@ -521,6 +527,29 @@ export class PluginHost {
 		}
 	}
 
+	/** Whether any plugin listens to session events, so the host can skip building their arguments. */
+	get hasSessionListeners(): boolean {
+		return this.sessionListeners.size > 0;
+	}
+
+	/** Hands a session event to the plugins. A failing listener is logged and never reaches the caller or the other listeners. */
+	emitSession(sessionId: string, event: SessionEvent, info: { owner?: string; cwd: string }): void {
+		for (const listener of [...this.sessionListeners]) this.safely(() => listener(sessionId, event, info));
+	}
+
+	emitSessionsChanged(): void {
+		for (const listener of [...this.changedListeners]) this.safely(listener);
+	}
+
+	private safely(fn: () => unknown): void {
+		try {
+			const result = fn();
+			if (result instanceof Promise) result.catch((err: unknown) => console.error("[prometheus] 插件会话监听器出错", err));
+		} catch (err) {
+			console.error("[prometheus] 插件会话监听器出错", err);
+		}
+	}
+
 	/** Removes everything the plugin registered and runs its cleanup hooks. */
 	private async teardown(entry: Entry): Promise<void> {
 		const reg = entry.reg;
@@ -737,6 +766,23 @@ export class PluginHost {
 			openSession: (options) => this.openSession(options),
 			sessionAccess: (id) => this.sessionAccess(id),
 			sessionExists: (id) => this.sessionExists(id),
+			events: {
+				onSession: (listener) => {
+					if (entry.reg !== reg) return () => {};
+					this.sessionListeners.add(listener);
+					const off = () => void this.sessionListeners.delete(listener);
+					reg.disposers.push(off);
+					return off;
+				},
+				onSessionsChanged: (listener) => {
+					if (entry.reg !== reg) return () => {};
+					this.changedListeners.add(listener);
+					const off = () => void this.changedListeners.delete(listener);
+					reg.disposers.push(off);
+					return off;
+				},
+			},
+			sessions: { info: (id) => this.sessionInfo(id) },
 			callPlugin: async (plugin, method, params) => {
 				const handler = this.rpcs.get(`${plugin}/${method}`);
 				if (!handler) throw new AppError("pluginMethodNotFound", { plugin, method });
