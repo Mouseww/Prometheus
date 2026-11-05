@@ -63,6 +63,26 @@ describe("migrations", () => {
 		await db.close();
 	});
 
+	it("prints the DBA SQL when the app role cannot be created", async () => {
+		const real = await openPglite("memory");
+		const denied = {
+			...real,
+			query: async (text: string, params?: unknown[]) => {
+				if (text.startsWith("CREATE ROLE")) throw new Error("permission denied to create role");
+				return real.query(text, params);
+			},
+		} as typeof real;
+		const err = await migrate(denied, { appRole: "hub_app" }).catch((e: Error) => e);
+		expect(err).toBeInstanceOf(Error);
+		const message = (err as Error).message;
+		expect(message).toContain("permission denied to create role");
+		expect(message).toContain("CREATE ROLE hub_app NOLOGIN;");
+		expect(message).toContain("GRANT hub_app TO");
+		// Nothing was migrated: RLS is never silently skipped.
+		expect(await real.query("SELECT to_regclass('public.users') AS t")).toEqual([{ t: null }]);
+		await real.close();
+	});
+
 	it("rejects an invalid role name", async () => {
 		const db = await openPglite("memory");
 		await expect(migrate(db, { appRole: "bad role; drop" })).rejects.toThrow(/角色名无效/);
@@ -127,5 +147,17 @@ describe("ulid", () => {
 		expect(ids.every((i) => /^[0-9A-HJKMNP-TV-Z]{26}$/.test(i))).toBe(true);
 		expect([...ids].sort()).toEqual(ids);
 		expect(new Set(ids).size).toBe(200);
+	});
+});
+
+/** Opt-in: set HUB_TEST_DATABASE_URL to a disposable PostgreSQL database to run the same checks against postgres.js. */
+describe.skipIf(!process.env.HUB_TEST_DATABASE_URL)("postgres driver", () => {
+	it("migrates and enforces RLS", async () => {
+		const { openPostgres } = await import("../src/db/postgres.ts");
+		const db = openPostgres(process.env.HUB_TEST_DATABASE_URL as string);
+		await migrate(db, { appRole: "prometheus_app" });
+		const rows = await db.tx({ userId: "nobody" }, (q) => q.query("SELECT 1 FROM organizations"));
+		expect(rows).toHaveLength(0);
+		await db.close();
 	});
 });
