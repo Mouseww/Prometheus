@@ -238,7 +238,7 @@ describe("checkout, start and mirroring", () => {
 			return s.snapshotCommit ? s : undefined;
 		}, "snapshotCommit");
 		expect(hub.status).toBe("idle");
-		const ref = `refs/prometheus/snapshots/${tw.world.alice.userId}/${hubId}`;
+		const ref = `refs/prometheus/snapshots/${tw.world.alice.userId}/${hubId}/latest`;
 		const tip = await gitOk(["--git-dir", tw.world.repoPath, "rev-parse", ref]);
 		expect(tip).toBe(hub.snapshotCommit);
 		const files = (await gitOk(["--git-dir", tw.world.repoPath, "ls-tree", "-r", "--name-only", tip])).split("\n");

@@ -7,6 +7,20 @@ export interface SessionMapping {
 	branch: string;
 	/** Next event sequence number to use; persisted after every successful upload so numbering survives restarts. */
 	nextSeq?: number;
+	/** Tree id the worktree was last set to by a snapshot apply (block 3B); a different current tree means the user edited since. */
+	lastApplied?: string;
+	/** Set once the session's brain moved to the other side: this copy only mirrors and refuses prompts. */
+	readOnly?: { to: "local" | "team"; activeSessionId: string };
+}
+
+/** A worktree that exists only to hold the other side's files (no agent session): hand calls run in it and snapshots land in it. */
+export interface ReplicaMapping {
+	hubSessionId: string;
+	workspaceId: string;
+	teamId: string;
+	worktree: string;
+	branch: string;
+	lastApplied?: string;
 }
 
 export interface WorkspaceMapping {
@@ -38,6 +52,8 @@ export interface TeamState {
 	serverId: string;
 	sessions: Record<string, SessionMapping>;
 	workspaces: Record<string, WorkspaceMapping>;
+	/** Worktrees without a session, keyed by Hub session id (block 3B). */
+	replicas?: Record<string, ReplicaMapping>;
 	localHub?: LocalHubState;
 }
 

@@ -16,6 +16,11 @@ export interface HubClientOptions {
 	log: PluginLogger;
 	fetch?: typeof fetch;
 	now?: () => number;
+	/**
+	 * Tenant instance mode (block 3B): the Hub started this server for its owner and gave it a long-lived credential
+	 * (`TEAM_TENANT_TOKEN`). There is no password and no refresh token; access tokens come from `/auth/tenant-token`.
+	 */
+	tenant?: { hubUrl: string; token: string };
 }
 
 export interface HubReply<T = unknown> {
@@ -36,6 +41,16 @@ export function jwtExpiryMs(token: string): number {
 		return typeof payload.exp === "number" ? payload.exp * 1000 : 0;
 	} catch {
 		return 0;
+	}
+}
+
+/** The `sub` claim of a JWT (the user id), or undefined when it cannot be read. The signature is not checked: the Hub does that. */
+export function jwtSubject(token: string): string | undefined {
+	try {
+		const payload = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8")) as { sub?: unknown };
+		return typeof payload.sub === "string" && payload.sub ? payload.sub : undefined;
+	} catch {
+		return undefined;
 	}
 }
 
@@ -75,11 +90,16 @@ export class HubClient {
 	}
 
 	get hubUrl(): string | undefined {
-		return this.opts.state.get().hubUrl;
+		return this.opts.tenant?.hubUrl ?? this.opts.state.get().hubUrl;
 	}
 
 	get loggedIn(): boolean {
-		return Boolean(this.opts.state.get().refreshToken);
+		return Boolean(this.opts.tenant) || Boolean(this.opts.state.get().refreshToken);
+	}
+
+	/** The tenant credential, when this server is a tenant instance (the WebSocket presents it directly). */
+	get tenantToken(): string | undefined {
+		return this.opts.tenant?.token;
 	}
 
 	/** Called with the new token after every refresh and with undefined after logout. */
@@ -172,6 +192,8 @@ export class HubClient {
 	}
 
 	async logout(): Promise<void> {
+		// A tenant instance belongs to the Hub: there is nothing to log out of.
+		if (this.opts.tenant) return;
 		const { refreshToken, hubUrl } = this.opts.state.get();
 		if (refreshToken && hubUrl) await this.plain("POST", this.apiUrl("/auth/logout", hubUrl), { refreshToken }).catch(() => {});
 		await this.forget();
@@ -201,7 +223,24 @@ export class HubClient {
 		return this.refreshing;
 	}
 
+	private async refreshTenant(tenant: { hubUrl: string; token: string }): Promise<string> {
+		const reply = await this.plain("POST", this.apiUrl("/auth/tenant-token", tenant.hubUrl), undefined, tenant.token);
+		if (!reply.envelope.ok) {
+			if (reply.status === 401 || reply.status === 403) throw new TeamError("notLoggedIn", "租户凭证已失效，请重启租户实例", 401);
+			this.fail(reply, "换取租户访问令牌失败");
+		}
+		const data = reply.envelope.data as { accessToken: string; user: TokenPair["user"] };
+		this.accessToken = data.accessToken;
+		this.expiresAt = jwtExpiryMs(data.accessToken);
+		await this.opts.state.update((s) => ({ ...s, hubUrl: tenant.hubUrl, userId: data.user.id, ...(data.user.displayName ? { displayName: data.user.displayName } : {}), ...(data.user.email ? { email: data.user.email } : {}) }));
+		await this.writeTokenFile(data.accessToken);
+		this.schedule();
+		for (const l of this.listeners) l(data.accessToken);
+		return data.accessToken;
+	}
+
 	private async refresh(): Promise<string> {
+		if (this.opts.tenant) return this.refreshTenant(this.opts.tenant);
 		const { refreshToken, hubUrl } = this.opts.state.get();
 		if (!refreshToken || !hubUrl) throw new TeamError("notLoggedIn", "尚未登录团队 Hub", 401);
 		const reply = await this.plain("POST", this.apiUrl("/auth/refresh", hubUrl), { refreshToken });

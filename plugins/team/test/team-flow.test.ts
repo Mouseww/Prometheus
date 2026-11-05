@@ -193,9 +193,10 @@ describe("team model provider", () => {
 			const registered: { name: string; config: any }[] = [];
 			const removed: string[] = [];
 			const pi = { registerProvider: (name: string, config: unknown) => void registered.push({ name, config }), unregisterProvider: (name: string) => void removed.push(name) } as unknown as ExtensionAPI;
-			expect(m.ctx.factories).toHaveLength(1);
+			// The handoff read-only guard registers first, the provider factory second.
+			expect(m.ctx.factories).toHaveLength(2);
 			await m.api.provider.refreshModels();
-			await m.ctx.factories[0]!(pi);
+			await m.ctx.factories[1]!(pi);
 
 			const last = () => registered.at(-1)!;
 			expect(last().name).toBe("team");

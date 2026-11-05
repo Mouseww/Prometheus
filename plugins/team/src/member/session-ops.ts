@@ -7,6 +7,7 @@ import { ensureWorkspace, fetchDefault } from "./checkout.ts";
 import { hubGit, identityOf, localGit, type MemberEnv, requireUserId } from "./env.ts";
 import { runGit } from "./git.ts";
 import { stageEverything } from "./snapshot.ts";
+import { snapshotRef } from "../sync/refs.ts";
 
 interface HubSession {
 	id: string;
@@ -69,6 +70,8 @@ export async function startSession(env: MemberEnv, params: Record<string, unknow
 			title,
 			branch,
 			baseCommit: base,
+			// A session started inside the tenant instance runs on the team side from the beginning.
+			...(env.side === "team" ? { execLocation: "team" } : {}),
 		});
 		await saveSession(env, opened.sessionId, { hubSessionId: registered.id, workspaceId, teamId: mapping.teamId ?? "", worktree, branch });
 		return { sessionId: opened.sessionId, hubSessionId: registered.id, worktree, branch };
@@ -89,7 +92,7 @@ export async function forkSession(env: MemberEnv, params: Record<string, unknown
 	await fetchDefault(env, mapping);
 	let start: string | undefined;
 	if (fork.snapshotCommit) {
-		const ref = `refs/prometheus/snapshots/${source.ownerUserId}/${source.id}`;
+		const ref = snapshotRef(source.ownerUserId, source.id);
 		await hubGit(env, ["fetch", "--quiet", "origin", `+${ref}:${ref}`], mapping.repoDir).catch((err: unknown) => env.log.warn(`${LOG} 获取原会话快照失败，改用其分支: ${errorMessage(err)}`));
 		start = fork.snapshotCommit;
 	}
@@ -106,7 +109,7 @@ export async function forkSession(env: MemberEnv, params: Record<string, unknown
 		let localId: string;
 		if (fork.transcript) {
 			const content = gunzipSync(Buffer.from(fork.transcript.content, "base64")).toString("utf8");
-			({ sessionId: localId } = await env.host.sessions.importTranscript({ cwd: worktree, content, name: title, runtime: "pi" }));
+			({ sessionId: localId } = await env.host.sessions.importTranscript({ cwd: worktree, content, name: title, workspaceName: workspaceLabel(mapping, title), runtime: "pi" }));
 		} else {
 			({ sessionId: localId } = await env.host.openSession({ cwd: worktree, name: title, workspaceName: workspaceLabel(mapping, title), runtime: "pi" }));
 		}

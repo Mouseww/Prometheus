@@ -18,6 +18,8 @@ export interface MemberEnv {
 	/** Plugin settings from config.json (`teamRoot`). Read on every use so edits apply without a restart. */
 	settings(): Record<string, unknown>;
 	host: MemberHost;
+	/** Which machine this plugin instance runs on: the user's own server ("local") or their tenant instance on the Hub host ("team"). */
+	side: "local" | "team";
 }
 
 export function identityOf(env: MemberEnv): GitIdentity {

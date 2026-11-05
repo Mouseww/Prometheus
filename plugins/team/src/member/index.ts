@@ -1,9 +1,12 @@
 import { join } from "node:path";
 import type { PluginContext } from "@prometheus/plugin-sdk";
+import { type HandsApi, type HandsOptions, setupHands } from "../hands/index.ts";
+import { setupHandoff } from "../handoff/index.ts";
+import { SyncManager } from "../sync/manager.ts";
 import { errorMessage, LOG, TeamError } from "../types.ts";
 import { checkoutWorkspace } from "./checkout.ts";
 import type { MemberEnv } from "./env.ts";
-import { HubClient } from "./hub-client.ts";
+import { HubClient, jwtSubject, normalizeHubUrl } from "./hub-client.ts";
 import { LocalHub, type LocalHubOptions } from "./local-hub.ts";
 import { SessionMirror } from "./mirror.ts";
 import { TeamProvider } from "./provider.ts";
@@ -13,9 +16,27 @@ import { openStateStore, type StateStore } from "./state.ts";
 import { TurnUploader } from "./turn-upload.ts";
 
 /** The slice of the plugin context the member role uses (tests pass a fake). */
-export type MemberCtx = Pick<PluginContext, "dataDir" | "log" | "settings" | "sessions" | "events" | "openSession" | "rpc" | "stream" | "extension" | "onDispose">;
+export type MemberCtx = Pick<PluginContext, "dataDir" | "log" | "settings" | "sessions" | "events" | "openSession" | "rpc" | "stream" | "extension" | "onDispose" | "tools" | "cwd">;
+
+/** What the Hub gives a tenant instance it started for its owner: where the Hub is and the long-lived credential (spec 3.1). */
+export interface TenantIdentity {
+	hubUrl: string;
+	token: string;
+}
+
+/** Reads `TEAM_HUB_URL` and `TEAM_TENANT_TOKEN`; both must be set for this server to count as a tenant instance. */
+export function tenantFromEnv(env: NodeJS.ProcessEnv = process.env): TenantIdentity | undefined {
+	const hubUrl = env.TEAM_HUB_URL?.trim();
+	const token = env.TEAM_TENANT_TOKEN?.trim();
+	return hubUrl && token ? { hubUrl: normalizeHubUrl(hubUrl), token } : undefined;
+}
 
 export interface MemberOptions {
+	/** Run as the tenant instance of this identity (default: taken from the environment, see `tenantFromEnv`). */
+	tenant?: TenantIdentity | null;
+	hands?: HandsOptions;
+	/** Barrier timeout for side switches (default 30 s). */
+	barrierMs?: number;
 	fetch?: typeof fetch;
 	now?: () => number;
 	flushIntervalMs?: number;
@@ -33,6 +54,8 @@ export interface MemberApi {
 	socket: HubSocket;
 	provider: TeamProvider;
 	localHub: LocalHub;
+	sync: SyncManager;
+	hands: HandsApi;
 }
 
 const TOPIC = /^[A-Za-z0-9_.:-]{1,60}$/;
@@ -41,23 +64,33 @@ const publicUser = (state: ReturnType<StateStore["get"]>) => (state.userId ? { i
 
 export async function setupMember(ctx: MemberCtx, options: MemberOptions = {}): Promise<MemberApi> {
 	const state = await openStateStore(join(ctx.dataDir, "team"));
-	const client = new HubClient({ state, log: ctx.log, fetch: options.fetch, now: options.now });
-	const env: MemberEnv = { client, state, log: ctx.log, settings: () => ctx.settings, host: { openSession: (o) => ctx.openSession(o), sessions: ctx.sessions } };
+	const tenant = options.tenant === undefined ? tenantFromEnv() : (options.tenant ?? undefined);
+	const client = new HubClient({ state, log: ctx.log, fetch: options.fetch, now: options.now, ...(tenant ? { tenant } : {}) });
+	// A tenant instance keeps its clones under its own working directory unless the administrator set a root.
+	const settings = (): Record<string, unknown> => (tenant && !ctx.settings.teamRoot ? { ...ctx.settings, teamRoot: join(ctx.cwd, "teams") } : ctx.settings);
+	const env: MemberEnv = { client, state, log: ctx.log, settings, host: { openSession: (o) => ctx.openSession(o), sessions: ctx.sessions }, side: tenant ? "team" : "local" };
+	const publish = (topic: string, data: unknown): void => {
+		try {
+			ctx.stream.publish(topic, data);
+		} catch (err) {
+			ctx.log.warn(`${LOG} 转发实时消息失败 (${topic}): ${errorMessage(err)}`);
+		}
+	};
 
 	const uploader = new TurnUploader(env);
 	const mirror = new SessionMirror(env, uploader, { flushIntervalMs: options.flushIntervalMs });
 	const socket = new HubSocket({
 		env,
 		sessions: ctx.sessions,
-		publish: (topic, data) => {
-			try {
-				ctx.stream.publish(topic, data);
-			} catch (err) {
-				ctx.log.warn(`${LOG} 转发实时消息失败 (${topic}): ${errorMessage(err)}`);
-			}
-		},
+		publish,
+		kind: tenant ? "tenant" : "local",
+		...(tenant ? { wsToken: () => Promise.resolve(tenant.token) } : {}),
 		...options.socket,
 	});
+	const sync = new SyncManager(env, { socket, notify: publish, barrierMs: options.barrierMs });
+	uploader.setPublisher(sync);
+	const hands = setupHands(ctx, env, socket, sync, options.hands);
+	const { off: offHandoff } = setupHandoff(ctx, { env, sync, mirror, uploader, notify: publish }, socket);
 	const provider = new TeamProvider(env, options.execPath);
 	const localHub = new LocalHub(env, options.localHub);
 	ctx.extension(provider.factory);
@@ -71,6 +104,8 @@ export async function setupMember(ctx: MemberCtx, options: MemberOptions = {}): 
 
 	const connect = async (): Promise<void> => {
 		socket.start();
+		// A tenant instance gets its models from the policy the Hub wrote, not through the member's own provider.
+		if (tenant) return;
 		await provider.refreshModels().catch((err: unknown) => ctx.log.warn(`${LOG} 刷新团队模型失败: ${errorMessage(err)}`));
 	};
 
@@ -142,6 +177,10 @@ export async function setupMember(ctx: MemberCtx, options: MemberOptions = {}): 
 
 	ctx.onDispose(async () => {
 		for (const off of offs) off();
+		offHandoff();
+		hands.caller.dispose();
+		hands.gate.dispose();
+		sync.dispose();
 		await mirror.idle().catch(() => {});
 		mirror.dispose();
 		socket.stop();
@@ -149,6 +188,16 @@ export async function setupMember(ctx: MemberCtx, options: MemberOptions = {}): 
 		localHub.dispose();
 	});
 
-	if (client.loggedIn) void connect();
-	return { env, state, client, mirror, socket, provider, localHub };
+	if (tenant) {
+		// The owner's id is known from the credential; the first access token also fills in their name.
+		const userId = jwtSubject(tenant.token);
+		await state.update((s) => ({ ...s, hubUrl: tenant.hubUrl, ...(userId ? { userId } : {}) }));
+		void client
+			.ensureToken()
+			.catch((err: unknown) => ctx.log.warn(`${LOG} 换取租户访问令牌失败: ${errorMessage(err)}`))
+			.finally(() => void connect());
+	} else if (client.loggedIn) {
+		void connect();
+	}
+	return { env, state, client, mirror, socket, provider, localHub, sync, hands };
 }

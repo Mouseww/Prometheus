@@ -1,7 +1,7 @@
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionFactory, OpenSessionOptions, PluginContext, RpcHandler } from "@prometheus/plugin-sdk";
+import type { ExtensionFactory, OpenSessionOptions, PluginContext, PluginTool, RpcHandler } from "@prometheus/plugin-sdk";
 import type { SessionEvent, UIRequest, UIResponse } from "@prometheus/protocol";
 import { PASSWORD } from "../../../packages/hub/test/hub-helpers.ts";
 import { setupWorld, type World } from "../../../packages/hub/test/git-helpers.ts";
@@ -32,6 +32,8 @@ export interface SessionCall {
 
 export interface FakeCtx extends MemberCtx {
 	dir: string;
+	/** Tools registered through `ctx.tools.register`, by name. */
+	tools: MemberCtx["tools"] & { registered: Map<string, PluginTool> };
 	logs: string[];
 	rpcs: Map<string, RpcHandler>;
 	call<T = any>(method: string, params?: Record<string, unknown>): Promise<T>;
@@ -64,6 +66,7 @@ export function fakeCtx(dir: string, settings: Record<string, unknown> = {}): Fa
 	const factories: ExtensionFactory[] = [];
 	const transcripts = new Map<string, string>();
 	const disposers: FakeCtx["disposers"] = [];
+	const registeredTools = new Map<string, PluginTool>();
 	let counter = 0;
 
 	const ctx: FakeCtx = {
@@ -71,6 +74,8 @@ export function fakeCtx(dir: string, settings: Record<string, unknown> = {}): Fa
 		logs,
 		rpcs,
 		dataDir: join(dir, "data"),
+		cwd: dir,
+		tools: { register: (tool) => void registeredTools.set(tool.name, tool), registered: registeredTools },
 		settings,
 		log: { info: (m) => void logs.push(m), warn: (m) => void logs.push(m), error: (m) => void logs.push(m) },
 		sessions: {
@@ -201,3 +206,21 @@ export async function startMember(tw: TeamWorld, email: string, options: StartMe
 }
 
 export const readText = (path: string): Promise<string> => readFile(path, "utf8");
+
+export type TestFrame = Record<string, unknown>;
+
+/** Two Hub-socket stand-ins wired back to back: a frame one sends reaches the other's `onFrame` handlers (the Hub in between is out of scope). */
+export function socketPair() {
+	const handlers: [Set<(f: TestFrame) => unknown>, Set<(f: TestFrame) => unknown>] = [new Set(), new Set()];
+	const sent: [TestFrame[], TestFrame[]] = [[], []];
+	const make = (me: 0 | 1) => ({
+		sendFrame: (frame: TestFrame): boolean => {
+			const copy = JSON.parse(JSON.stringify(frame)) as TestFrame;
+			sent[me].push(copy);
+			queueMicrotask(() => handlers[me === 0 ? 1 : 0].forEach((h) => void h(copy)));
+			return true;
+		},
+		onFrame: (h: (f: TestFrame) => unknown) => (handlers[me].add(h), () => void handlers[me].delete(h)),
+	});
+	return { a: make(0), b: make(1), sent };
+}
