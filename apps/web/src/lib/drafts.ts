@@ -13,8 +13,17 @@ export interface Draft {
 	history?: { at: number; draft: string };
 }
 
-/** Key of the new-chat page: its session id changes while it is set up (workspace or agent picked), the draft must not. */
+/**
+ * Key of the new-chat page before a workspace is picked: its session id changes while it is set up (workspace or agent
+ * picked), the draft must not. Once a workspace is known the draft belongs to that workspace instead (see
+ * `newChatDraft`), or typing into one project's new-chat page would show up in every other project's.
+ */
 export const NEW_CHAT_DRAFT = "new";
+
+/** Draft key of the new-chat page for `scope` (the workspace it is set up in); unscoped is the workspace-less page. */
+export function newChatDraft(scope?: string | null): string {
+	return scope ? `${NEW_CHAT_DRAFT}:${scope}` : NEW_CHAT_DRAFT;
+}
 
 const STORAGE_KEY = "prometheus.drafts";
 const MAX_SAVED = 200;
@@ -62,4 +71,29 @@ export function saveDraft(key: string, draft: Draft): void {
 	if (draft.text) all[key] = { text: draft.text, at: Date.now() };
 	else delete all[key];
 	persist();
+}
+
+/**
+ * Hand what was typed before a workspace was picked over to that workspace's page, once: after that the two are apart.
+ * Returns the draft to show (the adopted one, or the target's own when it already has something).
+ */
+export function adoptDraft(from: string, to: string): Draft {
+	const target = loadDraft(to);
+	if (target.text || target.images.length || target.docs.length) return target;
+	const source = loadDraft(from);
+	if (!source.text && !source.images.length && !source.docs.length) return target;
+	saveDraft(to, source);
+	saveDraft(from, { text: "", images: [], docs: [] });
+	return source;
+}
+
+/**
+ * The composer moved on to `to` while it stayed mounted: keep `mine` with the key it was typed under (`from`) and report
+ * what the new one holds. Picking a workspace turns the plain new-chat page into that workspace's page, and only that
+ * transition carries text over: every other switch (another conversation, another workspace) starts from its own draft.
+ */
+export function switchDraft(from: string, to: string, mine: Draft): Draft {
+	if (from === to) return mine;
+	saveDraft(from, mine);
+	return from === NEW_CHAT_DRAFT && to.startsWith(`${NEW_CHAT_DRAFT}:`) ? adoptDraft(from, to) : loadDraft(to);
 }

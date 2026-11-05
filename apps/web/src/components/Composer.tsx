@@ -7,7 +7,7 @@ import { Mentions, SlashCommands } from "./suggestions.tsx";
 import { type Attachment, AttachmentError, fileToAttachment, formatSize, isPicture, MAX_FILE_MB, MAX_FILES } from "../lib/attachments.ts";
 import { fileToImage, ImageError, imageSrc, MAX_IMAGES } from "../lib/images.ts";
 import { inputAt, rememberInput } from "../lib/inputHistory.ts";
-import { loadDraft, NEW_CHAT_DRAFT, saveDraft } from "../lib/drafts.ts";
+import { loadDraft, NEW_CHAT_DRAFT, newChatDraft, saveDraft, switchDraft } from "../lib/drafts.ts";
 import { aliasKey, type SendMode, setPrefs, usePrefs } from "../lib/prefs.ts";
 import { abortRun, openSettings, pluginCall, sendPrompt, setModel, setPermissionMode, setThinking, toast, unqueue, useSpace, useStore } from "../lib/store.ts";
 import { BACK_LAYER, useBackLayer } from "../lib/back.ts";
@@ -496,8 +496,9 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 	const commands = useStore((s) => s.commands);
 	const editorText = useStore((s) => s.editorText);
 	// The unsent text, pictures and files belong to the conversation on screen, not to this component (which is
-	// rebuilt on some switches and kept on others): they are loaded from and saved to that conversation's draft.
-	const draftKey = newChat || !session ? NEW_CHAT_DRAFT : session.id;
+	// rebuilt on some switches and kept on others): they are loaded from and saved to that conversation's draft. The
+	// new-chat page is scoped to the workspace it is set up in, so one project's typing never lands in another's box.
+	const draftKey = newChat ? newChatDraft(session?.workspaceId || session?.cwd) : session?.id ?? NEW_CHAT_DRAFT;
 	const [text, setText] = useState(() => loadDraft(draftKey).text);
 	const textRef = useRef(text);
 	textRef.current = text;
@@ -508,8 +509,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 	const [shownKey, setShownKey] = useState(draftKey);
 	if (shownKey !== draftKey) {
 		// Another conversation while this component stays: keep what was typed with the one left, show the other's.
-		saveDraft(shownKey, { text, images, docs, history: history.current });
-		const next = loadDraft(draftKey);
+		const next = switchDraft(shownKey, draftKey, { text, images, docs, history: history.current });
 		history.current = next.history ?? { at: -1, draft: "" };
 		setShownKey(draftKey);
 		setText(next.text);
@@ -661,6 +661,11 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 			setText(value);
 			setImages(attached);
 			setDocs(attachedDocs);
+		} else {
+			// Went out: the sent text must not stay behind as this conversation's draft, or reopening it (or opening another
+			// new chat in the same workspace) would show the message again. Explicit, because this composer is typically
+			// unmounted by the pending echo before its save effect runs with the emptied box.
+			saveDraft(shownKey, { text: "", images: [], docs: [] });
 		}
 		return ok;
 	};
