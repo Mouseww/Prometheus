@@ -149,6 +149,9 @@ describe("plugin session control through the host", () => {
 			expect(info).toMatchObject({ cwd: expect.stringContaining("other"), owner: "ann", name: "from hub" });
 			expect(info?.firstMessage).toContain("hello team");
 			expect(host.sessionOwner(imported?.sessionId ?? "")).toBe("ann");
+			const labelled = await ctxRef?.sessions.importTranscript({ cwd: other, content: exported?.content ?? "", name: "标题", workspaceName: "团队/工作区: 标题" });
+			expect(labelled?.sessionId).toBeTruthy();
+			expect(((await ctxRef?.workspaces()) ?? []).some((w) => w.name === "团队/工作区: 标题")).toBe(true);
 			await expect(ctxRef?.sessions.importTranscript({ cwd: other, content: "garbage" }) as Promise<unknown>).rejects.toThrow();
 			await expect(ctxRef?.sessions.importTranscript({ cwd: join(root, "missing"), content: exported?.content ?? "" }) as Promise<unknown>).rejects.toThrow();
 

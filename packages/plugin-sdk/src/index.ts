@@ -346,8 +346,11 @@ export interface PluginContext {
 		abort(sessionId: string): Promise<void>;
 		/** The session's PI transcript as JSONL; undefined for sessions of other runtimes or without a file. */
 		exportTranscript(sessionId: string): Promise<{ format: "pi-jsonl"; content: string } | undefined>;
-		/** Write a new PI session (fresh id, the given cwd) into the PI session store so the host lists and can resume it. */
-		importTranscript(opts: { cwd: string; content: string; name?: string; owner?: string; runtime?: "pi" }): Promise<{ sessionId: string }>;
+		/**
+		 * Write a new PI session (fresh id, the given cwd) into the PI session store so the host lists and can resume it.
+		 * `workspaceName` is how the folder is listed in the sidebar (like `OpenSessionOptions.workspaceName`).
+		 */
+		importTranscript(opts: { cwd: string; content: string; name?: string; workspaceName?: string; owner?: string; runtime?: "pi" }): Promise<{ sessionId: string }>;
 		/** Pin a short note to the session (list and header); undefined clears it. Survives restarts. */
 		setBadge(sessionId: string, badge: SessionBadge | undefined): Promise<void>;
 	};

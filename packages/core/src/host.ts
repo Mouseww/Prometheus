@@ -967,13 +967,13 @@ ${extras.map((p) => `- ${p}`).join("
 	}
 
 	/** Writes a PI session file with a fresh id into the PI store, so it is listed and can be resumed. */
-	private async importTranscript(opts: { cwd: string; content: string; name?: string; owner?: string; runtime?: "pi" }): Promise<{ sessionId: string }> {
+	private async importTranscript(opts: { cwd: string; content: string; name?: string; workspaceName?: string; owner?: string; runtime?: "pi" }): Promise<{ sessionId: string }> {
 		if (opts.runtime !== undefined && opts.runtime !== "pi") throw new AppError("transcriptInvalid");
 		const dir = opts.cwd?.trim();
 		if (!dir || !existsSync(dir) || !statSync(dir).isDirectory()) throw new AppError("workdirNotFound", { dir });
 		const cwd = normalizeDir(dir);
 		const { id, path } = await this.needPi.importTranscript(cwd, opts.content, opts.name?.trim() || undefined);
-		await this.workspaces.add(dir);
+		await this.workspaces.add(dir, opts.workspaceName?.trim() || undefined);
 		this.paths.set(id, path);
 		const owner = opts.owner ?? this.serverOwner();
 		if (owner) this.owners.set(id, owner);
