@@ -6,7 +6,7 @@ import { diff, treeSignature } from "./engine/diff.ts";
 import { indexTree, type PNode, prune, walk } from "./engine/prune.ts";
 import { estimateTokens, formatNode, render } from "./engine/render.ts";
 import { type ActionTarget, appVerdict, irreversibleByRule, isSecretWrite, keysLookIrreversible, type PolicySettings } from "./policy.ts";
-import { type Driver, type Op, OPS, type WindowInfo } from "./protocol.ts";
+import { type Driver, type Op, OPS, type WindowAction, type WindowInfo } from "./protocol.ts";
 
 export interface ComputerSettings extends PolicySettings {
 	/** Token budget of one snapshot. */
@@ -556,6 +556,60 @@ export class ComputerService {
 		}
 		const head = `✓ 已发送${text ? `文本（${text.length} 字符）` : ""}${keys ? ` 按键 ${keys}` : ""}`;
 		return [head, ...(await this.report(s, win, before, windowsBefore, signal))].join("\n").trim();
+	}
+
+	/** Read, replace or clear the clipboard text. Reading is capped so a huge copy cannot flood the context. */
+	async clipboard(sessionId: string, action: "get" | "set" | "clear", text?: string): Promise<string> {
+		this.ensureRunning();
+		const d = await this.opts.driver();
+		const base = { session: sessionId, device: this.deviceName(), app: "clipboard", window: "" };
+		try {
+			if (action === "get") {
+				const r = await d.call("clipboard.get", {});
+				this.opts.audit.write({ ...base, op: "clipboard_get", valueLength: r.text.length, ok: true });
+				if (!r.hasText) return "剪贴板里没有文本。";
+				const max = 4000;
+				return r.text.length > max ? `${r.text.slice(0, max)}\n…（共 ${r.text.length} 字符，已截断）` : r.text;
+			}
+			if (action === "set" && !text) throw new UserFacingError("set 需要 text；要清空请用 clear");
+			await d.call("clipboard.set", action === "set" ? { text } : {});
+			this.opts.audit.write({ ...base, op: action === "set" ? "clipboard_set" : "clipboard_clear", valueLength: text?.length, ok: true });
+			return action === "set" ? `✓ 已写入剪贴板（${text!.length} 字符）` : "✓ 已清空剪贴板";
+		} catch (e) {
+			if (e instanceof UserFacingError) throw e;
+			this.opts.audit.write({ ...base, op: `clipboard_${action}`, ok: false, error: explain(e) });
+			throw new UserFacingError(explain(e));
+		}
+	}
+
+	/** Minimize, maximize, restore, move, resize or close a window. Closing asks first unless auto mode. */
+	async manageWindow(
+		sessionId: string,
+		ctx: ExtensionContext | undefined,
+		spec: string | undefined,
+		action: WindowAction,
+		geo: { x?: number; y?: number; width?: number; height?: number },
+	): Promise<string> {
+		this.ensureRunning();
+		const win = await this.resolveWindow(sessionId, spec);
+		const base = { session: sessionId, device: this.deviceName(), app: win.app, window: win.title, op: `window_${action}` };
+		if (action === "close") {
+			const refused = await this.guard(ctx, "确认关闭窗口", `Agent 要关闭 ${win.app}「${win.title}」。未保存的内容可能丢失。`);
+			if (refused) {
+				this.opts.audit.write({ ...base, ok: false, error: `refused: ${refused}`, guard: "window-close" });
+				return `✗ 已拒绝关闭窗口：${refused}`;
+			}
+		}
+		try {
+			const d = await this.opts.driver();
+			await d.call("window.manage", { window: win.id, action, ...geo });
+			this.opts.audit.write({ ...base, ok: true, method: "window" });
+		} catch (e) {
+			this.opts.audit.write({ ...base, ok: false, error: explain(e) });
+			throw new UserFacingError(explain(e));
+		}
+		if (action === "close") this.session(sessionId).snaps.delete(win.id);
+		return `✓ ${action} ${win.app}「${win.title}」`;
 	}
 
 	async launch(sessionId: string, target: string, args: string | undefined, signal?: AbortSignal): Promise<string> {
