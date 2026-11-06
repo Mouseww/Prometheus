@@ -588,7 +588,7 @@ export function Sidebar({ target, onDisconnect }: { target: BackendTarget; onDis
 	];
 
 	return (
-		<aside className="flex w-72 shrink-0 flex-col border-r hairline bg-ink-950/60 backdrop-blur max-md:w-full max-md:bg-ink-950">
+		<aside className="flex w-full min-w-0 shrink-0 flex-col border-r hairline bg-ink-950/60 backdrop-blur max-md:w-full max-md:bg-ink-950">
 			<div className="px-2 pt-3">
 				{assistant && (
 					<div className="mb-2">
