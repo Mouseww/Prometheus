@@ -45,7 +45,6 @@ import {
 	openSession,
 	prefetchSession,
 	openSettings,
-	openAssistantMain,
 	pluginActive,
 	startPersonalChat,
 	useSpace,
@@ -511,24 +510,21 @@ const AGE_LABEL: Record<AgeGroup, "ageToday" | "ageWeek" | "ageEarlier"> = { tod
 function PersonalList({ sessions, mainId, activeId }: { sessions: SessionSummary[]; mainId: string | null; activeId?: string }) {
 	const t = useT(M);
 	const [showArchived, setShowArchived] = useState(false);
+	// 普罗 is a group, not one eternal chat: the long-running main chat is just another row in it.
 	const main = sessions.find((s) => s.id === mainId);
-	const live = sessions.filter((s) => !s.archived && s.id !== mainId);
-	const archived = sessions.filter((s) => s.archived && s.id !== mainId);
+	const live = sessions.filter((s) => !s.archived);
+	const archived = sessions.filter((s) => s.archived);
 	const groups = useMemo(() => groupByAge(live), [live]);
-	const view = useStore((s) => s.view);
-	const mainActive = Boolean(mainId) && mainId === activeId && view === "chat";
 	return (
 		<div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-			<button
-				type="button"
-				title={t("mainThreadHint")}
-				onClick={() => void (main ? openSession(main.id) : openAssistantMain())}
-				className={clsx("mb-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors", mainActive ? "bg-ink-800 text-ink-100" : "text-ink-300 hover:bg-ink-800/70 hover:text-ink-100")}
-			>
+			<div title={t("mainThreadHint")} className="mb-1 flex w-full items-center gap-2 px-2.5 py-1.5 text-[13px] text-ink-300">
 				<Flame className="size-4 shrink-0 text-ember-400" />
 				<span className="min-w-0 flex-1 truncate">{t("mainThread")}</span>
 				{main?.running && <span className="size-1.5 animate-breathe rounded-full bg-amber-400" />}
-			</button>
+				<button type="button" onClick={() => void startPersonalChat()} title={t("startChat")} className="rounded-md p-1 text-ink-400 hover:bg-ink-800 hover:text-ember-300">
+					<Plus className="size-3.5" />
+				</button>
+			</div>
 			{groups.length === 0 && archived.length === 0 && <div className="px-3 py-3 text-xs text-ink-600">{t("noConversations")}</div>}
 			{groups.map((g) => (
 				<div key={g.key} className="mt-2">

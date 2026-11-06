@@ -5,7 +5,7 @@ import type { AutomationTask, ImageContent } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { type Attachment, AttachmentError, fileToAttachment, formatSize, isPicture, MAX_FILE_MB, MAX_FILES } from "../lib/attachments.ts";
 import { fileToImage, ImageError, imageSrc, MAX_IMAGES } from "../lib/images.ts";
-import { onPluginChange, openAssistantMain, openSession, type PendingQuestion, pluginCall, refreshCommands, sendPrompt, toast, useStore } from "../lib/store.ts";
+import { onPluginChange, openSession, type PendingQuestion, pluginCall, refreshCommands, sendPrompt, startPersonalChat, toast, useStore } from "../lib/store.ts";
 import { delegatedRuns, delegationTitle } from "../lib/spaces.ts";
 import { answerStar, REPO_URL, useStar } from "../lib/star.ts";
 import { openExternal } from "../lib/links.ts";
@@ -454,8 +454,8 @@ export function PersonalHome() {
 			if (!hasPayload || sending || reading > 0) return;
 			setSending(true);
 			try {
-				await openAssistantMain();
-				// openAssistantMain resolves once the chat is on screen; without a session there is nothing to prompt.
+				// Every home-page message opens a fresh conversation instead of reusing the assistant's main chat.
+				await startPersonalChat();
 				if (!useStore.getState().session) {
 					toast(t("sendFailed"), "error");
 					return;
