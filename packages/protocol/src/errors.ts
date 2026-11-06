@@ -14,6 +14,7 @@ export const ERROR_PARAMS = {
 	identityForbidden: ["method"],
 	invalidParams: ["method"],
 	policyLocked: ["field"],
+	subagentPolicyUnenforceable: ["runner", "lock"],
 	agentDisabled: [],
 	transcriptInvalid: [],
 	policyInvalid: ["detail"],

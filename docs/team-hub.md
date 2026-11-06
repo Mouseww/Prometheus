@@ -428,7 +428,7 @@ PGlite 是以单用户模式运行的嵌入式 PostgreSQL，没有后台检查�
 - **PostgreSQL 路径**：通过 postgres.js 连接真实 PostgreSQL 的代码路径尚未对真实服务器做端到端验证。
 - **Windows 沙箱**：Windows 沙箱运行时尚未在真实机器上端到端验证，目前只有命令构造的单元测试。
 - **Docker 运行时**：尚未对真实 Docker 守护进程验证。
-- **子代理的管理员策略**：PI 子代理同样遵守策略：`disabledTools` 通过 `excludeTools` 从子会话的工具列表中去掉，并加载一个只执行管理员限制的守卫扩展，调用被禁用的工具会被拒绝；`readOutsideProject` 为 `deny` 或 `ask` 时，读取子代理工作目录之外的文件会被拒绝（子代理无人可问，`ask` 等同于拒绝）。Claude Code 子代理会按名称映射（`read`、`grep`、`find`/`ls`、`edit`、`write`、`bash`）传入 `--disallowedTools`，但无法限制读取项目外的文件；Codex 子代理目前无法按工具禁用，也无法限制读取项目外的文件。需要严格限制时，请不要让 restricted 租户使用 Claude Code 或 Codex 运行器的子代理。
+- **子代理的管理员策略**：PI 子代理同样遵守策略：`disabledTools` 通过 `excludeTools` 从子会话的工具列表中去掉，并加载一个只执行管理员限制的守卫扩展，调用被禁用的工具会被拒绝；`readOutsideProject` 为 `deny` 或 `ask` 时，读取子代理工作目录之外的文件会被拒绝（子代理无人可问，`ask` 等同于拒绝）。Claude Code 子代理会按名称映射（`read`、`grep`、`find`/`ls`、`edit`、`write`、`bash`）传入 `--disallowedTools`。凡是外部命令行无法执行的限制，对应的子代理会被直接拒绝运行，并返回 `subagentPolicyUnenforceable` 错误：`readOutsideProject` 为 `deny` 或 `ask` 时，Claude Code 和 Codex 子代理都会被拒绝；`disabledTools` 非空时 Codex 子代理会被拒绝。这种情况下请改用 PI 子代理。
 - **租户网关令牌**：有效期 7 天，租户停止、账号禁用或签发新凭据时立即吊销（见「安全说明」）。
 - **额度预留**：模型代理在请求前按输入估算加最大输出预留额度（`credit_reservations`），结算时按实际用量扣费并释放预留，失败或无用量时释放。并发请求会看到彼此的预留，合计不会超过余额。无人结算的预留 10 分钟后失效。预留只覆盖估算值，实际用量超出估算时仍按余额封顶扣费（透支记录在 `overdraft_credits`）。
 - **刷新令牌宽限期**：20 秒宽限期内重放旧令牌会得到新令牌，窃取者若恰好在这段时间内重放也能换到令牌，这是对多标签页并发刷新的取舍。其新令牌与受害者的令牌同属一个家族，之后任何一方在宽限期后重放旧令牌都会撤销整个家族。

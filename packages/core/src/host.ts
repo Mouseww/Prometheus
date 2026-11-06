@@ -82,6 +82,7 @@ import { extraRoots, issuePanelTicket, issueTicket, panelTicketLookup, panelTick
 import { UPLOAD_ROOT, pruneUploads, removeSessionUploads, saveAttachments } from "./uploads.ts";
 import { fullResultContent, slimMessage, slimMessages } from "./slim.ts";
 import { type GatePolicy, PermissionGate } from "./permission-gate.ts";
+import { type CliRunner, unenforceableLock } from "./policy-guard.ts";
 import { PermissionStore } from "./permission-store.ts";
 import { AGENT_PACKAGES, agentEntry, agentStatuses, cliVersion, compareVersions, installAgentCli, isManaged, latestVersion, npmAvailable, npmPrefixOf, uninstallAgentCli, withAgentBin } from "./agent/install.ts";
 import { bootstrap, type Runtime } from "./runtime.ts";
@@ -568,9 +569,17 @@ ${extras.map((p) => `- ${p}`).join("
 			runners: {
 				// Reads the chat's model and thinking level lazily: the session does not exist yet.
 				pi: this.pi ? this.pi.subagentRunner(() => session, () => this.gatePolicy()) : async () => { throw new AppError("piNotInstalled"); },
-				// The CLI children have no gate of their own; the tools the administrator disabled are taken away from Claude Code.
-				"claude-code": (job, hooks, signal) => runClaude(job, hooks, signal, this.gatePolicy()?.disabledTools),
-				codex: runCodex,
+				// The CLI children have no gate of their own: Claude Code loses the tools the administrator disabled, and a
+				// runner that cannot honor a lock is refused instead of running unchecked.
+				"claude-code": async (job, hooks, signal) => {
+					const policy = this.gatePolicy();
+					this.refuseUnenforceable("claude-code", policy);
+					return runClaude(job, hooks, signal, policy?.disabledTools);
+				},
+				codex: async (job, hooks, signal) => {
+					this.refuseUnenforceable("codex", this.gatePolicy());
+					return runCodex(job, hooks, signal);
+				},
 			},
 		});
 		const bridge = new UIBridge({
@@ -1166,6 +1175,12 @@ ${extras.map((p) => `- ${p}`).join("
 			...(policy?.disabledTools?.length ? { disabledTools: policy.disabledTools } : {}),
 			...(readOutsideProject !== "allow" ? { readOutsideProject } : {}),
 		};
+	}
+
+	/** Refuses a CLI subagent that cannot honor one of the administrator's locks. */
+	private refuseUnenforceable(runner: CliRunner, policy: GatePolicy | undefined): void {
+		const lock = unenforceableLock(runner, policy);
+		if (lock) throw new AppError("subagentPolicyUnenforceable", { runner, lock });
 	}
 
 	private hostSettings(): HostSettings {
