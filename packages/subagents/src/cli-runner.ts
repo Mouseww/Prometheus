@@ -71,10 +71,23 @@ export function cliAvailable(kind: keyof typeof CLI_BINARY): boolean {
 const CLAUDE_READ_TOOLS = "Read,Grep,Glob";
 const CLAUDE_WRITE_TOOLS = "Read,Grep,Glob,Edit,Write,Bash";
 
-export function claudeArgs(job: RunJob): string[] {
+/** Claude Code's name for each canonical tool an administrator can disable. */
+const CLAUDE_TOOL_NAME: Record<string, string> = { read: "Read", grep: "Grep", find: "Glob", ls: "Glob", edit: "Edit", write: "Write", bash: "Bash" };
+
+/** The Claude Code tools a canonical `disabledTools` list takes away. */
+export function claudeDisabled(disabledTools: readonly string[] | undefined): string[] {
+	return [...new Set((disabledTools ?? []).map((t) => CLAUDE_TOOL_NAME[t]).filter((t): t is string => !!t))];
+}
+
+export function claudeArgs(job: RunJob, disabledTools?: readonly string[]): string[] {
 	const args = ["-p", "--input-format", "text", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--disable-slash-commands"];
-	if (job.def.writable) args.push("--permission-mode", "acceptEdits", "--tools", CLAUDE_WRITE_TOOLS, "--allowedTools", CLAUDE_WRITE_TOOLS);
-	else args.push("--permission-mode", "plan", "--tools", CLAUDE_READ_TOOLS, "--allowedTools", CLAUDE_READ_TOOLS);
+	const off = claudeDisabled(disabledTools);
+	const keep = (list: string) => list.split(",").filter((t) => !off.includes(t)).join(",");
+	const allowed = keep(job.def.writable ? CLAUDE_WRITE_TOOLS : CLAUDE_READ_TOOLS);
+	args.push("--permission-mode", job.def.writable ? "acceptEdits" : "plan", "--tools", allowed);
+	// `--tools ""` turns every tool off; an empty `--allowedTools` would add nothing, so it is left out.
+	if (allowed) args.push("--allowedTools", allowed);
+	if (off.length) args.push("--disallowedTools", off.join(","));
 	const model = job.model?.trim();
 	if (model) {
 		if (!MODEL_RE.test(model)) throw new Error(`Claude Code 的模型名不合法: ${model}`);
@@ -279,12 +292,12 @@ function runProcess(exe: Executable, args: string[], input: string, cwd: string,
 
 const MISSING = (name: string) => `找不到 ${name} 命令行工具。请先安装并登录，或把该子代理的运行器改回 PI`;
 
-export async function runClaude(job: RunJob, hooks: RunHooks, signal: AbortSignal): Promise<string> {
+export async function runClaude(job: RunJob, hooks: RunHooks, signal: AbortSignal, disabledTools?: readonly string[]): Promise<string> {
 	const exe = resolveExecutable(CLI_BINARY["claude-code"]);
 	if (!exe) throw new Error(MISSING("claude"));
 	const open = new Map<string, SubagentStep>();
 	let outcome: ClaudeOutcome | undefined;
-	const res = await runProcess(exe, claudeArgs(job), composePrompt(job), job.cwd, signal, (line) => {
+	const res = await runProcess(exe, claudeArgs(job, disabledTools), composePrompt(job), job.cwd, signal, (line) => {
 		outcome = readClaudeLine(line, hooks, open) ?? outcome;
 	});
 	if (signal.aborted) throw new Error("已停止");

@@ -567,8 +567,9 @@ ${extras.map((p) => `- ${p}`).join("
 			emit: (runs) => this.emitEvent(id, { type: "subagents_update", runs }),
 			runners: {
 				// Reads the chat's model and thinking level lazily: the session does not exist yet.
-				pi: this.pi ? this.pi.subagentRunner(() => session) : async () => { throw new AppError("piNotInstalled"); },
-				"claude-code": runClaude,
+				pi: this.pi ? this.pi.subagentRunner(() => session, () => this.gatePolicy()) : async () => { throw new AppError("piNotInstalled"); },
+				// The CLI children have no gate of their own; the tools the administrator disabled are taken away from Claude Code.
+				"claude-code": (job, hooks, signal) => runClaude(job, hooks, signal, this.gatePolicy()?.disabledTools),
 				codex: runCodex,
 			},
 		});
@@ -1159,9 +1160,10 @@ ${extras.map((p) => `- ${p}`).join("
 	private gatePolicy(): GatePolicy | undefined {
 		const policy = this.runtime.config.policy();
 		const readOutsideProject = this.runtime.config.readOutsideProject();
-		if (!policy?.forbiddenModes && readOutsideProject === "allow") return undefined;
+		if (!policy?.forbiddenModes && !policy?.disabledTools?.length && readOutsideProject === "allow") return undefined;
 		return {
 			...(policy?.forbiddenModes ? { forbiddenModes: policy.forbiddenModes } : {}),
+			...(policy?.disabledTools?.length ? { disabledTools: policy.disabledTools } : {}),
 			...(readOutsideProject !== "allow" ? { readOutsideProject } : {}),
 		};
 	}

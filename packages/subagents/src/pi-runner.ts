@@ -1,4 +1,4 @@
-import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { InlineExtension, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { SubagentStep } from "@prometheus/protocol";
 import type { RunHooks, RunJob } from "./types.ts";
 
@@ -36,12 +36,22 @@ const argText = (args: unknown): string => {
 	return str(o.command) || str(o.path) || str(o.file_path) || str(o.pattern) || clip(JSON.stringify(o), 300);
 };
 
+/** The administrator locks a child must honor. A child has no permission gate of its own and nobody to ask. */
+export interface ChildPolicy {
+	disabledTools?: readonly string[];
+	readOutsideProject?: "allow" | "ask" | "deny";
+}
+
 export interface PiRunnerDeps {
 	modelRuntime: ModelRuntime;
 	agentDir: string;
 	/** The chat's current model, for agents that do not name one. */
 	parentModel: () => string | undefined;
 	parentThinking: () => Level | undefined;
+	/** Administrator locks, read at every run so a change applies to the next child. */
+	policy?: () => ChildPolicy | undefined;
+	/** Builds the extension that enforces `policy` on a child's tool calls (core owns the rules; this package cannot import core). */
+	guard?: (policy: ChildPolicy) => InlineExtension;
 }
 
 export function createPiRunner(deps: PiRunnerDeps) {
@@ -62,10 +72,16 @@ export function createPiRunner(deps: PiRunnerDeps) {
 
 		const def = job.def;
 		const tools = def.tools.length ? def.tools.filter((t) => PI_CHILD_TOOLS.includes(t)) : undefined;
+		const policy = deps.policy?.();
+		const disabled = policy?.disabledTools?.length ? [...policy.disabledTools] : undefined;
+		const locked = disabled || (policy?.readOutsideProject && policy.readOutsideProject !== "allow");
+		const guard = locked && policy && deps.guard ? deps.guard(policy) : undefined;
 		const loader = new DefaultResourceLoader({
 			cwd: job.cwd,
 			agentDir: deps.agentDir,
+			// User and package extensions stay off; only the policy guard is loaded, through an inline factory.
 			noExtensions: true,
+			...(guard ? { extensionFactories: [guard] } : {}),
 			noPromptTemplates: true,
 			noThemes: true,
 			noSkills: !def.inheritSkills,
@@ -83,6 +99,8 @@ export function createPiRunner(deps: PiRunnerDeps) {
 			...(model ? { model } : {}),
 			...(thinking && (LEVELS as readonly string[]).includes(thinking) ? { thinkingLevel: thinking } : {}),
 			...(tools ? { tools } : {}),
+			// Dropped from the registry after the allowlist, so the child never sees them.
+			...(disabled ? { excludeTools: disabled } : {}),
 		});
 
 		const open = new Map<string, SubagentStep>();

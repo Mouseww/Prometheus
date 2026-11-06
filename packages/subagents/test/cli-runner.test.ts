@@ -29,6 +29,20 @@ describe("claude args", () => {
 	it("rejects a model name that is not a plain identifier", () => {
 		expect(() => claudeArgs({ def: def(), task: "t", cwd: ".", model: "a; rm -rf /" })).toThrow();
 	});
+	it("takes administrator-disabled tools away, mapped to Claude Code names", () => {
+		const a = claudeArgs({ def: def({ writable: true }), task: "t", cwd: "." }, ["bash", "ls", "neutral_echo"]);
+		expect(a[a.indexOf("--tools") + 1]).toBe("Read,Grep,Edit,Write");
+		expect(a[a.indexOf("--allowedTools") + 1]).toBe("Read,Grep,Edit,Write");
+		expect(a[a.indexOf("--disallowedTools") + 1]).toBe("Bash,Glob");
+	});
+	it("turns every tool off rather than all on when nothing is left", () => {
+		const a = claudeArgs({ def: def(), task: "t", cwd: "." }, ["read", "grep", "find"]);
+		expect(a[a.indexOf("--tools") + 1]).toBe("");
+		expect(a).not.toContain("--allowedTools");
+	});
+	it("adds no flag without a policy", () => {
+		expect(claudeArgs({ def: def(), task: "t", cwd: "." })).not.toContain("--disallowedTools");
+	});
 });
 
 describe("codex args", () => {

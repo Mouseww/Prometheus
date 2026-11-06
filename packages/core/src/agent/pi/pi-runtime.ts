@@ -18,6 +18,7 @@ import {
 import { parsePiModels, toProviderConfig } from "@prometheus/gateway";
 import { AppError, encodeError, type ModelInfo, type UsageStats } from "@prometheus/protocol";
 import { createPiRunner, type SubagentRuntime } from "@prometheus/subagents";
+import { type GuardPolicy, policyGuardExtension } from "../../policy-guard.ts";
 import { skipPiImageAutoResize } from "../../images.ts";
 import type { PermissionGate } from "../../permission-gate.ts";
 import { pluginBuilderExtension } from "../../plugin-tool.ts";
@@ -196,10 +197,12 @@ export class PiRuntime implements AgentRuntime {
 	 * Runner for subagents that use PI. It inherits model and thinking level from the parent chat, read
 	 * lazily because the parent session does not exist yet when its subagent runtime is built.
 	 */
-	subagentRunner(parent: () => RuntimeSession | undefined): ReturnType<typeof createPiRunner> {
+	subagentRunner(parent: () => RuntimeSession | undefined, policy?: () => GuardPolicy | undefined): ReturnType<typeof createPiRunner> {
 		return createPiRunner({
 			modelRuntime: this.modelRuntime,
 			agentDir: this.agentDir,
+			// Children have no permission gate: the administrator locks reach them through excludeTools and a guard extension.
+			...(policy ? { policy, guard: policyGuardExtension } : {}),
 			parentModel: () => {
 				const s = parent();
 				return s instanceof PiRuntimeSession ? s.inherited().model : undefined;
@@ -244,6 +247,9 @@ export class PiRuntime implements AgentRuntime {
 		// "Image omitted: could not be resized". The web UI already shrinks attachments.
 		skipPiImageAutoResize(settingsManager);
 		raiseRetryBudget(settingsManager);
+		// Tools the administrator disabled are never declared to the model: PI drops them from its registry on every
+		// refresh, built-in, extension and MCP tools alike. The gate still blocks them as a second line of defense.
+		const disabledTools = gate.policy?.disabledTools;
 		const { session } = await createAgentSession({
 			cwd,
 			agentDir: this.agentDir,
@@ -251,6 +257,7 @@ export class PiRuntime implements AgentRuntime {
 			sessionManager,
 			settingsManager,
 			resourceLoader: await this.loader(cwd, gate, subagents),
+			...(disabledTools?.length ? { excludeTools: [...disabledTools] } : {}),
 		});
 		const adapter = new PiRuntimeSession({
 			session,
