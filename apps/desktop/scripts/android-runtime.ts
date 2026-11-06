@@ -49,6 +49,8 @@ interface Pkg {
 	depends: string[];
 	filename: string;
 	sha256: string;
+	/** The build in the current Termux index, used when the pinned one has been dropped. */
+	current?: Pkg;
 }
 
 type Lock = Record<string, { filename: string; sha256: string }>;
@@ -124,7 +126,12 @@ async function fetchDeb(pkg: Pkg): Promise<Buffer> {
 			lastError = (e as Error).message;
 		}
 	}
-	throw new Error(`${pkg.name}: ${lastError}. Termux drops old builds; refresh with \`android-runtime.ts --update-lock\` (or set TERMUX_MIRROR).`);
+	// The pinned build is gone (Termux drops old ones): take the current build from the index, still checked against the index checksum.
+	if (pkg.current && pkg.current.filename !== pkg.filename) {
+		console.warn(`warning: ${pkg.name}: pinned build unavailable (${lastError}); using ${pkg.current.filename}. Run \`android-runtime.ts --update-lock\` and commit.`);
+		return fetchDeb(pkg.current);
+	}
+	throw new Error(`${pkg.name}: ${lastError}. Refresh with \`android-runtime.ts --update-lock\` (or set TERMUX_MIRROR).`);
 }
 
 function extractDeb(deb: string, into: string, work: string, name: string): void {
@@ -164,7 +171,7 @@ try {
 			console.warn(`warning: ${p.name} is not in android-termux.lock.json; using the current Termux build`);
 			return p;
 		}
-		return { ...p, filename: l.filename, sha256: l.sha256 };
+		return { ...p, filename: l.filename, sha256: l.sha256, current: p };
 	};
 	const packages = [...fresh.map(pin), pin(certPackage)];
 	console.log(`termux packages: ${packages.map((p) => p.name).join(", ")}`);

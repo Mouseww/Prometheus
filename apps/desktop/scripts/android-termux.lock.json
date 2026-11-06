@@ -172,7 +172,7 @@
 		"sha256": "150d7dd382e92587808d96813b9538fe5c6c41fa33f1a1033daa4e30c6ff2695"
 	},
 	"npm": {
-		"filename": "pool/main/n/npm/npm_12.2.2_all.deb",
+		"filename": "pool/main/n/npm/npm_12.2.1_all.deb",
 		"sha256": "edb4a1dc3a6967f1e65872c7cb7588bd3672152beab6ae633ba848931371e9e1"
 	},
 	"openssl": {

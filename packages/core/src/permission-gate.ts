@@ -2,6 +2,7 @@ import { Type } from "typebox";
 import type { InlineExtension } from "@earendil-works/pi-coding-agent";
 import type { PluginTool } from "@prometheus/plugin-sdk";
 import type { PermissionMode, PermissionPrompt, RunAccess } from "@prometheus/protocol";
+import { escapesWorktree } from "./worktree.ts";
 import { decide, EXIT_PLAN_MODE, INSTALL_PLUGIN_TOOL, isProjectPath, ruleKey, toolKind } from "./permissions.ts";
 
 const PLAN_PROMPT = `# Plan mode
@@ -100,6 +101,8 @@ export class PermissionGate {
 	blocked: BlockedCall[] = [];
 	/** Rules the user answered "always allow" for during this session. */
 	readonly allowed = new Set<string>();
+	/** Set for a chat that works in its own worktree: writes into the repository outside it are refused. */
+	guard: { repo: string; keep: string } | undefined;
 	ask: ((prompt: PermissionPrompt, signal?: AbortSignal) => Promise<string | undefined>) | undefined;
 	onModeChange: ((mode: PermissionMode) => void) | undefined;
 
@@ -133,6 +136,9 @@ export class PermissionGate {
 	 */
 	async evaluate(call: { toolName: string; input: Record<string, unknown>; readOnly: boolean; cwd: string; signal?: AbortSignal }): Promise<{ block: true; reason: string } | undefined> {
 		const { toolName, input, readOnly } = call;
+		if (this.guard && toolKind(toolName) === "edit" && escapesWorktree(str(input.path), call.cwd, this.guard)) {
+			return { block: true, reason: `Blocked: this chat works in its own git worktree (${this.guard.keep}). Do not write the project folder directly; use a path inside the worktree.` };
+		}
 		if (this.unattended) {
 			const v = decide(ACCESS_MODE[this.unattended], { toolName, input, readOnly }, { cwd: call.cwd, allowed: this.allowed });
 			if (v.type === "allow" && toolName !== INSTALL_PLUGIN_TOOL) return;

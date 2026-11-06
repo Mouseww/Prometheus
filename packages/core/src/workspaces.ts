@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { createJsonStore, type JsonStore } from "@prometheus/plugin-sdk";
-import { AppError, type WorkspaceInfo } from "@prometheus/protocol";
+import { AppError, type WorkspaceInfo, type WorktreeOverride } from "@prometheus/protocol";
 
 interface WorkspaceFile {
 	workspaces: WorkspaceInfo[];
@@ -99,6 +99,22 @@ export class WorkspaceStore {
 				next.workspaces.push({ id, path: dir, name: basename(dir) || dir, createdAt: e.modified, lastUsedAt: e.modified });
 			}
 		});
+	}
+
+	async setWorktree(id: string, mode: WorktreeOverride): Promise<WorkspaceInfo> {
+		let result: WorkspaceInfo | undefined;
+		await this.write((d) => {
+			result = d.workspaces.find((w) => w.id === id);
+			if (!result) return;
+			if (mode === "inherit") delete result.worktree;
+			else result.worktree = mode;
+		});
+		if (!result) throw new AppError("workspaceNotFound", { id });
+		return result;
+	}
+
+	async override(id: string): Promise<WorktreeOverride> {
+		return (await this.data()).workspaces.find((w) => w.id === id)?.worktree ?? "inherit";
 	}
 
 	async touch(id: string): Promise<void> {

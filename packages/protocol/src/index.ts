@@ -344,6 +344,62 @@ export interface SessionSummary {
 	workspaceId: string;
 	/** Which agent runtime drives it; absent means PI. */
 	runtime?: RuntimeKind;
+	/** Set when the chat works in its own git worktree instead of the project folder. */
+	worktree?: SessionWorktree;
+}
+
+/** How a chat is isolated from the real project folder (see docs/worktree-mode.md). */
+export interface SessionWorktree {
+	/** The project folder the chat belongs to; it is never touched until the user merges. */
+	root: string;
+	/** Top of the chat's own checkout. */
+	path: string;
+	/** Where the agent works: `path`, plus the project's sub-folder when the project is not the repository root. */
+	cwd: string;
+	/** Top of the repository that owns `root`. */
+	repo: string;
+	branch: string;
+	baseBranch: string;
+	baseCommit: string;
+	/** `active` is usable; `discarded` and `orphaned` (checkout and branch both gone) are read-only history. */
+	state: "active" | "discarded" | "orphaned";
+	createdAt: string;
+	/** Paths (relative to `path`) that are linked or copied in from the project and never committed. */
+	skip?: string[];
+}
+
+export type WorktreeSetting = "off" | "ask" | "on";
+export type WorktreeOverride = "inherit" | "off" | "on";
+export type WorktreeStrategy = "squash" | "merge" | "apply";
+
+export interface WorktreeFile {
+	path: string;
+	/** Single-letter git status: A, M, D, R or ? for untracked. */
+	status: string;
+	/** Line counts against where the chat started; absent in lightweight listings. */
+	added?: number;
+	deleted?: number;
+	binary?: boolean;
+}
+
+/** What the review panel shows and the merge button depends on. */
+export interface WorktreeStatus {
+	worktree: SessionWorktree;
+	files: WorktreeFile[];
+	/** Commits on the chat's branch since it was created (checkpoints included). */
+	ahead: number;
+	/** Commits the base branch gained since; merging first folds them into the chat's checkout. */
+	behind: number;
+	/** Files the base merge left conflicted inside the checkout; the project folder is untouched. */
+	conflicts: string[];
+	/** Changed files the project folder also has uncommitted edits in; merging is blocked while this is not empty. */
+	mainDirty: string[];
+	/** Other chats of the same project that changed the same files. */
+	overlaps: { sessionId: string; files: string[] }[];
+	/** Error code of what blocks merging right now, if anything. */
+	blocked?: "worktreeBaseMoved" | "worktreeMainDirty" | "worktreeConflict" | "worktreeBusy" | "worktreeGone" | "worktreeEmpty";
+	/** Parameter of the blocking error (branch name, file list). */
+	blockedDetail?: string;
 }
 
 /** A project directory; every session whose cwd resolves to `path` is grouped under it. */
@@ -353,6 +409,8 @@ export interface WorkspaceInfo {
 	name: string;
 	createdAt: string;
 	lastUsedAt: string;
+	/** Per-project override of the worktree setting; absent means inherit. */
+	worktree?: WorktreeOverride;
 }
 
 export interface DirListing {
@@ -391,6 +449,12 @@ export interface HostSettings {
 	goalTurns?: number;
 	/** Context fill, in percent, at which a long conversation is compacted; unset means the built-in 80. Older servers omit it. */
 	compactPercent?: number;
+	/** Whether new chats get their own git worktree: `off`, `ask` (the new-chat switch decides) or `on` (always). `ask` when unset. Older servers omit it. */
+	worktreeMode?: WorktreeSetting;
+	/** With `ask`: whether the new-chat switch starts on. True when unset. */
+	worktreeDefault?: boolean;
+	/** How a merge lands in the project folder. `squash` when unset. */
+	worktreeStrategy?: WorktreeStrategy;
 }
 
 // ---------- Subagents ----------
@@ -487,6 +551,8 @@ export interface SessionSnapshot {
 	agent?: string;
 	/** The goal the agent is working toward on its own (/goal); absent when there is none. */
 	goal?: GoalState;
+	/** Set when the chat works in its own git worktree. */
+	worktree?: SessionWorktree;
 }
 
 /** Estimated tokens (chars/4) per context component; the sum approximates, not equals, `contextTokens`. */
@@ -1211,7 +1277,7 @@ export interface RpcMethods {
 	"runtime.env": { params: RuntimeEnv; result: null };
 
 	"session.list": { params: Record<string, never>; result: SessionSummary[] };
-	"session.create": { params: { cwd?: string; name?: string; runtime?: RuntimeKind; agent?: string; /** Chosen model; its provider decides where traffic goes. */ model?: ModelRef; gateway?: GatewayChoice }; result: SessionSnapshot };
+	"session.create": { params: { cwd?: string; name?: string; runtime?: RuntimeKind; agent?: string; /** Chosen model; its provider decides where traffic goes. */ model?: ModelRef; gateway?: GatewayChoice; /** Isolate the chat in its own worktree; absent follows the settings. */ worktree?: boolean }; result: SessionSnapshot };
 	"runtime.list": { params: Record<string, never>; result: RuntimeInfo[] };
 	/** Continue a conversation in another runtime: a new session in the same folder that receives the transcript as context on its first turn. The original session is kept. */
 	"session.switchRuntime": { params: { sessionId: string; runtime: RuntimeKind; agent?: string; model?: ModelRef; gateway?: GatewayChoice }; result: SessionSnapshot };
@@ -1267,6 +1333,19 @@ export interface RpcMethods {
 	"workspace.add": { params: { path: string; name?: string }; result: WorkspaceInfo };
 	"workspace.rename": { params: { id: string; name: string }; result: WorkspaceInfo };
 	"workspace.remove": { params: { id: string }; result: null };
+	/** Sets the project's worktree override. */
+	"workspace.setWorktree": { params: { id: string; mode: WorktreeOverride }; result: WorkspaceInfo };
+	"worktree.status": { params: { sessionId: string }; result: WorktreeStatus };
+	/** Folds the base branch into the chat's checkout; conflicts stay there. */
+	"worktree.sync": { params: { sessionId: string }; result: WorktreeStatus };
+	/** Lands the chat's changes in the project folder, then starts the chat over from the new base. */
+	"worktree.merge": { params: { sessionId: string; strategy?: WorktreeStrategy; message?: string }; result: WorktreeStatus };
+	/** Deletes the checkout and the branch; the chat stays as read-only history. */
+	"worktree.discard": { params: { sessionId: string }; result: null };
+	/** Unmerged worktree chats of a project. */
+	/** Diff of one file of the chat against where it started. */
+	"worktree.diff": { params: { sessionId: string; path: string }; result: GitDiff };
+	"worktree.pending": { params: { workspaceId: string }; result: { sessionId: string; branch: string; files: number }[] };
 	/** Reveal the workspace folder in the OS file manager of the machine running the server. */
 	"workspace.open": { params: { id: string }; result: null };
 	"fs.dirs": { params: { path?: string }; result: DirListing };

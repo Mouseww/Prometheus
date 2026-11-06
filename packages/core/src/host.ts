@@ -39,6 +39,9 @@ import {
 	type SessionEvent,
 	type SessionSnapshot,
 	type SessionSummary,
+	type SessionWorktree,
+	type WorktreeSetting,
+	type WorktreeStrategy,
 	type UIRequest,
 	type RunAccess,
 	GOAL_DEFAULT_TURNS,
@@ -78,6 +81,7 @@ import { AgentStore, runClaude, runCodex, SubagentRuntime } from "@prometheus/su
 import { UIBridge } from "./ui-bridge.ts";
 import { ceilingFor, clampAccess } from "./access.ts";
 import { normalizeDir, WorkspaceStore, workspaceId } from "./workspaces.ts";
+import { WorktreeManager } from "./worktree.ts";
 import { DEFAULT_COMPACT_PERCENT } from "./agent/pi/compaction.ts";
 import tauriConf from "../../../apps/desktop/src-tauri/tauri.conf.json" with { type: "json" };
 
@@ -192,6 +196,7 @@ export class PrometheusHost {
 	private readonly pendingReload = new Set<string>();
 	private readonly listener: HostListener;
 	private readonly workspaces: WorkspaceStore;
+	private readonly worktrees: WorktreeManager;
 	private readonly index: SessionIndex;
 	private readonly permissions: PermissionStore;
 	private readonly externalRuntimes = new Map<string, AgentRuntime>();
@@ -213,6 +218,7 @@ export class PrometheusHost {
 		this.cwd = options.cwd ?? process.cwd();
 		this.listener = options.listener;
 		this.workspaces = new WorkspaceStore(join(runtime.dataDir, "workspaces.json"));
+		this.worktrees = new WorktreeManager(runtime.dataDir);
 		this.index = new SessionIndex(join(runtime.dataDir, "sessions", "index.json"));
 		this.permissions = new PermissionStore(join(runtime.dataDir, "sessions", "permissions.json"));
 		runtime.plugins.reloadSessions = () => this.reloadSessions();
@@ -250,6 +256,7 @@ export class PrometheusHost {
 		}
 		const host = new PrometheusHost(runtime, pi, options);
 		await host.index.load();
+		await host.worktrees.load();
 		await host.permissions.load();
 		pi?.syncGateways();
 		void pruneUploads().catch(() => {});
@@ -502,7 +509,10 @@ export class PrometheusHost {
 			},
 			event: (e) => {
 				this.listener.event(id, e.type === "message_start" || e.type === "message_end" ? { ...e, message: slimMessage(e.message) } : e);
-				if (e.type === "agent_settled") this.goals.settled(id, e.aborted);
+				if (e.type === "agent_settled") {
+					this.goals.settled(id, e.aborted);
+					if (this.worktrees.get(id)) void this.worktrees.checkpoint(id).catch(() => {});
+				}
 			},
 			sessionsChanged: () => {
 				const current = this.live.get(id);
@@ -565,7 +575,9 @@ export class PrometheusHost {
 		let pending = this.opening.get(sessionId);
 		if (!pending) {
 			pending = (async () => {
+				await this.worktrees.ensure(sessionId).catch(() => {});
 				const live = await this.openFresh(sessionId);
+				this.guardWorktree(live, sessionId);
 				// Back to the mode it was left in; a chat from before modes were remembered gets the default setting.
 				live.gate.setMode(this.permissions.get(sessionId) ?? this.defaultPermission());
 				return live;
@@ -661,7 +673,52 @@ export class PrometheusHost {
 	}
 
 	/** Removes a session for good: its live state, transcript, uploads and list entry. */
+	private refuseWhileRunning(sessionId: string): void {
+		if (this.live.get(sessionId)?.session.isStreaming) throw new AppError("worktreeBusy");
+	}
+
+	private worktreeField(sessionId: string): { worktree?: SessionWorktree } {
+		const wt = this.worktrees.get(sessionId);
+		return wt ? { worktree: wt } : {};
+	}
+
+	/** Whether a new chat in `dir` gets its own worktree: the project's override wins, then the global setting and the new-chat switch. */
+	private async wantsWorktree(dir: string, asked: boolean | undefined): Promise<boolean> {
+		const override = await this.workspaces.override(workspaceId(dir));
+		if (override !== "inherit") return override === "on";
+		const mode = this.worktreeMode();
+		if (mode === "off") return false;
+		if (mode === "on") return true;
+		return asked ?? this.runtime.config.get().worktreeDefault;
+	}
+
+	private worktreeMode(): WorktreeSetting {
+		const m = this.runtime.config.get().worktreeMode;
+		return m === "off" || m === "on" ? m : "ask";
+	}
+
+	private worktreeStrategy(): WorktreeStrategy {
+		const m = this.runtime.config.get().worktreeStrategy;
+		return m === "merge" || m === "apply" ? m : "squash";
+	}
+
+	/** Points a chat's permission gate at its worktree so it cannot write the project folder directly. */
+	private guardWorktree(live: LiveSession, sessionId: string): void {
+		live.gate.guard = this.worktrees.guardOf(sessionId);
+	}
+
+	/** Makes the chat's own checkout for a new chat, or tells why it works in the project folder instead. */
+	private async tryWorktree(dir: string, asked: boolean | undefined): Promise<{ wt?: SessionWorktree; note?: string }> {
+		if (!(await this.wantsWorktree(dir, asked))) return {};
+		try {
+			return { wt: await this.worktrees.create(dir) };
+		} catch (err) {
+			return { note: encodeError(err instanceof AppError ? err : new AppError("worktreeFailed", { error: err instanceof Error ? err.message : String(err) })) };
+		}
+	}
+
 	private async deleteSession(sessionId: string): Promise<void> {
+		await this.worktrees.release(sessionId).catch(() => {});
 		void removeSessionUploads(sessionId).catch(() => {});
 		this.goals.erase(sessionId);
 		this.permissions.delete(sessionId);
@@ -687,7 +744,7 @@ export class PrometheusHost {
 	private async listSessions(): Promise<SessionSummary[]> {
 		const infos = (await this.pi?.listNative()) ?? [];
 		for (const info of infos) if (info.ref.path) this.paths.set(info.ref.id, info.ref.path);
-		await this.workspaces.ensure(infos.map((i) => ({ path: i.cwd, modified: i.modified })));
+		await this.workspaces.ensure(infos.map((i) => ({ path: this.worktrees.rootOf(i.cwd), modified: i.modified })));
 		const archived = await this.workspaces.archived();
 		const listed = new Set(infos.map((i) => i.ref.id));
 		const now = new Date().toISOString();
@@ -708,7 +765,8 @@ export class PrometheusHost {
 				live: true,
 				running: true,
 				archived: false,
-				workspaceId: workspaceId(state.cwd),
+				workspaceId: workspaceId(this.worktrees.rootOf(state.cwd)),
+				...this.worktreeField(id),
 			});
 		}
 		const external: SessionSummary[] = [];
@@ -726,12 +784,13 @@ export class PrometheusHost {
 				live: Boolean(live),
 				running: live?.session.isStreaming ?? false,
 				archived: archived.has(e.id),
-				workspaceId: e.cwd ? workspaceId(e.cwd) : "",
+				workspaceId: e.cwd ? workspaceId(this.worktrees.rootOf(e.cwd)) : "",
+				...this.worktreeField(e.id),
 				runtime: e.runtime,
 				...(e.agent ? { agent: e.agent } : {}),
 			});
 		}
-		await this.workspaces.ensure(external.map((e) => ({ path: e.cwd, modified: e.modified })));
+		await this.workspaces.ensure(external.map((e) => ({ path: this.worktrees.rootOf(e.cwd), modified: e.modified })));
 		return [...external, ...infos
 			.map((info) => ({
 				id: info.ref.id,
@@ -744,7 +803,8 @@ export class PrometheusHost {
 				live: this.live.has(info.ref.id),
 				running: this.live.get(info.ref.id)?.session.isStreaming ?? false,
 				archived: archived.has(info.ref.id),
-				workspaceId: info.cwd ? workspaceId(info.cwd) : "",
+				workspaceId: info.cwd ? workspaceId(this.worktrees.rootOf(info.cwd)) : "",
+				...this.worktreeField(info.ref.id),
 			})), ...unsaved]
 			.sort((a, b) => b.modified.localeCompare(a.modified));
 	}
@@ -760,7 +820,8 @@ export class PrometheusHost {
 			id: s.id,
 			name: s.name,
 			cwd: s.cwd,
-			workspaceId: workspaceId(s.cwd),
+			workspaceId: workspaceId(this.worktrees.rootOf(s.cwd)),
+			...this.worktreeField(s.id),
 			messages: page.messages,
 			...(page.offset > 0 ? { messageOffset: page.offset } : {}),
 			model: s.model,
@@ -952,7 +1013,7 @@ export class PrometheusHost {
 	}
 
 	private hostSettings(): HostSettings {
-		return { autoCompaction: this.pi?.autoCompaction() ?? true, workspaceRoot: this.workspaceRoot(), defaultAgent: this.defaultAgent(), defaultPermission: this.defaultPermission(), defaultThinking: this.defaultThinking(), goalTurns: this.runtime.config.get().goalTurns || GOAL_DEFAULT_TURNS, compactPercent: this.compactPercent() };
+		return { autoCompaction: this.pi?.autoCompaction() ?? true, workspaceRoot: this.workspaceRoot(), defaultAgent: this.defaultAgent(), defaultPermission: this.defaultPermission(), defaultThinking: this.defaultThinking(), goalTurns: this.runtime.config.get().goalTurns || GOAL_DEFAULT_TURNS, compactPercent: this.compactPercent(), worktreeMode: this.worktreeMode(), worktreeDefault: this.runtime.config.get().worktreeDefault, worktreeStrategy: this.worktreeStrategy() };
 	}
 
 	/** The permission mode new chats start in; unknown values (a hand-edited config) fall back to asking first. */
@@ -1016,11 +1077,24 @@ export class PrometheusHost {
 		}),
 
 		"session.list": () => this.listSessions(),
-		"session.create": async ({ cwd, name, runtime: kind, agent, model, gateway }) => {
+		"session.create": async ({ cwd, name, runtime: kind, agent, model, gateway, worktree }) => {
 			const dir = cwd?.trim() || this.cwd;
 			if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new AppError("workdirNotFound", { dir });
 			await this.workspaces.add(dir);
-			const live = kind && kind !== "pi" ? await this.createExternal(kind, agent, dir, this.gatewayFromModel(model, gateway)) : await this.attach((init) => this.needPi.create({ ...init, cwd: normalizeDir(dir) }));
+			const { wt, note } = await this.tryWorktree(dir, worktree);
+			const workDir = wt?.cwd ?? dir;
+			let live: LiveSession;
+			try {
+				live = kind && kind !== "pi" ? await this.createExternal(kind, agent, workDir, this.gatewayFromModel(model, gateway)) : await this.attach((init) => this.needPi.create({ ...init, cwd: normalizeDir(workDir) }));
+			} catch (err) {
+				if (wt) await this.worktrees.dispose(wt).catch(() => {});
+				throw err;
+			}
+			if (wt) {
+				await this.worktrees.bind(live.session.id, wt);
+				this.guardWorktree(live, live.session.id);
+			}
+			if (note) live.bridge.context().notify(note, "warning");
 			if (name?.trim()) live.session.setName(name.trim());
 			// The configured starting level, if this model offers it; otherwise keep the model's own default.
 			const wanted = this.defaultThinking();
@@ -1036,6 +1110,9 @@ export class PrometheusHost {
 			const dir = state.cwd;
 			const seed = state.messages.slice(-SEED_MESSAGES);
 			const live = kind !== "pi" ? await this.createExternal(kind, agent, dir, this.gatewayFromModel(model, gateway), seed) : await this.attach((init) => this.needPi.create({ ...init, cwd: normalizeDir(dir), history: seed }));
+			// The checkout moves to the new chat; releasing it with the old one would delete it.
+			await this.worktrees.move(sessionId, live.session.id);
+			this.guardWorktree(live, live.session.id);
 			if (state.name) live.session.setName(state.name);
 			live.gate.setMode(source.gate.mode);
 			const handoff = buildHandoff(state.messages, this.agentName(from, this.index.get(sessionId)?.agent));
@@ -1153,6 +1230,34 @@ export class PrometheusHost {
 			this.listener.sessionsChanged();
 			return null;
 		},
+		"workspace.setWorktree": async ({ id, mode }) => {
+			if (!["inherit", "off", "on"].includes(mode)) throw new AppError("generic");
+			const w = await this.workspaces.setWorktree(id, mode);
+			this.listener.sessionsChanged();
+			return w;
+		},
+		"worktree.status": ({ sessionId }) => this.worktrees.status(sessionId),
+		"worktree.sync": ({ sessionId }) => {
+			this.refuseWhileRunning(sessionId);
+			return this.worktrees.sync(sessionId);
+		},
+		"worktree.merge": async ({ sessionId, strategy, message }) => {
+			this.refuseWhileRunning(sessionId);
+			const result = await this.worktrees.merge(sessionId, strategy ?? this.worktreeStrategy(), message);
+			this.listener.sessionsChanged();
+			return result;
+		},
+		"worktree.discard": async ({ sessionId }) => {
+			this.refuseWhileRunning(sessionId);
+			await this.worktrees.discard(sessionId);
+			const live = this.live.get(sessionId);
+			if (live) live.gate.guard = undefined;
+			this.listener.sessionsChanged();
+			return null;
+		},
+		"worktree.diff": ({ sessionId, path }) => this.worktrees.diff(sessionId, path),
+		"worktree.pending": async ({ workspaceId: id }) =>
+			Promise.all(this.worktrees.pending(id).map(async ({ sessionId, wt }) => ({ sessionId, branch: wt.branch, files: await this.worktrees.fileCount(sessionId) }))),
 		"fs.dirs": ({ path }) => this.listDirs(path),
 		"fs.pick": async ({ start, title }) => {
 			const from = start && existsSync(start) ? start : undefined;
@@ -1173,7 +1278,7 @@ export class PrometheusHost {
 		"fs.mkdir": ({ parent, name }) => this.createDir(parent, name),
 
 		"settings.get": () => this.hostSettings(),
-		"settings.set": async ({ autoCompaction, workspaceRoot, defaultAgent, defaultPermission, defaultThinking, goalTurns, compactPercent }) => {
+		"settings.set": async ({ autoCompaction, workspaceRoot, defaultAgent, defaultPermission, defaultThinking, goalTurns, compactPercent, worktreeMode, worktreeDefault, worktreeStrategy }) => {
 			if (typeof autoCompaction === "boolean") {
 				await this.pi?.setAutoCompaction(autoCompaction);
 				// Live sessions cache their own SettingsManager.
@@ -1193,6 +1298,11 @@ export class PrometheusHost {
 				if (!PERMISSION_MODES.includes(defaultPermission)) throw new AppError("unknownPermissionMode", { mode: String(defaultPermission) });
 				await this.runtime.config.setDefaultPermission(defaultPermission);
 			}
+			if (worktreeMode !== undefined || worktreeDefault !== undefined || worktreeStrategy !== undefined) {
+				if (worktreeMode !== undefined && !["off", "ask", "on"].includes(worktreeMode)) throw new AppError("generic");
+				if (worktreeStrategy !== undefined && !["squash", "merge", "apply"].includes(worktreeStrategy)) throw new AppError("generic");
+				await this.runtime.config.setWorktree({ mode: worktreeMode, default: typeof worktreeDefault === "boolean" ? worktreeDefault : undefined, strategy: worktreeStrategy });
+			}
 			if (typeof compactPercent === "number") await this.runtime.config.setCompactPercent(compactPercent);
 			if (typeof defaultThinking === "string") {
 				// An empty string clears it: new chats then keep whatever level their model starts at.
@@ -1210,6 +1320,8 @@ export class PrometheusHost {
 		"chat.prompt": async ({ sessionId, text, images, files, delivery }) => {
 			if (!text.trim() && !images?.length && !files?.length) throw new AppError("messageEmpty");
 			checkImages(images);
+			const wt = this.worktrees.get(sessionId);
+			if (wt && wt.state !== "active") throw new AppError("worktreeGone");
 			// Documents the model cannot read itself: stored in a temporary folder, and the message says where.
 			const saved = files?.length ? await saveAttachments(sessionId, files) : [];
 			const body = withAttachmentNote(text, saved);
@@ -1275,7 +1387,7 @@ export class PrometheusHost {
 			const native = (await rt.listNative()).filter((n) => n.cwd);
 			const known = new Set(this.index.list().filter((e) => e.runtime === agent.kind).map((e) => e.nativeId));
 			const before = (await this.workspaces.list()).length;
-			await this.workspaces.ensure(native.map((n) => ({ path: n.cwd, modified: n.modified })));
+			await this.workspaces.ensure(native.map((n) => ({ path: this.worktrees.rootOf(n.cwd), modified: n.modified })));
 			let added = 0;
 			for (const n of native) {
 				if (known.has(n.ref.nativeId)) continue;

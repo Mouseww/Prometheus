@@ -301,6 +301,7 @@ function SessionRow({ s, active }: { s: SessionSummary; active: boolean }) {
 					{delegated && <span className="shrink-0 rounded bg-ember-500/15 px-1 text-[10px] leading-4 text-ember-300">{t("delegated")}</span>}
 					{asking && <span className="shrink-0 rounded bg-amber-500/20 px-1 text-[10px] leading-4 text-amber-300">{t("asking")}</span>}
 					<span className="truncate">{title}</span>
+					{s.worktree?.state === "active" && <GitBranch className="size-3 shrink-0 text-ember-400" aria-label={s.worktree.branch} />}
 				</div>
 				<div className="flex items-center gap-1.5 text-[10.5px] text-ink-500">
 					{loading ? (

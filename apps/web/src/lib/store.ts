@@ -10,6 +10,10 @@ import type {
 	CommandInfo,
 	HostSettings,
 	HostInfo,
+	SessionWorktree,
+	WorktreeOverride,
+	WorktreeStatus,
+	WorktreeStrategy,
 	ImageContent,
 	MessageRef,
 	ModelInfo,
@@ -44,6 +48,7 @@ import { effectiveSpace, samePath, type Space, spaceOf } from "./spaces.ts";
 
 const M = defineMessages({
 	zh: {
+		worktreeMerged: "改动已合并到项目文件夹",
 		compacting: "正在压缩上下文…",
 		compactFailed: "压缩失败：{e}",
 		compactTooSmall: "当前对话还很短，暂无需压缩",
@@ -61,6 +66,7 @@ const M = defineMessages({
 		pkgUpdate: "更新",
 	},
 	en: {
+		worktreeMerged: "Changes merged into the project folder",
 		compacting: "Compacting context…",
 		compactFailed: "Compaction failed: {e}",
 		compactTooSmall: "The conversation is still short; nothing to compact",
@@ -102,6 +108,8 @@ export interface Banner {
 
 export interface ActiveSession {
 	id: string;
+	/** Set when the chat works in its own git worktree. */
+	worktree?: SessionWorktree;
 	name?: string;
 	cwd: string;
 	workspaceId: string;
@@ -218,6 +226,8 @@ interface State {
 	draftModel: ModelRef | null;
 	/** Permission mode picked on the new-chat page before a session exists. */
 	draftPermission: PermissionMode;
+	/** The new-chat switch for an isolated worktree; null follows the setting. */
+	draftWorktree: boolean | null;
 	/** Agent runtime picked on the new-chat page; fixed once the session exists. */
 	draftRuntime: RuntimeKind;
 	/** Runtimes this host can offer, with health and capabilities. */
@@ -258,6 +268,7 @@ export const useStore = create<State>(() => ({
 	opening: null,
 	draftModel: null,
 	draftPermission: "default",
+	draftWorktree: null,
 	draftRuntime: "pi",
 	runtimes: [],
 	draftAgentId: "pi",
@@ -567,6 +578,7 @@ function fromSnapshot(s: SessionSnapshot): ActiveSession {
 		name: s.name,
 		cwd: s.cwd,
 		workspaceId: s.workspaceId,
+		...(s.worktree ? { worktree: s.worktree } : {}),
 		messages: s.messages,
 		messageOffset: s.messageOffset ?? 0,
 		tools: {},
@@ -892,10 +904,60 @@ export async function setDraftAgent(info: RuntimeInfo): Promise<void> {
 export async function createSession(cwd?: string): Promise<void> {
 	const { draftRuntime: runtime, draftAgentId, draftModel } = get();
 	const agent = customAgent({ id: draftAgentId, kind: runtime });
+	const { draftWorktree, hostSettings } = get();
+	const worktree = hostSettings?.worktreeMode === "ask" && draftWorktree !== null ? { worktree: draftWorktree } : {};
 	const snap = await call((c) =>
-		c.rpc("session.create", runtime === "pi" ? { cwd } : { cwd, runtime, ...(agent ? { agent } : {}), ...(draftModel ? { model: draftModel } : {}) }),
+		c.rpc("session.create", runtime === "pi" ? { cwd, ...worktree } : { cwd, ...worktree, runtime, ...(agent ? { agent } : {}), ...(draftModel ? { model: draftModel } : {}) }),
 	);
 	if (snap) activate(snap);
+}
+
+export function setDraftWorktree(on: boolean): void {
+	set({ draftWorktree: on });
+}
+
+/** Whether the new-chat switch is on: its own choice, else the configured default. */
+export function draftWorktreeOn(s: Pick<State, "draftWorktree" | "hostSettings">): boolean {
+	return s.draftWorktree ?? s.hostSettings?.worktreeDefault ?? true;
+}
+
+function applyWorktree(sessionId: string, worktree: SessionWorktree): void {
+	set((s) => ({
+		session: s.session?.id === sessionId ? { ...s.session, worktree } : s.session,
+		sessions: s.sessions.map((x) => (x.id === sessionId ? { ...x, worktree } : x)),
+	}));
+}
+
+export async function worktreeStatus(sessionId: string): Promise<WorktreeStatus | undefined> {
+	return call((c) => c.rpc("worktree.status", { sessionId }));
+}
+
+export async function worktreeSync(sessionId: string): Promise<WorktreeStatus | undefined> {
+	const r = await call((c) => c.rpc("worktree.sync", { sessionId }));
+	if (r) applyWorktree(sessionId, r.worktree);
+	return r;
+}
+
+export async function worktreeMerge(sessionId: string, strategy: WorktreeStrategy, message?: string): Promise<WorktreeStatus | undefined> {
+	const r = await call((c) => c.rpc("worktree.merge", { sessionId, strategy, ...(message?.trim() ? { message: message.trim() } : {}) }));
+	if (r) {
+		applyWorktree(sessionId, r.worktree);
+		toast(tr(M, "worktreeMerged"));
+	}
+	return r;
+}
+
+export async function worktreeDiscard(sessionId: string): Promise<boolean> {
+	const r = await call((c) => c.rpc("worktree.discard", { sessionId }));
+	if (r === undefined) return false;
+	const cur = get().session?.id === sessionId ? get().session?.worktree : get().sessions.find((x) => x.id === sessionId)?.worktree;
+	if (cur) applyWorktree(sessionId, { ...cur, state: "discarded" });
+	return true;
+}
+
+export async function setWorkspaceWorktree(id: string, mode: WorktreeOverride): Promise<void> {
+	const w = await call((c) => c.rpc("workspace.setWorktree", { id, mode }));
+	if (w) set((s) => ({ workspaces: s.workspaces.map((x) => (x.id === id ? w : x)) }));
 }
 
 

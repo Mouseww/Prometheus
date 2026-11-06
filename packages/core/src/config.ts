@@ -41,6 +41,12 @@ export interface PrometheusConfig {
 	goalTurns: number;
 	/** Context fill, in percent, at which a long conversation is auto-compacted; 0 means the built-in default. */
 	compactPercent: number;
+	/** Whether new chats get their own git worktree: "off", "ask" or "on"; "" means the built-in "ask". */
+	worktreeMode: string;
+	/** With "ask": whether the new-chat switch starts on. */
+	worktreeDefault: boolean;
+	/** How a merge lands: "squash", "merge" or "apply"; "" means "squash". */
+	worktreeStrategy: string;
 }
 
 function normalizeNetwork(raw: Partial<NetworkConfig> | undefined): NetworkConfig {
@@ -58,7 +64,7 @@ export function defaultDataDir(): string {
 	return process.env.PROMETHEUS_HOME || join(homedir(), ".prometheus");
 }
 
-const EMPTY: PrometheusConfig = { gateways: [], agents: [], plugins: [], disabledPlugins: [], pluginSettings: {}, network: normalizeNetwork(undefined), workspaceRoot: "", defaultAgent: "", defaultPermission: "", defaultThinking: "", goalTurns: 0, compactPercent: 0 };
+const EMPTY: PrometheusConfig = { gateways: [], agents: [], plugins: [], disabledPlugins: [], pluginSettings: {}, network: normalizeNetwork(undefined), workspaceRoot: "", defaultAgent: "", defaultPermission: "", defaultThinking: "", goalTurns: 0, compactPercent: 0, worktreeMode: "", worktreeDefault: true, worktreeStrategy: "" };
 
 /** config.json holds API keys, so it is always written owner-only. */
 export class ConfigStore {
@@ -87,6 +93,9 @@ export class ConfigStore {
 				defaultAgent: typeof raw.defaultAgent === "string" ? raw.defaultAgent : "",
 				defaultPermission: typeof raw.defaultPermission === "string" ? raw.defaultPermission : "",
 				defaultThinking: typeof raw.defaultThinking === "string" ? raw.defaultThinking : "",
+				worktreeMode: typeof raw.worktreeMode === "string" ? raw.worktreeMode : "",
+				worktreeDefault: raw.worktreeDefault !== false,
+				worktreeStrategy: typeof raw.worktreeStrategy === "string" ? raw.worktreeStrategy : "",
 				goalTurns: typeof raw.goalTurns === "number" && raw.goalTurns >= 1 ? Math.floor(raw.goalTurns) : 0,
 				// Out-of-range values are dropped rather than clamped: the caller falls back to the default.
 				compactPercent:
@@ -139,6 +148,13 @@ export class ConfigStore {
 	/** Compaction threshold in percent; 0 (or anything out of range) restores the built-in default. */
 	async setCompactPercent(percent: number): Promise<void> {
 		this.config.compactPercent = Number.isFinite(percent) && percent >= MIN_COMPACT_PERCENT && percent <= MAX_COMPACT_PERCENT ? Math.round(percent) : 0;
+		await this.persist();
+	}
+
+	async setWorktree(patch: { mode?: string; default?: boolean; strategy?: string }): Promise<void> {
+		if (patch.mode !== undefined) this.config.worktreeMode = patch.mode === "ask" ? "" : patch.mode;
+		if (patch.default !== undefined) this.config.worktreeDefault = patch.default;
+		if (patch.strategy !== undefined) this.config.worktreeStrategy = patch.strategy === "squash" ? "" : patch.strategy;
 		await this.persist();
 	}
 

@@ -22,6 +22,7 @@ import { VoiceButton } from "./VoiceButton.tsx";
 import { usePopover } from "./TitleBar.tsx";
 import { BranchPicker } from "./BranchPicker.tsx";
 import { SessionChanges } from "./SessionChanges.tsx";
+import { WorktreePanel, WorktreeSwitch } from "./WorktreePanel.tsx";
 import { PersonalChip, WorkspaceChip, WorkspacePicker } from "./WorkspacePicker.tsx";
 
 const M = defineMessages({
@@ -883,19 +884,22 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 			)}
 
 			{!newChat && <GoalBar />}
-			<SessionChanges />
+			{session?.worktree ? <WorktreePanel /> : <SessionChanges />}
 
 			<div className="mb-2 px-1">
 				{newChat && personalSpace ? (
 					<PersonalChip />
 				) : newChat ? (
-					<WorkspacePicker>
-						<BranchPicker />
-					</WorkspacePicker>
+					<div className="flex min-w-0 items-center gap-2">
+						<WorkspacePicker>
+							<BranchPicker />
+						</WorkspacePicker>
+						{!session && <WorktreeSwitch />}
+					</div>
 				) : (
 					<div className="flex min-w-0 items-center gap-2">
 						<WorkspaceChip />
-						<BranchPicker />
+						{!session?.worktree && <BranchPicker />}
 					</div>
 				)}
 			</div>

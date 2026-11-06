@@ -6,9 +6,10 @@ import { isAndroid, isDesktopShell, isTauri, loadMode } from "../lib/backend.ts"
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { requestNotifyPermission } from "../lib/notify.ts";
 import { switchLook } from "../lib/look.ts";
+import { spaceOf } from "../lib/spaces.ts";
 import { initRuntimes } from "../lib/runtimes.ts";
 import { type Lang, SKINS, type SendMode, type Skin, setPrefs, type ThemeMode, usePrefs } from "../lib/prefs.ts";
-import { openSettings, pluginActive, type SettingsTab, updateHostSettings, useStore } from "../lib/store.ts";
+import { openSettings, pluginActive, type SettingsTab, setWorkspaceWorktree, updateHostSettings, useStore } from "../lib/store.ts";
 import { checkForUpdate, showUpdate, updaterSupported, useUpdater } from "../lib/updater.ts";
 import { GatewaysView } from "./GatewaysView.tsx";
 import { FolderPicker } from "./FolderPicker.tsx";
@@ -27,7 +28,7 @@ import { SubagentsView } from "./SubagentsView.tsx";
 import { LogsView } from "./LogsView.tsx";
 import { VeilView } from "./VeilView.tsx";
 import { SkillsView } from "./SkillsView.tsx";
-import { DEFAULT_COMPACT_PERCENT, MAX_COMPACT_PERCENT, MIN_COMPACT_PERCENT, PERMISSION_MODES, type PermissionMode, THINKING_LEVELS, type ThinkingLevel } from "@prometheus/protocol";
+import { DEFAULT_COMPACT_PERCENT, MAX_COMPACT_PERCENT, MIN_COMPACT_PERCENT, PERMISSION_MODES, type PermissionMode, THINKING_LEVELS, type ThinkingLevel, type WorktreeOverride, type WorktreeStrategy } from "@prometheus/protocol";
 import { Button, PageHeader, Select } from "./ui.tsx";
 import { UsageView } from "./UsageView.tsx";
 import { VoiceSettings } from "./VoiceSettings.tsx";
@@ -277,6 +278,101 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
 			</div>
 			{children}
 		</div>
+	);
+}
+
+const W = defineMessages({
+	zh: {
+		title: "独立工作树",
+		mode: "新对话使用独立工作树",
+		modeHint: "每个对话在自己的 git 工作树里改代码，合并前不会动项目文件夹，同一项目可以放心开多个对话。只对 git 仓库生效，其他文件夹照常直接修改。关闭后新对话与以前完全一样；已有对话不受影响。",
+		off: "关闭",
+		ask: "每次询问",
+		on: "总是开启",
+		default: "询问时默认开启",
+		strategy: "默认合并方式",
+		squash: "压缩为一个提交",
+		merge: "保留历史（merge 提交）",
+		apply: "只应用改动，不提交",
+		projects: "按项目覆盖",
+		projectsHint: "为单个项目指定开或关，优先于上面的设置。",
+		inherit: "跟随全局",
+		projOff: "关闭",
+		projOn: "开启",
+	},
+	en: {
+		title: "Own worktree",
+		mode: "Give new chats their own worktree",
+		modeHint: "Each chat edits code in its own git worktree and leaves the project folder alone until you merge, so several chats can work in one project. Only applies to git repositories; other folders are edited directly as before. Turning it off makes new chats behave exactly as they used to; existing chats are not affected.",
+		off: "Off",
+		ask: "Ask each time",
+		on: "Always",
+		default: "Switch starts on when asking",
+		strategy: "Default merge style",
+		squash: "Squash into one commit",
+		merge: "Keep history (merge commit)",
+		apply: "Apply changes, do not commit",
+		projects: "Per project",
+		projectsHint: "Turn it on or off for one project, overriding the setting above.",
+		inherit: "Follow global",
+		projOff: "Off",
+		projOn: "On",
+	},
+});
+
+function WorktreeSection() {
+	const t = useT(W);
+	const host = useStore((s) => s.hostSettings);
+	const all = useStore((s) => s.workspaces);
+	const home = useStore((s) => s.assistant?.home ?? null);
+	const projects = all.filter((w) => spaceOf(w.path, home) === "work");
+	const mode = host?.worktreeMode ?? "ask";
+	return (
+		<Section title={t("title")}>
+			<Row label={t("mode")} hint={t("modeHint")}>
+				<Segmented
+					value={mode}
+					options={[
+						{ value: "off", label: t("off") },
+						{ value: "ask", label: t("ask") },
+						{ value: "on", label: t("on") },
+					]}
+					onChange={(worktreeMode) => void updateHostSettings({ worktreeMode })}
+				/>
+			</Row>
+			{mode === "ask" && (
+				<Row label={t("default")}>
+					<Toggle checked={host?.worktreeDefault ?? true} disabled={!host} onChange={(worktreeDefault) => void updateHostSettings({ worktreeDefault })} />
+				</Row>
+			)}
+			{mode !== "off" && (
+				<Row label={t("strategy")}>
+					<Select className="max-w-80" value={host?.worktreeStrategy ?? "squash"} disabled={!host} onChange={(e) => void updateHostSettings({ worktreeStrategy: e.target.value as WorktreeStrategy })}>
+						<option value="squash">{t("squash")}</option>
+						<option value="merge">{t("merge")}</option>
+						<option value="apply">{t("apply")}</option>
+					</Select>
+				</Row>
+			)}
+			{projects.length > 0 && (
+				<Row label={t("projects")} hint={t("projectsHint")}>
+					<div className="flex w-full max-w-md flex-col gap-1.5">
+						{projects.map((w) => (
+							<div key={w.id} className="flex items-center gap-2">
+								<span className="min-w-0 flex-1 truncate text-sm text-ink-200" title={w.path}>
+									{w.name}
+								</span>
+								<Select className="w-auto" value={w.worktree ?? "inherit"} onChange={(e) => void setWorkspaceWorktree(w.id, e.target.value as WorktreeOverride)}>
+									<option value="inherit">{t("inherit")}</option>
+									<option value="off">{t("projOff")}</option>
+									<option value="on">{t("projOn")}</option>
+								</Select>
+							</div>
+						))}
+					</div>
+				</Row>
+			)}
+		</Section>
 	);
 }
 
@@ -668,6 +764,8 @@ function ChatSettings() {
 						<DefaultPermissionRow />
 						<DefaultThinkingRow />
 					</Section>
+
+					<WorktreeSection />
 
 					<Section title={t("notifications")}>
 						<Row label={t("notifyOnDone")} hint={notifyMsg ?? t("notifyOnDoneHint")}>
