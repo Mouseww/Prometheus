@@ -114,6 +114,8 @@ export function WorktreePanel() {
 		return <div className="mb-2 rounded-xl border border-ink-800 bg-ink-900/60 px-3 py-1.5 text-xs text-ink-400">{t("gone")}</div>;
 	}
 	if (!status) return null;
+	// Nothing to merge (no uncommitted changes, no commits ahead of the base): the strip would only be noise.
+	if (files.length === 0 && status.ahead === 0) return null;
 
 	const totals = files.reduce((a, f) => ({ added: a.added + f.added, deleted: a.deleted + f.deleted }), { added: 0, deleted: 0 });
 	const chosen = strategy ?? hostStrategy;
