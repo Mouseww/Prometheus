@@ -11,10 +11,11 @@ import { Button, Collapse, Select } from "./ui.tsx";
 const M = defineMessages({
 	zh: {
 		title: "独立工作树",
-		summary: "{n} 个文件 · 领先 {a}",
-		behind: " · 落后 {b}",
-		clean: "还没有改动",
-		review: "审查全部",
+		pending: "已改 {n} 个文件，待合并到项目",
+		pendingCommits: "有 {a} 个提交待合并到项目",
+		hint: "这些改动在独立分支 {branch} 里，合并后才会进入项目文件夹。",
+		behind: "基础分支有 {b} 个新提交，可先同步。",
+		review: "审查",
 		reviewTitle: "本对话在独立工作树里的改动",
 		reviewSub: "相对本对话开始时的版本",
 		sync: "同步基础分支",
@@ -39,10 +40,11 @@ const M = defineMessages({
 	},
 	en: {
 		title: "Own worktree",
-		summary: "{n} files · {a} ahead",
-		behind: " · {b} behind",
-		clean: "No changes yet",
-		review: "Review all",
+		pending: "{n} files changed, not merged yet",
+		pendingCommits: "{a} commits not merged yet",
+		hint: "These changes live on branch {branch} and reach the project folder only after you merge.",
+		behind: "The base branch has {b} new commits; you can sync first.",
+		review: "Review",
 		reviewTitle: "Changes in this chat's worktree",
 		reviewSub: "Against where this chat started",
 		sync: "Sync base branch",
@@ -148,31 +150,31 @@ ${t("discardBody", { n: files.length, branch: wt.branch })}`, { danger: true, co
 	};
 
 	return (
-		<div className="mb-2 overflow-hidden rounded-xl border border-ink-800 bg-ink-900/60">
+		<div className="mb-2 overflow-hidden rounded-xl border border-ink-800/70 bg-ink-900/40">
 			<div className="flex items-center">
 				<button
 					type="button"
 					onClick={() => setOpen(!open)}
 					aria-expanded={open}
-					className="flex min-w-0 flex-1 items-center gap-2 px-3 py-1.5 text-left text-xs text-ink-300 transition-colors hover:text-ink-100"
+					title={wt.branch}
+					className="flex min-w-0 flex-1 items-center gap-2 px-3 py-1 text-left text-xs text-ink-400 transition-colors hover:text-ink-200"
 				>
 					<ChevronRight className={clsx("size-3.5 shrink-0 transition-transform", open && "rotate-90")} />
-					<GitBranch className="size-3.5 shrink-0 text-ember-400" />
-					<span className="truncate font-mono">{wt.branch}</span>
-					<span className="shrink-0 text-ink-500">
-						{files.length ? t("summary", { n: files.length, a: status.ahead }) : t("clean")}
-						{status.behind > 0 && t("behind", { b: status.behind })}
-					</span>
+					<span className="truncate">{files.length ? t("pending", { n: files.length }) : t("pendingCommits", { a: status.ahead })}</span>
 					{files.length > 0 && <LineCounts {...totals} />}
 				</button>
 				{files.length > 0 && (
-					<button type="button" onClick={() => setReview({})} className="shrink-0 px-3 py-1.5 text-xs text-ember-300 hover:underline">
+					<button type="button" onClick={() => setReview({})} className="shrink-0 px-3 py-1 text-xs text-ember-300 hover:underline">
 						{t("review")}
 					</button>
 				)}
 			</div>
 			<Collapse open={open}>
 				<div className="border-t border-ink-800">
+					<p className="px-3 pt-2 pb-1 text-xs text-ink-500">
+						{t("hint", { branch: wt.branch })}
+						{status.behind > 0 && ` ${t("behind", { b: status.behind })}`}
+					</p>
 					{files.length > 0 && (
 						<ul className="max-h-40 overflow-y-auto p-1">
 							{files.map((f) => (
