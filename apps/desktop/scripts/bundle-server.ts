@@ -34,6 +34,8 @@ const sources = [
 	"packages/gateway",
 	"packages/plugin-sdk",
 	"packages/subagents",
+	"packages/hub",
+	"plugins/team",
 	"plugins/knowledge-lancedb",
 	"plugins/mcp",
 	"plugins/skills",
