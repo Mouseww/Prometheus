@@ -206,6 +206,18 @@ describe("worktree mode", () => {
 		expect(readFileSync(join(repo, "node_modules", "dep.js"), "utf8")).toBe("dep\n");
 	});
 
+	it("also links the node_modules of workspace packages", async () => {
+		mkdirSync(join(repo, "apps", "web", "node_modules"), { recursive: true });
+		writeFileSync(join(repo, "apps", "web", "package.json"), "{}\n");
+		sh(repo, "add", "-A");
+		sh(repo, "commit", "-qm", "pkg");
+		const wt = await open("s1");
+		expect(lstatSync(join(wt.path, "apps", "web", "node_modules")).isSymbolicLink()).toBe(true);
+		writeFileSync(join(wt.cwd, "a.txt"), "x\n");
+		await mgr.checkpoint("s1");
+		expect(sh(wt.path, "ls-tree", "-r", "--name-only", "HEAD")).not.toMatch(/node_modules/);
+	});
+
 	it("maps a checkout back to its project, so chats do not make up new projects", async () => {
 		const wt = await open("s1");
 		expect(mgr.rootOf(wt.cwd)).toBe(wt.root);

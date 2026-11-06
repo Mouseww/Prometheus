@@ -92,6 +92,23 @@ function removeLink(path: string): void {
 	}
 }
 
+/** Folders one or two levels down that carry their own node_modules (apps/web, packages/core, ...). */
+function packageDirs(base: string): string[] {
+	const out: string[] = [];
+	const dirs = (d: string): string[] => {
+		try {
+			return readdirSync(d, { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== "node_modules" && !e.name.startsWith(".")).map((e) => e.name);
+		} catch {
+			return [];
+		}
+	};
+	for (const a of dirs(base)) {
+		if (existsSync(join(base, a, "node_modules"))) out.push(a);
+		for (const b of dirs(join(base, a))) if (existsSync(join(base, a, b, "node_modules"))) out.push(`${a}/${b}`);
+	}
+	return out;
+}
+
 interface ProjectConfig {
 	link?: string[];
 	copy?: string[];
@@ -217,6 +234,8 @@ export class WorktreeManager {
 			const rel = relative(repo, base);
 			const target = join(path, rel);
 			for (const name of link) this.linkOne(join(base, name), join(target, name), join(rel, name), skip);
+			// Workspace packages (pnpm, npm, yarn) keep their own node_modules next to the root one.
+			if (!cfg.link) for (const sub of packageDirs(base)) this.linkOne(join(base, sub, "node_modules"), join(target, sub, "node_modules"), join(rel, sub, "node_modules"), skip);
 			const envs = copy ?? (existsSync(base) ? readdirSync(base).filter((f) => /^\.env(\..+)?$/.test(f)) : []);
 			for (const name of envs) {
 				const from = join(base, name);
