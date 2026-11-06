@@ -12,7 +12,6 @@ const M = defineMessages({
 	zh: {
 		title: "独立工作树",
 		pending: "已改 {n} 个文件，待合并到项目",
-		pendingCommits: "有 {a} 个提交待合并到项目",
 		hint: "这些改动在独立分支 {branch} 里，合并后才会进入项目文件夹。",
 		behind: "基础分支有 {b} 个新提交，可先同步。",
 		review: "审查",
@@ -41,7 +40,6 @@ const M = defineMessages({
 	en: {
 		title: "Own worktree",
 		pending: "{n} files changed, not merged yet",
-		pendingCommits: "{a} commits not merged yet",
 		hint: "These changes live on branch {branch} and reach the project folder only after you merge.",
 		behind: "The base branch has {b} new commits; you can sync first.",
 		review: "Review",
@@ -116,8 +114,8 @@ export function WorktreePanel() {
 		return <div className="mb-2 rounded-xl border border-ink-800 bg-ink-900/60 px-3 py-1.5 text-xs text-ink-400">{t("gone")}</div>;
 	}
 	if (!status) return null;
-	// Nothing to merge (no uncommitted changes, no commits ahead of the base): the strip would only be noise.
-	if (files.length === 0 && status.ahead === 0) return null;
+	// Nothing left to merge (no file differs from the base branch, whether or not the chat has commits): the strip would only be noise.
+	if (files.length === 0) return null;
 
 	const totals = files.reduce((a, f) => ({ added: a.added + f.added, deleted: a.deleted + f.deleted }), { added: 0, deleted: 0 });
 	const chosen = strategy ?? hostStrategy;
@@ -160,7 +158,7 @@ ${t("discardBody", { n: files.length, branch: wt.branch })}`, { danger: true, co
 					className="flex min-w-0 flex-1 items-center gap-2 px-3 py-1 text-left text-xs text-ink-400 transition-colors hover:text-ink-200"
 				>
 					<ChevronRight className={clsx("size-3.5 shrink-0 transition-transform", open && "rotate-90")} />
-					<span className="truncate">{files.length ? t("pending", { n: files.length }) : t("pendingCommits", { a: status.ahead })}</span>
+					<span className="truncate">{t("pending", { n: files.length })}</span>
 					{files.length > 0 && <LineCounts {...totals} />}
 				</button>
 				{files.length > 0 && (

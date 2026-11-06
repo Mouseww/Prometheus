@@ -53,6 +53,24 @@ describe("worktree mode", () => {
 		expect(st.blocked).toBeUndefined();
 	});
 
+	it("drops files whose content already landed on the base branch some other way", async () => {
+		const wt = await open("s1");
+		writeFileSync(join(wt.cwd, "a.txt"), "same\n");
+		writeFileSync(join(wt.cwd, "b.txt"), "mine\n");
+		await mgr.checkpoint("s1");
+		// The same edit to a.txt reaches the project folder outside the panel (direct commit on the base branch).
+		writeFileSync(join(repo, "a.txt"), "same\n");
+		sh(repo, "commit", "-q", "-am", "direct");
+		const st = await mgr.status("s1");
+		expect(st.files.map((f) => f.path)).toEqual(["b.txt"]);
+		// Once every file has landed, nothing is left to merge.
+		writeFileSync(join(repo, "b.txt"), "mine\n");
+		sh(repo, "commit", "-q", "-am", "direct 2");
+		const done = await mgr.status("s1");
+		expect(done.files).toEqual([]);
+		expect(done.blocked).toBe("worktreeEmpty");
+	});
+
 	it("rejects non-git folders and empty repos with a code", async () => {
 		const plain = join(tmp, "plain");
 		mkdirSync(plain);

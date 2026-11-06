@@ -384,6 +384,15 @@ export class WorktreeManager {
 				i += 2;
 			}
 		}
+		// Files whose content already equals the base branch tip landed some other way (direct push, cherry-pick, an edit in the
+		// project folder): there is nothing left to merge for them, so they are not "changes" any more.
+		if (out.size) {
+			const differing = await git(wt.path, ["diff", "--name-only", "--no-renames", "-z", wt.baseBranch]);
+			if (differing.code === 0) {
+				const still = new Set(differing.stdout.split(" ").filter(Boolean));
+				for (const path of [...out.keys()]) if (!still.has(path)) out.delete(path);
+			}
+		}
 		const untracked = await git(wt.path, ["ls-files", "--others", "--exclude-standard", "-z", "--", ".", ...this.excludes(wt)]);
 		for (const f of untracked.stdout.split("\0")) if (f) out.set(f, "?");
 		out.delete("");
@@ -434,7 +443,7 @@ export class WorktreeManager {
 		} else if (mainDirty.length) {
 			out.blocked = "worktreeMainDirty";
 			out.blockedDetail = mainDirty.slice(0, 8).join(", ");
-		} else if (!files.length && ahead === 0) {
+		} else if (!files.length) {
 			out.blocked = "worktreeEmpty";
 		}
 		return out;
