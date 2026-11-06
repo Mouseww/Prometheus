@@ -38,7 +38,6 @@ import { delegationTitle, groupByAge, type AgeGroup, spaceOf } from "../lib/spac
 import { PlatformSwitcher } from "./PlatformSwitcher.tsx";
 import { SpaceSwitcher } from "./SpaceSwitcher.tsx";
 import {
-	addWorkspace,
 	archiveSession,
 	call,
 	deleteSession,
@@ -55,7 +54,7 @@ import {
 	startNewChat,
 	useStore,
 } from "../lib/store.ts";
-import { FolderPicker } from "./FolderPicker.tsx";
+import { WorkspaceFolders } from "./WorkspaceFolders.tsx";
 import { usePopover } from "./TitleBar.tsx";
 
 const M = defineMessages({
@@ -96,6 +95,7 @@ const M = defineMessages({
 		confirmRemove: "从列表移除工作区「{name}」？会话文件不会被删除。",
 		renameWorkspace: "重命名工作区",
 		revealWorkspace: "在文件管理器中打开",
+		manageFolders: "管理文件夹",
 		empty: "暂无对话",
 		disconnect: "断开连接",
 		local: "本机",
@@ -139,6 +139,7 @@ const M = defineMessages({
 		confirmRemove: "Remove workspace \"{name}\" from the list? Session files are kept.",
 		renameWorkspace: "Rename workspace",
 		revealWorkspace: "Open in file manager",
+		manageFolders: "Manage folders",
 		empty: "No chats yet",
 		disconnect: "Disconnect",
 		local: "Local",
@@ -392,6 +393,7 @@ function WorkspaceGroup({ w, sessions, activeId, current }: { w: WorkspaceInfo; 
 	const live = sessions.filter((s) => !s.archived);
 	const archived = sessions.filter((s) => s.archived);
 	const menu = usePopover();
+	const [foldersOf, setFoldersOf] = useState<WorkspaceInfo | null>(null);
 	// One collapsed workspace at a time per app run (plus whichever is open), remembered per folder.
 	const open = useExpanded(w.id);
 	// Opening a chat in here is a request to see this workspace, not to leave it folded.
@@ -443,6 +445,16 @@ function WorkspaceGroup({ w, sessions, activeId, current }: { w: WorkspaceInfo; 
 							</button>
 							<button
 								type="button"
+								className={clsx(menuItem, "text-ink-200 hover:bg-ink-800")}
+								onClick={() => {
+									menu.setOpen(false);
+									setFoldersOf(w);
+								}}
+							>
+								<FolderPlus className="size-3.5" /> {t("manageFolders")}
+							</button>
+							<button
+								type="button"
 								className={clsx(menuItem, "text-rose-400 hover:bg-rose-400/10")}
 								onClick={() => {
 									menu.setOpen(false);
@@ -457,6 +469,7 @@ function WorkspaceGroup({ w, sessions, activeId, current }: { w: WorkspaceInfo; 
 				<button type="button" onClick={() => void newChatIn(w)} className="rounded p-0.5 text-ink-500 hover:bg-ink-700 hover:text-ember-300" title={t("newChat")}>
 					<Plus className="size-4" />
 				</button>
+				{foldersOf && <WorkspaceFolders existing={foldersOf} onClose={() => setFoldersOf(null)} />}
 			</div>
 			<Collapse open={open.isOpen}>
 				<div className="mt-0.5 ml-3 space-y-0.5 border-l border-ink-800 pl-1.5">
@@ -697,14 +710,7 @@ export function Sidebar({ target, onDisconnect }: { target: BackendTarget; onDis
 			</div>
 
 			{picking && (
-				<FolderPicker
-					onClose={() => setPicking(false)}
-					onPick={async (path) => {
-						setPicking(false);
-						const w = await addWorkspace(path);
-						if (w) await newChatIn(w);
-					}}
-				/>
+				<WorkspaceFolders onClose={() => setPicking(false)} onDone={(w) => void newChatIn(w)} />
 			)}
 		</aside>
 	);

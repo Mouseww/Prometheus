@@ -3,8 +3,8 @@ import { Check, ChevronDown, FolderOpen, FolderPlus, User } from "lucide-react";
 import { useMemo, useState } from "react";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { spaceOf } from "../lib/spaces.ts";
-import { addWorkspace, chooseWorkspace, useSpace, useStore } from "../lib/store.ts";
-import { FolderPicker } from "./FolderPicker.tsx";
+import { chooseWorkspace, useSpace, useStore } from "../lib/store.ts";
+import { WorkspaceFolders } from "./WorkspaceFolders.tsx";
 import { usePopover } from "./TitleBar.tsx";
 
 const M = defineMessages({
@@ -99,14 +99,7 @@ export function WorkspacePicker({ children }: { children?: React.ReactNode }) {
 				</div>
 			)}
 			{picking && (
-				<FolderPicker
-					onClose={() => setPicking(false)}
-					onPick={async (path) => {
-						setPicking(false);
-						const w = await addWorkspace(path);
-						if (w) await chooseWorkspace(w.path);
-					}}
-				/>
+				<WorkspaceFolders onClose={() => setPicking(false)} onDone={(w) => void chooseWorkspace(w.path)} />
 			)}
 		</div>
 	);

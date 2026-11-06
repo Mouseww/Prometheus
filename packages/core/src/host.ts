@@ -223,6 +223,13 @@ export class PrometheusHost {
 		this.permissions = new PermissionStore(join(runtime.dataDir, "sessions", "permissions.json"));
 		runtime.plugins.reloadSessions = () => this.reloadSessions();
 		runtime.plugins.workspaces = async () => (await this.workspaces.list()).map((w) => ({ id: w.id, path: w.path, name: w.name }));
+		runtime.plugins.hostProviders.push(async (req) => {
+			const extras = await this.workspaces.extras(workspaceId(this.worktrees.rootOf(req.cwd)));
+			if (!extras.length) return undefined;
+			return { static: { sections: { extra_folders: `Additional project folders (the working folder is the primary one; these are also part of the project, read and edit files there by absolute path):
+${extras.map((p) => `- ${p}`).join("
+")}` }, guidelines: [] } };
+		});
 		runtime.plugins.runAgent = (opts) => this.runAgent(opts);
 		runtime.plugins.openSession = (opts) => this.openSession(opts);
 		runtime.plugins.sessionAccess = (id) => this.sessionAccess(id);
@@ -1208,8 +1215,13 @@ export class PrometheusHost {
 			// every session file to answer this made opening a workspace as slow as listing all history.
 			return this.workspaces.list();
 		},
-		"workspace.add": async ({ path, name }) => {
-			const w = await this.workspaces.add(path, name);
+		"workspace.add": async ({ path, name, extraPaths }) => {
+			const w = await this.workspaces.add(path, name, extraPaths);
+			this.listener.sessionsChanged();
+			return w;
+		},
+		"workspace.setFolders": async ({ id, extraPaths }) => {
+			const w = await this.workspaces.setFolders(id, extraPaths);
 			this.listener.sessionsChanged();
 			return w;
 		},

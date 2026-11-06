@@ -23,6 +23,23 @@ export function workspaceId(path: string): string {
 	return createHash("sha1").update(key).digest("hex").slice(0, 12);
 }
 
+/** Keeps only existing folders other than the primary one, without duplicates. */
+function setExtras(w: WorkspaceInfo, paths: string[]): void {
+	const seen = new Set([workspaceId(w.path)]);
+	const out: string[] = [];
+	for (const p of paths) {
+		if (!p?.trim()) continue;
+		const dir = normalizeDir(p);
+		const id = workspaceId(dir);
+		if (seen.has(id)) continue;
+		if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new AppError("dirNotFound", { dir });
+		seen.add(id);
+		out.push(dir);
+	}
+	if (out.length) w.extraPaths = out;
+	else delete w.extraPaths;
+}
+
 export class WorkspaceStore {
 	private readonly store: JsonStore<WorkspaceFile>;
 	private cache: WorkspaceFile | undefined;
@@ -58,7 +75,7 @@ export class WorkspaceStore {
 	}
 
 	/** Explicit add (or reuse): validates the directory and un-hides it. */
-	async add(path: string, name?: string): Promise<WorkspaceInfo> {
+	async add(path: string, name?: string, extraPaths?: string[]): Promise<WorkspaceInfo> {
 		const dir = normalizeDir(path);
 		if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new AppError("dirNotFound", { dir });
 		const id = workspaceId(dir);
@@ -70,9 +87,11 @@ export class WorkspaceStore {
 			if (existing) {
 				existing.lastUsedAt = now;
 				if (name?.trim()) existing.name = name.trim();
+				if (extraPaths) setExtras(existing, extraPaths);
 				result = existing;
 			} else {
 				result = { id, path: dir, name: name?.trim() || basename(dir) || dir, createdAt: now, lastUsedAt: now };
+				if (extraPaths) setExtras(result, extraPaths);
 				d.workspaces.push(result);
 			}
 		});
@@ -111,6 +130,21 @@ export class WorkspaceStore {
 		});
 		if (!result) throw new AppError("workspaceNotFound", { id });
 		return result;
+	}
+
+	/** Replaces the additional folders of a project. */
+	async setFolders(id: string, extraPaths: string[]): Promise<WorkspaceInfo> {
+		let result: WorkspaceInfo | undefined;
+		await this.write((d) => {
+			result = d.workspaces.find((w) => w.id === id);
+			if (result) setExtras(result, extraPaths);
+		});
+		if (!result) throw new AppError("workspaceNotFound", { id });
+		return result;
+	}
+
+	async extras(id: string): Promise<string[]> {
+		return (await this.data()).workspaces.find((w) => w.id === id)?.extraPaths ?? [];
 	}
 
 	async override(id: string): Promise<WorktreeOverride> {
