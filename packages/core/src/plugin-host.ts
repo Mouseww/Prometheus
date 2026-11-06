@@ -197,6 +197,8 @@ export class PluginHost {
 	/** Wired by the session host; no-ops in the TUI where PI owns the session. */
 	reloadSessions: () => Promise<void> = async () => {};
 	workspaces: () => Promise<WorkspaceRef[]> = async () => [];
+	/** Context the host itself adds for every session (e.g. a project's additional folders). */
+	readonly hostProviders: ContextProvider[] = [];
 	runAgent: (options: AgentRunOptions) => Promise<AgentRunResult> = async () => {
 		throw new AppError("pluginBackgroundUnsupported");
 	};
@@ -286,6 +288,7 @@ export class PluginHost {
 	 */
 	async collectContext(req: ContextRequest): Promise<CollectedContext> {
 		const jobs = [...this.entries].flatMap((entry) => [...(entry.reg?.providers ?? [])].map((provider) => ({ plugin: entry.info.name, provider })));
+		for (const provider of this.hostProviders) jobs.push({ plugin: "prometheus", provider });
 		return this.gather(jobs, req);
 	}
 
@@ -393,7 +396,7 @@ export class PluginHost {
 
 	/** Like `collectContext`, but also runs the context providers captured from legacy `extension` factories (their output arrives as `turn`). */
 	async collectContextExternal(req: ContextRequest): Promise<CollectedContext> {
-		return this.gather((await this.externalView()).contextProviders, req);
+		return this.gather([...(await this.externalView()).contextProviders, ...this.hostProviders.map((provider) => ({ plugin: "prometheus", provider }))], req);
 	}
 
 	/** What does not work outside PI, per plugin; plugins without findings are left out. */

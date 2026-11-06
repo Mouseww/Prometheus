@@ -1209,9 +1209,16 @@ export async function forkMessage(index: number): Promise<void> {
 	toast(tr(M, "forked"));
 }
 
-export async function addWorkspace(path: string): Promise<WorkspaceInfo | undefined> {
-	const w = await call((c) => c.rpc("workspace.add", { path }));
+export async function addWorkspace(path: string, extraPaths?: string[]): Promise<WorkspaceInfo | undefined> {
+	const w = await call((c) => c.rpc("workspace.add", { path, ...(extraPaths?.length ? { extraPaths } : {}) }));
 	if (w) await refreshWorkspaces();
+	return w;
+}
+
+/** Replaces a project's additional folders; the primary folder stays as it is. */
+export async function setWorkspaceFolders(id: string, extraPaths: string[]): Promise<WorkspaceInfo | undefined> {
+	const w = await call((c) => c.rpc("workspace.setFolders", { id, extraPaths }));
+	if (w) set((s) => ({ workspaces: s.workspaces.map((x) => (x.id === id ? w : x)) }));
 	return w;
 }
 

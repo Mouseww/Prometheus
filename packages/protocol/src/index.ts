@@ -411,6 +411,8 @@ export interface WorkspaceInfo {
 	lastUsedAt: string;
 	/** Per-project override of the worktree setting; absent means inherit. */
 	worktree?: WorktreeOverride;
+	/** Additional folders the agent may also work in; `path` stays the primary one. */
+	extraPaths?: string[];
 }
 
 export interface DirListing {
@@ -1330,7 +1332,8 @@ export interface RpcMethods {
 	"message.fork": { params: { sessionId: string; ref: MessageRef }; result: { snapshot: SessionSnapshot; editorText?: string } };
 
 	"workspace.list": { params: Record<string, never>; result: WorkspaceInfo[] };
-	"workspace.add": { params: { path: string; name?: string }; result: WorkspaceInfo };
+	"workspace.add": { params: { path: string; name?: string; extraPaths?: string[] }; result: WorkspaceInfo };
+	"workspace.setFolders": { params: { id: string; extraPaths: string[] }; result: WorkspaceInfo };
 	"workspace.rename": { params: { id: string; name: string }; result: WorkspaceInfo };
 	"workspace.remove": { params: { id: string }; result: null };
 	/** Sets the project's worktree override. */
