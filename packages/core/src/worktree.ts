@@ -389,7 +389,7 @@ export class WorktreeManager {
 		if (out.size) {
 			const differing = await git(wt.path, ["diff", "--name-only", "--no-renames", "-z", wt.baseBranch]);
 			if (differing.code === 0) {
-				const still = new Set(differing.stdout.split(" ").filter(Boolean));
+				const still = new Set(differing.stdout.split("\0").filter(Boolean));
 				for (const path of [...out.keys()]) if (!still.has(path)) out.delete(path);
 			}
 		}
