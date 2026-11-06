@@ -2,6 +2,9 @@ import clsx from "clsx";
 import { Check, Copy, Eye, FileText, FolderTree, Globe, LoaderCircle, PanelRightClose, RefreshCw, SquareTerminal, X } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { copyToClipboard } from "../lib/clipboard.ts";
+import { usePanelWidth } from "../lib/panelWidth.ts";
+import { useIsMobile } from "../lib/viewport.ts";
+import { ResizeHandle } from "./ResizeHandle.tsx";
 import { highlightLines, languageFor } from "../lib/highlight.ts";
 import type { WorkbenchFile } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
@@ -58,19 +61,26 @@ export function WorkbenchPanel() {
 	const pageOpen = useStore((s) => s.view !== "chat");
 	const wide = useStore((s) => s.workbench.wide ?? false);
 	const collapsed = useStore((s) => s.workbench.collapsed ?? false);
+	const isMobile = useIsMobile();
+	const fileWidth = usePanelWidth("workbench", { min: 320, max: 1100, edge: "left" });
+	const browserWidth = usePanelWidth("workbench.browser", { min: 360, max: 1400, edge: "left" });
 	if (!enabled || !tabs.length) return null;
 	const tab = tabs.find((x) => x.id === active) ?? tabs[0];
 	if (!tab) return null;
 	const browser = tab.kind === "browser";
+	const pw = browser ? browserWidth : fileWidth;
+	const resizable = !isMobile && !(browser && wide);
 	return (
 		<aside
 			className={clsx(
 				pageOpen || collapsed ? "hidden" : "flex",
-				"shrink-0 flex-col border-l hairline bg-ink-900/80 backdrop-blur max-md:absolute max-md:inset-y-0 max-md:right-0 max-md:z-30 max-md:w-full max-md:bg-ink-900 max-md:shadow-2xl",
+				"relative shrink-0 flex-col border-l hairline bg-ink-900/80 backdrop-blur max-md:absolute max-md:inset-y-0 max-md:right-0 max-md:z-30 max-md:w-full max-md:bg-ink-900 max-md:shadow-2xl",
 				browser && wide ? "w-[min(80rem,calc(100%-24rem))]" : browser ? "w-[32rem] lg:w-[44rem] 2xl:w-[56rem]" : "w-[28rem] max-md:w-[min(30rem,100%)] lg:w-[38rem]",
 			)}
+			style={resizable && pw.width !== null ? { width: pw.width } : undefined}
 			aria-label={t("title")}
 		>
+			{resizable && <ResizeHandle panel={pw} />}
 			<div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b hairline px-1.5 py-1">
 				{tabs.map((x) => (
 					<div key={x.id} className={clsx("group flex max-w-48 shrink-0 items-center gap-1.5 rounded-md py-1 pl-2 pr-1 text-xs", x.id === tab.id ? "bg-ink-800 text-ink-100" : "text-ink-400 hover:bg-ink-850")}>

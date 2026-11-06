@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { SIDEBAR_MAX, SIDEBAR_MIN, useSidebarWidth } from "./lib/sidebarWidth.ts";
+import { usePanelWidth } from "./lib/panelWidth.ts";
+import { ResizeHandle } from "./components/ResizeHandle.tsx";
 import { AutomationsView } from "./components/AutomationsView.tsx";
 import { FlowsView } from "./components/FlowsView.tsx";
 import { ChatView } from "./components/ChatView.tsx";
@@ -44,7 +45,7 @@ export function App() {
 	const [wantsPassword, setWantsPassword] = useState(false);
 	const isMobile = useIsMobile();
 	const [sidebar, setSidebar] = useState(() => window.innerWidth >= 768);
-	const sb = useSidebarWidth();
+	const sb = usePanelWidth("sidebar", { min: 220, max: 560, edge: "right" });
 	const conn = useStore((s) => s.conn);
 	const view = useStore((s) => s.view);
 	const title = useStore((s) => s.title);
@@ -267,23 +268,10 @@ export function App() {
 				{sidebar && (
 					<div
 						className={isMobile ? "absolute inset-y-0 left-0 z-40 flex w-[min(20rem,88%)] animate-slide-in shadow-2xl shadow-black/60" : "relative flex shrink-0 animate-slide-in"}
-						style={isMobile ? undefined : { width: sb.width }}
+						style={isMobile ? undefined : { width: sb.width ?? 288 }}
 					>
 						<Sidebar target={target} onDisconnect={() => setTarget(null)} />
-						{!isMobile && (
-							<div
-								role="separator"
-								aria-orientation="vertical"
-								aria-valuemin={SIDEBAR_MIN}
-								aria-valuemax={SIDEBAR_MAX}
-								aria-valuenow={sb.width}
-								tabIndex={0}
-								className="group absolute inset-y-0 -right-1 z-20 w-2 cursor-col-resize touch-none outline-none"
-								{...sb.handleProps}
-							>
-								<span className={`absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors group-hover:bg-ember-500/70 group-focus-visible:bg-ember-500/70 ${sb.dragging ? "bg-ember-500" : "bg-transparent"}`} />
-							</div>
-						)}
+						{!isMobile && <ResizeHandle panel={sb} />}
 					</div>
 				)}
 				<main className="relative flex min-w-0 flex-1 flex-col">

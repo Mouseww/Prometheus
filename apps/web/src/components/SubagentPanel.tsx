@@ -4,6 +4,9 @@ import { Bot, Brain, Check, ChevronDown, ChevronRight, CircleAlert, Clock, ListT
 import { useEffect, useMemo, useRef, useState } from "react";
 import { sortSubagents, type SubagentDetail, type SubagentRun, type SubagentState, type SubagentStep } from "@prometheus/protocol";
 import { fmtTokens } from "../lib/format.ts";
+import { usePanelWidth } from "../lib/panelWidth.ts";
+import { useIsMobile } from "../lib/viewport.ts";
+import { ResizeHandle } from "./ResizeHandle.tsx";
 import { localizeError } from "../lib/errors.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { closeSubagentRegion, NO_SUBAGENTS, openSubagentList, selectSubagent, setSubagentSort, type SubagentSort, stopSubagent, useStore } from "../lib/store.ts";
@@ -407,13 +410,17 @@ export function SubagentPanel() {
 	const selected = useStore((s) => s.subagentUi.selected);
 	const runs = useStore((s) => s.session?.subagents ?? NO_SUBAGENTS);
 	const hasSession = useStore((s) => s.session !== null);
+	const isMobile = useIsMobile();
+	const pw = usePanelWidth("subagents", { min: 300, max: 900, edge: "left" });
 	if (!open || !hasSession) return null;
 	const run = runs.find((r) => r.id === selected);
 	return (
 		<aside
-			className="flex w-[22rem] shrink-0 flex-col border-l hairline bg-ink-900/80 backdrop-blur max-md:bg-ink-900 max-md:absolute max-md:inset-y-0 max-md:right-0 max-md:z-30 max-md:w-[min(24rem,100%)] max-md:shadow-2xl lg:w-[26rem]"
+			className="relative flex w-[22rem] shrink-0 flex-col border-l hairline bg-ink-900/80 backdrop-blur max-md:bg-ink-900 max-md:absolute max-md:inset-y-0 max-md:right-0 max-md:z-30 max-md:w-[min(24rem,100%)] max-md:shadow-2xl lg:w-[26rem]"
+			style={!isMobile && pw.width !== null ? { width: pw.width } : undefined}
 			aria-label={t("title")}
 		>
+			{!isMobile && <ResizeHandle panel={pw} />}
 			{listOpen && (
 				<div className={clsx("flex min-h-0 flex-col", detailOpen ? "basis-2/5" : "flex-1")}>
 					<ListRegion runs={runs} selected={selected} />
