@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { BarChart3, Blocks, Bug, Boxes, Bot, Info, Cable, Check, FolderOpen, Globe, Laptop, Layers, Mic, Moon, Network, Package, Palette, MessagesSquare, Plug, Server, Shield, Sparkles, Sun, SlidersHorizontal, Terminal } from "lucide-react";
+import { BarChart3, Blocks, Bug, Boxes, Bot, Info, Cable, Check, FolderOpen, Globe, Laptop, Layers, Mic, Moon, Network, Package, Palette, MessageCircle, MessagesSquare, Plug, Server, Shield, Sparkles, Sun, SlidersHorizontal, Terminal } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { isAndroid, isDesktopShell, isTauri, loadMode } from "../lib/backend.ts";
@@ -31,6 +31,7 @@ import { SkillsView } from "./SkillsView.tsx";
 import { DEFAULT_COMPACT_PERCENT, MAX_COMPACT_PERCENT, MIN_COMPACT_PERCENT, PERMISSION_MODES, type PermissionMode, THINKING_LEVELS, type ThinkingLevel, type WorktreeOverride, type WorktreeStrategy } from "@prometheus/protocol";
 import { Button, PageHeader, Select } from "./ui.tsx";
 import { UsageView } from "./UsageView.tsx";
+import { ChannelsSettings } from "./ChannelsSettings.tsx";
 import { VoiceSettings } from "./VoiceSettings.tsx";
 
 const M = defineMessages({
@@ -48,6 +49,7 @@ const M = defineMessages({
 		veil: "隐私面罩",
 		logs: "错误日志",
 		voice: "语音输入",
+		channels: "IM 通道",
 		network: "网络访问",
 		runtimes: "运行环境",
 		platforms: "多平台",
@@ -159,6 +161,7 @@ const M = defineMessages({
 		subagents: "Subagents",
 		veil: "Privacy Mask",
 		logs: "Error log",
+		channels: "IM channels",
 		voice: "Voice",
 		network: "Network access",
 		runtimes: "Runtimes",
@@ -797,6 +800,7 @@ const TAB_GROUPS: { id: SettingsTab; icon: typeof Network; plugin?: string; loca
 		{ id: "agents", icon: Bot },
 		{ id: "gateways", icon: Network },
 		{ id: "voice", icon: Mic, plugin: "voice" },
+		{ id: "channels", icon: MessageCircle, plugin: "assistant" },
 	],
 	[
 		{ id: "modes", icon: Layers, plugin: "modes" },
@@ -866,6 +870,7 @@ export function SettingsView() {
 				{tab === "skills" && <SkillsView />}
 				{tab === "market" && <MarketView />}
 				{tab === "voice" && <VoiceSettings />}
+				{tab === "channels" && <ChannelsSettings />}
 				{tab === "network" && <NetworkSettings />}
 				{tab === "runtimes" && <RuntimesSettings />}
 				{tab === "modes" && <ModesView />}

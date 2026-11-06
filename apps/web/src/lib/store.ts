@@ -182,7 +182,7 @@ function savedSort(): SubagentSort {
 	return v === "started" || v === "ended" ? v : "status";
 }
 
-export type SettingsTab = "general" | "appearance" | "chat" | "agents" | "gateways" | "mcp" | "connectors" | "skills" | "modes" | "subagents" | "market" | "veil" | "logs" | "plugins" | "voice" | "network" | "runtimes" | "platforms" | "ssh" | "usage" | "about";
+export type SettingsTab = "general" | "appearance" | "chat" | "agents" | "gateways" | "mcp" | "connectors" | "skills" | "modes" | "subagents" | "market" | "veil" | "logs" | "plugins" | "voice" | "channels" | "network" | "runtimes" | "platforms" | "ssh" | "usage" | "about";
 /** A question a delegated run asked and is waiting on (plugins/assistant/src/ask.ts). */
 export interface PendingQuestion {
 	id: string;
