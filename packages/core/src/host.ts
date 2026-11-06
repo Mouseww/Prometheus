@@ -227,8 +227,7 @@ export class PrometheusHost {
 			const extras = await this.workspaces.extras(workspaceId(this.worktrees.rootOf(req.cwd)));
 			if (!extras.length) return undefined;
 			return { static: { sections: { extra_folders: `Additional project folders (the working folder is the primary one; these are also part of the project, read and edit files there by absolute path):
-${extras.map((p) => `- ${p}`).join("
-")}` }, guidelines: [] } };
+${extras.map((p) => `- ${p}`).join("\n")}` }, guidelines: [] } };
 		});
 		runtime.plugins.runAgent = (opts) => this.runAgent(opts);
 		runtime.plugins.openSession = (opts) => this.openSession(opts);

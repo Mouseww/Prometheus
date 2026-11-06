@@ -359,10 +359,10 @@ function WorktreeSection() {
 					<div className="flex w-full max-w-md flex-col gap-1.5">
 						{projects.map((w) => (
 							<div key={w.id} className="flex items-center gap-2">
-								<span className="min-w-0 flex-1 truncate text-sm text-ink-200" title={w.path}>
+								<span className="min-w-0 flex-1 basis-0 truncate text-sm text-ink-200" title={w.path}>
 									{w.name}
 								</span>
-								<Select className="w-auto" value={w.worktree ?? "inherit"} onChange={(e) => void setWorkspaceWorktree(w.id, e.target.value as WorktreeOverride)}>
+								<Select className="!w-36 shrink-0" value={w.worktree ?? "inherit"} onChange={(e) => void setWorkspaceWorktree(w.id, e.target.value as WorktreeOverride)}>
 									<option value="inherit">{t("inherit")}</option>
 									<option value="off">{t("projOff")}</option>
 									<option value="on">{t("projOn")}</option>
