@@ -315,6 +315,11 @@ try {
 		"android.permission.ACCESS_WIFI_STATE",
 		"android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
 		"android.permission.MANAGE_EXTERNAL_STORAGE",
+		// Newer Android gates traffic to other devices on the home network behind a runtime permission (NEARBY_WIFI_DEVICES
+		// on 16, ACCESS_LOCAL_NETWORK after). Without it the local server (node, ssh, git) cannot reach 192.168.x.x hosts,
+		// while loopback and the internet keep working.
+		"android.permission.NEARBY_WIFI_DEVICES",
+		"android.permission.ACCESS_LOCAL_NETWORK",
 	];
 	for (const perm of perms) {
 		if (!manifest.includes(perm)) manifest = manifest.replace(/<manifest[^>]*>/, (m) => `${m}
@@ -478,6 +483,18 @@ function activityHelpersSource(): string {
       checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
     ) {
       requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
+    }
+    // Local-network access: the system blocks LAN addresses for the whole app (including the node server) until this is granted.
+    // Unknown permission names are simply denied on older Android, so asking is safe everywhere.
+    val lan = arrayOf("android.permission.NEARBY_WIFI_DEVICES", "android.permission.ACCESS_LOCAL_NETWORK")
+      .filter { checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED }
+    val lprefs = getSharedPreferences("prometheus", MODE_PRIVATE)
+    if (android.os.Build.VERSION.SDK_INT >= 33 && lan.isNotEmpty() && lprefs.getInt("asked_lan", 0) < 2) {
+      lprefs.edit().putInt("asked_lan", lprefs.getInt("asked_lan", 0) + 1).apply()
+      try {
+        requestPermissions(lan.toTypedArray(), 2)
+      } catch (_: Exception) {
+      }
     }
     // Ask once to be exempt from battery optimisation, otherwise Doze cuts background network access.
     val pm = getSystemService(android.os.PowerManager::class.java)
