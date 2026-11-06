@@ -281,7 +281,9 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, kind: Kind)
 	if (url.pathname.startsWith("/plugins/")) {
 		// A panel page is loaded by a sandboxed iframe that may not carry the cookie; it brings a pass instead.
 		const passed = req.method === "GET" && host.panelTicketValid(url.searchParams.get("pt"));
-		if (!passed && !httpAuthorized(req, kind)) return json(res, 401, { error: "unauthorized" });
+		// Platform callbacks (/plugins/<name>/hook/*) cannot carry our login; the plugin verifies each one itself.
+		const hook = /^\/plugins\/[^/]+\/hook\//.test(url.pathname);
+		if (!passed && !hook && !httpAuthorized(req, kind)) return json(res, 401, { error: "unauthorized" });
 		const route = host.runtime.plugins.routes.find((r) => r.method === req.method && r.path === url.pathname);
 		if (!route) return json(res, 404, { error: "not found" });
 		await route.handler(req, res);

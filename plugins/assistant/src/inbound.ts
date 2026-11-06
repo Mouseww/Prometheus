@@ -5,6 +5,8 @@ export const MAX_TEXT = 4000;
 
 export interface InboundDeps {
 	main(): Promise<{ sessionId: string }>;
+	/** When given, each channel label gets its own conversation instead of the main chat. */
+	sessionFor?(label: string): Promise<{ sessionId: string }>;
 	run(options: AgentRunOptions): Promise<AgentRunResult>;
 	now(): number;
 	/** Messages accepted per minute across all channels; the rest get 429. */
@@ -47,8 +49,8 @@ export function createInbound(deps: InboundDeps): (body: unknown) => Promise<Inb
 
 		inFlight = true;
 		try {
-			const { sessionId } = await deps.main();
 			const label = channelLabel(b.channel);
+			const { sessionId } = deps.sessionFor ? await deps.sessionFor(label) : await deps.main();
 			const prompt = `（来自「${label}」的消息。对方不在电脑前：只能查看、回答和规划，不能修改任何东西；需要改动就告诉对方回到电脑前处理。）\n${text}`;
 			const r = await deps.run({ cwd: "", sessionId, prompt, access: "readonly", timeoutMs: deps.timeoutMs ?? 5 * 60_000 });
 			const reply = String(r.text || r.error || "").slice(0, 8000);

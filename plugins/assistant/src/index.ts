@@ -9,6 +9,7 @@ import { createInbound, MAX_BODY } from "./inbound.ts";
 import { ensureHome, listNotes, notesIndex, readPersona, sameDir } from "./home.ts";
 import { type Capability, capabilityPrompt } from "./capabilities.ts";
 import { mainThread } from "./main-thread.ts";
+import { CHANNEL_NAMES, type ChannelId, type ChannelsConfig, createChannels } from "./channels/index.ts";
 
 const NAME = "assistant";
 
@@ -248,6 +249,70 @@ ${text}`;
 			}
 			const r = await inbound(body);
 			send(r.status, r.body);
+		});
+
+		// IM channels (Telegram, Feishu, QQ, WeCom): each sender gets a conversation of its own in the personal space,
+		// read-only like every outside message. Config lives in channels.json; webhook platforms call /hook/*.
+		const channelStore = createJsonStore<ChannelsConfig>(join(ctx.dataDir, "channels.json"), () => ({}));
+		const peerStore = createJsonStore<{ map: Record<string, string> }>(join(ctx.dataDir, "channel-sessions.json"), () => ({ map: {} }));
+		const peerSession = async (label: string): Promise<{ sessionId: string }> => {
+			const saved = (await peerStore.read()).map[label];
+			if (saved && (await ctx.sessionExists(saved))) return { sessionId: saved };
+			const [channel = "", ...rest] = label.split(":");
+			const name = `${CHANNEL_NAMES[channel as ChannelId] ?? channel} · ${rest.join(":").slice(-8)}`;
+			const { sessionId } = await ctx.openSession({ cwd: home.dir, name, workspaceName: "个人助理" });
+			await peerStore.update((d) => ({ map: { ...d.map, [label]: sessionId } }));
+			ctx.notifyChanged();
+			return { sessionId };
+		};
+		const channelInbound = createInbound({ main: getMain, sessionFor: peerSession, run: (o) => ctx.runAgent(o), now: () => Date.now(), perMinute: 30 });
+		const channels = createChannels({
+			load: () => channelStore.read(),
+			save: async (c) => void (await channelStore.update(() => c)),
+			ask: async (label, text) => {
+				const r = await channelInbound({ text, channel: label });
+				return { ok: r.body.ok, reply: r.body.reply, error: r.body.error };
+			},
+			log: ctx.log,
+		});
+		void channels.start().catch((e) => ctx.log.warn(`channels failed to start: ${(e as Error).message}`));
+		ctx.onDispose(() => channels.stop());
+		ctx.rpc("channels", () => channels.view());
+		ctx.rpc("channels.set", async (p) => {
+			await channels.set(String(p.channel ?? ""), (p.config ?? {}) as Record<string, unknown>);
+			return channels.view();
+		});
+
+		// Called by the platforms, which cannot send our login: these paths are open in the server and every request is
+		// checked here with the platform's own signature or token.
+		const readRaw = async (req: AsyncIterable<unknown>): Promise<string | null> => {
+			let raw = "";
+			for await (const c of req) {
+				raw += c;
+				if (raw.length > MAX_BODY) return null;
+			}
+			return raw;
+		};
+		const reply = (res: import("node:http").ServerResponse, status: number, body: string, type = "application/json; charset=utf-8") => {
+			res.writeHead(status, { "content-type": type, "cache-control": "no-store" });
+			res.end(body);
+		};
+		ctx.route("POST", "/hook/feishu", async (req, res) => {
+			const raw = await readRaw(req);
+			if (raw === null) return reply(res, 413, "{}");
+			const r = channels.feishu(raw);
+			reply(res, r.status, JSON.stringify(r.body));
+		});
+		const query = (req: import("node:http").IncomingMessage) => new URL(req.url ?? "", "http://x").searchParams;
+		ctx.route("GET", "/hook/wecom", (req, res) => {
+			const echo = channels.wecom()?.verify(query(req));
+			if (echo == null) return reply(res, 403, "forbidden", "text/plain");
+			reply(res, 200, echo, "text/plain");
+		});
+		ctx.route("POST", "/hook/wecom", async (req, res) => {
+			const raw = await readRaw(req);
+			const ok = raw !== null && channels.wecom()?.receive(query(req), raw);
+			reply(res, ok ? 200 : 403, ok ? "success" : "forbidden", "text/plain");
 		});
 
 		// Daily briefing: off until the user asks for it (assistant_briefing); the text lands in notes/.
