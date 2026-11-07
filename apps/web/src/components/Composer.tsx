@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { sessionSpace } from "../lib/spaces.ts";
 import { ArrowUp, Brain, Check, ChevronDown, CornerDownRight, Cpu, File as FileIcon, FileText, Folder as FolderIcon, ListEnd, Maximize2, Paperclip, Pencil, Search, Square, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CommandInfo, ImageContent, ThinkingLevel } from "@prometheus/protocol";
@@ -492,8 +493,10 @@ let appliedEditorNonce = 0;
 
 export function Composer({ newChat = false }: { newChat?: boolean }) {
 	const t = useT(M);
-	const personalSpace = useSpace() === "personal";
 	const session = useStore((s) => s.session);
+	const home = useStore((s) => s.assistant?.home ?? null);
+	// A blank chat in the assistant's home is personal whatever tab is selected: it must not offer a project chooser.
+	const personalSpace = useSpace() === "personal" || (newChat && !!session && sessionSpace(session, home) === "personal");
 	const commands = useStore((s) => s.commands);
 	const editorText = useStore((s) => s.editorText);
 	// The unsent text, pictures and files belong to the conversation on screen, not to this component (which is

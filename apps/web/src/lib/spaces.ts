@@ -18,6 +18,11 @@ export function spaceOf(cwd: string, home: string | null): Space {
 	return home && samePath(cwd, home) ? "personal" : "work";
 }
 
+/** The space a conversation belongs to. A chat running in its own worktree has a cwd elsewhere; its project folder (root) decides. */
+export function sessionSpace(s: { cwd: string; worktree?: { root: string } | null }, home: string | null): Space {
+	return spaceOf(s.worktree?.root ?? s.cwd, home);
+}
+
 /** The space actually shown: without an assistant there is only the work space. */
 export function effectiveSpace(chosen: Space, home: string | null): Space {
 	return home ? chosen : "work";

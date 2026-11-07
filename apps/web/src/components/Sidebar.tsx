@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { sessionSpace } from "../lib/spaces.ts";
 import { Collapse, Flame } from "./ui.tsx";
 import { confirmDialog, promptDialog } from "../lib/dialogs.ts";
 import {
@@ -580,7 +581,7 @@ export function Sidebar({ target, onDisconnect }: { target: BackendTarget; onDis
 		for (const s of sessions) map.set(s.workspaceId, [...(map.get(s.workspaceId) ?? []), s]);
 		return map;
 	}, [sessions]);
-	const personal = useMemo(() => (assistant ? sessions.filter((s) => spaceOf(s.cwd, assistant.home) === "personal") : []), [sessions, assistant]);
+	const personal = useMemo(() => (assistant ? sessions.filter((s) => sessionSpace(s, assistant.home) === "personal") : []), [sessions, assistant]);
 
 	const nav = [
 		{ view: "knowledge" as const, label: t("knowledge"), icon: BookOpen },

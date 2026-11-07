@@ -44,7 +44,7 @@ import { localizeError } from "./errors.ts";
 import { defineMessages, tr } from "./i18n.ts";
 import { noteToolResult } from "./runtimes.ts";
 import { noteUse } from "./star.ts";
-import { effectiveSpace, samePath, type Space, spaceOf } from "./spaces.ts";
+import { effectiveSpace, samePath, type Space, sessionSpace, spaceOf } from "./spaces.ts";
 
 const M = defineMessages({
 	zh: {
@@ -732,14 +732,14 @@ export async function setSpace(space: Space): Promise<void> {
 	set({ space, view: space === "personal" ? "home" : "chat" });
 	localStorage.setItem(SPACE_KEY, space);
 	if (space === "personal") return;
-	const here = get().sessions.filter((s) => !s.archived && spaceOf(s.cwd, home) === space);
+	const here = get().sessions.filter((s) => !s.archived && sessionSpace(s, home) === space);
 	const target = here.find((s) => s.id === lastInSpace[space]) ?? here[0];
 	if (target) await openSession(target.id);
 	else {
 		// The new-chat page keeps a blank chat it is already on, and the blank one here belongs to the other space:
 		// a first message typed now would land in it. Let go of it so the page starts from a workspace choice.
 		const blank = get().session;
-		if (blank && blank.messages.length === 0 && !blank.pending && !blank.isStreaming && spaceOf(blank.cwd, home) !== space) {
+		if (blank && blank.messages.length === 0 && !blank.pending && !blank.isStreaming && sessionSpace(blank, home) !== space) {
 			get().client?.unsubscribe(blank.id);
 			set({ session: null, commands: [] });
 		}
@@ -766,7 +766,7 @@ function followSession(s: State, prev: State): void {
 	if (!s.session || s.session.id === prev.session?.id) return;
 	const home = s.assistant?.home;
 	if (!home) return;
-	const space = spaceOf(s.session.cwd, home);
+	const space = sessionSpace(s.session, home);
 	if (space === s.space) return;
 	localStorage.setItem(SPACE_KEY, space);
 	useStore.setState({ space });
@@ -1146,7 +1146,7 @@ async function leaveSession(sessionId: string): Promise<void> {
 	const next = get().sessions.find((s) => !s.archived && s.id !== sessionId && s.workspaceId === current.workspaceId);
 	if (next) await openSession(next.id);
 	// A personal chat has no folder to pick on the new-chat page, so go straight to a fresh one.
-	else if (spaceOf(current.cwd, get().assistant?.home ?? null) === "personal") await startPersonalChat();
+	else if (sessionSpace(current, get().assistant?.home ?? null) === "personal") await startPersonalChat();
 }
 
 export async function archiveSession(sessionId: string, archived: boolean): Promise<void> {
