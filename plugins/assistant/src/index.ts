@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Type } from "typebox";
 import { type ContextContribution, createJsonStore, definePlugin } from "@prometheus/plugin-sdk";
 import { type DelegationCard, delegate, type DelegateDeps, type LiveRun, waitOn } from "./delegate.ts";
@@ -48,7 +48,7 @@ export default definePlugin({
 		ctx.rpc("info", async () => {
 			const saved = (await store.read()).sessionId;
 			const alive = saved ? await ctx.sessionExists(saved) : false;
-			return { home: home.dir, sessionId: alive ? saved : null, delegated: [...delegations.keys()], pending: asker.pending() };
+			return { home: home.dir, personalRoots: [join(dirname(ctx.dataDir), "prometheus-pet")], sessionId: alive ? saved : null, delegated: [...delegations.keys()], pending: asker.pending() };
 		});
 
 		const briefStore = createJsonStore<BriefingSettings>(join(ctx.dataDir, "briefing.json"), () => ({ ...DEFAULT_BRIEFING }));

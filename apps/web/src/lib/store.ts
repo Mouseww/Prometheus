@@ -44,7 +44,7 @@ import { localizeError } from "./errors.ts";
 import { defineMessages, tr } from "./i18n.ts";
 import { noteToolResult } from "./runtimes.ts";
 import { noteUse } from "./star.ts";
-import { effectiveSpace, samePath, type Space, sessionSpace, spaceOf } from "./spaces.ts";
+import { effectiveSpace, samePath, type Space, sessionSpace, setPersonalRoots, spaceOf } from "./spaces.ts";
 
 const M = defineMessages({
 	zh: {
@@ -687,11 +687,12 @@ export async function refreshAssistant(): Promise<void> {
 	}
 	const info = (await get()
 		.client?.rpc("plugin.call", { plugin: "assistant", method: "info", params: {} })
-		.catch(() => undefined)) as { home?: string; sessionId?: string | null; delegated?: string[]; pending?: PendingQuestion[] } | undefined;
+		.catch(() => undefined)) as { home?: string; sessionId?: string | null; delegated?: string[]; pending?: PendingQuestion[]; personalRoots?: string[] } | undefined;
 	if (!info?.home) {
 		if (get().assistant) set({ assistant: null });
 		return;
 	}
+	setPersonalRoots(info.personalRoots ?? []);
 	const mainId = info.sessionId ?? null;
 	const delegated = new Set(info.delegated ?? []);
 	const cur = get().assistant;

@@ -13,9 +13,22 @@ export function samePath(a: string | null | undefined, b: string | null | undefi
 	return Boolean(a) && Boolean(b) && norm(a as string) === norm(b as string);
 }
 
-/** The space a conversation or folder belongs to, given the assistant's home folder (null: no personal space). */
+/** Other folders that belong to the personal space (the companion's groups live beside the assistant's home). */
+let extraRoots: string[] = [];
+export function setPersonalRoots(roots: readonly string[]): void {
+	extraRoots = roots.map(norm).filter(Boolean);
+}
+
+const within = (path: string, root: string) => {
+	const p = norm(path);
+	const r = norm(root);
+	return p === r || p.startsWith(`${r}/`);
+};
+
+/** The space a conversation or folder belongs to, given the assistant's home folder (null: no personal space). The home, its subfolders and the extra personal roots all count. */
 export function spaceOf(cwd: string, home: string | null): Space {
-	return home && samePath(cwd, home) ? "personal" : "work";
+	if (!home || !cwd) return "work";
+	return within(cwd, home) || extraRoots.some((r) => within(cwd, r)) ? "personal" : "work";
 }
 
 /** The space a conversation belongs to. A chat running in its own worktree has a cwd elsewhere; its project folder (root) decides. */
