@@ -1,3 +1,4 @@
+import { DownloadButton } from "./FileDownloadButton.tsx";
 import clsx from "clsx";
 import { Check, Copy, Eye, FileText, FolderTree, Globe, LoaderCircle, PanelRightClose, RefreshCw, SquareTerminal, X } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -170,6 +171,7 @@ function FileView({ tab }: { tab: Extract<WorkbenchTab, { kind: "file" }> }) {
 				<span className="min-w-0 flex-1 truncate font-mono text-ink-400" title={file?.path ?? tab.path}>
 					{file?.path ?? tab.path}
 				</span>
+				<DownloadButton path={file?.path ?? tab.path} className="max-md:size-8" />
 				{isMd && (
 					<button type="button" onClick={() => setRendered(!rendered)} className="flex items-center gap-1 rounded px-1.5 py-0.5 text-ink-400 hover:bg-ink-800 hover:text-ink-100">
 						<Eye className="size-3.5" />

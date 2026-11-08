@@ -54,3 +54,32 @@ export function useVisualViewport(): { top: number; height: number } {
 
 	return box;
 }
+
+/**
+ * Keeps the whole app above the on-screen keyboard. When the keyboard shrinks only the visual viewport, `#root` is
+ * sized to it (and moved with it on iOS, which scrolls the page), so the focused input is never covered.
+ */
+export function installKeyboardInset(): void {
+	const vv = window.visualViewport;
+	if (!vv) return;
+	const root = document.documentElement;
+	let frame = 0;
+	const apply = () => {
+		frame = 0;
+		const covered = window.innerHeight - vv.height - vv.offsetTop;
+		if (window.matchMedia(MOBILE).matches && window.innerHeight - vv.height > 100) {
+			root.style.setProperty("--app-h", `${Math.round(vv.height)}px`);
+			root.style.setProperty("--app-top", `${Math.round(vv.offsetTop)}px`);
+			if (covered > -1) window.scrollTo(0, 0);
+		} else {
+			root.style.removeProperty("--app-h");
+			root.style.removeProperty("--app-top");
+		}
+	};
+	const schedule = () => {
+		if (!frame) frame = requestAnimationFrame(apply);
+	};
+	vv.addEventListener("resize", schedule);
+	vv.addEventListener("scroll", schedule);
+	apply();
+}

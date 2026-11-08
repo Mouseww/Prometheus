@@ -162,6 +162,8 @@ html, body, #root { height: 100%; }
 	html, body, #root { height: 100dvh; }
 }
 body { margin: 0; overflow: hidden; overscroll-behavior: none; }
+/* Set by installKeyboardInset while a phone keyboard is open: the app shrinks to the visible part of the page. */
+:root[style*="--app-h"] #root { height: var(--app-h); transform: translateY(var(--app-top, 0px)); }
 
 /* iOS zooms the page when a focused field is under 16px. */
 @media (max-width: 767px) {
