@@ -11,7 +11,7 @@ import type { MappingStore } from "./store.ts";
 /** A placeholder is at most 63 chars; 96 is a safe bound. */
 const MAX_HOLD = 96;
 
-/** Index where a suffix that may still be the prefix of `{{TYPE_ULID}}` starts. */
+/** Index where a suffix that may still be the prefix of `{{TYPE_ID}}` starts. */
 function holdSuffixStart(s: string): number {
 	const i = s.lastIndexOf("{");
 	if (i === -1) return s.length;
@@ -49,7 +49,8 @@ function isUlidClosePrefix(s: string): boolean {
 	let i = 0;
 	while (i < s.length && i < 26) {
 		const c = s[i] as string;
-		if (c === "}") return false;
+		// A single closing brace after a full-length id is still an unfinished token.
+		if (c === "}") return i >= 8 && s.slice(i) === "}";
 		if (!/[0-9A-HJKMNP-TV-Z]/.test(c)) return false;
 		i++;
 	}

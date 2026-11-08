@@ -12,7 +12,7 @@
 import { definePlugin, type RpcHandler } from "@prometheus/plugin-sdk";
 import { ConfigFile, type VeilConfig } from "./config.ts";
 import { RuleSet, builtinRules, validateRule, type Rule } from "./engine/rules.ts";
-import { MappingStore } from "./engine/store.ts";
+import { MappingStore, loadOrCreateKey } from "./engine/store.ts";
 import { desensitizeJson, desensitizeString, parseJson } from "./engine/walk.ts";
 import { createRestorer, redactBuffer, VeilRelay } from "./proxy/relay.ts";
 import { parseProxyUrl, type ProxySettings } from "./proxy/transport.ts";
@@ -51,6 +51,7 @@ export default definePlugin({
 
 		const store = new MappingStore({
 			path: `${ctx.dataDir}/mappings.json`,
+			key: await loadOrCreateKey(`${ctx.dataDir}/install.key`),
 			ttlDays: configFile.get().mappingTtlDays,
 		});
 		const loaded = await store.load();

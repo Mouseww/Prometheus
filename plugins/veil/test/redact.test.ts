@@ -9,13 +9,14 @@ import { desensitizeJson, desensitizeString, restoreJson, restoreString, type Js
 import { findPlaceholders, parsePlaceholder } from "../src/engine/placeholder.ts";
 import { shouldSkipDesensitize } from "../src/engine/binary.ts";
 
+const KEY = Buffer.alloc(32, 7);
 let dir: string;
 let store: MappingStore;
 const rules = () => new RuleSet({ rules: builtinRules(), allowlist: DEFAULT_ALLOWLIST });
 
 beforeEach(async () => {
 	dir = await mkdtemp(join(tmpdir(), "veil-test-"));
-	store = new MappingStore({ path: join(dir, "mappings.json"), ttlDays: 0 });
+	store = new MappingStore({ path: join(dir, "mappings.json"), key: KEY, ttlDays: 0 });
 });
 
 afterEach(async () => {
@@ -26,7 +27,7 @@ afterEach(async () => {
 describe("placeholder", () => {
 	it("formats and parses a round trip", () => {
 		const token = store.getOrInsert("PHONE", "13800138000");
-		expect(token).toMatch(/^\{\{PHONE_[0-9A-HJKMNP-TV-Z]{26}\}\}$/);
+		expect(token).toMatch(/^\{\{PHONE_[0-9A-HJKMNP-TV-Z]{8}\}\}$/);
 		const parsed = parsePlaceholder(token);
 		expect(parsed?.typePrefix).toBe("PHONE");
 	});
@@ -35,6 +36,23 @@ describe("placeholder", () => {
 		expect(parsePlaceholder("{{PHONE_xxxx}}")).toBeUndefined();
 		expect(parsePlaceholder("{{TODO_1}}")).toBeUndefined();
 		expect(parsePlaceholder("{{phone_01ARZ3NDEKTSV4RRFFQ69G5FAV}}")).toBeUndefined();
+	});
+});
+
+describe("keyed placeholder", () => {
+	it("is short, stable for one install and different across installs", () => {
+		const other = new MappingStore({ path: join(dir, "o.json"), key: Buffer.alloc(32, 9), ttlDays: 0 });
+		const a = store.getOrInsert("PHONE", "13800138000");
+		expect(a.length).toBeLessThanOrEqual("{{PHONE_}}".length + 8);
+		expect(new MappingStore({ path: join(dir, "x.json"), key: KEY, ttlDays: 0 }).getOrInsert("PHONE", "13800138000")).toBe(a);
+		expect(other.getOrInsert("PHONE", "13800138000")).not.toBe(a);
+	});
+
+	it("restores a token whose closing brace is split off", () => {
+		const token = store.getOrInsert("PHONE", "13800138000");
+		const window = new RestoreWindow(store);
+		const out = window.push(token.slice(0, -1)) + window.push(token.slice(-1)) + window.flush();
+		expect(out).toBe("13800138000");
 	});
 });
 
@@ -54,7 +72,7 @@ describe("store", () => {
 	it("persists across reloads so old conversations still restore", async () => {
 		const token = store.getOrInsert("PHONE", "13800138000");
 		await store.flush();
-		const second = new MappingStore({ path: join(dir, "mappings.json"), ttlDays: 0 });
+		const second = new MappingStore({ path: join(dir, "mappings.json"), key: KEY, ttlDays: 0 });
 		const loaded = await second.load();
 		expect(loaded.loaded).toBe(1);
 		expect(second.lookup(token)).toBe("13800138000");

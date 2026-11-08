@@ -2,9 +2,11 @@
  * `{{TYPE_ULID}}` tokens. Ported from veil's `placeholder.rs`.
  *
  * The shape is deliberately narrow: an uppercase type of 1..=32 chars, an underscore, then a
- * 26-character Crockford base32 ULID. A token that does not parse is left alone, so ordinary
+ * short (8..=26 char) Crockford base32 id. A token that does not parse is left alone, so ordinary
  * mustache templates (`{{TODO_1}}`) pass through untouched.
  */
+
+import { createHmac } from "node:crypto";
 
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
@@ -13,7 +15,34 @@ const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
  * A factory, not a shared literal: a module-level `/g` regex carries `lastIndex` between calls,
  * and any re-entrant scan would silently skip matches.
  */
-export const placeholderPattern = (): RegExp => /\{\{([A-Z][A-Z0-9]{0,31})_([0-9A-HJKMNP-TV-Z]{26})\}\}/g;
+export const placeholderPattern = (): RegExp => /\{\{([A-Z][A-Z0-9]{0,31})_([0-9A-HJKMNP-TV-Z]{8,26})\}\}/g;
+
+/** Shortest id; longer ones (up to 26, the legacy ULID length) are only used to resolve a collision. */
+export const MIN_ID_LEN = 8;
+export const MAX_ID_LEN = 26;
+
+/**
+ * Deterministic short id: HMAC-SHA256(installKey, type, NUL, plaintext) in Crockford base32.
+ * Same install + same secret always gives the same id; another install gives an unrelated one.
+ * `len` grows only when two different secrets collide on a shorter id.
+ */
+export function keyedId(key: Buffer, typePrefix: string, plaintext: string, len = MIN_ID_LEN): string {
+	const digest = createHmac("sha256", key).update(typePrefix, "utf8").update("\u0000").update(plaintext, "utf8").digest();
+	let bits = 0;
+	let acc = 0;
+	let out = "";
+	for (const byte of digest) {
+		acc = (acc << 8) | byte;
+		bits += 8;
+		while (bits >= 5 && out.length < len) {
+			out += CROCKFORD[(acc >> (bits - 5)) & 31];
+			bits -= 5;
+		}
+		acc &= (1 << bits) - 1;
+		if (out.length >= len) break;
+	}
+	return out;
+}
 
 export interface Placeholder {
 	typePrefix: string;
