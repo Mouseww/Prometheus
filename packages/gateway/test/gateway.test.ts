@@ -217,9 +217,9 @@ describe("transcribe", () => {
 });
 
 describe("GATEWAY_PRESETS", () => {
-	it("ships the eight built-in providers, each valid once a key is supplied", async () => {
+	it("ships the nine built-in providers, each valid once a key is supplied", async () => {
 		const { GATEWAY_PRESETS } = await import("@prometheus/protocol");
-		expect(GATEWAY_PRESETS.map((p) => p.id)).toEqual(["deepseek", "zhipu", "openai", "claude", "gemini", "moonshot", "openrouter", "opencode"]);
+		expect(GATEWAY_PRESETS.map((p) => p.id)).toEqual(["infistar", "deepseek", "zhipu", "openai", "claude", "gemini", "moonshot", "openrouter", "opencode"]);
 		for (const p of GATEWAY_PRESETS) {
 			const g: GatewayConfig = { id: p.id, name: p.name, format: p.format, baseUrl: p.baseUrl, auth: p.auth, apiKey: SECRET, models: p.models };
 			expect(validateGateway(g), p.id).toEqual([]);

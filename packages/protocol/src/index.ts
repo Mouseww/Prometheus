@@ -1482,9 +1482,26 @@ export interface GatewayPreset {
 	models: GatewayModel[];
 	/** Page where the user creates an API key. */
 	keyUrl: string;
+	/** Sponsored provider: listed first and badged in the picker; keyUrl is its registration page. */
+	sponsored?: boolean;
 }
 
 export const GATEWAY_PRESETS: readonly GatewayPreset[] = [
+	{
+		id: "infistar",
+		name: "无限星河AI",
+		description: { zh: "赞助合作 · 无限星河AI（Infistar）OpenAI 兼容网关，注册即用", en: "Sponsored · Infistar OpenAI-compatible gateway, sign up and go" },
+		format: "openai-completions",
+		baseUrl: "https://infistar.cc/v1",
+		auth: { type: "bearer" },
+		keyUrl: "https://www.infistar.cc/register?aff=5NAGNQX3&ref_source=link",
+		sponsored: true,
+		// A starting point only; use "load models" in the editor to sync the live list.
+		models: [
+			{ id: "gpt-5.5", name: "GPT-5.5", contextWindow: 1_000_000, maxTokens: 128_000, reasoning: true },
+			{ id: "gpt-5.4", name: "GPT-5.4", contextWindow: 1_000_000, maxTokens: 128_000, reasoning: true, vision: true },
+		],
+	},
 	{
 		id: "deepseek",
 		name: "DeepSeek",

@@ -77,6 +77,8 @@ const M = defineMessages({
 		customDesc: "手动配置任意兼容端点",
 		added: "已添加",
 		getKey: "获取 API Key",
+		register: "注册账号并获取 API Key",
+		sponsored: "赞助",
 		advanced: "高级设置",
 		simpleHint: "地址、协议与模型已按官方配置预填，填入 API Key 即可使用。",
 		loadDefaults: "加载模型默认设置",
@@ -160,6 +162,8 @@ const M = defineMessages({
 		customDesc: "Configure any compatible endpoint by hand",
 		added: "Added",
 		getKey: "Get an API key",
+		register: "Sign up and get an API key",
+		sponsored: "Sponsored",
 		advanced: "Advanced settings",
 		simpleHint: "URL, protocol and models are prefilled from the official setup. Enter your API key to start.",
 		loadDefaults: "Load model defaults",
@@ -428,6 +432,7 @@ function PresetPicker({ existing, onPick, onClose }: { existing: GatewayConfig[]
 						>
 							<div className="flex items-center gap-2">
 								<span className="font-display font-semibold">{p.name}</span>
+								{p.sponsored && <Badge tone="ember">{t("sponsored")}</Badge>}
 								{taken.has(p.id) && <Badge tone="moss">{t("added")}</Badge>}
 							</div>
 							<div className="mt-1 text-xs text-ink-500">{p.description[lang]}</div>
@@ -561,7 +566,7 @@ function GatewayEditor({ initial, isNew, preset, onClose, onSaved }: { initial: 
 						</div>
 						<div className="flex flex-wrap gap-2">
 							<a href={preset.keyUrl} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1.5 text-sm text-ember-400 hover:underline">
-								<ExternalLink className="size-3.5" /> {t("getKey")}
+								<ExternalLink className="size-3.5" /> {t(preset.sponsored ? "register" : "getKey")}
 							</a>
 							<button type="button" onClick={() => setAdvanced(true)} className="ml-auto inline-flex items-center gap-1.5 text-sm text-ink-400 hover:text-ink-100">
 								<SlidersHorizontal className="size-3.5" /> {t("advanced")}
