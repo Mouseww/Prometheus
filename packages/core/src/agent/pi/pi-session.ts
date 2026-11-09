@@ -55,6 +55,8 @@ export class PiRuntimeSession implements RuntimeSession {
 	private readonly listeners = new Set<(event: SessionEvent) => void>();
 	private readonly unsubscribe: () => void;
 	private disposed = false;
+	/** Where the chat stood before the last `rewind`, so a failed resubmit can put it back. */
+	private rewound?: { from: string; to: string | null };
 
 	constructor(opts: PiSessionOptions) {
 		this.opts = opts;
@@ -342,9 +344,32 @@ export class PiRuntimeSession implements RuntimeSession {
 		const images = typeof m.content === "string" ? [] : m.content.filter((c): c is ImageContent => c.type === "image");
 		if (!text.trim() && !images.length) throw new AppError("messageEmpty");
 		// Branch from before the user message; the old reply stays in the session tree.
-		const result = await this.session.navigateTree(user.entryId);
-		if (result.cancelled) throw new AppError("aborted");
+		const sm = this.session.sessionManager;
+		const from = sm.getLeafId();
+		if (sm.getLeafId() === user.entryId) {
+			// A message that got no reply (the run was cut off before one was saved) is itself the leaf, and PI's
+			// navigateTree does nothing when asked to go to the leaf. Resending would then add the same message
+			// a second time, so step back to its parent by hand.
+			const parent = sm.getEntry(user.entryId)?.parentId ?? null;
+			if (parent === null) sm.resetLeaf();
+			else sm.branch(parent);
+			this.session.refreshContext();
+		} else {
+			const result = await this.session.navigateTree(user.entryId);
+			if (result.cancelled) throw new AppError("aborted");
+		}
+		this.rewound = from ? { from, to: sm.getLeafId() } : undefined;
 		return { text, ...(images.length ? { images } : {}) };
+	}
+
+	undoRewind(): void {
+		const undo = this.rewound;
+		this.rewound = undefined;
+		const sm = this.session.sessionManager;
+		// Only while the chat still stands where the rewind left it: if the resubmit added anything, that is the new truth.
+		if (!undo || this.session.isStreaming || sm.getLeafId() !== undo.to) return;
+		sm.branch(undo.from);
+		this.session.refreshContext();
 	}
 
 	/** Take one waiting message out of the steer / follow-up queue so it can be edited or dropped. */

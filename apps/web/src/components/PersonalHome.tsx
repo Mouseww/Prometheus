@@ -6,7 +6,7 @@ import { defineMessages, useT } from "../lib/i18n.ts";
 import { type Attachment, AttachmentError, fileToAttachment, formatSize, isPicture, MAX_FILE_MB, MAX_FILES } from "../lib/attachments.ts";
 import { fileToImage, ImageError, imageSrc, MAX_IMAGES } from "../lib/images.ts";
 import { onPluginChange, openSession, type PendingQuestion, pluginCall, refreshCommands, sendPrompt, startPersonalChat, toast, useStore } from "../lib/store.ts";
-import { delegatedRuns, delegationTitle } from "../lib/spaces.ts";
+import { delegatedRuns, delegationTitle, samePath } from "../lib/spaces.ts";
 import { answerStar, REPO_URL, useStar } from "../lib/star.ts";
 import { openExternal } from "../lib/links.ts";
 import { Badge, Button } from "./ui.tsx";
@@ -456,7 +456,10 @@ export function PersonalHome() {
 			try {
 				// Every home-page message opens a fresh conversation instead of reusing the assistant's main chat.
 				await startPersonalChat();
-				if (!useStore.getState().session) {
+				// If creating the chat failed, the page may still be on some other blank chat (a work one): never send into it.
+				const opened = useStore.getState().session;
+				const homePath = useStore.getState().assistant?.home;
+				if (!opened || !homePath || !samePath(opened.cwd, homePath)) {
 					toast(t("sendFailed"), "error");
 					return;
 				}
@@ -464,7 +467,8 @@ export function PersonalHome() {
 				const sent = await sendPrompt(said, undefined, pictures.length ? pictures : undefined, docs.length ? docs : undefined);
 				if (!sent) {
 					// The chat was already busy with another run: keep what was typed so it is not lost.
-					setDraft(said);
+					// Keep what was typed, unless the user already started on something else while it was sending.
+					setDraft((cur) => (cur ? cur : said));
 					toast(t("sendBusy"), "warning");
 					return;
 				}
@@ -575,7 +579,8 @@ export function PersonalHome() {
 											}
 										}
 									}
-									if (e.key === "Enter" && !e.shiftKey) {
+									// Enter that confirms an IME candidate (pinyin, kana...) must not send the half-typed message.
+									if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
 										e.preventDefault();
 										void ask();
 									}

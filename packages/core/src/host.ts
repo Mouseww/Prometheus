@@ -968,7 +968,14 @@ ${extras.map((p) => `- ${p}`).join("\n")}` }, guidelines: [] } };
 		if (!live.session.rewind) throw new AppError("generic");
 		const input = await live.session.rewind(ref, edited);
 		this.resetMessages(sessionId, live);
-		await this.prompt(sessionId, input.text, input.images, undefined);
+		try {
+			await this.prompt(sessionId, input.text, input.images, undefined);
+		} catch (err) {
+			// The send was refused (no model, no key...): bring the chat back instead of leaving the message only in an old branch.
+			live.session.undoRewind?.();
+			this.resetMessages(sessionId, live);
+			throw err;
+		}
 	}
 
 	/** Take one waiting message out of the steer / follow-up queue so it can be edited or dropped. */

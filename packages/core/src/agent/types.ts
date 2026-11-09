@@ -179,6 +179,8 @@ export interface RuntimeSession {
 	compact?(instructions?: string): Promise<void>;
 	/** Branch back to the user message at or before `ref`; returns its content for resubmission. `text` replaces the message text (edit). */
 	rewind?(ref: MessageRef, text?: string): Promise<UserInput>;
+	/** Undo the last `rewind` when resubmitting failed before anything was added, so the message is not lost from the chat. */
+	undoRewind?(): void;
 	/** Drop a message (and the tool results tied to it) from the context. */
 	deleteMessages?(ref: MessageRef): Promise<void>;
 	/** Take a waiting message out of the steer / follow-up queue; `text` guards against a stale index. */

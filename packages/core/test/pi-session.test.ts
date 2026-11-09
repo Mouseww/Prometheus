@@ -210,6 +210,10 @@ describe("PiRuntimeSession message operations", () => {
 			sessionManager: {
 				getCwd: () => "/work",
 				getBranch: () => entries.map((m, i) => ({ type: "message", id: `e${i}`, message: m })),
+				getLeafId: () => (entries.length ? `e${entries.length - 1}` : null),
+				getEntry: (id: string) => ({ id, parentId: null }),
+				branch: vi.fn(),
+				resetLeaf: vi.fn(),
 				appendContextEdit: (id: string, v: null) => void edits.push([id, v]),
 			},
 			...overrides,
@@ -259,6 +263,61 @@ describe("PiRuntimeSession message operations", () => {
 		const withImage = { role: "user", content: [{ type: "text", text: "see" }, image], timestamp: 5 };
 		const { adapter } = chat({}, [withImage]);
 		expect(await adapter.rewind(refOf(0, withImage))).toEqual({ text: "see", images: [image] });
+	});
+
+	it("rewind of an unanswered message steps back to its parent instead of leaving the leaf on it", async () => {
+		const branch = vi.fn();
+		const resetLeaf = vi.fn();
+		const entry = (parentId: string | null) => ({ parentId });
+		const sm = (leaf: string, parentId: string | null) => ({
+			getCwd: () => "/work",
+			getBranch: () => [{ type: "message", id: "e0", message: user }],
+			getLeafId: () => leaf,
+			getEntry: () => entry(parentId),
+			branch,
+			resetLeaf,
+		});
+		// Leaf is the user message and it has a parent: PI's navigateTree would be a no-op, so the adapter branches itself.
+		const a = chat({ sessionManager: sm("e0", "p0") }, [user]);
+		expect(await a.adapter.rewind(refOf(0, user))).toEqual({ text: "hello" });
+		expect(branch).toHaveBeenCalledWith("p0");
+		expect(a.stub.navigateTree).not.toHaveBeenCalled();
+		expect(a.stub.refreshContext).toHaveBeenCalledTimes(1);
+		// Root message: the leaf is reset.
+		const b = chat({ sessionManager: sm("e0", null) }, [user]);
+		await b.adapter.rewind(refOf(0, user), "changed");
+		expect(resetLeaf).toHaveBeenCalledTimes(1);
+		expect(b.stub.navigateTree).not.toHaveBeenCalled();
+	});
+
+	it("undoRewind puts the chat back while the leaf is still where the rewind left it, and only then", async () => {
+		const branch = vi.fn();
+		let leaf = "e2";
+		const { adapter, stub } = chat({
+			sessionManager: {
+				getCwd: () => "/work",
+				getBranch: () => [user, assistant, result].map((m, i) => ({ type: "message", id: `e${i}`, message: m })),
+				getLeafId: () => leaf,
+				getEntry: () => ({ parentId: null }),
+				branch,
+				resetLeaf: () => {
+					leaf = "root";
+				},
+			},
+		}, [user, assistant, result]);
+		stub.navigateTree.mockImplementation(async () => {
+			leaf = "p0";
+			return { cancelled: false };
+		});
+		await adapter.rewind(refOf(0, user));
+		adapter.undoRewind();
+		expect(branch).toHaveBeenCalledWith("e2");
+		// A second call, or a leaf that moved on since, does nothing.
+		adapter.undoRewind();
+		await adapter.rewind(refOf(0, user));
+		leaf = "new-reply";
+		adapter.undoRewind();
+		expect(branch).toHaveBeenCalledTimes(1);
 	});
 
 	it("rewind rejects an empty edit without navigating, and a cancelled navigation as aborted", async () => {

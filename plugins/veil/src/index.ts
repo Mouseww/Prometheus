@@ -13,7 +13,7 @@ import { definePlugin, type RpcHandler } from "@prometheus/plugin-sdk";
 import { ConfigFile, type VeilConfig } from "./config.ts";
 import { RuleSet, builtinRules, validateRule, type Rule } from "./engine/rules.ts";
 import { MappingStore, loadOrCreateKey } from "./engine/store.ts";
-import { desensitizeJson, desensitizeString, parseJson } from "./engine/walk.ts";
+import { desensitizeJson, desensitizeString, parseJson, restoreAssistantMessage, restoreInPlace } from "./engine/walk.ts";
 import { createRestorer, redactBuffer, VeilRelay } from "./proxy/relay.ts";
 import { parseProxyUrl, type ProxySettings } from "./proxy/transport.ts";
 
@@ -209,6 +209,21 @@ export default definePlugin({
 					ctx.log.error(`脱敏失败，已拦截本次请求：${err instanceof Error ? err.message : String(err)}`);
 					throw new Error("面罩：脱敏失败，已拦截本次请求（未发往上游）");
 				}
+			});
+
+			// Inbound: the model only ever saw aliases, so what it writes back carries aliases too. Put the real
+			// values back before the message is shown and saved. Not gated on `redaction`: an alias the store
+			// issued earlier may still be quoted after the switch is turned off, and unknown tokens stay untouched.
+			pi.on("message_end", (event) => {
+				const message = event.message as Parameters<typeof restoreAssistantMessage>[0];
+				const restored = restoreAssistantMessage(message, store);
+				return restored === message ? undefined : { message: restored as typeof event.message };
+			});
+
+			// Tool arguments the model wrote (a command, a path, a password) must run with the real values.
+			pi.on("tool_call", (event) => {
+				restoreInPlace(event.input, store);
+				return undefined;
 			});
 
 			pi.on("before_provider_headers", (event) => {

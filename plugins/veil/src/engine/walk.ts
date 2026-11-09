@@ -68,6 +68,80 @@ export function restoreJson(value: Json, store: MappingStore): Json {
 	return mapStrings(value, undefined, (_key, text) => restoreString(text, store));
 }
 
+/**
+ * Restores a finished assistant message in the history the user sees.
+ *
+ * The in-process PI path only masks the outgoing request; nothing rewrites the reply, so a model that
+ * echoes `{{PHONE_7K2M9XQA}}` would show (and persist) the alias instead of the real value. Text and
+ * tool-call arguments are restored; signed or redacted thinking is left alone because editing it would
+ * invalidate the provider's signature. Returns the same object when nothing changed. The next request
+ * masks the restored text again, and the same plaintext always maps to the same alias.
+ */
+export function restoreAssistantMessage<T extends { role?: unknown; content?: unknown }>(message: T, store: MappingStore): T {
+	if (message.role !== "assistant" || !Array.isArray(message.content)) return message;
+	let changed = false;
+	const content = message.content.map((block: unknown) => {
+		if (!block || typeof block !== "object") return block;
+		const b = block as Record<string, unknown>;
+		if (b.type === "text" && typeof b.text === "string") {
+			const text = restoreString(b.text, store);
+			if (text === b.text) return block;
+			changed = true;
+			return { ...b, text };
+		}
+		if (b.type === "thinking" && typeof b.thinking === "string" && !b.thinkingSignature && !b.redacted) {
+			const thinking = restoreString(b.thinking, store);
+			if (thinking === b.thinking) return block;
+			changed = true;
+			return { ...b, thinking };
+		}
+		if (b.type === "toolCall" && b.arguments && typeof b.arguments === "object") {
+			const args = restoreJson(b.arguments as Json, store);
+			if (JSON.stringify(args) === JSON.stringify(b.arguments)) return block;
+			changed = true;
+			return { ...b, arguments: args };
+		}
+		return block;
+	});
+	return changed ? { ...message, content } : message;
+}
+
+/**
+ * Restores placeholders inside a tool call's input, in place (that is how PI lets a `tool_call` handler
+ * change arguments). The model only ever saw aliases, so a command, path or password it wrote would
+ * otherwise run with the alias text. Returns whether anything changed.
+ */
+export function restoreInPlace(value: unknown, store: MappingStore): boolean {
+	let changed = false;
+	const visit = (node: unknown): void => {
+		if (Array.isArray(node)) {
+			node.forEach((item, i) => {
+				if (typeof item === "string") {
+					const next = restoreString(item, store);
+					if (next !== item) {
+						node[i] = next;
+						changed = true;
+					}
+				} else visit(item);
+			});
+		} else if (node && typeof node === "object") {
+			const obj = node as Record<string, unknown>;
+			for (const key of Object.keys(obj)) {
+				const item = obj[key];
+				if (typeof item === "string") {
+					const next = restoreString(item, store);
+					if (next !== item) {
+						obj[key] = next;
+						changed = true;
+					}
+				} else visit(item);
+			}
+		}
+	};
+	visit(value);
+	return changed;
+}
+
 /** Best-effort JSON parse; returns undefined for non-JSON input. */
 export function parseJson(text: string): Json | undefined {
 	const trimmed = text.trimStart();
