@@ -4,7 +4,6 @@ import { ChevronRight, File, Folder, FolderOpen, LoaderCircle, RefreshCw } from 
 import { useCallback, useEffect, useState } from "react";
 import type { FolderListing } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { DownloadButton } from "./FileDownloadButton.tsx";
 import { openFile, pluginCall, useStore } from "../lib/store.ts";
 
 const M = defineMessages({
@@ -85,7 +84,6 @@ export function FolderView({ cwd }: { cwd: string }) {
 								<File className="size-3.5 shrink-0 text-ink-500" />
 								<span className="truncate">{e.name}</span>
 							</button>
-							<DownloadButton path={e.path} name={e.name} className="mr-1 md:opacity-0 md:group-hover:opacity-100 max-md:size-8" />
 						</div>
 					),
 				)}

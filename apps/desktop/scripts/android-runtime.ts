@@ -375,6 +375,20 @@ try {
 		else if (/startPrometheusService\(\)\n/.test(activity)) activity = activity.replace(/startPrometheusService\(\)\n/, "startPrometheusService()\n    installBackBridge()\n");
 		if (!/\n\s+installBackBridge\(\)\n/.test(activity)) throw new Error("could not patch MainActivity.kt (template changed?)");
 	}
+	// Download, status-bar height and keyboard insets live in the same bridge; older generated projects get them added.
+	if (!activity.includes("fun safeTop")) {
+		activity = activity.replace(/inner class SystemBarBridge \{
+/, () => `inner class SystemBarBridge {
+${bridgeExtraSource()}`);
+		activity = activity.replace(/
+\}\s*$/, () => `
+${insetsSource()}}
+`);
+		activity = activity.replace(/(super\.onWebViewCreate\(webView\)
+)/, () => `$1    installInsets(webView)
+`);
+		if (!activity.includes("fun safeTop") || !activity.includes("installInsets(webView)")) throw new Error("could not patch MainActivity.kt (template changed?)");
+	}
 	writeFileSync(activityPath, activity);
 	console.log("patched MainActivity.kt");
 } finally {
@@ -589,6 +603,7 @@ function systemBarSource(): string {
   // The page reports its own theme (Settings > Appearance), which may differ from the phone's dark mode.
   override fun onWebViewCreate(webView: android.webkit.WebView) {
     super.onWebViewCreate(webView)
+    installInsets(webView)
     try {
       webView.addJavascriptInterface(SystemBarBridge(), "PrometheusHost")
     } catch (_: Throwable) {
@@ -596,6 +611,7 @@ function systemBarSource(): string {
   }
 
   inner class SystemBarBridge {
+${bridgeExtraSource()}
     @android.webkit.JavascriptInterface
     fun theme(dark: Boolean) {
       runOnUiThread { applySystemBarTheme(dark) }
@@ -625,6 +641,80 @@ function systemBarSource(): string {
     }
     // Behind the transparent bars: the app's own background, so no white strip appears in dark mode.
     w.setBackgroundDrawableResource(if (dark) android.R.color.black else android.R.color.white)
+  }
+${insetsSource()}`;
+}
+
+/** Methods of the PrometheusHost bridge beyond theme(): file download and status bar height. */
+function bridgeExtraSource(): string {
+	return `
+    /** Saves a one-time download link into the public Downloads folder with the system DownloadManager (the opener plugin refuses loopback URLs). */
+    @android.webkit.JavascriptInterface
+    fun download(url: String, name: String) {
+      try {
+        val clean = name.map { if (it < ' ' || "/\\\\:*?\\"<>|".indexOf(it) >= 0) '_' else it }.joinToString("").trim().ifEmpty { "file" }
+        val dir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+        var target = clean
+        var n = 1
+        val dot = clean.lastIndexOf('.')
+        while (java.io.File(dir, target).exists()) {
+          target = if (dot > 0) clean.substring(0, dot) + " (" + n + ")" + clean.substring(dot) else clean + " (" + n + ")"
+          n++
+        }
+        val req = android.app.DownloadManager.Request(android.net.Uri.parse(url))
+          .setTitle(target)
+          .setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+          .setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, target)
+        getSystemService(android.app.DownloadManager::class.java).enqueue(req)
+      } catch (_: Throwable) {
+      }
+    }
+
+    /** Status bar height in CSS px; the page asks because it may load before the insets callback ran. */
+    @android.webkit.JavascriptInterface
+    fun safeTop(): Int = cssPx(if (statusTopPx > 0) statusTopPx else resourceStatusTopPx())
+`;
+}
+
+/** Keyboard (IME) and status bar insets: the shell is edge-to-edge, so neither is applied for us. */
+function insetsSource(): string {
+	return `
+  private var statusTopPx = 0
+
+  /** Insets and dimension resources are physical pixels; the page lays out in CSS px (= dp). */
+  private fun cssPx(devicePx: Int): Int {
+    val density = resources.displayMetrics.density
+    return if (density > 0f) Math.round(devicePx / density) else devicePx
+  }
+
+  private fun resourceStatusTopPx(): Int {
+    val id = resources.getIdentifier("status_bar_height", "dimen", "android")
+    return if (id > 0) resources.getDimensionPixelSize(id) else 0
+  }
+
+  private fun installInsets(webView: android.webkit.WebView) {
+    androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(webView) { v, insets ->
+      val top = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars() or androidx.core.view.WindowInsetsCompat.Type.displayCutout()).top
+      statusTopPx = top
+      v.post {
+        webView.evaluateJavascript("document.documentElement.style.setProperty('--safe-top','" + cssPx(top) + "px')", null)
+      }
+      // edge-to-edge windows stop resizing for the keyboard from API 30, so shrink the WebView by hand.
+      if (android.os.Build.VERSION.SDK_INT >= 30) {
+        val ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime()).bottom
+        val lp = v.layoutParams
+        if (lp is android.view.ViewGroup.MarginLayoutParams) {
+          if (lp.bottomMargin != ime) {
+            lp.bottomMargin = ime
+            v.layoutParams = lp
+          }
+        } else {
+          v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, ime)
+        }
+      }
+      insets
+    }
+    webView.post { androidx.core.view.ViewCompat.requestApplyInsets(webView) }
   }
 `;
 }

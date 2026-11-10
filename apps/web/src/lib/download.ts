@@ -3,7 +3,7 @@
 // a destination (File System Access API) the pieces are written straight to disk, which has no size limit; elsewhere
 // they are collected in memory and handed to the browser as a download, which is capped.
 import { defineMessages, tr } from "./i18n.ts";
-import { isTauri } from "./backend.ts";
+import { isAndroid, isTauri } from "./backend.ts";
 import { openExternal } from "./links.ts";
 import { call, toast, useStore } from "./store.ts";
 
@@ -13,12 +13,14 @@ const M = defineMessages({
 		failed: "下载失败：{name}",
 		tooBig: "文件 {size} 超过浏览器下载上限 {max}，请换用 Chrome 或 Edge，或在服务器上直接取",
 		starting: "正在下载 {name}…",
+		started: "已开始下载 {name}，可在通知或「下载」文件夹查看",
 	},
 	en: {
 		saved: "Saved {name}",
 		failed: "Download failed: {name}",
 		tooBig: "The file is {size}, over this browser's download limit of {max}. Use Chrome or Edge, or fetch it on the server",
 		starting: "Downloading {name}…",
+		started: "Download started: {name}. Check notifications or the Downloads folder",
 	},
 });
 
@@ -64,7 +66,20 @@ export async function downloadFile(path: string, suggestedName?: string): Promis
 		const client = useStore.getState().client;
 		const link = await call((c) => c.rpc("file.link", { sessionId: session.id, path }));
 		if (!client || !link) return false;
-		await openExternal(`${client.target.httpBase}/api/download/${encodeURIComponent(link.id)}`);
+		const url = `${client.target.httpBase}/api/download/${encodeURIComponent(link.id)}`;
+		if (isAndroid()) {
+			const host = window.PrometheusHost;
+			if (typeof host?.download === "function") {
+				try {
+					host.download(url, name);
+					toast(tr(M, "started", { name }), "info");
+					return true;
+				} catch {
+					// fall through to the system browser
+				}
+			}
+		}
+		await openExternal(url);
 		return true;
 	}
 

@@ -40,6 +40,11 @@ export function isAndroid(): boolean {
 	return /Android/i.test(navigator.userAgent);
 }
 
+/** True when the primary pointer is a finger: autofocus there only pops up the soft keyboard. */
+export function isTouchPrimary(): boolean {
+	return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
+}
+
 /** The Tauri desktop shell: frameless window, tray and self-updater exist only here. */
 export function isDesktopShell(): boolean {
 	return isTauri() && !isAndroid();

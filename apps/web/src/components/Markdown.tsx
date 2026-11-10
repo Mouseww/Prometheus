@@ -29,7 +29,7 @@ function CodeBlock({ children, ...rest }: React.ComponentPropsWithoutRef<"pre"> 
 		}
 	};
 	return (
-		<div className="group/code relative">
+		<div className="group/code relative min-w-0 max-w-full">
 			<button type="button" onClick={() => void copy()} title="Copy" aria-label="Copy" className="absolute top-2 right-2 z-10 grid size-7 place-items-center rounded-md bg-ink-800/80 text-ink-300 hover:text-ink-100">
 				{done ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
 			</button>

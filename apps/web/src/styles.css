@@ -90,6 +90,7 @@ html[data-chat-resizing] { cursor: col-resize; user-select: none; }
 }
 
 :root {
+	--safe-top: env(safe-area-inset-top, 0px);
 	color-scheme: dark;
 	--glow: 255 90 31;
 	--hair: 242 233 223;
@@ -204,7 +205,7 @@ body { margin: 0; overflow: hidden; overscroll-behavior: none; }
 /* Desktop title bar: draggable chrome, interactive children opt out. */
 .titlebar { -webkit-user-select: none; user-select: none; }
 /* Phones draw edge to edge; keep the bar below the status bar / notch (0 on desktop). */
-.titlebar { padding-top: env(safe-area-inset-top, 0px); }
+.titlebar { padding-top: var(--safe-top); }
 .titlebar button, .titlebar input, .titlebar a, .titlebar [data-no-drag] { -webkit-app-region: no-drag; }
 
 /* Thinking-effort slider */
@@ -220,7 +221,10 @@ body { margin: 0; overflow: hidden; overscroll-behavior: none; }
 .rail-x::-webkit-scrollbar { display: none; }
 
 /* Markdown */
-.prose-forge { line-height: 1.7; font-size: 0.95rem; overflow-wrap: anywhere; }
+.prose-forge { line-height: 1.7; font-size: 0.95rem; overflow-wrap: anywhere; min-width: 0; max-width: 100%; }
+.prose-forge img { max-width: 100%; height: auto; }
+/* The file viewer's own download paths are blob downloads, which the Android WebView cannot do. */
+.ofv-fallback > a { display: none; }
 .prose-forge > * + * { margin-top: 0.75em; }
 .prose-forge h1, .prose-forge h2, .prose-forge h3 { font-family: var(--font-display); font-weight: 650; letter-spacing: -0.01em; margin-top: 1.2em; }
 .prose-forge h1 { font-size: 1.4rem; }
@@ -232,14 +236,14 @@ body { margin: 0; overflow: hidden; overscroll-behavior: none; }
 .prose-forge li + li { margin-top: 0.25em; }
 .prose-forge blockquote { border-left: 2px solid var(--color-ember-500); padding-left: 1em; color: var(--color-ink-300); }
 .prose-forge :not(pre) > code { font-family: var(--font-mono); font-size: 0.85em; background: var(--color-ink-800); padding: 0.1em 0.4em; border-radius: 5px; color: var(--color-ember-200); }
-.prose-forge pre { font-family: var(--font-mono); font-size: 0.82rem; background: var(--color-ink-900) !important; border: 1px solid rgb(var(--hair) / 0.08); border-radius: 12px; padding: 1em 1.1em; overflow-x: auto; }
+.prose-forge pre { font-family: var(--font-mono); font-size: 0.82rem; background: var(--color-ink-900) !important; border: 1px solid rgb(var(--hair) / 0.08); border-radius: 12px; padding: 1em 1.1em; overflow-x: auto; max-width: 100%; }
 .prose-forge pre code.hljs { background: transparent; padding: 0; }
 /* highlight.js theme is dark-only; keep code blocks dark in the light theme. */
 :root[data-theme="light"] .prose-forge pre { background: #1f1b18 !important; color: #f2e9df; border-color: transparent; }
 /* Side file viewer: highlight.js colours on the panel's own background. The theme is dark-only, so the light theme keeps code dark. */
 .code-view.hljs { background: transparent; color: var(--color-ink-200); padding: 0; }
 :root[data-theme="light"] .code-view.hljs { background: #1f1b18; color: #f2e9df; }
-.prose-forge table { border-collapse: collapse; font-size: 0.88rem; display: block; overflow-x: auto; }
+.prose-forge table { border-collapse: collapse; font-size: 0.88rem; display: block; overflow-x: auto; max-width: 100%; }
 .prose-forge th, .prose-forge td { border: 1px solid var(--color-ink-700); padding: 0.4em 0.8em; }
 .prose-forge th { background: var(--color-ink-850); font-weight: 600; }
 .prose-forge hr { border-color: var(--color-ink-700); }

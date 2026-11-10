@@ -3,6 +3,7 @@ import { sessionSpace } from "../lib/spaces.ts";
 import { ArrowUp, Brain, Check, ChevronDown, CornerDownRight, Cpu, File as FileIcon, FileText, Folder as FolderIcon, ListEnd, Maximize2, Paperclip, Pencil, Search, Square, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CommandInfo, ImageContent, ThinkingLevel } from "@prometheus/protocol";
+import { isTouchPrimary } from "../lib/backend.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { Mentions, SlashCommands } from "./suggestions.tsx";
 import { type Attachment, AttachmentError, fileToAttachment, formatSize, isPicture, MAX_FILE_MB, MAX_FILES } from "../lib/attachments.ts";
@@ -254,7 +255,7 @@ ${current.provider}/${current.id}` : undefined}
 				<div className="absolute bottom-full left-3 right-3 z-40 mb-2 md:left-0 md:right-auto md:w-[26rem] animate-rise overflow-hidden rounded-xl border border-ink-700 bg-ink-900/97 shadow-2xl shadow-black/40 backdrop-blur">
 					<div className="flex items-center gap-2 border-b border-ink-800 px-3">
 						<Search className="size-3.5 text-ink-500" />
-						<input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("searchModel")} className="w-full bg-transparent py-2.5 text-sm focus:outline-none" />
+						<input autoFocus={!isTouchPrimary()} value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("searchModel")} className="w-full bg-transparent py-2.5 text-sm focus:outline-none" />
 					</div>
 					<div className="max-h-[min(20rem,45dvh)] overflow-y-auto py-1">
 						{groups.length === 0 && (
@@ -938,7 +939,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 				</button>
 				<textarea
 					ref={ref}
-					autoFocus
+					autoFocus={!isTouchPrimary()}
 					value={text}
 					onChange={(e) => {
 						setText(e.target.value);

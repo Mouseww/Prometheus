@@ -6,6 +6,10 @@
 interface AndroidHost {
 	/** True for a dark app theme (light bar icons); false for a light one (dark bar icons). */
 	theme?: (dark: boolean) => void;
+	/** Saves a download link into the phone's Downloads folder via DownloadManager. */
+	download?: (url: string, name: string) => void;
+	/** Status bar height in CSS px (the WebView reports 0 for safe-area-inset-top without a cutout). */
+	safeTop?: () => number;
 }
 
 declare global {

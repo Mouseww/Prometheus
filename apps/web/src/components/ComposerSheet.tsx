@@ -95,7 +95,7 @@ export function ComposerSheet(p: ComposerSheetProps) {
 	return createPortal(
 		<div
 			className="fixed right-0 left-0 z-[55] flex bg-ink-950 md:items-center md:justify-center md:bg-black/55 md:p-8 md:backdrop-blur-sm"
-			style={{ top: p.viewport.top, height: p.viewport.height, paddingTop: "env(safe-area-inset-top, 0px)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+			style={{ top: p.viewport.top, height: p.viewport.height, paddingTop: "var(--safe-top)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
 			onMouseDown={(e) => e.target === e.currentTarget && p.onClose()}
 		>
 			<div

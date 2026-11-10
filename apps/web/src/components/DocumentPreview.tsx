@@ -69,7 +69,7 @@ export default function DocumentPreview({ path, name, refreshKey }: { path: stri
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [client, sessionId, path, name, refreshKey]);
 
-	const viewer = useMemo(() => (file ? <FileViewer file={file} fileName={file.name} width="100%" height="100%" fit="contain" toolbar theme="dark" plugins={plugins} onError={() => setError(t("failed"))} /> : null), [file]); // eslint-disable-line react-hooks/exhaustive-deps
+	const viewer = useMemo(() => (file ? <FileViewer file={file} fileName={file.name} width="100%" height="100%" fit="contain" toolbar={{ download: false }} theme="dark" plugins={plugins} onError={() => setError(t("failed"))} /> : null), [file]); // eslint-disable-line react-hooks/exhaustive-deps
 	if (error) return <p className="p-4 text-sm text-ink-500">{error}</p>;
 	if (!viewer)
 		return (

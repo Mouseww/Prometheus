@@ -83,3 +83,25 @@ export function installKeyboardInset(): void {
 	vv.addEventListener("scroll", schedule);
 	apply();
 }
+
+/**
+ * Android WebView reports `safe-area-inset-top` as 0 unless there is a cutout, so the status bar covers the top bar.
+ * The shell knows the real height (CSS px); publish it as `--safe-top`.
+ */
+export function installSafeArea(): void {
+	const root = document.documentElement;
+	const apply = () => {
+		let top = 0;
+		try {
+			top = Math.round(window.PrometheusHost?.safeTop?.() ?? 0);
+		} catch {
+			top = 0;
+		}
+		if (top > 0) root.style.setProperty("--safe-top", `${top}px`);
+		else root.style.removeProperty("--safe-top");
+	};
+	apply();
+	for (const ms of [150, 600, 1500]) setTimeout(apply, ms); // the bridge may be injected after this module loads
+	window.addEventListener("resize", apply);
+	window.addEventListener("orientationchange", apply);
+}
