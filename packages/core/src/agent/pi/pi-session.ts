@@ -21,8 +21,11 @@ import type { PermissionGate } from "../../permission-gate.ts";
 import { EXIT_PLAN_MODE } from "../../permissions.ts";
 import type { PromptDelivery, RuntimeCapabilities, RuntimeSession, RuntimeSnapshot, SessionHooks, SessionRef, UserInput } from "../types.ts";
 import { slimEvent } from "./events.ts";
-import { ShellWatchdog } from "./shell-watchdog.ts";
+import { ShellWatchdog, type StuckCall } from "./shell-watchdog.ts";
 import { contextBreakdown, estimateTokens, hasReportedUsage, lastReply } from "./tokens.ts";
+
+/** How many times in a row a hung shell command may be recovered without the user typing anything. */
+const MAX_AUTO_RESUMES = 3;
 
 export { PI_CAPABILITIES } from "./capabilities.ts";
 import { PI_CAPABILITIES } from "./capabilities.ts";
@@ -57,11 +60,9 @@ export class PiRuntimeSession implements RuntimeSession {
 	private readonly unsubscribe: () => void;
 	private disposed = false;
 	/** Probe for shell calls with no output change for 10 minutes (checked every 30s): aborts the turn. */
-	private readonly shellWatchdog = new ShellWatchdog((call) => {
-		if (this.disposed) return;
-		this.opts.notifyError(`Shell command had no output for ${Math.round(call.idleMs / 1000)}s and was aborted: ${call.command}`);
-		void this.session.abort().catch(() => {});
-	});
+	private readonly shellWatchdog = new ShellWatchdog((call) => void this.recoverStuckShell(call));
+	/** Consecutive automatic resumes after a stuck shell command; reset by any user prompt. */
+	private autoResumes = 0;
 	/** Where the chat stood before the last `rewind`, so a failed resubmit can put it back. */
 	private rewound?: { from: string; to: string | null };
 
@@ -130,7 +131,32 @@ export class PiRuntimeSession implements RuntimeSession {
 
 	// ---------- turns ----------
 
+	/** Abort the turn held by a hung shell command, then tell the model so it carries on (bounded, to avoid loops). */
+	private async recoverStuckShell(call: StuckCall): Promise<void> {
+		if (this.disposed) return;
+		const secs = Math.round(call.idleMs / 1000);
+		this.opts.notifyError(`Shell command had no output for ${secs}s and was aborted: ${call.command}`);
+		try {
+			await this.session.abort();
+			// If the hung tool still does not release the turn, do not wait forever either.
+			await Promise.race([this.session.waitForIdle(), new Promise<void>((r) => setTimeout(r, 15_000).unref?.())]);
+		} catch {
+			return;
+		}
+		if (this.disposed || this.autoResumes >= MAX_AUTO_RESUMES) return;
+		this.autoResumes++;
+		const note =
+			`[系统提示] 上一条 ${call.toolName} 命令（${call.command}）连续 ${secs} 秒没有任何输出，已被自动中止。` +
+			"请继续完成刚才的任务：不要原样重跑会卡住的命令，改用带 timeout 的方式、非交互参数、或放到后台运行并把输出写入日志文件后轮询；若确认只是耗时较长，可显式设置更大的 timeout 重试。";
+		try {
+			await this.session.prompt(note);
+		} catch (err) {
+			this.opts.notifyError(`Auto-resume failed: ${String(err)}`);
+		}
+	}
+
 	prompt(input: UserInput, delivery: PromptDelivery): Promise<PromptDisposition> {
+		this.autoResumes = 0;
 		const session = this.session;
 		// Resolve as soon as PI accepts the prompt; the run itself streams through events.
 		return new Promise<PromptDisposition>((resolve, reject) => {
