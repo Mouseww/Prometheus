@@ -21,6 +21,7 @@ import type { PermissionGate } from "../../permission-gate.ts";
 import { EXIT_PLAN_MODE } from "../../permissions.ts";
 import type { PromptDelivery, RuntimeCapabilities, RuntimeSession, RuntimeSnapshot, SessionHooks, SessionRef, UserInput } from "../types.ts";
 import { slimEvent } from "./events.ts";
+import { ShellWatchdog } from "./shell-watchdog.ts";
 import { contextBreakdown, estimateTokens, hasReportedUsage, lastReply } from "./tokens.ts";
 
 export { PI_CAPABILITIES } from "./capabilities.ts";
@@ -55,6 +56,12 @@ export class PiRuntimeSession implements RuntimeSession {
 	private readonly listeners = new Set<(event: SessionEvent) => void>();
 	private readonly unsubscribe: () => void;
 	private disposed = false;
+	/** Probe for shell calls that outlive their timeout (the SDK's kill did not release them): aborts the turn. */
+	private readonly shellWatchdog = new ShellWatchdog((call) => {
+		if (this.disposed) return;
+		this.opts.notifyError(`Shell command stuck for ${Math.round(call.elapsedMs / 1000)}s and was aborted: ${call.command}`);
+		void this.session.abort().catch(() => {});
+	});
 	/** Where the chat stood before the last `rewind`, so a failed resubmit can put it back. */
 	private rewound?: { from: string; to: string | null };
 
@@ -92,6 +99,9 @@ export class PiRuntimeSession implements RuntimeSession {
 	}
 
 	private onPiEvent(e: AgentSessionEvent): void {
+		if (e.type === "tool_execution_start") this.shellWatchdog.start(e.toolCallId, e.toolName, e.args);
+		else if (e.type === "tool_execution_end") this.shellWatchdog.end(e.toolCallId);
+		else if (e.type === "agent_settled") this.shellWatchdog.dispose();
 		const slim = slimEvent(e);
 		if (slim) this.emit(slim);
 		const hooks = this.opts.hooks;
@@ -421,6 +431,7 @@ export class PiRuntimeSession implements RuntimeSession {
 	async dispose(): Promise<void> {
 		if (this.disposed) return;
 		this.disposed = true;
+		this.shellWatchdog.dispose();
 		this.unsubscribe();
 		this.opts.onDispose?.();
 		this.listeners.clear();

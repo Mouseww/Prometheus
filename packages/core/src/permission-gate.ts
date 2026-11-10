@@ -3,6 +3,7 @@ import type { InlineExtension } from "@earendil-works/pi-coding-agent";
 import type { PluginTool } from "@prometheus/plugin-sdk";
 import type { PermissionMode, PermissionPrompt, RunAccess } from "@prometheus/protocol";
 import { escapesWorktree } from "./worktree.ts";
+import { applyDefaultShellTimeout } from "./agent/pi/shell-watchdog.ts";
 import { decide, EXIT_PLAN_MODE, INSTALL_PLUGIN_TOOL, isProjectPath, ruleKey, toolKind } from "./permissions.ts";
 
 const PLAN_PROMPT = `# Plan mode
@@ -215,6 +216,8 @@ export class PermissionGate {
 
 				pi.on("tool_call", async (event, ctx) => {
 					const input = event.input as Record<string, unknown>;
+					// The SDK shell tools have no default timeout; a command that never ends would freeze the turn.
+					applyDefaultShellTimeout(event.toolName, input);
 					const readOnly = pi.getAllTools().find((t) => t.name === event.toolName)?.annotations?.readOnlyHint === true;
 					return this.evaluate({ toolName: event.toolName, input, readOnly, cwd: ctx.cwd, signal: ctx.signal });
 				});
