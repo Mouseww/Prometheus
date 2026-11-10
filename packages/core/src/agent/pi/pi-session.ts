@@ -56,10 +56,10 @@ export class PiRuntimeSession implements RuntimeSession {
 	private readonly listeners = new Set<(event: SessionEvent) => void>();
 	private readonly unsubscribe: () => void;
 	private disposed = false;
-	/** Probe for shell calls that outlive their timeout (the SDK's kill did not release them): aborts the turn. */
+	/** Probe for shell calls with no output change for 10 minutes (checked every 30s): aborts the turn. */
 	private readonly shellWatchdog = new ShellWatchdog((call) => {
 		if (this.disposed) return;
-		this.opts.notifyError(`Shell command stuck for ${Math.round(call.elapsedMs / 1000)}s and was aborted: ${call.command}`);
+		this.opts.notifyError(`Shell command had no output for ${Math.round(call.idleMs / 1000)}s and was aborted: ${call.command}`);
 		void this.session.abort().catch(() => {});
 	});
 	/** Where the chat stood before the last `rewind`, so a failed resubmit can put it back. */
@@ -100,6 +100,7 @@ export class PiRuntimeSession implements RuntimeSession {
 
 	private onPiEvent(e: AgentSessionEvent): void {
 		if (e.type === "tool_execution_start") this.shellWatchdog.start(e.toolCallId, e.toolName, e.args);
+		else if (e.type === "tool_execution_update") this.shellWatchdog.touch(e.toolCallId);
 		else if (e.type === "tool_execution_end") this.shellWatchdog.end(e.toolCallId);
 		else if (e.type === "agent_settled") this.shellWatchdog.dispose();
 		const slim = slimEvent(e);

@@ -1,43 +1,37 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { applyDefaultShellTimeout, defaultShellTimeoutSeconds, ShellWatchdog } from "../src/agent/pi/shell-watchdog.ts";
-
-describe("applyDefaultShellTimeout", () => {
-	it("adds a timeout to shell calls without one", () => {
-		const input: Record<string, unknown> = { command: "sleep 1" };
-		expect(applyDefaultShellTimeout("bash", input, 600)).toBe(true);
-		expect(input.timeout).toBe(600);
-	});
-	it("keeps an explicit timeout and ignores other tools", () => {
-		const input: Record<string, unknown> = { command: "x", timeout: 5 };
-		expect(applyDefaultShellTimeout("bash", input, 600)).toBe(false);
-		expect(input.timeout).toBe(5);
-		expect(applyDefaultShellTimeout("read", {}, 600)).toBe(false);
-	});
-	it("can be disabled by env", () => {
-		expect(defaultShellTimeoutSeconds({ PROMETHEUS_SHELL_TIMEOUT: "0" })).toBe(0);
-		expect(applyDefaultShellTimeout("bash", {}, 0)).toBe(false);
-	});
-});
+import { ShellWatchdog } from "../src/agent/pi/shell-watchdog.ts";
 
 describe("ShellWatchdog", () => {
 	beforeEach(() => vi.useFakeTimers());
 	afterEach(() => vi.useRealTimers());
 
-	it("reports a call still open after timeout + grace", () => {
+	it("reports a call with no change for the idle window", () => {
 		const stuck = vi.fn();
-		const w = new ShellWatchdog(stuck, 1000, 900);
-		w.start("1", "bash", { command: "tail -f x", timeout: 10 });
-		vi.advanceTimersByTime(10_999);
+		const w = new ShellWatchdog(stuck, 30_000, 600_000);
+		w.start("1", "bash", { command: "tail -f x" });
+		vi.advanceTimersByTime(570_000);
 		expect(stuck).not.toHaveBeenCalled();
-		vi.advanceTimersByTime(2);
+		vi.advanceTimersByTime(60_000);
+		expect(stuck).toHaveBeenCalledTimes(1);
 		expect(stuck).toHaveBeenCalledWith(expect.objectContaining({ toolCallId: "1", command: "tail -f x" }));
 	});
-	it("stays quiet when the call ends", () => {
+	it("keeps waiting while output keeps changing", () => {
 		const stuck = vi.fn();
-		const w = new ShellWatchdog(stuck, 1000, 900);
-		w.start("1", "bash", { command: "ls", timeout: 10 });
+		const w = new ShellWatchdog(stuck, 30_000, 600_000);
+		w.start("1", "bash", { command: "npm i" });
+		for (let i = 0; i < 40; i++) {
+			vi.advanceTimersByTime(60_000);
+			w.touch("1");
+		}
+		expect(stuck).not.toHaveBeenCalled();
+	});
+	it("stays quiet when the call ends or is not a shell tool", () => {
+		const stuck = vi.fn();
+		const w = new ShellWatchdog(stuck, 30_000, 600_000);
+		w.start("1", "bash", { command: "ls" });
 		w.end("1");
-		vi.advanceTimersByTime(60_000);
+		w.start("2", "read", {});
+		vi.advanceTimersByTime(3_600_000);
 		expect(stuck).not.toHaveBeenCalled();
 	});
 });
