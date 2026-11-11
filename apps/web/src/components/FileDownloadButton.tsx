@@ -67,3 +67,42 @@ export function PathCode({ path, children }: { path: string; children: React.Rea
 		</>
 	);
 }
+
+/**
+ * A Markdown link whose target is a file on the server, e.g. `[下载 PPT](/data/out.pptx)`. Opened as a web address it would
+ * be a 404 on our own site, so a click downloads it the way the workspace does. A file the conversation cannot reach
+ * stays plain text instead of a link that leads nowhere.
+ */
+export function FileLink({ path, children }: { path: string; children: React.ReactNode }) {
+	const sessionId = useStore((s) => s.session?.id);
+	const [exists, setExists] = useState<boolean | null>(null);
+	const [busy, setBusy] = useState(false);
+	useEffect(() => {
+		let live = true;
+		setExists(null);
+		if (sessionId) void fileExists(sessionId, path).then((ok) => live && setExists(ok));
+		else setExists(false);
+		return () => {
+			live = false;
+		};
+	}, [sessionId, path]);
+	if (exists === false) return <span title={path}>{children}</span>;
+	return (
+		<a
+			href={path}
+			data-file-link=""
+			title={path}
+			aria-busy={busy || undefined}
+			onClick={(e) => {
+				e.preventDefault();
+				if (busy || !exists) return;
+				setBusy(true);
+				void downloadFile(path).finally(() => setBusy(false));
+			}}
+			className={busy ? "cursor-progress" : undefined}
+		>
+			{children}
+			{busy ? <LoaderCircle className="ml-0.5 inline size-3.5 animate-spin align-middle" /> : <Download className="ml-0.5 inline size-3.5 align-middle" />}
+		</a>
+	);
+}

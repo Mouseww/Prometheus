@@ -57,6 +57,8 @@ export function installGlobalGuards(): void {
 			const href = a.getAttribute("href") ?? "";
 			if (href.startsWith("#")) return;
 			e.preventDefault();
+			// A link to a file on the server (Markdown.tsx): its own click handler downloads it, it is not a web page.
+			if (a.hasAttribute("data-file-link")) return;
 			void openExternal(a.href);
 		},
 		true,
@@ -66,7 +68,7 @@ export function installGlobalGuards(): void {
 	});
 	document.addEventListener("contextmenu", (e) => {
 		const a = (e.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
-		if (!a || e.defaultPrevented || a.getAttribute("href")?.startsWith("#")) return;
+		if (!a || e.defaultPrevented || a.getAttribute("href")?.startsWith("#") || a.hasAttribute("data-file-link")) return;
 		e.preventDefault();
 		showContextMenu(e.clientX, e.clientY, [
 			{ label: tr(M, "openLink"), run: () => void openExternal(a.href) },

@@ -2,11 +2,11 @@ import { Check, Copy } from "lucide-react";
 import { isValidElement, memo, useState, type ReactNode } from "react";
 import { copyToClipboard } from "../lib/clipboard.ts";
 import { toast } from "../lib/store.ts";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
-import { looksLikeFilePath } from "../lib/download.ts";
-import { PathCode } from "./FileDownloadButton.tsx";
+import { fileLinkPath, looksLikeFilePath } from "../lib/download.ts";
+import { FileLink, PathCode } from "./FileDownloadButton.tsx";
 
 function textOf(node: ReactNode): string {
 	if (node == null || typeof node === "boolean") return "";
@@ -41,6 +41,16 @@ function CodeBlock({ children, ...rest }: React.ComponentPropsWithoutRef<"pre"> 
 /** Inline code naming a file gets a download button once the server confirms the file is there; blocks and other code stay as they are. */
 const components = {
 	pre: CodeBlock,
+	// A link to a file on the server downloads it; web links stay links (opened outside the app by links.ts).
+	a({ href, children, node: _node, ...rest }: React.ComponentPropsWithoutRef<"a"> & { node?: unknown }) {
+		const path = fileLinkPath(href);
+		if (path) return <FileLink path={path}>{children}</FileLink>;
+		return (
+			<a href={href} {...rest}>
+				{children}
+			</a>
+		);
+	},
 	code({ className, children, node: _node, ...rest }: React.ComponentPropsWithoutRef<"code"> & { node?: unknown }) {
 		const text = typeof children === "string" ? children : "";
 		if (!className && text && !/[\r\n]/.test(text) && looksLikeFilePath(text)) return <PathCode path={text}>{children}</PathCode>;
@@ -52,11 +62,14 @@ const components = {
 	},
 };
 
+/** The default filter drops `C:\...` and `file:` targets as unsafe schemes; file paths are kept so FileLink can download them. */
+const urlTransform = (url: string): string => (fileLinkPath(url) ? url : defaultUrlTransform(url));
+
 // Unlabeled code blocks get their language detected, so every code block is coloured.
 export const Markdown = memo(function Markdown({ text }: { text: string }) {
 	return (
 		<div className="prose-forge">
-			<ReactMarkdown components={components} remarkPlugins={[remarkGfm]} rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}>
+			<ReactMarkdown components={components} urlTransform={urlTransform} remarkPlugins={[remarkGfm]} rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}>
 				{text}
 			</ReactMarkdown>
 		</div>

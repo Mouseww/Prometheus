@@ -166,3 +166,21 @@ const PATH_LIKE = new RegExp(`^(?:[A-Za-z]:)?[^\\s"'<>|*?:()\\[\\]{}\`]*[^\\s"'<
 export function looksLikeFilePath(text: string): boolean {
 	return text.length > 3 && text.length < 260 && !text.includes("://") && PATH_LIKE.test(text);
 }
+
+/**
+ * The server-side path a Markdown link points at, or null when it is a real web link. The model often writes files as
+ * `[下载](/data/out.pptx)` or `[x](file:///C:/out.pptx)`: opened as a URL that is a 404 on our own site, so such links are
+ * downloaded instead. Markdown percent-encodes non-ASCII characters in link targets, so the path is decoded first.
+ */
+export function fileLinkPath(href: string | undefined): string | null {
+	if (!href) return null;
+	let path = href.trim();
+	if (/^file:/i.test(path)) path = path.replace(/^file:\/*/i, "/").replace(/^\/([A-Za-z]:)/, "$1");
+	else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(path) || /^(?:mailto|tel|data|javascript):/i.test(path) || path.startsWith("#")) return null;
+	try {
+		path = decodeURIComponent(path);
+	} catch {
+		// a stray % that is not an escape: keep the text as written
+	}
+	return looksLikeFilePath(path) ? path : null;
+}

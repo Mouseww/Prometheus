@@ -7,6 +7,8 @@ vi.stubGlobal("requestAnimationFrame", (fn: () => void) => setTimeout(fn, 0));
 vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener: () => undefined, removeEventListener: () => undefined, addListener: () => undefined, removeListener: () => undefined }));
 const anchors: { href: string; download: string; clicked: boolean }[] = [];
 vi.stubGlobal("document", {
+	querySelector: () => null,
+	head: { appendChild: () => undefined },
 	documentElement: { classList: { add: () => undefined, remove: () => undefined, toggle: () => undefined }, style: { setProperty: () => undefined }, dataset: {} },
 	addEventListener: () => undefined,
 	visibilityState: "visible",
@@ -23,7 +25,7 @@ URL.revokeObjectURL = () => undefined;
 
 // The store reads browser globals while loading, so these are imported after they exist.
 const { useStore } = await import("../src/lib/store.ts");
-const { baseName, downloadFile, fileExists, looksLikeFilePath, MEMORY_LIMIT } = await import("../src/lib/download.ts");
+const { baseName, downloadFile, fileExists, fileLinkPath, looksLikeFilePath, MEMORY_LIMIT } = await import("../src/lib/download.ts");
 
 const bytes = Uint8Array.from({ length: 10_000 }, (_, i) => i % 251);
 const b64 = (u: Uint8Array) => btoa(String.fromCharCode(...u));
@@ -128,5 +130,21 @@ describe("mentioned paths", () => {
 		expect(baseName("a/b/c.txt")).toBe("c.txt");
 		expect(baseName("C:\\x\\y.docx")).toBe("y.docx");
 		expect(baseName("dir/")).toBe("dir");
+	});
+});
+
+describe("fileLinkPath", () => {
+	it("reads a server path out of a Markdown link target, decoding what Markdown percent-encoded", () => {
+		expect(fileLinkPath("/data/plugin-data/assistant/home/IA-%E5%8F%AF%E9%9D%A0%E6%80%A7%E9%A3%8E%E9%99%A9%E5%88%86%E6%9E%90.pptx")).toBe("/data/plugin-data/assistant/home/IA-可靠性风险分析.pptx");
+		expect(fileLinkPath("/data/plugin-data/assistant/home/IA-可靠性风险分析.pptx")).toBe("/data/plugin-data/assistant/home/IA-可靠性风险分析.pptx");
+		expect(fileLinkPath("out/report.docx")).toBe("out/report.docx");
+		expect(fileLinkPath("C:\work\a.xlsx")).toBe("C:\work\a.xlsx");
+		expect(fileLinkPath("file:///C:/work/a.xlsx")).toBe("C:/work/a.xlsx");
+		expect(fileLinkPath("file:///data/a.pdf")).toBe("/data/a.pdf");
+	});
+	it("leaves web links, anchors and unsafe schemes alone", () => {
+		for (const href of ["https://example.com/a.pdf", "http://x/y.pptx", "#section", "mailto:a@b.c", "javascript:alert(1).js", "/docs/guide", undefined, ""]) {
+			expect(fileLinkPath(href)).toBeNull();
+		}
 	});
 });
