@@ -6,9 +6,9 @@
 // Node comes from Termux: Google and nodejs.org publish no Android build, and Termux's is the maintained one.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, closeSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO = "https://packages.termux.dev/apt/termux-main";
@@ -278,10 +278,34 @@ try {
 	rmSync(libOut, { recursive: true, force: true });
 	mkdirSync(libOut, { recursive: true });
 	const libSrc = join(prefix, "lib");
+	// Termux names one library several times (`libicudata.so`, `.so.78`, `.so.78.3`) with the long name as the real file and
+	// the others as links. Copying every name after resolving it stored the same 33 MB of ICU data three times (~40 MB in the
+	// APK). Store each real file once and recreate the links as relative ones, so every soname still resolves on the phone
+	// while the archive only carries the bytes once.
+	const stored = new Map<string, string>();
 	for (const f of readdirSync(libSrc)) {
 		if (!/\.so(\.|$)/.test(f)) continue;
-		// dereference: the tarball should hold real files, not links into a Termux prefix that does not exist on the phone.
-		cpSync(realpathSync(join(libSrc, f)), join(libOut, f));
+		const real = realpathSync(join(libSrc, f));
+		const target = basename(real);
+		if (!stored.has(real)) {
+			copyFileSync(real, join(libOut, target));
+			stored.set(real, target);
+		}
+		if (f === target) continue;
+		try {
+			symlinkSync(target, join(libOut, f));
+		} catch {
+			// No symlink privilege (a local Windows build): copy the bytes instead; the phone only sees the tarball.
+			copyFileSync(real, join(libOut, f));
+		}
+	}
+	// Every name has to resolve on the phone: a link whose file was never stored would make Node fail to start there.
+	for (const f of readdirSync(libOut)) {
+		try {
+			realpathSync(join(libOut, f));
+		} catch {
+			throw new Error(`server/lib/${f} points at a library that is missing from the archive`);
+		}
 	}
 
 	const tarball = join(jniDir, "libserver_bundle.so");
