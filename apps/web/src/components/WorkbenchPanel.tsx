@@ -159,6 +159,7 @@ function FileView({ tab }: { tab: Extract<WorkbenchTab, { kind: "file" }> }) {
 	const [copied, setCopied] = useState(false);
 	const lines = useMemo(() => (file?.kind === "text" ? (file.text ?? "").split("\n") : []), [file]);
 	const isMd = file?.language === "markdown";
+	const isHtml = file?.language === "html";
 	// Coloured lines, same count as `lines`; null shows the text plain (unknown language, or too big to colour quickly).
 	const colored = useMemo(() => {
 		if (file?.kind !== "text") return null;
@@ -172,7 +173,7 @@ function FileView({ tab }: { tab: Extract<WorkbenchTab, { kind: "file" }> }) {
 					{file?.path ?? tab.path}
 				</span>
 				<DownloadButton path={file?.path ?? tab.path} className="max-md:size-8" />
-				{isMd && (
+				{(isMd || isHtml) && (
 					<button type="button" onClick={() => setRendered(!rendered)} className="flex items-center gap-1 rounded px-1.5 py-0.5 text-ink-400 hover:bg-ink-800 hover:text-ink-100">
 						<Eye className="size-3.5" />
 						{rendered ? t("source") : t("preview")}
@@ -222,7 +223,10 @@ function FileView({ tab }: { tab: Extract<WorkbenchTab, { kind: "file" }> }) {
 						<Markdown text={file.text ?? ""} />
 					</div>
 				)}
-				{file?.kind === "text" && !(isMd && rendered) && (
+				{file?.kind === "text" && isHtml && rendered && (
+					<iframe key={reloads} title={file.name} srcDoc={file.text ?? ""} sandbox="allow-scripts allow-forms allow-popups allow-modals" className="size-full border-0 bg-white" />
+				)}
+				{file?.kind === "text" && !((isMd || isHtml) && rendered) && (
 					<table className={clsx("code-view w-full border-collapse font-mono text-[12px] leading-5", colored && "hljs")}>
 						<tbody>
 							{lines.map((line, i) => (
