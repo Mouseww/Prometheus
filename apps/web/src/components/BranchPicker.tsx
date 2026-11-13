@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Check, ChevronDown, GitBranch, Plus } from "lucide-react";
+import { Check, ChevronDown, GitBranch, Plus, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { GitBranch as Branch, GitStatus } from "@prometheus/protocol";
 import { promptDialog } from "../lib/dialogs.ts";
@@ -17,6 +17,9 @@ const M = defineMessages({
 		running: "对话运行中，暂不能切换分支",
 		detached: "游离 HEAD",
 		none: "没有本地分支",
+		sync: "同步远程（获取并快进拉取）",
+		syncing: "同步中…",
+		synced: "已同步",
 	},
 	en: {
 		branch: "Switch branch",
@@ -26,6 +29,9 @@ const M = defineMessages({
 		running: "A run is in progress; branches can't be switched now",
 		detached: "Detached HEAD",
 		none: "No local branches",
+		sync: "Sync with remote (fetch + fast-forward)",
+		syncing: "Syncing…",
+		synced: "Synced",
 	},
 });
 
@@ -38,6 +44,7 @@ export function BranchPicker() {
 	const { open, setOpen, ref } = usePopover();
 	const [status, setStatus] = useState<GitStatus | null>(null);
 	const [branches, setBranches] = useState<Branch[]>([]);
+	const [syncing, setSyncing] = useState(false);
 
 	const refresh = useCallback(async () => {
 		if (!enabled || !path) return setStatus(null);
@@ -66,6 +73,18 @@ export function BranchPicker() {
 		const res = await pluginCall("git", "checkout", { workspace: path, name, create });
 		if (res !== undefined) toast(t("switched", { name }));
 		await refresh();
+	};
+
+	// Worktree runs push to the remote branch directly, so the local copy of it falls behind: fetch (to refresh the count), then fast-forward.
+	const sync = async () => {
+		setSyncing(true);
+		try {
+			if ((await pluginCall("git", "fetch", { workspace: path })) === undefined) return;
+			if ((await pluginCall("git", "pull", { workspace: path })) !== undefined) toast(t("synced"));
+		} finally {
+			setSyncing(false);
+			await refresh();
+		}
 	};
 
 	const local = branches.filter((b) => !b.remote);
@@ -106,6 +125,16 @@ export function BranchPicker() {
 							</button>
 						))}
 					</div>
+					<button
+						type="button"
+						disabled={streaming || syncing}
+						onClick={() => void sync()}
+						className="flex w-full items-center gap-2 border-t border-ink-800 px-3.5 py-2.5 text-left text-sm text-ink-200 hover:bg-ink-800 disabled:opacity-40"
+					>
+						<RefreshCw className={clsx("size-4", syncing && "animate-spin")} />
+						<span className="min-w-0 flex-1 truncate">{syncing ? t("syncing") : t("sync")}</span>
+						{status.behind > 0 && <span className="font-mono text-[11px] text-ink-500">↓{status.behind}</span>}
+					</button>
 					<button
 						type="button"
 						disabled={streaming}
