@@ -263,10 +263,15 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, kind: Kind)
 	if (url.pathname.startsWith("/api/download/") && (req.method === "GET" || req.method === "HEAD")) {
 		const file = host.takeDownload(decodeURIComponent(url.pathname.slice("/api/download/".length)));
 		if (!file) return json(res, 404, { error: "not found" });
+		// ?view=1 on an HTML file renders it in the browser instead of saving it. The sandbox CSP gives the page an opaque
+		// origin, so its scripts cannot reach this server's cookie or API.
+		const view = url.searchParams.get("view") === "1" && /\.html?$/i.test(file.name);
 		res.writeHead(200, {
-			"content-type": "application/octet-stream",
+			"content-type": view ? "text/html; charset=utf-8" : "application/octet-stream",
 			"content-length": file.size,
-			"content-disposition": `attachment; filename="download"; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+			...(view
+				? { "content-security-policy": "sandbox allow-scripts allow-forms allow-popups allow-modals" }
+				: { "content-disposition": `attachment; filename="download"; filename*=UTF-8''${encodeURIComponent(file.name)}` }),
 			"cache-control": "no-store",
 			"x-content-type-options": "nosniff",
 		});

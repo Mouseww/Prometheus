@@ -1,7 +1,8 @@
 import { DownloadButton } from "./FileDownloadButton.tsx";
 import clsx from "clsx";
-import { Check, Copy, Eye, FileText, FolderTree, Globe, LoaderCircle, PanelRightClose, RefreshCw, SquareTerminal, X } from "lucide-react";
+import { Check, Copy, ExternalLink, Eye, FileText, FolderTree, Globe, LoaderCircle, PanelRightClose, RefreshCw, SquareTerminal, X } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { previewInBrowser } from "../lib/download.ts";
 import { copyToClipboard } from "../lib/clipboard.ts";
 import { usePanelWidth } from "../lib/panelWidth.ts";
 import { useIsMobile } from "../lib/viewport.ts";
@@ -33,6 +34,7 @@ const M = defineMessages({
 		truncated: "文件较大，只显示前 1 MB",
 		preview: "渲染预览",
 		source: "源码",
+		openBrowser: "在浏览器中打开",
 	},
 	en: {
 		title: "Viewer",
@@ -49,6 +51,7 @@ const M = defineMessages({
 		truncated: "Large file: showing the first 1 MB",
 		preview: "Preview",
 		source: "Source",
+		openBrowser: "Open in browser",
 	},
 });
 
@@ -173,6 +176,12 @@ function FileView({ tab }: { tab: Extract<WorkbenchTab, { kind: "file" }> }) {
 					{file?.path ?? tab.path}
 				</span>
 				<DownloadButton path={file?.path ?? tab.path} className="max-md:size-8" />
+				{isHtml && (
+					<button type="button" onClick={() => void previewInBrowser(file?.path ?? tab.path)} className="flex items-center gap-1 rounded px-1.5 py-0.5 text-ink-400 hover:bg-ink-800 hover:text-ink-100">
+						<ExternalLink className="size-3.5" />
+						{t("openBrowser")}
+					</button>
+				)}
 				{(isMd || isHtml) && (
 					<button type="button" onClick={() => setRendered(!rendered)} className="flex items-center gap-1 rounded px-1.5 py-0.5 text-ink-400 hover:bg-ink-800 hover:text-ink-100">
 						<Eye className="size-3.5" />
