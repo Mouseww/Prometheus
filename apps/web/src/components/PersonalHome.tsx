@@ -600,7 +600,7 @@ export function PersonalHome() {
 								placeholder={t("composerHint")}
 								rows={2}
 								aria-label={t("composerHint")}
-								className="w-full resize-none bg-transparent text-[14.5px] leading-relaxed text-ink-100 outline-none placeholder:text-ink-500"
+								className="min-h-[4.5rem] w-full flex-1 resize-none bg-transparent text-[14.5px] leading-relaxed text-ink-100 outline-none placeholder:text-ink-500"
 							/>
 							{showMention && (
 								<SuggestionPanel>

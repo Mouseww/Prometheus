@@ -14,9 +14,32 @@ interface UpdaterState {
 	error: string | null;
 	/** The prompt dialog is hidden once dismissed; the settings button can reopen it. */
 	dismissed: boolean;
+	/** Download progress while installing: bytes received, and the total (null when the server did not say). */
+	received: number;
+	total: number | null;
+	/** True once the download is done and the app is stopping the server / installing. */
+	downloaded: boolean;
 }
 
-export const useUpdater = create<UpdaterState>(() => ({ phase: "idle", version: null, notes: null, error: null, dismissed: false }));
+export const useUpdater = create<UpdaterState>(() => ({
+	phase: "idle",
+	version: null,
+	notes: null,
+	error: null,
+	dismissed: false,
+	received: 0,
+	total: null,
+	downloaded: false,
+}));
+
+/** Resolves the running download's cancel race. The updater plugin cannot abort the transfer itself, so a cancel
+ *  stops waiting for it and never installs it; the next attempt starts a fresh download. */
+let cancelDownload: (() => void) | null = null;
+
+/** Cancels the update download in progress (no-op once it is finished and installing). */
+export function cancelUpdate(): void {
+	if (!useUpdater.getState().downloaded) cancelDownload?.();
+}
 
 let pending: Update | null = null;
 /** Android: where the new APK is downloaded from (the system installer takes over from there). */
@@ -143,10 +166,28 @@ export async function installUpdate(whenIdle = false): Promise<void> {
 	if (isAndroid()) return installAndroid();
 	const update = pending;
 	if (!update) return;
-	useUpdater.setState({ phase: "installing", error: null });
+	useUpdater.setState({ phase: "installing", error: null, received: 0, total: null, downloaded: false });
+	const cancelled = new Promise<"cancelled">((resolve) => {
+		cancelDownload = () => resolve("cancelled");
+	});
 	try {
 		const { invoke } = await import("@tauri-apps/api/core");
-		await update.download();
+		let received = 0;
+		const done = update.download((ev) => {
+			if (ev.event === "Started") useUpdater.setState({ total: ev.data.contentLength ?? null });
+			else if (ev.event === "Progress") {
+				received += ev.data.chunkLength;
+				useUpdater.setState({ received });
+			}
+		});
+		const outcome = await Promise.race([done.then(() => "done" as const), cancelled]);
+		if (outcome === "cancelled") {
+			done.catch(() => {});
+			useUpdater.setState({ phase: "available", dismissed: false });
+			return;
+		}
+		useUpdater.setState({ downloaded: true });
+		cancelDownload = null;
 		if (whenIdle) {
 			// Restarting the backend would cut a running agent short: hold on until nothing runs (or the user turned this off).
 			while (!agentsIdle()) {
