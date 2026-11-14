@@ -606,26 +606,33 @@ export function MessageList({
 
 	// Earlier turns appear above what the user is reading: keep that in place. Adding "the height they brought" is not enough,
 	// because messages the browser skipped only have estimated heights that settle later. Instead the first message in view is
-	// remembered with its offset from the top of the viewport and put back there after every layout change, until the user scrolls again.
+	// remembered and put back after every layout change, until the content settles.
+	//
+	// It is remembered by its position in the *content* (top of the element inside the scroller's scrollable area), not by its
+	// place on screen. Only a change above it moves that number; scrolling does not. This matters on a phone: the touch that
+	// asks for earlier turns is often still dragging when they arrive, and a screen-relative anchor would read that movement
+	// as drift and give up, letting the prepended turns shove the whole conversation back by their height.
 	const first = start + offset;
+	const contentTop = (el: Element, scroller: HTMLElement) => el.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
 	const releaseTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-	const pin = useRef<{ el: Element; off: number; expect: number; until: number } | null>(null);
+	const pin = useRef<{ el: Element; at: number; until: number } | null>(null);
 	const holdAnchoring = useCallback(() => {
 		const scroller = scrollParent(root.current);
 		if (!scroller) return;
 		scroller.style.overflowAnchor = "none";
 		clearTimeout(releaseTimer.current);
-		// Give native anchoring back once the content has settled (or if nothing ends up being inserted).
+		// Give native anchoring back once the content has settled (or if nothing ends up being inserted). The window is longer
+		// than a fetch takes on a slow phone, and the media estimates of skipped messages settle a few frames after that.
 		releaseTimer.current = setTimeout(() => {
 			scroller.style.overflowAnchor = "";
 			pin.current = null;
-		}, 1500);
+		}, 3000);
 		const top = scroller.getBoundingClientRect().top;
 		for (const child of Array.from(root.current?.children ?? [])) {
 			if (child === sentinel.current) continue;
 			const r = child.getBoundingClientRect();
 			if (r.bottom > top + 1) {
-				pin.current = { el: child, off: r.top - top, expect: scroller.scrollTop, until: Date.now() + 1500 };
+				pin.current = { el: child, at: contentTop(child, scroller), until: Date.now() + 3000 };
 				break;
 			}
 		}
@@ -634,14 +641,17 @@ export function MessageList({
 		const p = pin.current;
 		const scroller = scrollParent(root.current);
 		if (!p || !scroller) return;
-		// The user moved the view (or time is up, or the message is gone): leave it alone from here on.
-		if (Date.now() > p.until || !p.el.isConnected || Math.abs(scroller.scrollTop - p.expect) > 3) {
+		// Time is up, or the message is gone: leave it alone from here on (native anchoring takes over again).
+		if (Date.now() > p.until || !p.el.isConnected) {
 			pin.current = null;
 			return;
 		}
-		const delta = p.el.getBoundingClientRect().top - scroller.getBoundingClientRect().top - p.off;
-		if (Math.abs(delta) > 1) scroller.scrollTop += delta;
-		p.expect = scroller.scrollTop;
+		const at = contentTop(p.el, scroller);
+		const delta = at - p.at;
+		if (Math.abs(delta) > 1) {
+			scroller.scrollTop += delta;
+			p.at = at;
+		}
 	}, []);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: runs after every commit that changes what is shown above the view
 	useLayoutEffect(() => {
@@ -718,8 +728,21 @@ export function MessageList({
 			lastGesture = Date.now();
 			load();
 		};
+		let touchY: number | null = null;
 		const onWheel = (e: WheelEvent) => e.deltaY < 0 && gesture();
-		const onTouch = () => gesture();
+		const onTouchStart = (e: TouchEvent) => {
+			touchY = e.touches.length === 1 ? (e.touches[0]?.clientY ?? null) : null;
+		};
+		// A finger moving down drags the content up. Sideways jitter, a pinch, or a swipe toward the latest turns must not
+		// pull history in: on a phone a slight touch while reading loaded a whole chunk and the view jumped back a page.
+		const onTouch = (e: TouchEvent) => {
+			const y = e.touches.length === 1 ? e.touches[0]?.clientY : undefined;
+			if (y !== undefined && touchY !== null && y > touchY + 4) gesture();
+			if (y !== undefined) touchY = y;
+		};
+		const onTouchEnd = () => {
+			touchY = null;
+		};
 		const onKey = (e: KeyboardEvent) => ["PageUp", "Home", "ArrowUp"].includes(e.key) && gesture();
 		const onDown = () => {
 			held = true;
@@ -735,7 +758,10 @@ export function MessageList({
 			if (up && (held || Date.now() - lastGesture < 400)) load();
 		};
 		scroller.addEventListener("wheel", onWheel, { passive: true });
+		scroller.addEventListener("touchstart", onTouchStart, { passive: true });
 		scroller.addEventListener("touchmove", onTouch, { passive: true });
+		scroller.addEventListener("touchend", onTouchEnd, { passive: true });
+		scroller.addEventListener("touchcancel", onTouchEnd, { passive: true });
 		scroller.addEventListener("keydown", onKey, { passive: true });
 		scroller.addEventListener("pointerdown", onDown, { passive: true });
 		scroller.addEventListener("scroll", onScroll, { passive: true });
@@ -743,7 +769,10 @@ export function MessageList({
 		window.addEventListener("pointercancel", onUp);
 		return () => {
 			scroller.removeEventListener("wheel", onWheel);
+			scroller.removeEventListener("touchstart", onTouchStart);
 			scroller.removeEventListener("touchmove", onTouch);
+			scroller.removeEventListener("touchend", onTouchEnd);
+			scroller.removeEventListener("touchcancel", onTouchEnd);
 			scroller.removeEventListener("keydown", onKey);
 			scroller.removeEventListener("pointerdown", onDown);
 			scroller.removeEventListener("scroll", onScroll);
