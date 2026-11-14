@@ -191,7 +191,7 @@ export class WorktreeManager {
 	}
 
 	/** Creates the checkout for a new chat. The caller binds it to the chat's id once that exists. */
-	async create(dir: string, opts: { withChanges?: boolean } = {}): Promise<SessionWorktree> {
+	async create(dir: string, opts: { withChanges?: boolean } = { withChanges: true }): Promise<SessionWorktree> {
 		const info = await this.inspect(dir);
 		if (!info.ok) throw new AppError(info.code, info.error ? { error: info.error } : {});
 		const root = normalizeDir(dir);
@@ -204,6 +204,17 @@ export class WorktreeManager {
 			if (opts.withChanges) {
 				const snap = (await git(info.repo, ["stash", "create"])).stdout.trim();
 				if (snap) await must(path, ["stash", "apply", snap]);
+				// `stash create` skips untracked files; carry those over too.
+				const loose = await git(info.repo, ["ls-files", "--others", "--exclude-standard", "-z"]);
+				for (const f of loose.stdout.split("\0")) {
+					if (!f) continue;
+					try {
+						mkdirSync(dirname(join(path, f)), { recursive: true });
+						copyFileSync(join(info.repo, f), join(path, f));
+					} catch {
+						// A file that vanished or cannot be read is not worth failing the chat for.
+					}
+				}
 			}
 		} catch (err) {
 			await git(info.repo, ["worktree", "remove", "--force", path]).catch(() => {});

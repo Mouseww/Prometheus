@@ -53,6 +53,15 @@ describe("worktree mode", () => {
 		expect(st.blocked).toBeUndefined();
 	});
 
+	it("carries uncommitted and untracked edits of the project folder into a new checkout", async () => {
+		writeFileSync(join(repo, "a.txt"), "dirty\n");
+		writeFileSync(join(repo, "loose.txt"), "loose\n");
+		const wt = await open("s1");
+		expect(readFileSync(join(wt.cwd, "a.txt"), "utf8")).toBe("dirty\n");
+		expect(readFileSync(join(wt.cwd, "loose.txt"), "utf8")).toBe("loose\n");
+		expect(readFileSync(join(repo, "a.txt"), "utf8")).toBe("dirty\n");
+	});
+
 	it("drops files whose content already landed on the base branch some other way", async () => {
 		const wt = await open("s1");
 		writeFileSync(join(wt.cwd, "a.txt"), "same\n");
