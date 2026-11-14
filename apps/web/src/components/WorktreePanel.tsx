@@ -36,6 +36,9 @@ const M = defineMessages({
 		moved: "项目文件夹当前在分支 {branch}，请切回 {base}",
 		dirty: "项目文件夹里这些文件有未提交的改动：{files}",
 		empty: "没有可合并的改动",
+		landed: "改动已合并进远程 {ref}，本地分支还没拉取。请先在项目文件夹里拉取，否则本地和远程会分叉",
+		remoteMoved: "远程 {ref} 已改动了这些文件，请先在项目文件夹里拉取：{files}",
+		remoteBehind: "远程 {ref} 比本地分支新 {b} 个提交。",
 	},
 	en: {
 		title: "Own worktree",
@@ -64,6 +67,9 @@ const M = defineMessages({
 		moved: "The project folder is on branch {branch}; switch back to {base}",
 		dirty: "The project folder has uncommitted changes in: {files}",
 		empty: "Nothing to merge",
+		landed: "The changes are already merged into remote {ref}, but the local branch has not pulled. Pull in the project folder first, or local and remote will diverge",
+		remoteMoved: "Remote {ref} changed these files; pull in the project folder first: {files}",
+		remoteBehind: "Remote {ref} is {b} commits ahead of the local branch.",
 	},
 });
 
@@ -123,7 +129,11 @@ export function WorktreePanel() {
 		? t("running")
 		: status.blocked === "worktreeConflict"
 			? t("conflicts", { files: status.blockedDetail ?? "" })
-			: status.blocked === "worktreeBaseMoved"
+			: status.blocked === "worktreeLanded"
+				? t("landed", { ref: status.remote?.ref ?? "" })
+				: status.blocked === "worktreeRemoteMoved"
+					? t("remoteMoved", { ref: status.remote?.ref ?? "", files: status.remote?.overlap.slice(0, 8).join(", ") ?? "" })
+					: status.blocked === "worktreeBaseMoved"
 				? t("moved", { branch: status.blockedDetail ?? "", base: wt.baseBranch })
 				: status.blocked === "worktreeMainDirty"
 					? t("dirty", { files: status.blockedDetail ?? "" })
@@ -158,7 +168,9 @@ ${t("discardBody", { n: files.length, branch: wt.branch })}`, { danger: true, co
 					className="flex min-w-0 flex-1 items-center gap-2 px-3 py-1 text-left text-xs text-ink-400 transition-colors hover:text-ink-200"
 				>
 					<ChevronRight className={clsx("size-3.5 shrink-0 transition-transform", open && "rotate-90")} />
-					<span className="truncate">{t("pending", { n: files.length })}</span>
+					<span className={clsx("truncate", status.blocked === "worktreeLanded" && "text-amber-400")}>
+						{status.blocked === "worktreeLanded" ? t("landed", { ref: status.remote?.ref ?? "" }) : t("pending", { n: files.length })}
+					</span>
 					{files.length > 0 && <LineCounts {...totals} />}
 				</button>
 				{files.length > 0 && (
@@ -172,6 +184,7 @@ ${t("discardBody", { n: files.length, branch: wt.branch })}`, { danger: true, co
 					<p className="px-3 pt-2 pb-1 text-xs text-ink-500">
 						{t("hint", { branch: wt.branch })}
 						{status.behind > 0 && ` ${t("behind", { b: status.behind })}`}
+						{status.remote && status.remote.behind > 0 && ` ${t("remoteBehind", { ref: status.remote.ref, b: status.remote.behind })}`}
 					</p>
 					{files.length > 0 && (
 						<ul className="max-h-40 overflow-y-auto p-1">

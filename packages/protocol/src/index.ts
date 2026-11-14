@@ -382,6 +382,18 @@ export interface WorktreeFile {
 	binary?: boolean;
 }
 
+/** Where the base branch stands against its upstream; the project folder may not know yet that the remote moved on. */
+export interface WorktreeRemote {
+	/** Upstream ref, e.g. origin/main. */
+	ref: string;
+	/** Commits the upstream has that the local base branch lacks. */
+	behind: number;
+	/** The upstream already holds every change of the chat (merged there, e.g. by a pull request): merging locally would diverge. */
+	landed: boolean;
+	/** Changed files the upstream also changed since; merging locally would fork from the remote. */
+	overlap: string[];
+}
+
 /** What the review panel shows and the merge button depends on. */
 export interface WorktreeStatus {
 	worktree: SessionWorktree;
@@ -396,8 +408,10 @@ export interface WorktreeStatus {
 	mainDirty: string[];
 	/** Other chats of the same project that changed the same files. */
 	overlaps: { sessionId: string; files: string[] }[];
+	/** The base branch's upstream (after a quiet fetch); absent when it has none or is unreachable. */
+	remote?: WorktreeRemote;
 	/** Error code of what blocks merging right now, if anything. */
-	blocked?: "worktreeBaseMoved" | "worktreeMainDirty" | "worktreeConflict" | "worktreeBusy" | "worktreeGone" | "worktreeEmpty";
+	blocked?: "worktreeLanded" | "worktreeRemoteMoved" | "worktreeBaseMoved" | "worktreeMainDirty" | "worktreeConflict" | "worktreeBusy" | "worktreeGone" | "worktreeEmpty";
 	/** Parameter of the blocking error (branch name, file list). */
 	blockedDetail?: string;
 }

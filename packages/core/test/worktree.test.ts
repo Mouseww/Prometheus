@@ -171,6 +171,54 @@ describe("worktree mode", () => {
 		expect(readFileSync(join(repo, "b.txt"), "utf8")).toBe("unrelated edit\n");
 	});
 
+	it("blocks the merge when the remote already holds the chat's changes but the project folder has not pulled", async () => {
+		const bare = join(tmp, "remote.git");
+		sh(tmp, "init", "-q", "--bare", "-b", "main", bare);
+		sh(repo, "remote", "add", "origin", bare);
+		sh(repo, "push", "-q", "-u", "origin", "main");
+		const wt = await open("s1");
+		writeFileSync(join(wt.cwd, "a.txt"), "remote-merged\n");
+		await mgr.checkpoint("s1");
+		// Someone merges the same change on the remote (pull request); the project folder has not pulled.
+		const other = join(tmp, "other");
+		sh(tmp, "clone", "-q", bare, other);
+		sh(other, "config", "user.email", "o@o");
+		sh(other, "config", "user.name", "o");
+		sh(other, "config", "commit.gpgsign", "false");
+		writeFileSync(join(other, "a.txt"), "remote-merged\n");
+		sh(other, "commit", "-qam", "pr merged");
+		sh(other, "push", "-q", "origin", "main");
+		const st = await mgr.status("s1", true);
+		expect(st.remote).toMatchObject({ ref: "origin/main", behind: 1, landed: true });
+		expect(st.blocked).toBe("worktreeLanded");
+		await expect(mgr.merge("s1", "squash")).rejects.toMatchObject({ code: "worktreeLanded" });
+		// After pulling, the changes are no longer pending at all.
+		sh(repo, "pull", "-q", "--ff-only");
+		const after = await mgr.status("s1", true);
+		expect(after.files).toEqual([]);
+		expect(after.remote?.behind).toBe(0);
+	});
+
+	it("blocks when the remote changed the same files the chat did", async () => {
+		const bare = join(tmp, "remote.git");
+		sh(tmp, "init", "-q", "--bare", "-b", "main", bare);
+		sh(repo, "remote", "add", "origin", bare);
+		sh(repo, "push", "-q", "-u", "origin", "main");
+		const wt = await open("s1");
+		writeFileSync(join(wt.cwd, "a.txt"), "mine\n");
+		const other = join(tmp, "other");
+		sh(tmp, "clone", "-q", bare, other);
+		sh(other, "config", "user.email", "o@o");
+		sh(other, "config", "user.name", "o");
+		sh(other, "config", "commit.gpgsign", "false");
+		writeFileSync(join(other, "a.txt"), "theirs\n");
+		sh(other, "commit", "-qam", "remote edit");
+		sh(other, "push", "-q", "origin", "main");
+		const st = await mgr.status("s1", true);
+		expect(st.blocked).toBe("worktreeRemoteMoved");
+		expect(st.remote?.overlap).toEqual(["a.txt"]);
+	});
+
 	it("blocks when the project folder left the base branch", async () => {
 		const wt = await open("s1");
 		writeFileSync(join(wt.cwd, "a.txt"), "chat\n");
