@@ -366,11 +366,20 @@ export interface SessionWorktree {
 	createdAt: string;
 	/** Paths (relative to `path`) that are linked or copied in from the project and never committed. */
 	skip?: string[];
+	/** Project-folder versions set aside by the last merge that replaced uncommitted edits; they can be put back. */
+	backup?: { commit: string; files: string[] };
 }
 
 export type WorktreeSetting = "off" | "ask" | "on";
 export type WorktreeOverride = "inherit" | "off" | "on";
 export type WorktreeStrategy = "squash" | "merge" | "apply";
+/**
+ * How to get past what blocks a merge, chosen by the user in one click:
+ * `overwrite` backs up the project folder's uncommitted copies of the chat's files, then replaces them;
+ * `keepMain` leaves those files as they are in the project folder and merges the rest;
+ * `switchBase` checks the base branch out in the project folder first.
+ */
+export type WorktreeResolve = "overwrite" | "keepMain" | "switchBase";
 
 export interface WorktreeFile {
 	path: string;
@@ -1342,7 +1351,9 @@ export interface RpcMethods {
 	/** Folds the base branch into the chat's checkout; conflicts stay there. */
 	"worktree.sync": { params: { sessionId: string }; result: WorktreeStatus };
 	/** Lands the chat's changes in the project folder, then starts the chat over from the new base. */
-	"worktree.merge": { params: { sessionId: string; strategy?: WorktreeStrategy; message?: string }; result: WorktreeStatus };
+	"worktree.merge": { params: { sessionId: string; strategy?: WorktreeStrategy; message?: string; resolve?: WorktreeResolve }; result: WorktreeStatus };
+	/** Puts back (or, with `drop`, just forgets) the project-folder versions a merge set aside. */
+	"worktree.restoreBackup": { params: { sessionId: string; drop?: boolean }; result: WorktreeStatus };
 	/** Deletes the checkout and the branch; the chat stays as read-only history. */
 	"worktree.discard": { params: { sessionId: string }; result: null };
 	/** Unmerged worktree chats of a project. */

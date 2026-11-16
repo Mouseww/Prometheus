@@ -1259,9 +1259,14 @@ ${extras.map((p) => `- ${p}`).join("\n")}` }, guidelines: [] } };
 			this.refuseWhileRunning(sessionId);
 			return this.worktrees.sync(sessionId);
 		},
-		"worktree.merge": async ({ sessionId, strategy, message }) => {
+		"worktree.restoreBackup": async ({ sessionId, drop }) => {
+			const result = await this.worktrees.restoreBackup(sessionId, drop);
+			this.listener.sessionsChanged();
+			return result;
+		},
+		"worktree.merge": async ({ sessionId, strategy, message, resolve }) => {
 			this.refuseWhileRunning(sessionId);
-			const result = await this.worktrees.merge(sessionId, strategy ?? this.worktreeStrategy(), message);
+			const result = await this.worktrees.merge(sessionId, strategy ?? this.worktreeStrategy(), message, resolve);
 			this.listener.sessionsChanged();
 			return result;
 		},

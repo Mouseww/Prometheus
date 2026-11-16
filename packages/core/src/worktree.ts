@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, statSync, symlinkSync, unlinkSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync, symlinkSync, unlinkSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createJsonStore, type JsonStore } from "@prometheus/plugin-sdk";
-import { AppError, type GitDiff, type SessionWorktree, type WorktreeFile, type WorktreeStatus, type WorktreeStrategy } from "@prometheus/protocol";
+import { AppError, type GitDiff, type SessionWorktree, type WorktreeFile, type WorktreeResolve, type WorktreeStatus, type WorktreeStrategy } from "@prometheus/protocol";
 import { normalizeDir, workspaceId } from "./workspaces.ts";
 
 // Per-chat git worktrees (docs/worktree-mode.md): the agent works in its own checkout and the real project folder is
@@ -50,6 +50,9 @@ async function must(cwd: string, args: string[]): Promise<string> {
 	if (r.code !== 0) throw new AppError("worktreeFailed", { error: (r.stderr || r.stdout).trim().split("\n").slice(0, 4).join(" ").slice(0, 400) });
 	return r.stdout.trim();
 }
+
+/** A path as a literal git pathspec (no glob or magic interpretation). */
+const literal = (p: string) => `:(literal)${p}`;
 
 function same(a: string, b: string): boolean {
 	const x = normalizeDir(a);
@@ -488,15 +491,29 @@ export class WorktreeManager {
 	}
 
 	/** Lands the chat's changes in the project folder. Everything that can fail is checked, or resolved inside the checkout, first. */
-	async merge(sessionId: string, strategy: WorktreeStrategy, message?: string): Promise<WorktreeStatus> {
+	async merge(sessionId: string, strategy: WorktreeStrategy, message?: string, resolve?: WorktreeResolve): Promise<WorktreeStatus> {
 		await this.checkpoint(sessionId);
 		const wt = this.need(sessionId);
 		await this.lock(wt.repo, async () => {
-			const pre = await this.status(sessionId);
+			let pre = await this.status(sessionId);
 			if (pre.conflicts.length) throw new AppError("worktreeConflict", { files: pre.blockedDetail ?? "" });
+			if (pre.blocked === "worktreeBaseMoved" && resolve === "switchBase") {
+				// git refuses when the switch would clobber uncommitted edits, so nothing is lost.
+				await must(wt.repo, ["checkout", "-q", wt.baseBranch]);
+				pre = await this.status(sessionId);
+			}
 			if (pre.blocked === "worktreeBaseMoved") throw new AppError("worktreeBaseMoved", { branch: pre.blockedDetail ?? "" });
+			let setAside: SessionWorktree["backup"];
+			if (pre.blocked === "worktreeMainDirty" && resolve === "keepMain") {
+				await this.dropFromChat(wt, pre.mainDirty);
+				pre = await this.status(sessionId);
+			} else if (pre.blocked === "worktreeMainDirty" && resolve === "overwrite") {
+				setAside = await this.setAsideInMain(wt, pre.mainDirty);
+				pre = await this.status(sessionId);
+			}
 			if (pre.blocked === "worktreeMainDirty") throw new AppError("worktreeMainDirty", { files: pre.blockedDetail ?? "" });
 			if (pre.blocked === "worktreeEmpty") throw new AppError("worktreeEmpty");
+			try {
 			await this.syncLocked(wt);
 			const conflicts = await this.conflictsOf(wt);
 			if (conflicts.length) throw new AppError("worktreeConflict", { files: conflicts.slice(0, 8).join(", ") });
@@ -527,9 +544,70 @@ export class WorktreeManager {
 			await must(wt.path, ["reset", "--hard", head]);
 			await this.save((d) => {
 				const cur = d.sessions[sessionId];
-				if (cur) d.sessions[sessionId] = { ...cur, baseCommit: head };
+				if (cur) d.sessions[sessionId] = { ...cur, baseCommit: head, backup: setAside };
 			});
+			} catch (err) {
+				// The merge did not land: give the project folder its own edits back.
+				if (setAside) await this.putBack(wt, setAside);
+				throw err;
+			}
 		});
+		return this.status(sessionId);
+	}
+
+	/** `overwrite`: moves the project folder's uncommitted copies of `paths` into a git stash, so the merge can replace them and they can be restored. */
+	private async setAsideInMain(wt: SessionWorktree, paths: string[]): Promise<SessionWorktree["backup"]> {
+		const before = (await git(wt.repo, ["rev-parse", "-q", "--verify", "refs/stash"])).stdout.trim();
+		const r = await git(wt.repo, [...(await identity(wt.repo)), "stash", "push", "--include-untracked", "-m", `prometheus: before merging ${wt.branch}`, "--", ...paths.map(literal)]);
+		if (r.code !== 0) throw new AppError("worktreeFailed", { error: (r.stderr || r.stdout).trim().slice(0, 400) });
+		const after = (await git(wt.repo, ["rev-parse", "-q", "--verify", "refs/stash"])).stdout.trim();
+		return after && after !== before ? { commit: after, files: paths } : undefined;
+	}
+
+	/** `keepMain`: the chat gives up its copy of `paths` (back to the base branch's version) so the project folder's edits stay as they are. */
+	private async dropFromChat(wt: SessionWorktree, paths: string[]): Promise<void> {
+		for (const p of paths) {
+			if ((await git(wt.path, ["cat-file", "-e", `${wt.baseBranch}:${p}`])).code === 0) await must(wt.path, ["checkout", wt.baseBranch, "--", literal(p)]);
+			else {
+				rmSync(join(wt.path, p), { force: true });
+				await git(wt.path, ["add", "-A", "--", literal(p)]);
+			}
+		}
+		if ((await git(wt.path, ["diff", "--cached", "--quiet"])).code !== 0) {
+			await must(wt.path, [...(await identity(wt.path)), "commit", "-q", "-m", "chore: keep the project folder's version of some files"]);
+		}
+	}
+
+	/** Writes the stashed project-folder copies back as uncommitted edits. Files that cannot be restored are skipped. */
+	private async putBack(wt: SessionWorktree, backup: NonNullable<SessionWorktree["backup"]>): Promise<void> {
+		for (const p of backup.files) {
+			const untracked = (await git(wt.repo, ["cat-file", "-e", `${backup.commit}^3:${p}`])).code === 0;
+			const r = await git(wt.repo, ["checkout", untracked ? `${backup.commit}^3` : backup.commit, "--", literal(p)]);
+			if (r.code === 0) await git(wt.repo, ["reset", "-q", "--", literal(p)]);
+		}
+		const list = (await git(wt.repo, ["stash", "list", "--format=%H"])).stdout.split("\n");
+		const at = list.indexOf(backup.commit);
+		if (at >= 0) await git(wt.repo, ["stash", "drop", "-q", `stash@{${at}}`]);
+	}
+
+	/** Undo of an `overwrite` merge: the project folder gets its own versions back; with `drop` the backup is just forgotten. */
+	async restoreBackup(sessionId: string, drop = false): Promise<WorktreeStatus> {
+		const wt = this.need(sessionId);
+		const backup = wt.backup;
+		if (backup) {
+			await this.lock(wt.repo, async () => {
+				if (!drop) await this.putBack(wt, backup);
+				else {
+					const list = (await git(wt.repo, ["stash", "list", "--format=%H"])).stdout.split("\n");
+					const at = list.indexOf(backup.commit);
+					if (at >= 0) await git(wt.repo, ["stash", "drop", "-q", `stash@{${at}}`]);
+				}
+				await this.save((d) => {
+					const cur = d.sessions[sessionId];
+					if (cur) d.sessions[sessionId] = { ...cur, backup: undefined };
+				});
+			});
+		}
 		return this.status(sessionId);
 	}
 

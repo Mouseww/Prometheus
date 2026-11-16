@@ -171,6 +171,43 @@ describe("worktree mode", () => {
 		expect(readFileSync(join(repo, "b.txt"), "utf8")).toBe("unrelated edit\n");
 	});
 
+	it("overwrite: sets the project folder's edits aside in a stash, merges, and can put them back", async () => {
+		const wt = await open("s1");
+		writeFileSync(join(wt.cwd, "a.txt"), "chat\n");
+		writeFileSync(join(wt.cwd, "new.txt"), "chat-new\n");
+		writeFileSync(join(repo, "a.txt"), "mine\n");
+		writeFileSync(join(repo, "new.txt"), "mine-new\n");
+		const st = await mgr.merge("s1", "squash", undefined, "overwrite");
+		expect(readFileSync(join(repo, "a.txt"), "utf8")).toBe("chat\n");
+		expect(readFileSync(join(repo, "new.txt"), "utf8")).toBe("chat-new\n");
+		expect(st.worktree.backup?.files.sort()).toEqual(["a.txt", "new.txt"]);
+		const back = await mgr.restoreBackup("s1");
+		expect(back.worktree.backup).toBeUndefined();
+		expect(readFileSync(join(repo, "a.txt"), "utf8")).toBe("mine\n");
+		expect(readFileSync(join(repo, "new.txt"), "utf8")).toBe("mine-new\n");
+		expect(sh(repo, "stash", "list")).toBe("");
+	});
+
+	it("keepMain: merges the other files and leaves the project folder's edited ones alone", async () => {
+		const wt = await open("s1");
+		writeFileSync(join(wt.cwd, "a.txt"), "chat\n");
+		writeFileSync(join(wt.cwd, "b.txt"), "chat-b\n");
+		writeFileSync(join(repo, "a.txt"), "mine\n");
+		await mgr.merge("s1", "squash", undefined, "keepMain");
+		expect(readFileSync(join(repo, "a.txt"), "utf8")).toBe("mine\n");
+		expect(readFileSync(join(repo, "b.txt"), "utf8")).toBe("chat-b\n");
+		expect(sh(repo, "status", "--porcelain")).toBe("M a.txt");
+	});
+
+	it("switchBase: checks the base branch out in the project folder, then merges", async () => {
+		const wt = await open("s1");
+		writeFileSync(join(wt.cwd, "a.txt"), "chat\n");
+		sh(repo, "checkout", "-q", "-b", "other");
+		await mgr.merge("s1", "squash", undefined, "switchBase");
+		expect(sh(repo, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
+		expect(readFileSync(join(repo, "a.txt"), "utf8")).toBe("chat\n");
+	});
+
 	it("blocks when the project folder left the base branch", async () => {
 		const wt = await open("s1");
 		writeFileSync(join(wt.cwd, "a.txt"), "chat\n");

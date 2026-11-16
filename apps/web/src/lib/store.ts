@@ -13,6 +13,7 @@ import type {
 	SessionWorktree,
 	WorktreeOverride,
 	WorktreeStatus,
+	WorktreeResolve,
 	WorktreeStrategy,
 	ImageContent,
 	MessageRef,
@@ -939,8 +940,14 @@ export async function worktreeSync(sessionId: string): Promise<WorktreeStatus | 
 	return r;
 }
 
-export async function worktreeMerge(sessionId: string, strategy: WorktreeStrategy, message?: string): Promise<WorktreeStatus | undefined> {
-	const r = await call((c) => c.rpc("worktree.merge", { sessionId, strategy, ...(message?.trim() ? { message: message.trim() } : {}) }));
+export async function worktreeRestoreBackup(sessionId: string, drop = false): Promise<WorktreeStatus | undefined> {
+	const r = await call((c) => c.rpc("worktree.restoreBackup", { sessionId, drop }));
+	if (r) applyWorktree(sessionId, r.worktree);
+	return r;
+}
+
+export async function worktreeMerge(sessionId: string, strategy: WorktreeStrategy, message?: string, resolve?: WorktreeResolve): Promise<WorktreeStatus | undefined> {
+	const r = await call((c) => c.rpc("worktree.merge", { sessionId, strategy, ...(message?.trim() ? { message: message.trim() } : {}), ...(resolve ? { resolve } : {}) }));
 	if (r) {
 		applyWorktree(sessionId, r.worktree);
 		toast(tr(M, "worktreeMerged"));

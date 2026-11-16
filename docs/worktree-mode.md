@@ -161,7 +161,8 @@ interface SessionWorktree {
 - 新 RPC:
   - `worktree.status { sessionId }`:返回 ahead/behind、改动文件数、与主目录冲突的文件、与其他会话重叠的文件、可否合并及原因
   - `worktree.sync { sessionId }`:把 base 并入工作树
-  - `worktree.merge { sessionId, strategy, message?, cleanup }`
+  - `worktree.merge { sessionId, strategy, message?, resolve? }`:`resolve` 一键绕过阻塞。`overwrite` 把项目文件夹里同名的未提交版本 stash 备份后用对话版本覆盖;`keepMain` 对话放弃这些文件、只合并其余;`switchBase` 先把项目文件夹切回基础分支。合并失败会自动把备份放回去
+  - `worktree.restoreBackup { sessionId, drop? }`:把 `overwrite` 备份的版本放回项目文件夹(未提交状态);`drop` 只丢弃备份
   - `worktree.discard { sessionId }`
   - `worktree.pending { workspaceId }`:该项目所有未合并的工作树,给侧栏和清理提示用
 - 新事件:`worktree.changed`(状态变化,驱动徽标刷新)

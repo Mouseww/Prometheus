@@ -1,10 +1,10 @@
 import clsx from "clsx";
 import { ChevronRight, GitBranch, GitMerge, RefreshCw, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { GitChangedFile, GitDiff, WorktreeStatus, WorktreeStrategy } from "@prometheus/protocol";
+import type { GitChangedFile, GitDiff, WorktreeResolve, WorktreeStatus, WorktreeStrategy } from "@prometheus/protocol";
 import { confirmDialog } from "../lib/dialogs.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { call, draftWorktreeOn, setDraftWorktree, useStore, worktreeDiscard, worktreeMerge, worktreeSync } from "../lib/store.ts";
+import { call, draftWorktreeOn, setDraftWorktree, useStore, worktreeDiscard, worktreeMerge, worktreeRestoreBackup, worktreeSync } from "../lib/store.ts";
 import { DiffReview, LineCounts } from "./DiffReview.tsx";
 import { Button, Collapse, Select } from "./ui.tsx";
 
@@ -36,6 +36,18 @@ const M = defineMessages({
 		moved: "项目文件夹当前在分支 {branch}，请切回 {base}",
 		dirty: "项目文件夹里这些文件有未提交的改动：{files}",
 		empty: "没有可合并的改动",
+		dirtyTitle: "项目文件夹里已有 {n} 个同名文件的另一个版本（未提交）",
+		dirtyBody: "可能是另一个对话直接写入的。选择保留哪一个，被替换的版本会自动备份，随时可恢复。",
+		useMine: "用本对话的版本合并",
+		keepMain: "保留项目里的版本，只合并其余文件",
+		movedTitle: "项目文件夹现在在分支 {branch}，本对话基于 {base}",
+		movedBody: "合并需要先切回 {base}；如果切换会覆盖未提交的改动，会自动取消，不会丢东西。",
+		switchBase: "切回 {base} 并合并",
+		conflictTitle: "有文件和项目里的新改动冲突：{files}",
+		conflictBody: "在本对话的工作树里把两边的改动合在一起，再回来合并。",
+		backedUp: "已合并。项目里原来的 {n} 个未提交版本已备份。",
+		restore: "恢复项目里的版本",
+		dismiss: "知道了",
 	},
 	en: {
 		title: "Own worktree",
@@ -64,6 +76,18 @@ const M = defineMessages({
 		moved: "The project folder is on branch {branch}; switch back to {base}",
 		dirty: "The project folder has uncommitted changes in: {files}",
 		empty: "Nothing to merge",
+		dirtyTitle: "The project folder already has another, uncommitted version of {n} of these files",
+		dirtyBody: "Maybe another chat wrote them directly. Pick which one to keep; the replaced version is backed up and can be restored.",
+		useMine: "Merge this chat's version",
+		keepMain: "Keep the project's version, merge the rest",
+		movedTitle: "The project folder is on branch {branch}; this chat is based on {base}",
+		movedBody: "Merging needs {base} checked out first. If switching would overwrite uncommitted edits it is cancelled, nothing is lost.",
+		switchBase: "Switch to {base} and merge",
+		conflictTitle: "Files conflict with new changes in the project: {files}",
+		conflictBody: "Combine both sides in this chat's worktree, then merge again.",
+		backedUp: "Merged. {n} uncommitted project versions were backed up.",
+		restore: "Restore the project's versions",
+		dismiss: "Dismiss",
 	},
 });
 
@@ -114,8 +138,10 @@ export function WorktreePanel() {
 		return <div className="mb-2 rounded-xl border border-ink-800 bg-ink-900/60 px-3 py-1.5 text-xs text-ink-400">{t("gone")}</div>;
 	}
 	if (!status) return null;
-	// Nothing left to merge (no file differs from the base branch, whether or not the chat has commits): the strip would only be noise.
-	if (files.length === 0) return null;
+	// Nothing left to merge (no file differs from the base branch, whether or not the chat has commits): the strip would only be noise,
+	// unless a merge just set the project's own versions aside and the user may want them back.
+	const backup = wt.backup;
+	if (files.length === 0 && !backup) return null;
 
 	const totals = files.reduce((a, f) => ({ added: a.added + f.added, deleted: a.deleted + f.deleted }), { added: 0, deleted: 0 });
 	const chosen = strategy ?? hostStrategy;
@@ -130,6 +156,8 @@ export function WorktreePanel() {
 					: status.blocked === "worktreeEmpty"
 						? t("empty")
 						: undefined;
+
+	const merging = (resolve: WorktreeResolve) => act(async () => { await worktreeMerge(id!, chosen, message, resolve); setMessage(""); });
 
 	const act = async (fn: () => Promise<unknown>) => {
 		setBusy(true);
@@ -147,8 +175,44 @@ ${t("discardBody", { n: files.length, branch: wt.branch })}`, { danger: true, co
 		if (ok) await act(() => worktreeDiscard(id!));
 	};
 
+	const backupBar = backup && (
+		<div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-green-500/20 bg-green-500/10 px-3 py-2 text-xs text-green-300">
+			<span>{t("backedUp", { n: backup.files.length })}</span>
+			<button type="button" disabled={busy} onClick={() => void act(() => worktreeRestoreBackup(id!))} className="text-ember-300 underline hover:text-ember-200">
+				{t("restore")}
+			</button>
+			<button type="button" disabled={busy} onClick={() => void act(() => worktreeRestoreBackup(id!, true))} className="text-ink-400 hover:text-ink-200">
+				{t("dismiss")}
+			</button>
+		</div>
+	);
+	if (files.length === 0) return <div className="mb-2 overflow-hidden rounded-xl border border-ink-800/70 bg-ink-900/40">{backupBar}</div>;
+
+	const blocker = streaming ? null : status.blocked === "worktreeMainDirty" ? (
+		<div className="m-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+			<p className="text-[13px] text-ink-100">{t("dirtyTitle", { n: status.mainDirty.length })}</p>
+			<p className="mb-2 text-xs text-ink-400">{t("dirtyBody")}</p>
+			<div className="flex flex-wrap gap-2">
+				<Button variant="primary" disabled={busy} onClick={() => void merging("overwrite")}>{t("useMine")}</Button>
+				<Button variant="ghost" disabled={busy} onClick={() => void merging("keepMain")}>{t("keepMain")}</Button>
+			</div>
+		</div>
+	) : status.blocked === "worktreeBaseMoved" ? (
+		<div className="m-2 rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-2">
+			<p className="text-[13px] text-ink-100">{t("movedTitle", { branch: status.blockedDetail ?? "", base: wt.baseBranch })}</p>
+			<p className="mb-2 text-xs text-ink-400">{t("movedBody", { base: wt.baseBranch })}</p>
+			<Button variant="primary" disabled={busy} onClick={() => void merging("switchBase")}>{t("switchBase", { base: wt.baseBranch })}</Button>
+		</div>
+	) : status.blocked === "worktreeConflict" ? (
+		<div className="m-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2">
+			<p className="text-[13px] text-ink-100">{t("conflictTitle", { files: status.blockedDetail ?? "" })}</p>
+			<p className="text-xs text-ink-400">{t("conflictBody")}</p>
+		</div>
+	) : null;
+
 	return (
 		<div className="mb-2 overflow-hidden rounded-xl border border-ink-800/70 bg-ink-900/40">
+			{backupBar}
 			<div className="flex items-center">
 				<button
 					type="button"
@@ -167,6 +231,7 @@ ${t("discardBody", { n: files.length, branch: wt.branch })}`, { danger: true, co
 					</button>
 				)}
 			</div>
+			{blocker}
 			<Collapse open={open}>
 				<div className="border-t border-ink-800">
 					<p className="px-3 pt-2 pb-1 text-xs text-ink-500">
@@ -194,12 +259,12 @@ ${t("discardBody", { n: files.length, branch: wt.branch })}`, { danger: true, co
 							))}
 						</ul>
 					)}
-					{status.overlaps.map((o) => (
+					{!blocker && status.overlaps.map((o) => (
 						<p key={o.sessionId} className="px-3 py-1 text-xs text-amber-400">
 							{t("overlap", { files: o.files.slice(0, 4).join(", ") })}
 						</p>
 					))}
-					{reason && <p className="px-3 py-1 text-xs text-ink-400">{reason}</p>}
+					{reason && !blocker && <p className="px-3 py-1 text-xs text-ink-400">{reason}</p>}
 					<div className="flex flex-wrap items-center gap-2 border-t border-ink-800 p-2">
 						<Select className="w-auto text-xs" aria-label={t("strategy")} value={chosen} onChange={(e) => setStrategy(e.target.value as WorktreeStrategy)}>
 							<option value="squash">{t("squash")}</option>
