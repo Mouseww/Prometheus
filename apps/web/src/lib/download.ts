@@ -133,14 +133,21 @@ export async function downloadFile(path: string, suggestedName?: string): Promis
 	return true;
 }
 
-/** Opens an HTML file of the open conversation in the system browser, rendered (a one-time link served inline). */
-export async function previewInBrowser(path: string): Promise<boolean> {
+/** A one-time URL that serves an HTML file of the open conversation rendered, under the server's own CSP (so inline styles work even where the app's CSP would block them in a srcDoc frame). */
+export async function htmlViewUrl(path: string): Promise<string | undefined> {
 	const session = useStore.getState().session;
 	const client = useStore.getState().client;
-	if (!session || !client) return false;
-	const link = await call((c) => c.rpc("file.link", { sessionId: session.id, path }));
-	if (!link) return false;
-	const url = `${client.target.httpBase}/api/download/${encodeURIComponent(link.id)}?view=1`;
+	if (!session || !client) return undefined;
+	// Quiet on failure: the caller has a fallback (the preview pane) and must not toast.
+	const link = await client.rpc("file.link", { sessionId: session.id, path }).catch(() => undefined);
+	if (!link) return undefined;
+	return `${client.target.httpBase}/api/download/${encodeURIComponent(link.id)}?view=1`;
+}
+
+/** Opens an HTML file of the open conversation in the system browser, rendered (a one-time link served inline). */
+export async function previewInBrowser(path: string): Promise<boolean> {
+	const url = await htmlViewUrl(path);
+	if (!url) return false;
 	if (isTauri()) await openExternal(url);
 	else window.open(url, "_blank", "noopener");
 	return true;

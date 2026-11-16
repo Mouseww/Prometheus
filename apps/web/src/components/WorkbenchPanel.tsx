@@ -2,7 +2,7 @@ import { DownloadButton } from "./FileDownloadButton.tsx";
 import clsx from "clsx";
 import { Check, Copy, ExternalLink, Eye, FileText, FolderTree, Globe, LoaderCircle, PanelRightClose, RefreshCw, SquareTerminal, X } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { previewInBrowser } from "../lib/download.ts";
+import { htmlViewUrl, previewInBrowser } from "../lib/download.ts";
 import { copyToClipboard } from "../lib/clipboard.ts";
 import { usePanelWidth } from "../lib/panelWidth.ts";
 import { useIsMobile } from "../lib/viewport.ts";
@@ -126,6 +126,25 @@ export function WorkbenchPanel() {
 	);
 }
 
+/** Rendered HTML preview. Loaded from the server's view route (own CSP) because a srcDoc frame inherits the desktop CSP, which drops inline <style>; falls back to srcDoc if no link can be made. */
+function HtmlFrame({ path, name, text }: { path: string; name: string; text: string }) {
+	const [url, setUrl] = useState<string | null | undefined>(undefined);
+	useEffect(() => {
+		let live = true;
+		void htmlViewUrl(path).then((u) => live && setUrl(u ?? null));
+		return () => {
+			live = false;
+		};
+	}, [path]);
+	if (url === undefined) return <div className="grid size-full place-items-center bg-white"><LoaderCircle className="size-5 animate-spin text-ink-500" /></div>;
+	const sandbox = "allow-scripts allow-forms allow-popups allow-modals";
+	return url ? (
+		<iframe title={name} src={url} sandbox={sandbox} className="size-full border-0 bg-white" />
+	) : (
+		<iframe title={name} srcDoc={text} sandbox={sandbox} className="size-full border-0 bg-white" />
+	);
+}
+
 const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
 
 function FileView({ tab }: { tab: Extract<WorkbenchTab, { kind: "file" }> }) {
@@ -233,7 +252,7 @@ function FileView({ tab }: { tab: Extract<WorkbenchTab, { kind: "file" }> }) {
 					</div>
 				)}
 				{file?.kind === "text" && isHtml && rendered && (
-					<iframe key={reloads} title={file.name} srcDoc={file.text ?? ""} sandbox="allow-scripts allow-forms allow-popups allow-modals" className="size-full border-0 bg-white" />
+					<HtmlFrame key={reloads} path={file.path ?? tab.path} name={file.name} text={file.text ?? ""} />
 				)}
 				{file?.kind === "text" && !((isMd || isHtml) && rendered) && (
 					<table className={clsx("code-view w-full border-collapse font-mono text-[12px] leading-5", colored && "hljs")}>
