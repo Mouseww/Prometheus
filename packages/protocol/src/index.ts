@@ -480,6 +480,10 @@ export interface HostSettings {
 	worktreeDefault?: boolean;
 	/** How a merge lands in the project folder. `squash` when unset. */
 	worktreeStrategy?: WorktreeStrategy;
+	/** Pull the base branch to the latest before creating a chat worktree. False when unset. */
+	worktreeAutoPull?: boolean;
+	/** Chats idle for more than this many days are recycled out of the session list; 0 or unset keeps all. */
+	recycleDays?: number;
 }
 
 // ---------- Subagents ----------

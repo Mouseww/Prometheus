@@ -193,6 +193,19 @@ export class WorktreeManager {
 		return { ok: true, repo, subdir: relative(repo, normalizeDir(dir)), baseBranch: branch, baseCommit: head.stdout.trim() };
 	}
 
+	/** Brings the current branch up to date (fetch + fast-forward) so a new chat starts from the latest commit. Never throws: offline or diverged branches just start from what is local. */
+	async pullLatest(dir: string): Promise<void> {
+		try {
+			const up = await git(dir, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
+			if (up.code !== 0) return;
+			const st = await git(dir, ["status", "--porcelain", "--untracked-files=no"]);
+			if (st.stdout.trim()) return; // local edits: leave the branch alone
+			await git(dir, ["pull", "--ff-only", "--quiet"]);
+		} catch {
+			// Best effort only.
+		}
+	}
+
 	/** Creates the checkout for a new chat. The caller binds it to the chat's id once that exists. */
 	async create(dir: string, opts: { withChanges?: boolean } = { withChanges: true }): Promise<SessionWorktree> {
 		const info = await this.inspect(dir);

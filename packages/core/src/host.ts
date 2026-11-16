@@ -717,6 +717,7 @@ ${extras.map((p) => `- ${p}`).join("\n")}` }, guidelines: [] } };
 	private async tryWorktree(dir: string, asked: boolean | undefined): Promise<{ wt?: SessionWorktree; note?: string }> {
 		if (!(await this.wantsWorktree(dir, asked))) return {};
 		try {
+			if (this.runtime.config.get().worktreeAutoPull) await this.worktrees.pullLatest(dir);
 			return { wt: await this.worktrees.create(dir) };
 		} catch (err) {
 			return { note: encodeError(err instanceof AppError ? err : new AppError("worktreeFailed", { error: err instanceof Error ? err.message : String(err) })) };
@@ -747,8 +748,17 @@ ${extras.map((p) => `- ${p}`).join("\n")}` }, guidelines: [] } };
 		this.listener.sessionsChanged();
 	}
 
+	/** Drops chats idle past the recycle window; chats that are open in memory stay. Files are kept, only the listing shrinks. */
+	private recycle<T extends { ref: { id: string }; modified: string }>(infos: T[]): T[] {
+		const days = this.runtime.config.get().recycleDays;
+		if (!(days >= 1)) return infos;
+		const cutoff = Date.now() - days * 86_400_000;
+		return infos.filter((i) => this.live.has(i.ref.id) || !(Date.parse(i.modified) < cutoff));
+	}
+
 	private async listSessions(): Promise<SessionSummary[]> {
-		const infos = (await this.pi?.listNative()) ?? [];
+		const all = (await this.pi?.listNative()) ?? [];
+		const infos = this.recycle(all);
 		for (const info of infos) if (info.ref.path) this.paths.set(info.ref.id, info.ref.path);
 		await this.workspaces.ensure(infos.map((i) => ({ path: this.worktrees.rootOf(i.cwd), modified: i.modified })));
 		const archived = await this.workspaces.archived();
@@ -779,6 +789,7 @@ ${extras.map((p) => `- ${p}`).join("\n")}` }, guidelines: [] } };
 		for (const e of this.index.list()) {
 			if (e.runtime === "pi") continue;
 			const live = this.live.get(e.id);
+			if (!live && this.recycle([{ ref: { id: e.id }, modified: e.modified }]).length === 0) continue;
 			external.push({
 				id: e.id,
 				name: e.name,
@@ -1026,7 +1037,7 @@ ${extras.map((p) => `- ${p}`).join("\n")}` }, guidelines: [] } };
 	}
 
 	private hostSettings(): HostSettings {
-		return { autoCompaction: this.pi?.autoCompaction() ?? true, workspaceRoot: this.workspaceRoot(), defaultAgent: this.defaultAgent(), defaultPermission: this.defaultPermission(), defaultThinking: this.defaultThinking(), goalTurns: this.runtime.config.get().goalTurns || GOAL_DEFAULT_TURNS, compactPercent: this.compactPercent(), worktreeMode: this.worktreeMode(), worktreeDefault: this.runtime.config.get().worktreeDefault, worktreeStrategy: this.worktreeStrategy() };
+		return { autoCompaction: this.pi?.autoCompaction() ?? true, workspaceRoot: this.workspaceRoot(), defaultAgent: this.defaultAgent(), defaultPermission: this.defaultPermission(), defaultThinking: this.defaultThinking(), goalTurns: this.runtime.config.get().goalTurns || GOAL_DEFAULT_TURNS, compactPercent: this.compactPercent(), worktreeMode: this.worktreeMode(), worktreeDefault: this.runtime.config.get().worktreeDefault, worktreeStrategy: this.worktreeStrategy(), worktreeAutoPull: this.runtime.config.get().worktreeAutoPull, recycleDays: this.runtime.config.get().recycleDays };
 	}
 
 	/** The permission mode new chats start in; unknown values (a hand-edited config) fall back to asking first. */
@@ -1301,7 +1312,7 @@ ${extras.map((p) => `- ${p}`).join("\n")}` }, guidelines: [] } };
 		"fs.mkdir": ({ parent, name }) => this.createDir(parent, name),
 
 		"settings.get": () => this.hostSettings(),
-		"settings.set": async ({ autoCompaction, workspaceRoot, defaultAgent, defaultPermission, defaultThinking, goalTurns, compactPercent, worktreeMode, worktreeDefault, worktreeStrategy }) => {
+		"settings.set": async ({ autoCompaction, workspaceRoot, defaultAgent, defaultPermission, defaultThinking, goalTurns, compactPercent, worktreeMode, worktreeDefault, worktreeStrategy, worktreeAutoPull, recycleDays }) => {
 			if (typeof autoCompaction === "boolean") {
 				await this.pi?.setAutoCompaction(autoCompaction);
 				// Live sessions cache their own SettingsManager.
@@ -1321,11 +1332,12 @@ ${extras.map((p) => `- ${p}`).join("\n")}` }, guidelines: [] } };
 				if (!PERMISSION_MODES.includes(defaultPermission)) throw new AppError("unknownPermissionMode", { mode: String(defaultPermission) });
 				await this.runtime.config.setDefaultPermission(defaultPermission);
 			}
-			if (worktreeMode !== undefined || worktreeDefault !== undefined || worktreeStrategy !== undefined) {
+			if (worktreeMode !== undefined || worktreeDefault !== undefined || worktreeStrategy !== undefined || worktreeAutoPull !== undefined) {
 				if (worktreeMode !== undefined && !["off", "ask", "on"].includes(worktreeMode)) throw new AppError("generic");
 				if (worktreeStrategy !== undefined && !["squash", "merge", "apply"].includes(worktreeStrategy)) throw new AppError("generic");
-				await this.runtime.config.setWorktree({ mode: worktreeMode, default: typeof worktreeDefault === "boolean" ? worktreeDefault : undefined, strategy: worktreeStrategy });
+				await this.runtime.config.setWorktree({ mode: worktreeMode, default: typeof worktreeDefault === "boolean" ? worktreeDefault : undefined, strategy: worktreeStrategy, autoPull: typeof worktreeAutoPull === "boolean" ? worktreeAutoPull : undefined });
 			}
+			if (typeof recycleDays === "number") await this.runtime.config.setRecycleDays(recycleDays);
 			if (typeof compactPercent === "number") await this.runtime.config.setCompactPercent(compactPercent);
 			if (typeof defaultThinking === "string") {
 				// An empty string clears it: new chats then keep whatever level their model starts at.

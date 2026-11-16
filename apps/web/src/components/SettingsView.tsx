@@ -117,6 +117,9 @@ const M = defineMessages({
 		reset: "恢复默认",
 		compactPercentHint: "上下文填到这个比例时开始压缩。越低越早压缩、越省上下文，但也更早丢掉细节。",
 		compactPercentOff: "自动压缩已关闭，此处不生效；重新开启后按此比例压缩。",
+		recycleDays: "会话回收",
+		recycleDaysHint: "超过设定天数未活动的会话会自动从左侧列表移除以减轻负担（文件保留，不会删除）。0 表示不回收。",
+		days: "天",
 		chatWidth: "对话宽度",
 		chatWidthHint: "也可以在对话页面里拖动内容两侧的边缘调整，双击边缘恢复自适应。",
 		motion: "界面动效",
@@ -230,6 +233,9 @@ const M = defineMessages({
 		reset: "Reset",
 		compactPercentHint: "Compact once the context is this full. Lower keeps the window roomier but drops detail sooner.",
 		compactPercentOff: "Auto-compaction is off, so this has no effect until you turn it back on.",
+		recycleDays: "Session recycling",
+		recycleDaysHint: "Chats idle for more than this many days drop out of the sidebar list to lighten the load (files are kept, nothing is deleted). 0 turns it off.",
+		days: "days",
 		chatWidth: "Chat width",
 		chatWidthHint: "You can also drag the edges beside the chat column; double-click an edge to go back to automatic.",
 		motion: "Interface motion",
@@ -297,6 +303,8 @@ const W = defineMessages({
 		squash: "压缩为一个提交",
 		merge: "保留历史（merge 提交）",
 		apply: "只应用改动，不提交",
+		autoPull: "新建会话前自动拉取最新代码",
+		autoPullHint: "创建独立 worktree 前，先对当前分支执行 fetch + 快进拉取，使新会话基于最新提交。有本地未提交改动、无上游分支或网络失败时会跳过。",
 		projects: "按项目覆盖",
 		projectsHint: "为单个项目指定开或关，优先于上面的设置。",
 		inherit: "跟随全局",
@@ -315,6 +323,8 @@ const W = defineMessages({
 		squash: "Squash into one commit",
 		merge: "Keep history (merge commit)",
 		apply: "Apply changes, do not commit",
+		autoPull: "Pull latest before creating a chat",
+		autoPullHint: "Before creating the worktree, fetch and fast-forward the current branch so the new chat starts from the latest commit. Skipped when there are local edits, no upstream, or the network fails.",
 		projects: "Per project",
 		projectsHint: "Turn it on or off for one project, overriding the setting above.",
 		inherit: "Follow global",
@@ -355,6 +365,11 @@ function WorktreeSection() {
 						<option value="merge">{t("merge")}</option>
 						<option value="apply">{t("apply")}</option>
 					</Select>
+				</Row>
+			)}
+			{mode !== "off" && (
+				<Row label={t("autoPull")} hint={t("autoPullHint")}>
+					<Toggle checked={host?.worktreeAutoPull ?? false} disabled={!host} onChange={(worktreeAutoPull) => void updateHostSettings({ worktreeAutoPull })} />
 				</Row>
 			)}
 			{projects.length > 0 && (
@@ -515,6 +530,38 @@ function DefaultPermissionRow() {
 					</option>
 				))}
 			</Select>
+		</Row>
+	);
+}
+
+function RecycleDaysRow() {
+	const t = useT(M);
+	const host = useStore((s) => s.hostSettings);
+	const saved = host?.recycleDays ?? 0;
+	const [text, setText] = useState<string | null>(null);
+	const commit = () => {
+		if (text === null) return;
+		const n = Math.max(0, Math.min(3650, Math.floor(Number(text) || 0)));
+		setText(null);
+		if (n !== saved) void updateHostSettings({ recycleDays: n });
+	};
+	return (
+		<Row label={t("recycleDays")} hint={t("recycleDaysHint")}>
+			<div className="flex items-center gap-2">
+				<input
+					type="number"
+					min={0}
+					max={3650}
+					value={text ?? String(saved)}
+					disabled={!host}
+					onChange={(e) => setText(e.target.value)}
+					onBlur={commit}
+					onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+					className="w-20 rounded-md border border-ink-700 bg-transparent px-2 py-1 text-sm text-ink-200"
+					aria-label={t("recycleDays")}
+				/>
+				<span className="text-xs text-ink-400">{t("days")}</span>
+			</div>
 		</Row>
 	);
 }
@@ -751,6 +798,7 @@ function ChatSettings() {
 							<Toggle checked={host?.autoCompaction ?? false} disabled={!host} onChange={(v) => void updateHostSettings({ autoCompaction: v })} />
 						</Row>
 						<CompactPercentRow />
+						<RecycleDaysRow />
 						<Row label={t("sendMode")} hint={t("sendModeHint")}>
 							<Segmented<SendMode>
 								value={prefs.sendMode}

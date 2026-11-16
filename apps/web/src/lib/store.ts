@@ -809,6 +809,7 @@ export async function refreshHostInfo(): Promise<void> {
 export async function updateHostSettings(patch: Partial<HostSettings>): Promise<void> {
 	const hostSettings = await call((c) => c.rpc("settings.set", patch));
 	if (hostSettings) applyHostSettings(hostSettings);
+	if (hostSettings && patch.recycleDays !== undefined) void refreshSessions();
 }
 
 export async function refreshModels(): Promise<void> {

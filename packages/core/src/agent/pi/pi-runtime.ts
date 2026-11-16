@@ -281,7 +281,17 @@ export class PiRuntime implements AgentRuntime {
 
 	// ---------- native storage ----------
 
-	async listNative(): Promise<NativeSessionInfo[]> {
+	private listing: Promise<NativeSessionInfo[]> | undefined;
+
+	/** Concurrent callers share one directory scan: every run start/settle asks for the list, and each scan parses every session file. */
+	listNative(): Promise<NativeSessionInfo[]> {
+		this.listing ??= this.scanNative().finally(() => {
+			this.listing = undefined;
+		});
+		return this.listing;
+	}
+
+	private async scanNative(): Promise<NativeSessionInfo[]> {
 		const infos = await SessionManager.listAll();
 		return infos.map((info) => ({
 			ref: { runtime: "pi", id: info.id, nativeId: info.id, path: info.path },
