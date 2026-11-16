@@ -538,6 +538,21 @@ export class WorktreeManager {
 		return out;
 	}
 
+	/** Fast-forwards the project folder's base branch to its upstream, for changes that already landed on the remote. Refuses anything but a clean fast-forward. */
+	async pullBase(sessionId: string): Promise<WorktreeStatus> {
+		const wt = this.need(sessionId);
+		await this.lock(wt.repo, async () => {
+			const up = (await git(wt.repo, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", `${wt.baseBranch}@{upstream}`])).stdout.trim();
+			if (!up) throw new AppError("worktreeFailed", { error: "no upstream" });
+			const remote = (await git(wt.repo, ["config", `branch.${wt.baseBranch}.remote`])).stdout.trim();
+			if (remote && remote !== ".") await must(wt.repo, ["fetch", "--quiet", remote]);
+			const current = (await git(wt.repo, ["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim();
+			if (current === wt.baseBranch) await must(wt.repo, ["merge", "--ff-only", up]);
+			else await must(wt.repo, ["branch", "-f", wt.baseBranch, up]); // not checked out anywhere here, so moving it cannot touch files
+		});
+		return this.status(sessionId, true);
+	}
+
 	/** Folds the base branch into the chat's checkout. Conflicts stay inside the checkout and show up in the status. */
 	async sync(sessionId: string): Promise<WorktreeStatus> {
 		await this.checkpoint(sessionId);

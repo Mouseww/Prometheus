@@ -1,6 +1,6 @@
 {
   "name": "@prometheus/desktop",
-  "version": "0.30.24",
+  "version": "0.30.25",
   "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",

@@ -1368,6 +1368,8 @@ export interface RpcMethods {
 	"worktree.status": { params: { sessionId: string }; result: WorktreeStatus };
 	/** Folds the base branch into the chat's checkout; conflicts stay there. */
 	"worktree.sync": { params: { sessionId: string }; result: WorktreeStatus };
+	/** Fast-forwards the project folder's base branch to its remote, for changes that already landed there. */
+	"worktree.pullBase": { params: { sessionId: string }; result: WorktreeStatus };
 	/** Lands the chat's changes in the project folder, then starts the chat over from the new base. */
 	"worktree.merge": { params: { sessionId: string; strategy?: WorktreeStrategy; message?: string; resolve?: WorktreeResolve }; result: WorktreeStatus };
 	/** Puts back (or, with `drop`, just forgets) the project-folder versions a merge set aside. */

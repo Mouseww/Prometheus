@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { GitChangedFile, GitDiff, WorktreeResolve, WorktreeStatus, WorktreeStrategy } from "@prometheus/protocol";
 import { confirmDialog } from "../lib/dialogs.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { call, draftWorktreeOn, sendPrompt, setDraftWorktree, useStore, worktreeDiscard, worktreeMerge, worktreeRestoreBackup, worktreeSync } from "../lib/store.ts";
+import { call, draftWorktreeOn, sendPrompt, setDraftWorktree, useStore, worktreeDiscard, worktreeMerge, worktreePullBase, worktreeRestoreBackup, worktreeSync } from "../lib/store.ts";
 import { DiffReview, LineCounts } from "./DiffReview.tsx";
 import { Button, Collapse, Select } from "./ui.tsx";
 
@@ -17,6 +17,7 @@ const M = defineMessages({
 		review: "审查",
 		reviewTitle: "本对话在独立工作树里的改动",
 		reviewSub: "相对本对话开始时的版本",
+		pullLanded: "拉取到本地",
 		sync: "同步基础分支",
 		merge: "合并到项目",
 		discard: "丢弃",
@@ -63,6 +64,7 @@ const M = defineMessages({
 		review: "Review",
 		reviewTitle: "Changes in this chat's worktree",
 		reviewSub: "Against where this chat started",
+		pullLanded: "Pull into local",
 		sync: "Sync base branch",
 		merge: "Merge into project",
 		discard: "Discard",
@@ -212,6 +214,11 @@ ${t("discardBody", { n: files.length, branch: wt.branch })}`, { danger: true, co
 				<Button variant="primary" disabled={busy} onClick={() => void merging("overwrite")}>{t("useMine")}</Button>
 				<Button variant="ghost" disabled={busy} onClick={() => void merging("keepMain")}>{t("keepMain")}</Button>
 			</div>
+		</div>
+	) : status.blocked === "worktreeLanded" ? (
+		<div className="m-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+			<p className="mb-2 text-[13px] text-ink-100">{t("landed", { ref: status.remote?.ref ?? "" })}</p>
+			<Button variant="primary" disabled={busy} onClick={() => void act(() => worktreePullBase(id!))}>{t("pullLanded")}</Button>
 		</div>
 	) : status.blocked === "worktreeBaseMoved" ? (
 		<div className="m-2 rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-2">

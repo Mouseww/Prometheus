@@ -941,6 +941,12 @@ export async function worktreeSync(sessionId: string): Promise<WorktreeStatus | 
 	return r;
 }
 
+export async function worktreePullBase(sessionId: string): Promise<WorktreeStatus | undefined> {
+	const r = await call((c) => c.rpc("worktree.pullBase", { sessionId }));
+	if (r) applyWorktree(sessionId, r.worktree);
+	return r;
+}
+
 export async function worktreeRestoreBackup(sessionId: string, drop = false): Promise<WorktreeStatus | undefined> {
 	const r = await call((c) => c.rpc("worktree.restoreBackup", { sessionId, drop }));
 	if (r) applyWorktree(sessionId, r.worktree);

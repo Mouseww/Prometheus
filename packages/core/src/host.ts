@@ -1270,6 +1270,12 @@ ${extras.map((p) => `- ${p}`).join("\n")}` }, guidelines: [] } };
 			this.refuseWhileRunning(sessionId);
 			return this.worktrees.sync(sessionId);
 		},
+		"worktree.pullBase": async ({ sessionId }) => {
+			this.refuseWhileRunning(sessionId);
+			const result = await this.worktrees.pullBase(sessionId);
+			this.listener.sessionsChanged();
+			return result;
+		},
 		"worktree.restoreBackup": async ({ sessionId, drop }) => {
 			const result = await this.worktrees.restoreBackup(sessionId, drop);
 			this.listener.sessionsChanged();
