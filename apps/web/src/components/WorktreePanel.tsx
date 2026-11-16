@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { GitChangedFile, GitDiff, WorktreeResolve, WorktreeStatus, WorktreeStrategy } from "@prometheus/protocol";
 import { confirmDialog } from "../lib/dialogs.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { call, draftWorktreeOn, setDraftWorktree, useStore, worktreeDiscard, worktreeMerge, worktreeRestoreBackup, worktreeSync } from "../lib/store.ts";
+import { call, draftWorktreeOn, sendPrompt, setDraftWorktree, useStore, worktreeDiscard, worktreeMerge, worktreeRestoreBackup, worktreeSync } from "../lib/store.ts";
 import { DiffReview, LineCounts } from "./DiffReview.tsx";
 import { Button, Collapse, Select } from "./ui.tsx";
 
@@ -44,7 +44,10 @@ const M = defineMessages({
 		movedBody: "合并需要先切回 {base}；如果切换会覆盖未提交的改动，会自动取消，不会丢东西。",
 		switchBase: "切回 {base} 并合并",
 		conflictTitle: "有文件和项目里的新改动冲突：{files}",
-		conflictBody: "在本对话的工作树里把两边的改动合在一起，再回来合并。",
+		conflictBody: "需要把两边的改动合在一起。可以交给 AI 在本对话里处理，处理完再点合并。",
+		aiFix: "让 AI 解决冲突",
+		viewConflict: "查看冲突",
+		aiPrompt: "本对话的工作树在同步基础分支 {base} 时产生了合并冲突，请解决这些文件里的冲突：{files}。\n要求：在文件里找到 <<<<<<< / ======= / >>>>>>> 标记，综合两边的意图改成最终内容，并删掉所有冲突标记；不要执行 git commit / merge / rebase 等命令，不要改其它文件；二进制文件无法逐行合并，请在两个版本中选一个并告诉我选了哪个。解决后简要说明每个文件怎么合的。",
 		backedUp: "已合并。项目里原来的 {n} 个未提交版本已备份。",
 		restore: "恢复项目里的版本",
 		dismiss: "知道了",
@@ -84,7 +87,10 @@ const M = defineMessages({
 		movedBody: "Merging needs {base} checked out first. If switching would overwrite uncommitted edits it is cancelled, nothing is lost.",
 		switchBase: "Switch to {base} and merge",
 		conflictTitle: "Files conflict with new changes in the project: {files}",
-		conflictBody: "Combine both sides in this chat's worktree, then merge again.",
+		conflictBody: "Both sides need to be combined. Let the AI do it in this chat, then merge again.",
+		aiFix: "Let the AI resolve the conflicts",
+		viewConflict: "View conflicts",
+		aiPrompt: "This chat's worktree hit merge conflicts while syncing the base branch {base}. Please resolve the conflicts in these files: {files}.\nRules: find the <<<<<<< / ======= / >>>>>>> markers, combine the intent of both sides into the final content and remove every marker; do not run git commit / merge / rebase and do not touch other files; binary files cannot be merged line by line, so pick one of the two versions and tell me which. Afterwards, briefly say how each file was combined.",
 		backedUp: "Merged. {n} uncommitted project versions were backed up.",
 		restore: "Restore the project's versions",
 		dismiss: "Dismiss",
@@ -206,7 +212,11 @@ ${t("discardBody", { n: files.length, branch: wt.branch })}`, { danger: true, co
 	) : status.blocked === "worktreeConflict" ? (
 		<div className="m-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2">
 			<p className="text-[13px] text-ink-100">{t("conflictTitle", { files: status.blockedDetail ?? "" })}</p>
-			<p className="text-xs text-ink-400">{t("conflictBody")}</p>
+			<p className="mb-2 text-xs text-ink-400">{t("conflictBody")}</p>
+			<div className="flex flex-wrap gap-2">
+				<Button variant="primary" disabled={busy} onClick={() => void sendPrompt(t("aiPrompt", { base: wt.baseBranch, files: status.conflicts.join(", ") }))}>{t("aiFix")}</Button>
+				<Button variant="ghost" onClick={() => setReview({ initial: status.conflicts[0] })}>{t("viewConflict")}</Button>
+			</div>
 		</div>
 	) : null;
 
