@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>独立工作树：合并被拦时的交互（示意图）</title>
+<style>
+  :root{--bg:#0f1115;--panel:#171a21;--line:#262b36;--t1:#e6e8ee;--t2:#a3a9b8;--t3:#6f7685;--ember:#ff8a4c;--amber:#f5b84a;--rose:#f0707f;--green:#5ac08a}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--t1);font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;padding:32px}
+  h1{font-size:18px;margin:0 0 4px} .sub{color:var(--t3);font-size:12px;margin-bottom:28px}
+  h2{font-size:13px;color:var(--t2);margin:32px 0 10px;font-weight:600}
+  h2 .tag{font-size:11px;padding:1px 8px;border-radius:99px;margin-right:8px;font-weight:500}
+  .old{background:#3a2226;color:var(--rose)} .new{background:#1f3a2c;color:var(--green)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:28px;align-items:start}
+  .col>.cap{color:var(--t3);font-size:12px;margin-bottom:8px}
+  .note{color:var(--t3);font-size:12px;margin-top:8px;line-height:1.7}
+  .wt{border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden;max-width:560px}
+  .head{display:flex;align-items:center;padding:7px 12px;font-size:12px;color:var(--t2);gap:8px}
+  .head .sp{flex:1}.add{color:var(--green)}.del{color:var(--rose)}
+  .head a{color:var(--ember);font-size:12px}
+  .files{border-top:1px solid var(--line);padding:4px}
+  .f{display:flex;gap:8px;padding:4px 8px;font-size:13px;color:var(--t2)}
+  .f i{font-style:normal;width:12px;color:var(--t3);font-family:monospace;font-size:11px}
+  .f span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.f b{font-weight:400;color:var(--t3);font-size:11px}
+  .reason{margin:0;padding:6px 12px;font-size:12px;color:var(--amber)}
+  .gray{color:var(--t3)}
+  .bar{display:flex;gap:8px;align-items:center;padding:8px;border-top:1px solid var(--line)}
+  .sel,.inp{border:1px solid var(--line);background:#11141a;border-radius:8px;padding:5px 10px;font-size:12px;color:var(--t2)}
+  .inp{flex:1;color:var(--t3)}
+  .btn{border:1px solid var(--line);border-radius:8px;padding:5px 12px;font-size:12px;color:var(--t2);background:transparent}
+  .danger{color:var(--rose);border-color:#4a2b31}
+  .pri{background:var(--ember);color:#1a1006;border-color:var(--ember);font-weight:600}
+  .dis{opacity:.35}
+  .alert{margin:8px;padding:10px 12px;border-radius:10px;background:#2a2314;border:1px solid #4a3c1a}
+  .alert .t{font-size:13px;color:var(--t1);margin-bottom:2px}
+  .alert .d{font-size:12px;color:var(--t2);margin-bottom:8px}
+  .alert .acts{display:flex;gap:8px;flex-wrap:wrap}
+  .alert.rose{background:#2a1a1d;border-color:#4a2b31}
+  .alert.blue{background:#161f2e;border-color:#25344d}
+  .ok{margin:8px;padding:8px 12px;border-radius:10px;background:#16261e;border:1px solid #23402f;font-size:12px;color:var(--green)}
+  .ok small{color:var(--t3);margin-left:6px}
+  .undo{color:var(--ember);text-decoration:underline;margin-left:8px;cursor:pointer}
+</style>
+</head>
+<body>
+<h1>独立工作树：合并被拦时的交互</h1>
+<div class="sub">静态示意图 · 仅表达布局与文案，不含逻辑 · 对应 WorktreePanel.tsx</div>
+
+<h2><span class="tag old">现状</span><span class="tag new">改后</span>场景 1：主目录里同名文件有未提交改动（你遇到的情况）</h2>
+<div class="grid">
+  <div class="col">
+    <div class="cap">现状：按钮灰了，原因在展开区、堆了三条互相重复的提示，没有任何可点的处理办法</div>
+    <div class="wt">
+      <div class="head">▾ 已改 2 个文件，待合并到项目 <span class="add">+0</span><span class="del">-0</span><span class="sp"></span><a>审查</a></div>
+      <div class="files">
+        <div class="f"><i>A</i><span>docs/output-sample/盾构TBM工程组段划分报告-模板（脱敏）.docx</span><b>bin</b></div>
+        <div class="f"><i>A</i><span>docs/output-sample/双护盾TBM适应性分析-模板（脱敏）.docx</span><b>bin</b></div>
+      </div>
+      <p class="reason">与另一个对话改了相同文件：盾构TBM…docx, 双护盾TBM…docx</p>
+      <p class="reason gray">项目文件夹里这些文件有未提交的改动：双护盾TBM…docx, 盾构TBM…docx</p>
+      <div class="bar"><span class="sel">压缩为一个提交 ▾</span><span class="inp">提交说明（可留空）</span>
+        <span class="btn dis">⟳</span><span class="btn danger">丢弃</span><span class="btn pri dis">合并到项目</span></div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="cap">改后：折叠态就能看到问题和解决办法；合并按钮可点；覆盖前自动备份</div>
+    <div class="wt">
+      <div class="head">▾ 已改 2 个文件，待合并到项目 <span class="add">+0</span><span class="del">-0</span><span class="sp"></span><a>审查</a></div>
+      <div class="alert">
+        <div class="t">项目文件夹里已有这 2 个文件的另一个版本（未提交）</div>
+        <div class="d">可能是另一个对话直接写入的。选择保留哪一个，被替换的版本会自动备份，随时可恢复。</div>
+        <div class="acts">
+          <span class="btn pri">用本对话的版本合并</span>
+          <span class="btn">保留项目里的版本，只合并其余文件</span>
+          <span class="btn">先对比两个版本</span>
+        </div>
+      </div>
+      <div class="bar"><span class="sel">压缩为一个提交 ▾</span><span class="inp">提交说明（可留空）</span>
+        <span class="btn dis">⟳</span><span class="btn danger">丢弃</span><span class="btn pri dis">合并到项目</span></div>
+    </div>
+    <div class="note">底部"合并到项目"在需要决策时置灰，决策只在上方这一处做，不再出现两个入口。点击上方主按钮即完成合并。</div>
+  </div>
+</div>
+
+<h2><span class="tag new">改后</span>场景 1 的完成态：合并成功，可撤销</h2>
+<div class="wt">
+  <div class="ok">已合并 2 个文件到项目。项目里原来的 2 个未提交版本已备份。<span class="undo">恢复项目里的版本</span></div>
+</div>
+
+<h2><span class="tag new">改后</span>场景 2：项目文件夹当前不在基础分支</h2>
+<div class="wt">
+  <div class="head">▾ 已改 3 个文件，待合并到项目 <span class="add">+42</span><span class="del">-7</span><span class="sp"></span><a>审查</a></div>
+  <div class="alert blue">
+    <div class="t">项目文件夹现在在分支 feature/x，本对话基于 main</div>
+    <div class="d">合并需要先切回 main。切换前项目里没有未提交改动，不会丢东西。</div>
+    <div class="acts"><span class="btn pri">切回 main 并合并</span></div>
+  </div>
+  <div class="bar"><span class="sel">压缩为一个提交 ▾</span><span class="inp">提交说明（可留空）</span>
+    <span class="btn dis">⟳</span><span class="btn danger">丢弃</span><span class="btn pri dis">合并到项目</span></div>
+</div>
+
+<h2><span class="tag new">改后</span>场景 3：同步基础分支时有冲突</h2>
+<div class="wt">
+  <div class="head">▾ 已改 4 个文件，待合并到项目 <span class="add">+120</span><span class="del">-31</span><span class="sp"></span><a>审查</a></div>
+  <div class="alert rose">
+    <div class="t">有 1 个文件和项目里的新改动冲突：src/app.ts</div>
+    <div class="d">需要把两边的改动合在一起。可以交给 AI 在本对话里处理，处理完会自动回到这里。</div>
+    <div class="acts"><span class="btn pri">让 AI 解决冲突</span><span class="btn">查看冲突</span></div>
+  </div>
+  <div class="bar"><span class="sel">压缩为一个提交 ▾</span><span class="inp">提交说明（可留空）</span>
+    <span class="btn dis">⟳</span><span class="btn danger">丢弃</span><span class="btn pri dis">合并到项目</span></div>
+</div>
+
+<h2><span class="tag new">改后</span>场景 4：无阻碍的正常态（不变）</h2>
+<div class="wt">
+  <div class="head">▸ 已改 3 个文件，待合并到项目 <span class="add">+42</span><span class="del">-7</span><span class="sp"></span><a>审查</a></div>
+  <div class="bar"><span class="sel">压缩为一个提交 ▾</span><span class="inp">提交说明（可留空）</span>
+    <span class="btn">⟳</span><span class="btn danger">丢弃</span><span class="btn pri">合并到项目</span></div>
+</div>
+</body>
+</html>
