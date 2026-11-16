@@ -28,6 +28,8 @@ export const ERROR_PARAMS = {
 	worktreeNotGit: [],
 	worktreeNoCommit: [],
 	worktreeFailed: ["error"],
+	worktreeLanded: ["ref", "base"],
+	worktreeRemoteMoved: ["ref", "files"],
 	worktreeBaseMoved: ["branch"],
 	worktreeMainDirty: ["files"],
 	worktreeConflict: ["files"],

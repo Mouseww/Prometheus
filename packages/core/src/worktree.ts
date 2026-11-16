@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync, symlinkSync, unlinkSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createJsonStore, type JsonStore } from "@prometheus/plugin-sdk";
-import { AppError, type GitDiff, type SessionWorktree, type WorktreeFile, type WorktreeResolve, type WorktreeStatus, type WorktreeStrategy } from "@prometheus/protocol";
+import { AppError, type GitDiff, type SessionWorktree, type WorktreeFile, type WorktreeRemote, type WorktreeResolve, type WorktreeStatus, type WorktreeStrategy } from "@prometheus/protocol";
 import { normalizeDir, workspaceId } from "./workspaces.ts";
 
 // Per-chat git worktrees (docs/worktree-mode.md): the agent works in its own checkout and the real project folder is
@@ -20,8 +20,10 @@ interface GitOut {
 }
 
 const GIT_TIMEOUT_MS = 120_000;
+const FETCH_TIMEOUT_MS = 20_000;
+const FETCH_EVERY_MS = 30_000;
 
-function git(cwd: string, args: string[]): Promise<GitOut> {
+function git(cwd: string, args: string[], timeoutMs = GIT_TIMEOUT_MS): Promise<GitOut> {
 	return new Promise((done, reject) => {
 		const child = spawn("git", args, {
 			cwd,
@@ -30,7 +32,7 @@ function git(cwd: string, args: string[]): Promise<GitOut> {
 		});
 		let stdout = "";
 		let stderr = "";
-		const timer = setTimeout(() => child.kill(), GIT_TIMEOUT_MS);
+		const timer = setTimeout(() => child.kill(), timeoutMs);
 		child.stdout.on("data", (d: Buffer) => (stdout += d.toString("utf8")));
 		child.stderr.on("data", (d: Buffer) => (stderr += d.toString("utf8")));
 		child.on("error", (err) => {
@@ -133,6 +135,7 @@ export class WorktreeManager {
 	private readonly store: JsonStore<WorktreeFile_>;
 	private cache: WorktreeFile_ = { sessions: {} };
 	private readonly locks = new Map<string, Promise<unknown>>();
+	private readonly fetchedAt = new Map<string, number>();
 	readonly baseDir: string;
 
 	constructor(dataDir: string) {
@@ -191,7 +194,7 @@ export class WorktreeManager {
 	}
 
 	/** Creates the checkout for a new chat. The caller binds it to the chat's id once that exists. */
-	async create(dir: string, opts: { withChanges?: boolean } = {}): Promise<SessionWorktree> {
+	async create(dir: string, opts: { withChanges?: boolean } = { withChanges: true }): Promise<SessionWorktree> {
 		const info = await this.inspect(dir);
 		if (!info.ok) throw new AppError(info.code, info.error ? { error: info.error } : {});
 		const root = normalizeDir(dir);
@@ -204,6 +207,17 @@ export class WorktreeManager {
 			if (opts.withChanges) {
 				const snap = (await git(info.repo, ["stash", "create"])).stdout.trim();
 				if (snap) await must(path, ["stash", "apply", snap]);
+				// `stash create` skips untracked files; carry those over too.
+				const loose = await git(info.repo, ["ls-files", "--others", "--exclude-standard", "-z"]);
+				for (const f of loose.stdout.split("\0")) {
+					if (!f) continue;
+					try {
+						mkdirSync(dirname(join(path, f)), { recursive: true });
+						copyFileSync(join(info.repo, f), join(path, f));
+					} catch {
+						// A file that vanished or cannot be read is not worth failing the chat for.
+					}
+				}
 			}
 		} catch (err) {
 			await git(info.repo, ["worktree", "remove", "--force", path]).catch(() => {});
@@ -434,7 +448,39 @@ export class WorktreeManager {
 		return out;
 	}
 
-	async status(sessionId: string): Promise<WorktreeStatus> {
+	/**
+	 * What the base branch's upstream (origin/main, ...) knows that the project folder does not. The chat's changes may already have
+	 * been merged there (pull request, push from another machine) while the local base branch has not pulled yet; merging into the
+	 * stale local branch would then diverge from the remote. Best effort: no upstream or no network means no answer.
+	 */
+	private async remoteOf(wt: SessionWorktree, files: WorktreeFile[], fresh: boolean): Promise<WorktreeRemote | undefined> {
+		const up = await git(wt.repo, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", `${wt.baseBranch}@{upstream}`]);
+		const ref = up.stdout.trim();
+		if (up.code !== 0 || !ref) return undefined;
+		const now = Date.now();
+		if (fresh || now - (this.fetchedAt.get(wt.repo) ?? 0) > FETCH_EVERY_MS) {
+			this.fetchedAt.set(wt.repo, now);
+			const remote = (await git(wt.repo, ["config", `branch.${wt.baseBranch}.remote`])).stdout.trim();
+			if (remote && remote !== ".") await git(wt.repo, ["fetch", "--quiet", remote], FETCH_TIMEOUT_MS).catch(() => {});
+		}
+		const behind = Number((await git(wt.repo, ["rev-list", "--count", `${wt.baseBranch}..${ref}`])).stdout.trim()) || 0;
+		const out: WorktreeRemote = { ref, behind, landed: false, overlap: [] };
+		if (!behind) return out;
+		const tracked = files.filter((f) => f.status !== "?").map((f) => f.path);
+		const differs = await git(wt.path, ["diff", "--name-only", "--no-renames", "-z", ref]);
+		if (differs.code === 0 && files.length) {
+			const still = new Set(differs.stdout.split("\0").filter(Boolean));
+			out.landed = tracked.length === files.length && tracked.every((p) => !still.has(p));
+		}
+		if (!out.landed) {
+			const moved = await git(wt.repo, ["diff", "--name-only", "--no-renames", "-z", wt.baseBranch, ref]);
+			const theirs = new Set(moved.stdout.split("\0").filter(Boolean));
+			out.overlap = files.map((f) => f.path).filter((p) => theirs.has(p));
+		}
+		return out;
+	}
+
+	async status(sessionId: string, fresh = false): Promise<WorktreeStatus> {
 		const wt = this.get(sessionId);
 		if (!wt) throw new AppError("sessionNotFound", { id: sessionId });
 		if (wt.state !== "active" || !existsSync(wt.path)) return { worktree: wt, files: [], ahead: 0, behind: 0, conflicts: [], mainDirty: [], overlaps: [], blocked: "worktreeGone" };
@@ -455,13 +501,21 @@ export class WorktreeManager {
 			if (shared.length) overlaps.push({ sessionId: id, files: shared });
 		}
 		await this.countLines(wt, files);
+		const remote = await this.remoteOf(wt, files, fresh).catch(() => undefined);
 		const out: WorktreeStatus = { worktree: wt, files, ahead, behind, conflicts, mainDirty, overlaps };
+		if (remote) out.remote = remote;
 		if (conflicts.length) {
 			out.blocked = "worktreeConflict";
 			out.blockedDetail = conflicts.slice(0, 8).join(", ");
 		} else if (current !== wt.baseBranch) {
 			out.blocked = "worktreeBaseMoved";
 			out.blockedDetail = current;
+		} else if (remote?.landed) {
+			out.blocked = "worktreeLanded";
+			out.blockedDetail = remote.ref;
+		} else if (remote?.overlap.length) {
+			out.blocked = "worktreeRemoteMoved";
+			out.blockedDetail = `${remote.ref}: ${remote.overlap.slice(0, 8).join(", ")}`;
 		} else if (mainDirty.length) {
 			out.blocked = "worktreeMainDirty";
 			out.blockedDetail = mainDirty.slice(0, 8).join(", ");
@@ -495,7 +549,7 @@ export class WorktreeManager {
 		await this.checkpoint(sessionId);
 		const wt = this.need(sessionId);
 		await this.lock(wt.repo, async () => {
-			let pre = await this.status(sessionId);
+			let pre = await this.status(sessionId, true);
 			if (pre.conflicts.length) throw new AppError("worktreeConflict", { files: pre.blockedDetail ?? "" });
 			if (pre.blocked === "worktreeBaseMoved" && resolve === "switchBase") {
 				// git refuses when the switch would clobber uncommitted edits, so nothing is lost.
@@ -511,6 +565,8 @@ export class WorktreeManager {
 				setAside = await this.setAsideInMain(wt, pre.mainDirty);
 				pre = await this.status(sessionId);
 			}
+			if (pre.blocked === "worktreeLanded") throw new AppError("worktreeLanded", { ref: pre.remote?.ref ?? "", base: wt.baseBranch });
+			if (pre.blocked === "worktreeRemoteMoved") throw new AppError("worktreeRemoteMoved", { ref: pre.remote?.ref ?? "", files: pre.remote?.overlap.slice(0, 8).join(", ") ?? "" });
 			if (pre.blocked === "worktreeMainDirty") throw new AppError("worktreeMainDirty", { files: pre.blockedDetail ?? "" });
 			if (pre.blocked === "worktreeEmpty") throw new AppError("worktreeEmpty");
 			try {
