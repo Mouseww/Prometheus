@@ -287,7 +287,8 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, kind: Kind)
 		// A panel page is loaded by a sandboxed iframe that may not carry the cookie; it brings a pass instead.
 		const passed = req.method === "GET" && host.panelTicketValid(url.searchParams.get("pt"));
 		// Platform callbacks (/plugins/<name>/hook/*) cannot carry our login; the plugin verifies each one itself.
-		const hook = /^\/plugins\/[^/]+\/hook\//.test(url.pathname);
+		// The OAuth redirect comes back from another site, so the SameSite=Strict login cookie is not sent; the flow's one-time `state` and PKCE verifier protect it.
+		const hook = /^\/plugins\/[^/]+\/hook\//.test(url.pathname) || (req.method === "GET" && url.pathname === "/plugins/connectors/oauth/callback");
 		if (!passed && !hook && !httpAuthorized(req, kind)) return json(res, 401, { error: "unauthorized" });
 		const route = host.runtime.plugins.routes.find((r) => r.method === req.method && r.path === url.pathname);
 		if (!route) return json(res, 404, { error: "not found" });
