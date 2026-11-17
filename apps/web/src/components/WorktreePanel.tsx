@@ -347,19 +347,21 @@ export function WorktreeSwitch() {
 	const on = useStore((s) => draftWorktreeOn(s));
 	if (!ask) return null;
 	return (
-		<button
-			type="button"
-			role="switch"
-			aria-checked={on}
-			title={t(on ? "on" : "off")}
-			onClick={() => void setDraftWorktree(!on)}
-			className={clsx(
-				"flex shrink-0 items-center gap-1.5 rounded-lg border px-2 py-1 text-xs transition-colors",
-				on ? "border-ember-500/50 bg-ember-500/10 text-ember-300" : "border-ink-700 text-ink-400 hover:text-ink-200",
-			)}
-		>
-			<GitBranch className="size-3.5" />
-			{t("label")}
-		</button>
+		<div title={t(on ? "on" : "off")} className="flex shrink-0 items-center gap-2 text-xs">
+			<span className={clsx("flex items-center gap-1.5", on ? "text-ember-300" : "text-ink-400")}>
+				<GitBranch className="size-3.5" />
+				{t("label")}
+			</span>
+			<button
+				type="button"
+				role="switch"
+				aria-checked={on}
+				aria-label={t("label")}
+				onClick={() => void setDraftWorktree(!on)}
+				className={clsx("relative h-4 w-7 shrink-0 rounded-full transition-colors", on ? "bg-ember-500" : "bg-ink-700")}
+			>
+				<span className={clsx("absolute top-0.5 left-0.5 size-3 rounded-full bg-white shadow transition-transform", on && "translate-x-3")} />
+			</button>
+		</div>
 	);
 }
