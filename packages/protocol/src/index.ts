@@ -36,6 +36,8 @@ export interface ToolCallContent { type: "toolCall"; id: string; name: string; a
 export interface Usage {
 	input: number;
 	output: number;
+	/** Thinking tokens. Counted outside `output` by providers that report it here, so display code adds it to `output` rather than assuming it is included. */
+	reasoning?: number;
 	cacheRead: number;
 	cacheWrite: number;
 	totalTokens: number;
@@ -702,6 +704,8 @@ export interface KnowledgeBaseInfo {
 export interface UsageTotals {
 	input: number;
 	output: number;
+	/** Thinking tokens, kept apart from `output` because providers report them separately. */
+	reasoning?: number;
 	cacheRead: number;
 	cacheWrite: number;
 	cost: number;

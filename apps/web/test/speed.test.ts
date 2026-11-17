@@ -4,7 +4,11 @@ import { estimateTokens, SpeedTracker } from "../src/lib/speed.ts";
 
 const start = { type: "message_start", message: { role: "assistant", content: [] } } as unknown as SessionEvent;
 const delta = (d: string) => ({ type: "message_update", delta: { type: "text_delta", contentIndex: 0, delta: d } }) as SessionEvent;
+const thinking = (d: string) => ({ type: "message_update", delta: { type: "thinking_delta", contentIndex: 0, delta: d } }) as SessionEvent;
+const toolDelta = (d: string) => ({ type: "message_update", delta: { type: "toolcall_delta", contentIndex: 0, delta: d } }) as SessionEvent;
 const end = (output: number) => ({ type: "message_end", message: { role: "assistant", content: [], provider: "gw", model: "m", usage: { output } } }) as unknown as SessionEvent;
+const endWithReasoning = (output: number, reasoning: number) =>
+	({ type: "message_end", message: { role: "assistant", content: [], provider: "gw", model: "m", usage: { output, reasoning } } }) as unknown as SessionEvent;
 
 describe("speed tracker", () => {
 	it("times a reply from its first token and averages by weight", () => {
@@ -46,5 +50,30 @@ describe("speed tracker", () => {
 	it("estimates CJK and Latin text", () => {
 		expect(estimateTokens("你好")).toBe(2);
 		expect(estimateTokens("abcdefgh")).toBe(2);
+	});
+
+	it("counts thinking and tool-call output in the live rate", () => {
+		// Counting only text_delta made the live figure collapse while the model thought or streamed a tool call.
+		const t = new SpeedTracker();
+		t.feed("s", start, 0);
+		t.feed("s", thinking("你".repeat(40)), 1000);
+		t.feed("s", toolDelta("a".repeat(40)), 2000);
+		expect(t.live("s", 3000)?.tps).toBeCloseTo(25, 5); // (40 + 10) tokens over 2 s
+	});
+
+	it("counts separately reported reasoning tokens in the final rate", () => {
+		// Providers that bill thinking apart from output report it as `reasoning`; it is generated output all the same.
+		const t = new SpeedTracker();
+		t.feed("s", start, 0);
+		t.feed("s", delta("hi"), 500);
+		t.feed("s", endWithReasoning(80, 20), 2500); // 100 tokens over 2 s
+		expect(t.summary("s").last).toMatchObject({ tps: 50, outputTokens: 100 });
+	});
+
+	it("skips deltas that carry no output", () => {
+		const t = new SpeedTracker();
+		t.feed("s", start, 0);
+		t.feed("s", { type: "message_update", delta: { type: "text_start", contentIndex: 0 } } as SessionEvent, 900);
+		expect(t.live("s", 900)).toEqual({ tps: null, ttftMs: null });
 	});
 });

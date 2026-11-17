@@ -8,6 +8,7 @@ const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v)
 function add(into: UsageTotals, u: Record<string, unknown>): void {
 	into.input += num(u.input);
 	into.output += num(u.output);
+	into.reasoning = (into.reasoning ?? 0) + num(u.reasoning);
 	into.cacheRead += num(u.cacheRead);
 	into.cacheWrite += num(u.cacheWrite);
 	into.cost += num((u.cost as { total?: unknown } | undefined)?.total);

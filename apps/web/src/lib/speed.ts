@@ -26,6 +26,9 @@ interface Running {
 	estimate: number;
 }
 
+/** The delta kinds that carry generated output. `toolcall_delta` streams JSON arguments, which are billed output too. */
+const OUTPUT_DELTA = new Set(["text_delta", "thinking_delta", "toolcall_delta"]);
+
 const EMPTY: SpeedSummary = { last: null, avgTps: null, replies: 0 };
 /** Replies shorter than this are too quick to give a meaningful rate. */
 const MIN_MS = 400;
@@ -82,6 +85,9 @@ export class SpeedTracker {
 			const r = this.running.get(sessionId);
 			const d = e.delta;
 			if (!r || !("delta" in d)) return;
+			// Count every generated token, not just visible prose: thinking and tool-call arguments are output as well.
+			// Counting only text made the live rate drop sharply whenever the model thought or called a tool.
+			if (!OUTPUT_DELTA.has(d.type)) return;
 			if (r.first === null) r.first = now;
 			r.estimate += estimateTokens(d.delta);
 			return;
@@ -90,15 +96,17 @@ export class SpeedTracker {
 			if (e.message.role !== "assistant") return;
 			const r = this.running.get(sessionId);
 			this.running.delete(sessionId);
-			const m = e.message as { usage?: { output?: number }; provider?: string; model?: string };
+			const m = e.message as { usage?: { output?: number; reasoning?: number }; provider?: string; model?: string };
+			// Providers that bill thinking separately report it under `reasoning`; it is still generated output.
+			const counted = (m.usage?.output ?? 0) + (m.usage?.reasoning ?? 0);
 			const out = m.usage?.output ?? 0;
 			if (!r || r.first === null || out <= 0) return;
 			const ms = now - r.first;
 			if (ms < MIN_MS) return;
-			const last: ReplySpeed = { tps: out / (ms / 1000), ttftMs: r.first - r.start, outputTokens: out, ...(m.provider && m.model ? { model: `${m.provider}/${m.model}` } : {}) };
+			const last: ReplySpeed = { tps: counted / (ms / 1000), ttftMs: r.first - r.start, outputTokens: counted, ...(m.provider && m.model ? { model: `${m.provider}/${m.model}` } : {}) };
 			this.byMessage.set(`${sessionId}:${(e.message as { timestamp?: number }).timestamp ?? 0}`, last);
 			const t = this.totals.get(sessionId) ?? { tokens: 0, ms: 0 };
-			t.tokens += out;
+			t.tokens += counted;
 			t.ms += ms;
 			this.totals.set(sessionId, t);
 			this.summaries.set(sessionId, { last, avgTps: t.tokens / (t.ms / 1000), replies: (this.summaries.get(sessionId)?.replies ?? 0) + 1 });
