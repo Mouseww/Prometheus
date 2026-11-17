@@ -898,7 +898,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 						<WorkspacePicker>
 							<BranchPicker />
 						</WorkspacePicker>
-						{!session && <WorktreeSwitch />}
+						<WorktreeSwitch />
 					</div>
 				) : (
 					<div className="flex min-w-0 items-center gap-2">

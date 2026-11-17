@@ -352,7 +352,7 @@ export function WorktreeSwitch() {
 			role="switch"
 			aria-checked={on}
 			title={t(on ? "on" : "off")}
-			onClick={() => setDraftWorktree(!on)}
+			onClick={() => void setDraftWorktree(!on)}
 			className={clsx(
 				"flex shrink-0 items-center gap-1.5 rounded-lg border px-2 py-1 text-xs transition-colors",
 				on ? "border-ember-500/50 bg-ember-500/10 text-ember-300" : "border-ink-700 text-ink-400 hover:text-ink-200",

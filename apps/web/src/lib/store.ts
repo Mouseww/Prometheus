@@ -915,8 +915,24 @@ export async function createSession(cwd?: string): Promise<void> {
 	if (snap) activate(snap);
 }
 
-export function setDraftWorktree(on: boolean): void {
+/**
+ * Sets the new-chat worktree switch. The blank chat already exists (it is made when the folder is chosen) and
+ * its worktree was decided then, so a changed choice starts a fresh blank chat in the same folder.
+ */
+export async function setDraftWorktree(on: boolean): Promise<void> {
 	set({ draftWorktree: on });
+	const prev = get().session;
+	if (!prev || prev.preview || prev.pending || prev.isStreaming || prev.messages.length > 0) return;
+	if (!!prev.worktree === on) return;
+	const permission = prev.permissionMode;
+	const model = prev.model;
+	get().client?.unsubscribe(prev.id);
+	await createSession(prev.worktree?.root ?? prev.cwd);
+	const created = get().session;
+	if (!created || created.id === prev.id) return;
+	void get().client?.rpc("session.delete", { sessionId: prev.id }).catch(() => {});
+	set({ draftModel: model ?? null });
+	if (permission !== created.permissionMode) await setPermissionMode(permission);
 }
 
 /** Whether the new-chat switch is on: its own choice, else the configured default. */
@@ -1087,7 +1103,7 @@ export function startNewChat(): void {
 	buffer = [];
 	const draft = defaultDraft();
 	const wasPi = draft.draftRuntime === "pi" && get().draftRuntime === "pi" && (current.runtime ?? "pi") === "pi";
-	set({ session: null, commands: [], draftModel: wasPi ? current.model : null, draftPermission: defaultPermission(), ...draft });
+	set({ session: null, commands: [], draftModel: wasPi ? current.model : null, draftPermission: defaultPermission(), draftWorktree: null, ...draft });
 	if (!wasPi) void refreshDraftModels();
 }
 
