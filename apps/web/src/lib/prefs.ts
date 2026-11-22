@@ -1,3 +1,4 @@
+import type { SyncScope } from "@prometheus/protocol";
 import { create } from "zustand";
 
 export type ThemeMode = "dark" | "light" | "system";
@@ -37,13 +38,34 @@ interface Prefs {
 	idleUpdate: boolean;
 	/** Display names the user gave models, keyed by `provider/id`. Only changes what is shown. */
 	modelAliases: Record<string, string>;
+	/** Platform sync. Nothing syncs by itself until `auto` is switched on. */
+	sync: SyncPrefs;
 }
+
+export interface SyncPrefs {
+	auto: boolean;
+	/** Saved platform to sync with. */
+	peerId: string;
+	direction: "pull" | "push";
+	scopes: SyncScope[];
+	intervalMin: number;
+	/** Whether gateways that exist on both sides are replaced by the source's. */
+	overwrite: boolean;
+	/** Epoch ms of the last successful run; chats changed since then are the ones moved. */
+	lastRun: number;
+}
+
+export const DEFAULT_SYNC: SyncPrefs = { auto: false, peerId: "", direction: "pull", scopes: ["gateways", "settings"], intervalMin: 30, overwrite: true, lastRun: 0 };
 
 export const aliasKey = (provider: string, id: string) => `${provider}/${id}`;
 
 const KEY = "prometheus.prefs";
 // Touch keyboards have no comfortable Enter-to-send: there, Enter breaks the line unless the user opts in.
 const touchFirst = window.matchMedia("(pointer: coarse)").matches;
+
+function mergeSaved(fallback: Prefs, saved: Partial<Prefs>): Prefs {
+	return { ...fallback, ...saved, sync: { ...DEFAULT_SYNC, ...saved.sync } };
+}
 
 function load(): Prefs {
 	const fallback: Prefs = {
@@ -60,9 +82,10 @@ function load(): Prefs {
 		enterToSend: !touchFirst,
 		idleUpdate: true,
 		modelAliases: {},
+		sync: DEFAULT_SYNC,
 	};
 	try {
-		return { ...fallback, ...(JSON.parse(localStorage.getItem(KEY) ?? "{}") as Partial<Prefs>) };
+		return mergeSaved(fallback, JSON.parse(localStorage.getItem(KEY) ?? "{}") as Partial<Prefs>);
 	} catch {
 		return fallback;
 	}

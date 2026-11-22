@@ -8,6 +8,7 @@ import { loadPlatforms, normalizeUrl, type Platform, samePlatform, savePlatforms
 import { toast, useStore } from "../lib/store.ts";
 import { targetFromUrl } from "../lib/backend.ts";
 import { uuid } from "../lib/uuid.ts";
+import { PlatformSync } from "./PlatformSync.tsx";
 import { Badge, Button, Empty, Field, Input, PageHeader } from "./ui.tsx";
 
 const M = defineMessages({
@@ -167,6 +168,7 @@ export function PlatformsView() {
 						);
 					})}
 					<p className="pt-2 text-xs text-ink-500">{t("storedLocally")}</p>
+					<PlatformSync />
 				</div>
 			</div>
 		</div>

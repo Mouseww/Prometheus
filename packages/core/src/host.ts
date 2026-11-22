@@ -59,6 +59,7 @@ import { CC_CAPABILITIES } from "./agent/claude-code/cc-session.ts";
 import type { PiRuntime } from "./agent/pi/pi-runtime.ts";
 import { PI_CAPABILITIES } from "./agent/pi/capabilities.ts";
 import { collectUsage } from "./usage.ts";
+import { cleanSyncSettings, emptyReport, pickSyncSettings, SyncLedger } from "./sync.ts";
 import { installOptionalPackage, isOptionalPackage, OPTIONAL_PACKAGES, type OptionalPackageId, optionalPackageStatus, uninstallOptionalPackage } from "./optional-packages.ts";
 import { isPiMissing, piAgentDir } from "./pi-paths.ts";
 import { buildHandoff, handoffBlock } from "./agent/handoff.ts";
@@ -198,6 +199,7 @@ export class PrometheusHost {
 	private readonly workspaces: WorkspaceStore;
 	private readonly worktrees: WorktreeManager;
 	private readonly index: SessionIndex;
+	private readonly syncLedger: SyncLedger;
 	private readonly permissions: PermissionStore;
 	private readonly externalRuntimes = new Map<string, AgentRuntime>();
 	/** Runtimes replaced after a profile edit; what they keep across chats (a shared server) stops with the host. */
@@ -219,6 +221,7 @@ export class PrometheusHost {
 		this.listener = options.listener;
 		this.workspaces = new WorkspaceStore(join(runtime.dataDir, "workspaces.json"));
 		this.worktrees = new WorktreeManager(runtime.dataDir);
+		this.syncLedger = new SyncLedger(join(runtime.dataDir, "sessions", "sync-ledger.json"));
 		this.index = new SessionIndex(join(runtime.dataDir, "sessions", "index.json"));
 		this.permissions = new PermissionStore(join(runtime.dataDir, "sessions", "permissions.json"));
 		runtime.plugins.reloadSessions = () => this.reloadSessions();
@@ -1659,6 +1662,91 @@ ${extras.map((p) => `- ${p}`).join("\n")}` }, guidelines: [] } };
 				this.listener.gatewaysChanged();
 			}
 			return { imported, skipped };
+		},
+
+		"sync.export": async ({ scopes }) => {
+			const want = new Set(scopes);
+			return {
+				...(want.has("gateways") ? { gateways: this.runtime.config.gateways() } : {}),
+				...(want.has("settings") ? { settings: pickSyncSettings(this.hostSettings()) } : {}),
+				...(want.has("projects") ? { projects: (await this.workspaces.list()).map((w) => ({ path: w.path, name: w.name, ...(w.extraPaths?.length ? { extraPaths: w.extraPaths } : {}) })) } : {}),
+				...(want.has("sessions") ? { sessionList: await this.listSessions() } : {}),
+			};
+		},
+		"sync.exportSession": async ({ sessionId }) => {
+			const live = await this.open(sessionId);
+			const state = live.session.snapshotState();
+			const meta = (await this.listSessions()).find((s) => s.id === sessionId);
+			const now = new Date().toISOString();
+			return { id: sessionId, ...(state.name ? { name: state.name } : {}), cwd: state.cwd, created: meta?.created ?? now, modified: meta?.modified ?? now, messages: state.messages.slice(-SEED_MESSAGES) };
+		},
+		"sync.import": async ({ bundle, overwrite }) => {
+			const report = emptyReport();
+			const replace = overwrite !== false;
+			for (const g of Array.isArray(bundle.gateways) ? bundle.gateways : []) {
+				try {
+					const had = this.runtime.config.gateways().some((x) => x.id === g.id);
+					if (had && !replace) {
+						report.gateways.skipped.push({ id: g.id, reason: "exists" });
+						continue;
+					}
+					await this.runtime.config.saveGateway(g);
+					if (had) report.gateways.updated++;
+					else report.gateways.added++;
+				} catch (err) {
+					report.gateways.skipped.push({ id: String(g?.id), reason: err instanceof Error ? err.message : String(err) });
+				}
+			}
+			if (report.gateways.added || report.gateways.updated) {
+				this.pi?.syncGateways();
+				this.listener.gatewaysChanged();
+			}
+			if (bundle.settings) {
+				const clean = cleanSyncSettings(bundle.settings);
+				// Settings validate themselves; one bad field must not drop the others.
+				for (const [k, v] of Object.entries(clean)) {
+					try {
+						await this.handlers["settings.set"]({ [k]: v } as Partial<HostSettings>);
+					} catch {}
+				}
+				report.settings = true;
+			}
+			for (const p of Array.isArray(bundle.projects) ? bundle.projects : []) {
+				if (typeof p?.path !== "string" || !existsSync(p.path) || !statSync(p.path).isDirectory()) {
+					report.projects.skipped.push({ id: String(p?.path), reason: "dirNotFound" });
+					continue;
+				}
+				const known = (await this.workspaces.list()).some((w) => workspaceId(w.path) === workspaceId(p.path));
+				if (known) {
+					report.projects.skipped.push({ id: p.path, reason: "exists" });
+					continue;
+				}
+				const extra = (p.extraPaths ?? []).filter((x) => existsSync(x));
+				await this.workspaces.add(p.path, p.name, extra.length ? extra : undefined).catch(() => {});
+				report.projects.added++;
+			}
+			for (const s of Array.isArray(bundle.sessions) ? bundle.sessions : []) {
+				if (typeof s?.id !== "string" || !Array.isArray(s.messages)) continue;
+				const done = await this.syncLedger.get(s.id);
+				if (done) {
+					report.sessions.skipped.push({ id: s.id, reason: "exists" });
+					continue;
+				}
+				try {
+					// The original folder usually does not exist on another machine; the chat then lands in the default one.
+					const dir = s.cwd && existsSync(s.cwd) && statSync(s.cwd).isDirectory() ? s.cwd : this.cwd;
+					await this.workspaces.add(dir);
+					const live = await this.attach((init) => this.needPi.create({ ...init, cwd: normalizeDir(dir), history: s.messages.slice(-SEED_MESSAGES) }));
+					if (s.name) live.session.setName(s.name);
+					await this.syncLedger.set(s.id, live.session.id);
+					await this.closeSession(live.session.id);
+					report.sessions.added++;
+				} catch (err) {
+					report.sessions.skipped.push({ id: s.id, reason: err instanceof Error ? err.message : String(err) });
+				}
+			}
+			if (report.sessions.added) this.listener.sessionsChanged();
+			return report;
 		},
 
 		"kb.list": () => this.runtime.knowledge.list(),

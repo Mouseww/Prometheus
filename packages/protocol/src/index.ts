@@ -654,6 +654,39 @@ export interface PiGatewayInfo {
 	missingKey: boolean;
 }
 
+/** What a platform-to-platform sync moves. Every part is optional and off unless asked for. */
+export type SyncScope = "gateways" | "settings" | "projects" | "sessions";
+export const SYNC_SCOPES: readonly SyncScope[] = ["gateways", "settings", "projects", "sessions"];
+
+/** Settings that are the same on any machine; paths and executables stay where they are. */
+export type SyncSettings = Pick<HostSettings, "autoCompaction" | "defaultAgent" | "defaultPermission" | "defaultThinking" | "goalTurns" | "compactPercent" | "worktreeMode" | "worktreeDefault" | "worktreeStrategy" | "worktreeAutoPull" | "recycleDays">;
+
+/** One conversation on its way between platforms. `id` is the id on the platform it came from and is how repeats are recognised. */
+export interface SyncSession {
+	id: string;
+	name?: string;
+	cwd: string;
+	created: string;
+	modified: string;
+	messages: ChatMessage[];
+}
+
+export interface SyncBundle {
+	/** Gateways with their keys: the whole point is that the other side can use them. */
+	gateways?: GatewayConfig[];
+	settings?: SyncSettings;
+	projects?: { path: string; name: string; extraPaths?: string[] }[];
+	sessions?: SyncSession[];
+}
+
+/** What the receiving side did with a bundle, per scope. `skipped` entries say why. */
+export interface SyncReport {
+	gateways: { added: number; updated: number; skipped: { id: string; reason: string }[] };
+	settings: boolean;
+	projects: { added: number; skipped: { id: string; reason: string }[] };
+	sessions: { added: number; skipped: { id: string; reason: string }[] };
+}
+
 export interface GatewayConfig {
 	id: string;
 	name: string;
@@ -1434,6 +1467,13 @@ export interface RpcMethods {
 	"gateway.piList": { params: Record<string, never>; result: PiGatewayInfo[] };
 	/** Import the named PI providers (all importable ones when `ids` is omitted); returns the ids imported. */
 	"gateway.piImport": { params: { ids?: string[] }; result: { imported: string[]; skipped: { id: string; reason: string }[] } };
+
+	/** The syncable settings, gateways and projects of this platform, plus a light list of its sessions (no messages). */
+	"sync.export": { params: { scopes: SyncScope[] }; result: SyncBundle & { sessionList?: SessionSummary[] } };
+	/** One session with its messages, for `sync.import` on the other platform. */
+	"sync.exportSession": { params: { sessionId: string }; result: SyncSession };
+	/** Applies a bundle from another platform. With `overwrite` false, gateways that already exist are left alone. */
+	"sync.import": { params: { bundle: SyncBundle; overwrite?: boolean }; result: SyncReport };
 
 	"kb.list": { params: Record<string, never>; result: KnowledgeBaseInfo[] };
 	"kb.create": { params: { name: string; description?: string; store?: string; embedding: { gatewayId: string; model: string } }; result: KnowledgeBaseInfo };

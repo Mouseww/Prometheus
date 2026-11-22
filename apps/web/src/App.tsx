@@ -31,6 +31,7 @@ import { clearSession, discoverBackend, establishCookie, isDesktopShell, parseSe
 import { bindClient, openSession, pluginActive, setSpace, setView, useStore } from "./lib/store.ts";
 import { CONNECT_EVENT } from "./lib/platforms.ts";
 import { usePrefs } from "./lib/prefs.ts";
+import { useAutoSync } from "./components/PlatformSync.tsx";
 import { checkForUpdate, startIdleUpdater } from "./lib/updater.ts";
 import { dismissSplash } from "./lib/splash.ts";
 import { useIsMobile } from "./lib/viewport.ts";
@@ -38,6 +39,7 @@ import { useIsMobile } from "./lib/viewport.ts";
 const closeView = () => setView("chat");
 
 export function App() {
+	useAutoSync();
 	const [target, setTarget] = useState<BackendTarget | null | undefined>(undefined);
 	const [bootError, setBootError] = useState<string | null>(null);
 	/** The local backend is waiting for components the installer leaves out (Node.js, the PI agent). */
