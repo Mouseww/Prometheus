@@ -7,6 +7,7 @@ import { roleLabel, useCommonT } from "../i18n.ts";
 import { Notice, useAction } from "../kit.tsx";
 import type { CreatedInvitation, TeamRole, TeamView } from "../types.ts";
 import { InvitationLinkBox } from "./admin/InvitationsPage.tsx";
+import { useInviteMail } from "./InviteMailOption.tsx";
 
 const M = defineMessages({
 	zh: {
@@ -38,11 +39,12 @@ export function TeamInviteForm({ team, initialEmail = "", initialRole = "member"
 	const [role, setRole] = useState<TeamRole>(initialRole);
 	const [created, setCreated] = useState<CreatedInvitation | undefined>(undefined);
 	const { busy, error, run } = useAction();
+	const mail = useInviteMail();
 
 	const submit = async (e: FormEvent) => {
 		e.preventDefault();
 		setCreated(undefined);
-		const r = await run(() => api.createInvitation({ scope: "team", scopeId: team.id, email: email.trim(), role }));
+		const r = await run(() => api.createInvitation({ scope: "team", scopeId: team.id, email: email.trim(), role, sendEmail: mail.send }));
 		if (r) {
 			setCreated(r);
 			setEmail("");
@@ -68,6 +70,7 @@ export function TeamInviteForm({ team, initialEmail = "", initialRole = "member"
 					<Link2 className="size-4" aria-hidden /> {t("create")}
 				</Button>
 			</form>
+			{mail.option}
 			{error && <Notice kind="error">{error}</Notice>}
 			{created && <InvitationLinkBox created={created} />}
 		</div>

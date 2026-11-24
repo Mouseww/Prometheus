@@ -7,6 +7,7 @@ import { roleLabel, useCommonT } from "../i18n.ts";
 import { AsyncView, Body, Card, Notice, useAction, useAsync } from "../kit.tsx";
 import { filterTeamsByScope, SCOPE_ALL } from "../logic/publicMode.ts";
 import type { OrgSummary, TeamView } from "../types.ts";
+import { OnboardingChecklist } from "./onboarding/OnboardingChecklist.tsx";
 
 const M = defineMessages({
 	zh: {
@@ -17,7 +18,8 @@ const M = defineMessages({
 		owner: "归属",
 		personal: "个人团队",
 		empty: "你还没有加入任何团队",
-		emptyHint: "新建一个团队，或让管理员邀请你加入。",
+		emptyHintOperator: "点右上角的「新建团队」创建第一个团队，然后到「邀请」里邀请成员。",
+		emptyHint: "请管理员把邀请链接发给你，点开链接注册或登录就会加入对应的团队。你也可以点右上角的「新建团队」自己建一个。",
 		emptyScope: "这个范围里还没有团队",
 		emptyScopeHint: "切换到“全部”查看其他团队，或在这里新建一个。",
 		personalTag: "个人",
@@ -31,7 +33,8 @@ const M = defineMessages({
 		owner: "Belongs to",
 		personal: "Personal team",
 		empty: "You are not in any team yet",
-		emptyHint: "Create a team, or ask an administrator to invite you.",
+		emptyHintOperator: "Use New team at the top right to create the first team, then invite people under Invitations.",
+		emptyHint: "Ask an administrator to send you an invitation link. Opening it and signing up or in adds you to the team. You can also use New team at the top right to create one yourself.",
 		emptyScope: "No teams in this context yet",
 		emptyScopeHint: "Switch to All to see your other teams, or create one here.",
 		personalTag: "Personal",
@@ -104,6 +107,7 @@ export function TeamsPage() {
 				}
 			/>
 			<Body>
+				<OnboardingChecklist />
 				{creating && (
 					<Card className="mb-4">
 						<CreateTeamForm
@@ -121,7 +125,7 @@ export function TeamsPage() {
 						const list = filterTeamsByScope(all, scope);
 						return list.length === 0 ? (
 							<Empty icon={<Users className="size-5" />} title={scope === SCOPE_ALL ? t("empty") : t("emptyScope")}>
-								{scope === SCOPE_ALL ? t("emptyHint") : t("emptyScopeHint")}
+								{scope !== SCOPE_ALL ? t("emptyScopeHint") : isOperator(me) ? t("emptyHintOperator") : t("emptyHint")}
 							</Empty>
 						) : (
 							<ul className="grid gap-3 @2xl:grid-cols-2">

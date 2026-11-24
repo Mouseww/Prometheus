@@ -232,6 +232,51 @@ export interface PlatformSettings {
 	allowPersonalTeams: boolean;
 	/** Public mode only: whether any verified user may create an organization. */
 	allowSelfCreateOrg: boolean;
+	/** Shown in invitation mails. Older Hubs omit it. */
+	siteName?: string;
+	/** Days an invitation link stays valid. Older Hubs omit it. */
+	invitationTtlDays?: number;
+}
+
+export type SmtpSecurity = "tls" | "starttls" | "none";
+
+/** Where the Hub sends mail from now: the settings saved in the console, the HUB_SMTP_URL variable, or only its log. */
+export type MailSource = "settings" | "env" | "none";
+
+/** What the console reads back. The password is never sent to the browser. */
+export interface MailSettings {
+	source: MailSource;
+	configured: boolean;
+	host: string;
+	port: number;
+	security: SmtpSecurity;
+	username: string;
+	hasPassword: boolean;
+	from: string;
+}
+
+export interface MailSettingsInput {
+	host: string;
+	port: number;
+	security: SmtpSecurity;
+	username?: string;
+	/** Left out keeps the saved password. */
+	password?: string;
+	clearPassword?: boolean;
+	from: string;
+}
+
+export interface MailTestResult {
+	ok: boolean;
+	error?: string;
+}
+
+export type OnboardingStepId = "publicUrl" | "mail" | "gateway" | "team" | "workspace" | "invite";
+
+export interface OnboardingStatus {
+	steps: { id: OnboardingStepId; done: boolean }[];
+	/** The operator closed the checklist. */
+	dismissed: boolean;
 }
 
 export type InvitationScope = "org" | "team";
@@ -241,6 +286,8 @@ export interface InvitationInput {
 	scopeId: string;
 	email: string;
 	role: string;
+	/** Also mail the link. Needs a configured mail server on the Hub. */
+	sendEmail?: boolean;
 }
 
 export interface InvitationView {
@@ -266,6 +313,10 @@ export interface CreatedInvitation {
 	link: string;
 	token: string;
 	invitation: InvitationView;
+	/** What happened to the mail: `skipped` when none was asked for. Older Hubs omit it. */
+	mail?: "sent" | "failed" | "skipped";
+	/** Why the mail failed: `mailNotConfigured`, `publicUrlMissing` or `sendFailed`. */
+	mailError?: string;
 }
 
 export interface OrgSummary {

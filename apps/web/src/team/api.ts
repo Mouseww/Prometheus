@@ -36,6 +36,10 @@ import type {
 	CreateOrgInput,
 	CreateWorkspaceInput,
 	CreatedInvitation,
+	MailSettings,
+	MailSettingsInput,
+	MailTestResult,
+	OnboardingStatus,
 	FileListing,
 	ForkResult,
 	GatewayFilter,
@@ -141,6 +145,14 @@ export interface TeamApi {
 	getSettings(): Promise<PlatformSettings>;
 	/** Only the given fields change. */
 	putSettings(settings: Partial<PlatformSettings>): Promise<PlatformSettings>;
+	getMailSettings(): Promise<MailSettings>;
+	putMailSettings(input: MailSettingsInput): Promise<MailSettings>;
+	/** Forgets the saved mail server; mail goes back to HUB_SMTP_URL, or to the Hub log. */
+	clearMailSettings(): Promise<MailSettings>;
+	/** Sends a test mail; with `config` it tries those settings without saving them. */
+	testMail(to: string, config?: MailSettingsInput): Promise<MailTestResult>;
+	getOnboarding(): Promise<OnboardingStatus>;
+	dismissOnboarding(dismissed: boolean): Promise<OnboardingStatus>;
 
 	createInvitation(input: InvitationInput): Promise<CreatedInvitation>;
 
@@ -364,6 +376,12 @@ export function createApiMethods(r: Requester): Omit<TeamApi, "subscribe"> {
 		putOrgRegistration: (orgId, policy) => send("PUT", `/api/orgs/${seg(orgId)}/registration`, policy),
 		getSettings: () => get("/api/admin/settings"),
 		putSettings: (settings) => send("PUT", "/api/admin/settings", settings),
+		getMailSettings: () => get("/api/admin/mail"),
+		putMailSettings: (input) => send("PUT", "/api/admin/mail", input),
+		clearMailSettings: () => send("DELETE", "/api/admin/mail"),
+		testMail: (to, config) => send("POST", "/api/admin/mail/test", config ? { to, config } : { to }),
+		getOnboarding: () => get("/api/admin/onboarding"),
+		dismissOnboarding: (dismissed) => send("PUT", "/api/admin/onboarding", { dismissed }),
 
 		createInvitation: (input) => send("POST", "/api/invitations", input),
 

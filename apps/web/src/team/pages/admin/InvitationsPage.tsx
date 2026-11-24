@@ -7,6 +7,8 @@ import { useTeam } from "../../context.tsx";
 import { roleLabel, useCommonT } from "../../i18n.ts";
 import { Body, Card, Notice, shortDate, useAction, useAsync } from "../../kit.tsx";
 import type { CreatedInvitation, InvitationScope } from "../../types.ts";
+import { useInviteMail } from "../InviteMailOption.tsx";
+import { InviteMailStatus } from "../InviteMailStatus.tsx";
 import { useAdminOrgs } from "./shared.tsx";
 
 const M = defineMessages({
@@ -73,6 +75,7 @@ export function InvitationLinkBox({ created }: { created: CreatedInvitation }) {
 			<p className="mt-2 text-xs text-ink-400">
 				{t("forWho", { email: created.invitation.email, name: created.invitation.scopeName, role: roleLabel(c, created.invitation.role) })} · {t("expires", { date: shortDate(created.invitation.expiresAt, lang) })}
 			</p>
+			<InviteMailStatus created={created} />
 		</Card>
 	);
 }
@@ -89,6 +92,7 @@ export function InvitationsPage() {
 	const [role, setRole] = useState("member");
 	const [created, setCreated] = useState<CreatedInvitation | undefined>(undefined);
 	const { busy, error, run } = useAction();
+	const mail = useInviteMail();
 
 	const options = scope === "org" ? (orgs.data ?? []).map((o) => ({ id: o.id, name: o.name })) : (teams.data ?? []).filter((x) => x.role === "admin").map((x) => ({ id: x.id, name: x.name }));
 	const scopeId = options.some((o) => o.id === target) ? target : (options[0]?.id ?? "");
@@ -97,7 +101,7 @@ export function InvitationsPage() {
 	const submit = async (e: FormEvent) => {
 		e.preventDefault();
 		setCreated(undefined);
-		const r = await run(() => api.createInvitation({ scope, scopeId, email: email.trim(), role }));
+		const r = await run(() => api.createInvitation({ scope, scopeId, email: email.trim(), role, sendEmail: mail.send }));
 		if (r) {
 			setCreated(r);
 			setEmail("");
@@ -145,6 +149,7 @@ export function InvitationsPage() {
 								))}
 							</Select>
 						</Field>
+						<div className="@2xl:col-span-2">{mail.option}</div>
 						<div className="flex items-center gap-3 @2xl:col-span-2">
 							<Button type="submit" variant="primary" disabled={busy || !scopeId || !email.trim()}>
 								{t("create")}
