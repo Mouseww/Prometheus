@@ -3,13 +3,17 @@ import { toIso } from "../db/db.ts";
 import { randomToken, sha256Hex } from "../crypto.ts";
 import { badRequest, forbidden, notFound, tooManyRequests } from "../errors.ts";
 import { ulid } from "../ids.ts";
+import { LOG_PREFIX } from "../log.ts";
 import type { Actor, OrgRole, TeamRole } from "../permissions.ts";
 import { can } from "../permissions.ts";
 import type { AuditService } from "./audit.ts";
 import { normalizeEmail, type ServiceDeps, scopeOf } from "./common.ts";
+import { escapeHtml, type Mailer } from "./mailer.ts";
+import { DEFAULT_INVITATION_TTL_DAYS, type SettingsService } from "./settings.ts";
 import type { TeamsService } from "./teams.ts";
 
-export const INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+export const INVITATION_TTL_MS = DEFAULT_INVITATION_TTL_DAYS * DAY_MS;
 
 export type InvitationScope = "org" | "team";
 
@@ -18,7 +22,12 @@ export interface InvitationInput {
 	scopeId: string;
 	email: string;
 	role: string;
+	/** Also mail the link to the invitee. Needs a configured mail server and HUB_PUBLIC_URL; the link is returned either way. */
+	sendEmail?: boolean;
 }
+
+/** What happened to the invitation mail: `skipped` when none was asked for. */
+export type InvitationMail = "sent" | "failed" | "skipped";
 
 export interface InvitationView {
 	id: string;
@@ -41,7 +50,7 @@ export interface InvitationRow {
 
 export interface InvitationsService {
 	/** `dailyLimit` caps how many invitations this actor may create per rolling 24 hours (429 beyond it). */
-	create(actor: Actor, input: InvitationInput, dailyLimit?: number): Promise<{ link: string; token: string; invitation: InvitationView }>;
+	create(actor: Actor, input: InvitationInput, dailyLimit?: number): Promise<{ link: string; token: string; invitation: InvitationView; mail: InvitationMail; mailError?: string }>;
 	/** Public lookup by token; 404 when unknown, expired or already used. */
 	lookup(token: string): Promise<InvitationView>;
 	/** Used by registration inside its transaction. Returns undefined when invalid. */
@@ -66,15 +75,45 @@ const TEAM_ROLES: readonly string[] = ["admin", "reviewer", "member"];
 /** Invitations one inviter may create per rolling 24 hours. Public mode is tight because an invite can name any address. */
 export const INVITES_PER_DAY_PUBLIC = 20;
 export const INVITES_PER_DAY_PRIVATE = 200;
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** The per-inviter daily cap for a Hub mode; routes pass it to `create`. */
 export const invitesPerDay = (mode: "private" | "public"): number => (mode === "public" ? INVITES_PER_DAY_PUBLIC : INVITES_PER_DAY_PRIVATE);
 
-export function createInvitationsService(deps: ServiceDeps, audit: AuditService, teams: TeamsService, publicUrl: string): InvitationsService {
+export interface InvitationExtras {
+	/** Reads the validity period and the site name; without it the defaults apply. */
+	settings?: SettingsService;
+	/** Without it, or when not configured, no mail is sent. */
+	mailer?: Mailer;
+}
+
+export function createInvitationsService(deps: ServiceDeps, audit: AuditService, teams: TeamsService, publicUrl: string, extras: InvitationExtras = {}): InvitationsService {
 	const scopeName = async (q: Queryable, scope: InvitationScope, id: string): Promise<string | undefined> => {
 		const rows = await q.query<{ name: string }>(scope === "org" ? "SELECT name FROM organizations WHERE id = $1" : "SELECT name FROM teams WHERE id = $1", [id]);
 		return rows[0]?.name;
+	};
+	/** Mails the link; a failure is reported to the inviter, never thrown, because the invitation exists either way. */
+	const deliver = async (view: InvitationView, link: string, ttlDays: number): Promise<{ mail: InvitationMail; mailError?: string }> => {
+		const mailer = extras.mailer;
+		if (!mailer?.configured) return { mail: "failed", mailError: "mailNotConfigured" };
+		if (!publicUrl) return { mail: "failed", mailError: "publicUrlMissing" };
+		const site = (await extras.settings?.siteName()) || "Prometheus";
+		const subject = `邀请你加入 ${view.scopeName} / Invitation to join ${view.scopeName}`;
+		const text = `${site} 邀请你加入「${view.scopeName}」。
+
+打开下面的链接注册或登录即可加入：
+${link}
+
+链接 ${ttlDays} 天内有效。如果你不认识邀请人，请忽略此邮件。
+
+${site} invited you to join "${view.scopeName}". Open the link to sign up or sign in. It is valid for ${ttlDays} days.`;
+		const html = `<p>${escapeHtml(site)} 邀请你加入「${escapeHtml(view.scopeName)}」。</p><p><a href="${escapeHtml(link)}">${escapeHtml(link)}</a></p><p>链接 ${ttlDays} 天内有效。如果你不认识邀请人，请忽略此邮件。</p>`;
+		try {
+			await mailer.send(view.email, subject, html, text);
+			return { mail: "sent" };
+		} catch (err) {
+			deps.log.error(`${LOG_PREFIX} 邀请邮件发送失败 (${view.email}): ${err instanceof Error ? err.message : String(err)}`);
+			return { mail: "failed", mailError: "sendFailed" };
+		}
 	};
 	const find = async (q: Queryable, token: string): Promise<InvitationRow | undefined> => {
 		const rows = await q.query<InvitationRow>(
@@ -93,7 +132,8 @@ export function createInvitationsService(deps: ServiceDeps, audit: AuditService,
 			if (!allowed.includes(input.role)) throw badRequest(`${input.scope === "org" ? "企业" : "团队"}邀请的角色无效`, "invalidRole");
 			const token = randomToken();
 			const id = ulid(deps.now());
-			const expiresAt = new Date(deps.now() + INVITATION_TTL_MS);
+			const ttlDays = extras.settings ? await extras.settings.invitationTtlDays() : DEFAULT_INVITATION_TTL_DAYS;
+			const expiresAt = new Date(deps.now() + ttlDays * DAY_MS);
 			const view = await deps.db.tx(scopeOf(actor), async (q) => {
 				let orgId: string | null;
 				if (input.scope === "org") {
@@ -118,7 +158,10 @@ export function createInvitationsService(deps: ServiceDeps, audit: AuditService,
 				await audit.write(q, { actorId: actor.userId, orgId, action: "invitation.create", targetType: input.scope, targetId: input.scopeId, detail: { email, role: input.role } });
 				return { id, scope: input.scope, scopeId: input.scopeId, scopeName: name, email, role: input.role, expiresAt: expiresAt.toISOString() };
 			});
-			return { link: `${publicUrl}/invite/${token}`, token, invitation: view };
+			const link = `${publicUrl}/invite/${token}`;
+			if (!input.sendEmail) return { link, token, invitation: view, mail: "skipped" };
+			const sent = await deliver(view, link, ttlDays);
+			return { link, token, invitation: view, ...sent };
 		},
 
 		async lookup(token) {

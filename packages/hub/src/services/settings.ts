@@ -9,7 +9,15 @@ export interface SettingsService {
 	defaultOrgId(q?: Queryable): Promise<string | undefined>;
 	/** Public mode: may any verified user create an organization? Defaults to true when unset. */
 	allowSelfCreateOrg(q?: Queryable): Promise<boolean>;
+	/** Name shown in invitation mails; empty until the operator sets one. */
+	siteName(q?: Queryable): Promise<string>;
+	/** How many days an invitation link stays valid. */
+	invitationTtlDays(q?: Queryable): Promise<number>;
 }
+
+export const DEFAULT_INVITATION_TTL_DAYS = 7;
+export const MIN_INVITATION_TTL_DAYS = 1;
+export const MAX_INVITATION_TTL_DAYS = 30;
 
 /** Platform wide settings (`platform_settings`): allow_personal_teams, default_org_id. */
 export function createSettingsService(deps: ServiceDeps, opts: { mode?: "private" | "public" } = {}): SettingsService {
@@ -32,6 +40,14 @@ export function createSettingsService(deps: ServiceDeps, opts: { mode?: "private
 		},
 		async allowSelfCreateOrg(q) {
 			return (await get<boolean>("allow_self_create_org", q)) !== false;
+		},
+		async siteName(q) {
+			const v = await get<string | null>("site_name", q);
+			return typeof v === "string" ? v : "";
+		},
+		async invitationTtlDays(q) {
+			const v = await get<number | null>("invitation_ttl_days", q);
+			return typeof v === "number" && v >= MIN_INVITATION_TTL_DAYS && v <= MAX_INVITATION_TTL_DAYS ? Math.floor(v) : DEFAULT_INVITATION_TTL_DAYS;
 		},
 		async defaultOrgId(q) {
 			const v = await get<string | null>("default_org_id", q);

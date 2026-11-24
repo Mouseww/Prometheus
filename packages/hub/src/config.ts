@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import type { HubLog } from "./log.ts";
 import { parseTrustProxy, type TrustProxy } from "./net/trusted-proxy.ts";
+import type { MailTransportFactory } from "./services/mailer.ts";
 
 export interface HubOptions {
 	/** Hub data directory: secret.key, jwt.key, setup-code.txt, pgdata, repos. */
@@ -27,6 +28,8 @@ export interface HubOptions {
 	trustProxy?: TrustProxy;
 	/** Tests only: let workspace import and upstream remotes be local paths or file:// URLs. Never set in production. */
 	allowLocalGitRemotes?: boolean;
+	/** Tests only: replaces the SMTP connection built from saved mail settings, so no mail leaves the machine. */
+	mailTransport?: MailTransportFactory;
 	version?: string;
 	now?: () => number;
 	/** Overrides HUB_MODE: `public` is the online service, `private` (default) a company deployment. */

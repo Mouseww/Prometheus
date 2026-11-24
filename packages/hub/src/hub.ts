@@ -19,7 +19,9 @@ import { createSetupCode } from "./setup-code.ts";
 import { createAbuseGuard } from "./services/abuse.ts";
 import { createAccountsService } from "./services/accounts.ts";
 import { createPublicAccounts } from "./services/accounts-public.ts";
-import { createMailer } from "./services/mailer.ts";
+import { createMailSettingsService } from "./services/mail-settings.ts";
+import { createMailer, RuntimeMailer } from "./services/mailer.ts";
+import { createOnboardingService } from "./services/onboarding.ts";
 import { createOrgsPublicService } from "./services/orgs-public.ts";
 import { createTransfersService } from "./services/transfers.ts";
 import { resolveTurnstile } from "./services/turnstile.ts";
@@ -78,9 +80,12 @@ export async function createHub(options: HubOptions): Promise<Hub> {
 		const registration = createRegistrationService(base, audit);
 		const orgs = createOrgsService(base, audit);
 		const teams = createTeamsService(base, audit, settings);
-		const invitations = createInvitationsService(base, audit, teams, config.publicUrl);
-		const mailer = createMailer({ smtpUrl: env.HUB_SMTP_URL || undefined, from: env.HUB_MAIL_FROM || undefined }, log);
+		// Settings saved in the admin console take over from HUB_SMTP_URL without a restart.
+		const mailer = new RuntimeMailer(createMailer({ smtpUrl: env.HUB_SMTP_URL || undefined, from: env.HUB_MAIL_FROM || undefined }, log));
+		const invitations = createInvitationsService(base, audit, teams, config.publicUrl, { settings, mailer });
 		const abuse = createAbuseGuard(base, limiter, audit);
+		const mailSettings = createMailSettingsService(base, { settings, secretBox, mailer, audit, limiter, ...(options.mailTransport ? { transport: options.mailTransport } : {}) });
+		await mailSettings.load();
 		const pub = createPublicAccounts(base, { config, mailer, turnstile: resolveTurnstile(env), abuse, limiter, audit, registration, settings });
 		const accounts = createAccountsService(base, {
 			pub,
@@ -107,6 +112,8 @@ export async function createHub(options: HubOptions): Promise<Hub> {
 		const upgradeHandlers: UpgradeHandler[] = [];
 		const registry = new ServiceRegistry();
 		registry.register("mailer", mailer);
+		registry.register("mailSettings", mailSettings);
+		registry.register("onboarding", createOnboardingService(base, { settings, audit, mailer, publicUrl: config.publicUrl }));
 		registry.register("abuse", abuse);
 		registry.register("publicAccounts", pub);
 		registry.register("orgsPublic", createOrgsPublicService(base, { config, orgs, settings, audit, adminUsers, registry }));
