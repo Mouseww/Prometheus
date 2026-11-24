@@ -21,6 +21,8 @@ export interface FlowDeps {
 	now(): Date;
 	changed(): void;
 	log(message: string): void;
+	/** Pause before a step retries by itself (default 3 s). */
+	retryDelayMs?: number;
 }
 
 /** Where a general flow should work: a workspace id (empty: personal space), or a folder path. */
@@ -305,6 +307,7 @@ export class FlowEngine {
 				cwd: o.location.path,
 				location: o.location,
 				trigger: o.trigger,
+				...(this.deps.retryDelayMs !== undefined ? { retryDelayMs: this.deps.retryDelayMs } : {}),
 				...(o.accessOverride ? { accessOverride: o.accessOverride } : {}),
 				...(o.parentRunId ? { parentRunId: o.parentRunId } : {}),
 				runChild: async (childFlowId, childInput, onStart) => {

@@ -21,15 +21,19 @@ const flowOf = (nodes: FlowNode[], edges: FlowEdge[]): Flow => ({ id: "f1", name
 
 function agent(reply: (o: AgentRunOptions) => string | Error | Promise<string | Error>) {
 	const calls: AgentRunOptions[] = [];
+	// A retry continues the same session with a short follow-up; the mock answers it as the step's original prompt.
+	const firstPrompt = new Map<string, string>();
 	const runAgent = async (o: AgentRunOptions): Promise<AgentRunResult> => {
 		calls.push(o);
-		const r = await reply(o);
-		return r instanceof Error ? { sessionId: `s${calls.length}`, status: "error", access: o.access, text: "", error: r.message } : { sessionId: `s${calls.length}`, status: "success", access: o.access, text: r };
+		const sessionId = o.sessionId ?? `s${calls.length}`;
+		if (!o.sessionId) firstPrompt.set(sessionId, o.prompt);
+		const r = await reply(o.sessionId ? { ...o, prompt: firstPrompt.get(o.sessionId) ?? o.prompt } : o);
+		return r instanceof Error ? { sessionId, status: "error", access: o.access, text: "", error: r.message } : { sessionId, status: "success", access: o.access, text: r };
 	};
 	return { calls, runAgent };
 }
 const run = (flow: Flow, input: string, a: ReturnType<typeof agent>, signal = new AbortController().signal) =>
-	runFlow(flow, input, "r1", { runAgent: a.runAgent, now: () => new Date(0), update: () => {}, cwd: "/proj" }, signal);
+	runFlow(flow, input, "r1", { runAgent: a.runAgent, now: () => new Date(0), update: () => {}, cwd: "/proj", retryDelayMs: 0 }, signal);
 
 describe("validateFlow", () => {
 	const ok = () => ({ name: "x", nodes: [node("start", "start"), node("a", "agent")], edges: [edge("start", "a")] });
@@ -221,11 +225,11 @@ describe("runFlow", () => {
 			if (o.prompt.startsWith("do a")) return ++n === 1 ? new Error("boom") : "A-ok";
 			return "B-ok";
 		});
-		const flow = flowOf([node("start", "start"), node("a", "agent"), node("b", "agent")], [edge("start", "a"), edge("a", "b")]);
+		const flow = flowOf([node("start", "start"), node("a", "agent", { retries: 0 }), node("b", "agent")], [edge("start", "a"), edge("a", "b")]);
 		const first = await run(flow, "", a);
 		expect(first.status).toBe("error");
 		expect(first.nodes.b?.status).toBe("skipped");
-		const second = await runFlow(flow, "", "r1", { runAgent: a.runAgent, now: () => new Date(0), update: () => {}, cwd: "/proj" }, new AbortController().signal, { run: first, action: "retry" });
+		const second = await runFlow(flow, "", "r1", { runAgent: a.runAgent, now: () => new Date(0), update: () => {}, cwd: "/proj", retryDelayMs: 0 }, new AbortController().signal, { run: first, action: "retry" });
 		expect(second.status).toBe("success");
 		expect(second.id).toBe("r1");
 		expect(second.nodes.a?.visits).toBe(2);
@@ -237,7 +241,7 @@ describe("runFlow", () => {
 		const a = agent((o) => (o.prompt.startsWith("do a") ? new Error("boom") : "B-ok"));
 		const flow = flowOf([node("start", "start"), node("a", "agent"), node("b", "agent")], [edge("start", "a"), edge("a", "b")]);
 		const first = await run(flow, "", a);
-		const second = await runFlow(flow, "", "r1", { runAgent: a.runAgent, now: () => new Date(0), update: () => {}, cwd: "/proj" }, new AbortController().signal, { run: first, action: "skip" });
+		const second = await runFlow(flow, "", "r1", { runAgent: a.runAgent, now: () => new Date(0), update: () => {}, cwd: "/proj", retryDelayMs: 0 }, new AbortController().signal, { run: first, action: "skip" });
 		expect(second.status).toBe("success");
 		expect(second.nodes.a?.status).toBe("skipped");
 		expect(second.nodes.b?.status).toBe("success");
@@ -264,7 +268,7 @@ describe("runFlow", () => {
 			return { sessionId: "s1", status: "success", access: o.access, text: "done", blocked };
 		};
 		const flow = flowOf([node("start", "start"), node("a", "agent", { access: "edits" })], [edge("start", "a")]);
-		const r = await runFlow(flow, "", "r1", { runAgent, now: () => new Date(0), update: () => {}, cwd: "/proj" }, new AbortController().signal);
+		const r = await runFlow(flow, "", "r1", { runAgent, now: () => new Date(0), update: () => {}, cwd: "/proj", retryDelayMs: 0 }, new AbortController().signal);
 		expect(r.status).toBe("success");
 		expect(calls[0]!.access).toBe("edits");
 		expect(r.nodes.a?.blocked?.[0]?.tool).toBe("bash");
@@ -323,6 +327,7 @@ describe("FlowEngine", () => {
 			now: () => new Date(0),
 			changed: () => {},
 			log: () => {},
+			retryDelayMs: 0,
 		});
 		return { engine, a, saved: () => saved };
 	}
@@ -357,7 +362,7 @@ describe("FlowEngine", () => {
 		let n = 0;
 		const { engine } = harness((o) => (o.prompt.startsWith("do a") && ++n === 1 ? (new Error("boom") as never) : "ok"));
 		await engine.start();
-		const flow = await engine.create(body());
+		const flow = await engine.create({ ...body(), nodes: [node("start", "start"), node("a", "agent", { retries: 0 })] });
 		const first = await (await engine.startRun(flow.id, "in")).done;
 		expect(first.status).toBe("error");
 		const { runId, done } = await engine.resumeRun(first.id, "retry");
@@ -420,6 +425,7 @@ describe("scheduled flows", () => {
 			now: () => clock,
 			changed: () => {},
 			log: () => {},
+			retryDelayMs: 0,
 		});
 		await engine.start();
 		const body = { name: "daily", description: "", workspaceId: "w1", nodes: [node("start", "start"), node("a", "agent")], edges: [edge("start", "a")], schedule: { type: "daily" as const, time: "09:00" }, scheduleEnabled: true, scheduleInput: "hi" };
@@ -462,6 +468,7 @@ describe("subflows", () => {
 			now: () => new Date(0),
 			changed: () => {},
 			log: () => {},
+			retryDelayMs: 0,
 		});
 		return { engine, a, saved: () => saved };
 	}
@@ -533,6 +540,7 @@ describe("subflows", () => {
 			now: () => new Date(0),
 			changed: () => {},
 			log: () => {},
+			retryDelayMs: 0,
 		});
 		void h;
 		await slow.start();

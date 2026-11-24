@@ -96,7 +96,7 @@ export default definePlugin({
 			name: "flow_create",
 			label: "创建流程",
 			description:
-				"Save a flow (agent steps, conditions, optional loops). Provide `flow` as a JSON string: {name,description,nodes:[{id,kind:start|agent|condition|end,title,prompt?,access?,mode?,match?}],edges:[{from,to,branch?}]}. Exactly one start node. A condition can loop by sending one branch back to an earlier step and the other branch out of the loop. Prompts may use {{input}}, {{prev}}, {{nodeId}}. Step access is capped at this chat's permission: readonly reads only, edits writes files but cannot run commands, full also runs commands (a step that runs tests or scripts needs full).",
+				"Save a flow (agent steps, conditions, optional loops). Provide `flow` as a JSON string: {name,description,nodes:[{id,kind:start|agent|condition|end,title,prompt?,access?,mode?,match?}],edges:[{from,to,branch?}]}. Exactly one start node. A condition can loop by sending one branch back to an earlier step and the other branch out of the loop. Prompts may use {{input}}, {{prev}}, {{nodeId}}. Optional per step: retries (0-3 automatic retries; agent default 1), timeoutMin, onError (stop by default, or continue to let the flow go on). Step access is capped at this chat's permission: readonly reads only, edits writes files but cannot run commands, full also runs commands (a step that runs tests or scripts needs full).",
 			promptSnippet: "flow_create: save a multi-step agent flow (custom SOP)",
 			parameters: Type.Object({ flow: Type.String({ description: "Flow as a JSON object string" }) }),
 			async execute(_id, params, _signal, _update, toolCtx) {

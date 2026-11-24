@@ -1,4 +1,4 @@
-import { type FlowRefContext, flowHasCycle, flowIssues, flowLoopBackIds, MAX_FLOW_NODES as MAX_NODES } from "@prometheus/protocol";
+import { type FlowRefContext, flowHasCycle, flowIssues, flowLoopBackIds, MAX_FLOW_NODES as MAX_NODES, MAX_FLOW_RETRIES, MAX_FLOW_TIMEOUT_MIN } from "@prometheus/protocol";
 import type { FlowEdge, FlowInput, FlowNode } from "@prometheus/protocol";
 
 export { MAX_NODES };
@@ -68,6 +68,12 @@ export function normalizeFlow(raw: unknown): FlowInput {
 			node.mode = ["contains", "regex", "ai"].includes(str(n.mode)) ? (str(n.mode) as FlowNode["mode"]) : "ai";
 			if (node.mode !== "ai") node.match = str(n.match).slice(0, 500);
 		}
+		const fallible = kind === "agent" || kind === "subflow" || (kind === "condition" && node.mode === "ai");
+		if (fallible) {
+			if (typeof n.retries === "number" && Number.isFinite(n.retries)) node.retries = Math.max(0, Math.min(MAX_FLOW_RETRIES, Math.round(n.retries)));
+			if (kind !== "subflow" && typeof n.timeoutMin === "number" && n.timeoutMin > 0) node.timeoutMin = Math.max(1, Math.min(MAX_FLOW_TIMEOUT_MIN, Math.round(n.timeoutMin)));
+			if (n.onError === "continue") node.onError = "continue";
+		}
 		return node;
 	});
 	const ids = new Set(nodes.map((n) => n.id));
@@ -129,6 +135,7 @@ export const GENERATE_GUIDE = `你是流程编排设计师。把用户描述的�
 提示词里可用变量：{{input}} 启动输入，{{prev}} 直接上游步骤的输出，{{节点id}} 指定节点的输出。
 edges 形如 {"from":"start","to":"a1"}；并行就让一个节点连向多个下游，汇合就让多个节点连向同一个下游。
 类型 subflow：调用另一条已保存的流程。字段 id,title,flowId(下面“可用的子流程”里的 id),prompt(传给子流程的输入，可省略，默认 {{prev}})。子流程的最终输出就是该节点的输出。
+可选的失败处理字段（agent / subflow / ai 条件）：retries(自动重试次数 0~3，默认 agent 1 次)，timeoutMin(单次超时分钟数)，onError("stop" 默认，失败即停止整个流程|"continue" 失败后记录并继续，用于可有可无的步骤)。
 步骤要拆得单一明确（3~8 个为宜）。除了条件节点的回边，不要出现没有出口的环。`;
 
 /** An AI draft may forget the entry node: add one in front of every node that has no incoming edge. */

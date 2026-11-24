@@ -1165,6 +1165,12 @@ export interface FlowNode {
 	mode?: FlowConditionMode;
 	/** condition (contains/regex): the text or pattern to look for in the upstream output. */
 	match?: string;
+	/** agent / subflow / ai condition: automatic retries on failure (0..MAX_FLOW_RETRIES). Default: agent and ai condition 1, subflow 0. An agent retry continues in the same chat. */
+	retries?: number;
+	/** agent / ai condition: give up on one attempt after this many minutes (default 30). */
+	timeoutMin?: number;
+	/** What a failure does once retries are used up: stop the flow (default), or record it and let the flow go on. */
+	onError?: "stop" | "continue";
 }
 
 export interface FlowEdge {
@@ -1227,6 +1233,10 @@ export interface FlowNodeRun {
 	branch?: boolean;
 	/** How many times this node has finished (loops and retries count). */
 	visits?: number;
+	/** Attempts used on the latest visit (more than 1 means it retried by itself). */
+	attempts?: number;
+	/** It failed, but its onError setting let the flow go on. */
+	tolerated?: boolean;
 	/** Earlier visits, newest last. The latest result lives on the fields above. */
 	history?: FlowNodeVisit[];
 }

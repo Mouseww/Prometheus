@@ -139,6 +139,18 @@ const M = defineMessages({
 		resumed: "已继续运行",
 		looped: "循环 {n} 次",
 		visits: "×{n}",
+		failSection: "失败处理",
+		retries: "自动重试",
+		retriesDefault: "默认（{n} 次）",
+		retriesN: "{n} 次",
+		retriesHint: "Agent 步骤重试时接着原会话继续，不会从头重做。",
+		timeout: "单次超时（分钟）",
+		timeoutPh: "默认 30",
+		onError: "重试用完仍失败时",
+		onErrorStop: "停止整个流程",
+		onErrorContinue: "记下失败，继续后面的步骤",
+		attempts: "重试 {n}",
+		tolerated: "失败·已继续",
 		instance: "实例 {id}",
 	},
 	en: {
@@ -243,6 +255,18 @@ const M = defineMessages({
 		resumed: "Run continued",
 		looped: "looped {n}×",
 		visits: "×{n}",
+		failSection: "On failure",
+		retries: "Automatic retries",
+		retriesDefault: "Default ({n})",
+		retriesN: "{n}",
+		retriesHint: "An agent step retries in the same chat, picking up where it stopped.",
+		timeout: "Timeout per attempt (min)",
+		timeoutPh: "Default 30",
+		onError: "When retries run out",
+		onErrorStop: "Stop the whole flow",
+		onErrorContinue: "Record it and go on",
+		attempts: "retry {n}",
+		tolerated: "failed · went on",
 		instance: "Instance {id}",
 	},
 });
@@ -920,8 +944,9 @@ export function FlowEditor({ initial, runs, flows, inspectRunId, onClose, onSave
 											{t(n.kind === "start" ? "kindStart" : n.kind === "agent" ? "kindAgent" : n.kind === "condition" ? "kindCondition" : n.kind === "subflow" ? "kindSubflow" : "kindEnd")}
 											<span className="ml-auto flex items-center gap-1">
 												{st === "running" && <LoaderCircle className="size-3.5 animate-spin text-ember-300" />}
-												{st && st !== "pending" && st !== "running" && <span className={clsx(st === "success" && "text-moss-400", st === "error" && "text-rose-400")}>{statusText(st)}</span>}
+												{st && st !== "pending" && st !== "running" && <span className={clsx(st === "success" && "text-moss-400", st === "error" && (nr?.tolerated ? "text-ember-300" : "text-rose-400"))}>{nr?.tolerated ? t("tolerated") : statusText(st)}</span>}
 												{nr?.visits && nr.visits > 1 && <span className="text-ink-500">{t("visits", { n: nr.visits })}</span>}
+												{nr?.attempts && nr.attempts > 1 && <span className="text-ember-300">{t("attempts", { n: nr.attempts - 1 })}</span>}
 												{dur > 0 && st !== "skipped" && <span className="tabular-nums text-ink-500">{fmtDur(dur)}</span>}
 											</span>
 										</div>
@@ -1114,6 +1139,45 @@ export function FlowEditor({ initial, runs, flows, inspectRunId, onClose, onSave
 										<CircleAlert className="mt-0.5 size-3 shrink-0" /> {m}
 									</p>
 								))}
+								{(selNode.kind === "agent" || selNode.kind === "subflow" || (selNode.kind === "condition" && (selNode.mode ?? "ai") === "ai")) && (
+									<div className="space-y-3 rounded-lg border border-ink-700 p-2.5">
+										<span className="text-xs font-medium text-ink-300">{t("failSection")}</span>
+										<Field label={t("retries")} hint={selNode.kind === "agent" ? t("retriesHint") : undefined}>
+											<Select
+												value={selNode.retries === undefined ? "" : String(selNode.retries)}
+												onChange={(e) => patchNode(selNode.id, { retries: e.target.value === "" ? undefined : Number(e.target.value) })}
+											>
+												<option value="">{t("retriesDefault", { n: selNode.kind === "subflow" ? 0 : 1 })}</option>
+												{[0, 1, 2, 3].map((n) => (
+													<option key={n} value={n}>
+														{t("retriesN", { n })}
+													</option>
+												))}
+											</Select>
+										</Field>
+										{selNode.kind !== "subflow" && (
+											<Field label={t("timeout")}>
+												<Input
+													type="number"
+													min={1}
+													max={240}
+													value={selNode.timeoutMin ?? ""}
+													placeholder={t("timeoutPh")}
+													onChange={(e) => {
+														const v = Math.round(Number(e.target.value));
+														patchNode(selNode.id, { timeoutMin: e.target.value && v > 0 ? Math.min(240, v) : undefined }, "timeout");
+													}}
+												/>
+											</Field>
+										)}
+										<Field label={t("onError")}>
+											<Select value={selNode.onError ?? "stop"} onChange={(e) => patchNode(selNode.id, { onError: e.target.value === "continue" ? "continue" : undefined })}>
+												<option value="stop">{t("onErrorStop")}</option>
+												<option value="continue">{t("onErrorContinue")}</option>
+											</Select>
+										</Field>
+									</div>
+								)}
 								<p className="text-[11px] text-ink-500">{t("nodeId", { id: selNode.id, ref: `{{${selNode.id}}}` })}</p>
 								{nodeRun(selNode.id) && nodeRun(selNode.id)!.status !== "pending" && (
 									<div className="space-y-1.5 rounded-lg border border-ink-700 p-2.5">

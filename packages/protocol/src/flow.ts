@@ -9,6 +9,10 @@ const KINDS = ["start", "agent", "condition", "end", "subflow"];
 export const MAX_SUBFLOW_DEPTH = 3;
 /** How many times a node may finish in one run (a loop that never takes its exit is cut off here). */
 export const MAX_FLOW_LOOPS = 20;
+/** Automatic retries a step may ask for. */
+export const MAX_FLOW_RETRIES = 3;
+/** Longest per-attempt timeout a step may set, in minutes. */
+export const MAX_FLOW_TIMEOUT_MIN = 240;
 
 export interface FlowIssue {
 	/** The node to highlight, when the problem belongs to one. */
@@ -71,34 +75,43 @@ export function flowSccs(nodes: FlowNode[], edges: FlowEdge[]): string[][] {
 	return sccs;
 }
 
-function canReach(fromId: string, target: string, edges: FlowEdge[]): boolean {
-	if (fromId === target) return true;
-	const seen = new Set([fromId]);
-	const stack = [fromId];
-	while (stack.length) {
-		const id = stack.pop()!;
-		for (const e of edges) {
-			if (e.from !== id || seen.has(e.to)) continue;
-			if (e.to === target) return true;
-			seen.add(e.to);
-			stack.push(e.to);
-		}
-	}
-	return false;
-}
-
-/** True when `from → to` closes a cycle: `to` is already on a path from start, and `to` can reach `from`. */
-export function isFlowLoopBack(startId: string, edges: FlowEdge[], from: string, to: string): boolean {
-	if (from === to) return true;
-	const without = edges.filter((e) => !(e.from === from && e.to === to));
-	return canReach(startId, to, without) && canReach(to, from, edges);
-}
-
-/** Cycle-closing edges. Layout ignores them so a loop does not pull its target into a later column. */
+/**
+ * Cycle-closing edges: the back edges of a depth-first walk from the start node (an edge into a node still on the walk's
+ * stack). For loops drawn the usual way (a condition pointing back at an earlier step) these are exactly the edges whose
+ * target comes before their source on every path, whatever order the edges were drawn in. Removing them leaves the graph
+ * acyclic, which the runner and the layout both rely on. Nodes the start cannot reach are walked afterwards.
+ */
 export function flowLoopBackIds(nodes: FlowNode[], edges: FlowEdge[]): Set<string> {
+	const ids = new Set(nodes.map((n) => n.id));
+	const out = new Map<string, FlowEdge[]>();
+	for (const e of edges) if (ids.has(e.from) && ids.has(e.to)) out.set(e.from, [...(out.get(e.from) ?? []), e]);
+	const state = new Map<string, 1 | 2>(); // 1 on the stack, 2 finished
+	const back = new Set<string>();
+	const walk = (root: string) => {
+		if (state.has(root)) return;
+		state.set(root, 1);
+		const stack: { id: string; i: number }[] = [{ id: root, i: 0 }];
+		while (stack.length) {
+			const top = stack[stack.length - 1]!;
+			const list = out.get(top.id) ?? [];
+			if (top.i >= list.length) {
+				state.set(top.id, 2);
+				stack.pop();
+				continue;
+			}
+			const e = list[top.i++]!;
+			const s = state.get(e.to);
+			if (s === 1) back.add(e.id);
+			else if (s === undefined) {
+				state.set(e.to, 1);
+				stack.push({ id: e.to, i: 0 });
+			}
+		}
+	};
 	const start = nodes.find((n) => n.kind === "start");
-	if (!start) return new Set();
-	return new Set(edges.filter((e) => isFlowLoopBack(start.id, edges, e.from, e.to)).map((e) => e.id));
+	if (start) walk(start.id);
+	for (const n of nodes) walk(n.id);
+	return back;
 }
 
 function reachableFrom(start: string, edges: FlowEdge[]): Set<string> {
@@ -157,6 +170,9 @@ export function flowIssues(flow: { name: string; nodes: FlowNode[]; edges: FlowE
 			}
 		}
 		if (n.kind === "agent" && n.access && !ACCESS.includes(n.access)) add(`步骤「${n.title}」权限不合法`, n.id);
+		if (n.retries !== undefined && (!Number.isInteger(n.retries) || n.retries < 0 || n.retries > MAX_FLOW_RETRIES)) add(`「${n.title}」的自动重试次数应为 0~${MAX_FLOW_RETRIES}`, n.id);
+		if (n.timeoutMin !== undefined && (!Number.isFinite(n.timeoutMin) || n.timeoutMin < 1 || n.timeoutMin > MAX_FLOW_TIMEOUT_MIN)) add(`「${n.title}」的超时应为 1~${MAX_FLOW_TIMEOUT_MIN} 分钟`, n.id);
+		if (n.onError !== undefined && n.onError !== "stop" && n.onError !== "continue") add(`「${n.title}」的失败处理不合法`, n.id);
 		if (n.kind === "condition") {
 			const mode = n.mode ?? "contains";
 			if (!n.prompt?.trim() && mode === "ai") add(`条件「${n.title}」没有填写判断问题`, n.id);
