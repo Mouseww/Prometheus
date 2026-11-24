@@ -16,6 +16,7 @@ const M = defineMessages({
 		sessions: "会话数",
 		requests: "请求数",
 		input: "输入",
+		inputFull: "输入（未缓存）",
 		output: "输出",
 		cache: "缓存读取",
 		hitRate: "缓存命中率",
@@ -37,6 +38,7 @@ const M = defineMessages({
 		sessions: "Sessions",
 		requests: "Requests",
 		input: "Input",
+		inputFull: "Input (uncached)",
 		output: "Output",
 		cache: "Cache read",
 		hitRate: "Cache hit",
@@ -90,7 +92,7 @@ function Table({ head, rows }: { head: string[]; rows: { key: string; label: str
 							<td className="max-w-64 truncate px-4 py-2 text-ink-100">{r.label}</td>
 							<td className="px-4 py-2 text-right">{fmt(r.totals.requests)}</td>
 							<td className="px-4 py-2 text-right">{fmt(r.totals.input)}</td>
-							<td className="px-4 py-2 text-right">{fmt(r.totals.output)}</td>
+							<td className="px-4 py-2 text-right">{fmt(r.totals.output + (r.totals.reasoning ?? 0))}</td>
 							<td className="px-4 py-2 text-right">{fmt(r.totals.cacheRead)}</td>
 							<td className="px-4 py-2 text-right">{fmtPercent(cacheRate(r.totals))}</td>
 							<td className="px-4 py-2 text-right">{money(r.totals.cost)}</td>
@@ -124,7 +126,9 @@ export function UsageView() {
 	}, [days]);
 
 	const empty = !loading && (stats?.totals.requests ?? 0) === 0;
-	const peak = Math.max(1, ...(stats?.byDay.map((d) => d.input + d.output) ?? []));
+	// The chart must plot the same three streams the table lists, or a tall bar will not match the row under it.
+	const barTotal = (d: { input: number; output: number; cacheRead: number }) => d.input + d.output + d.cacheRead;
+	const peak = Math.max(1, ...(stats?.byDay.map(barTotal) ?? []));
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
@@ -156,10 +160,11 @@ export function UsageView() {
 				) : (
 					stats && (
 						<div className={`mx-auto max-w-4xl space-y-8 p-4 @3xl:p-8 transition-opacity ${loading ? "opacity-50" : ""}`}>
-							<div className="grid gap-3 @xl:grid-cols-2 @4xl:grid-cols-5">
+							<div className="grid gap-3 @xl:grid-cols-2 @4xl:grid-cols-6">
 								<Stat label={t("requests")} value={fmt(stats.totals.requests)} />
-								<Stat label={t("input")} value={fmt(stats.totals.input)} />
-								<Stat label={t("output")} value={fmt(stats.totals.output)} />
+								<Stat label={t("inputFull")} value={fmt(stats.totals.input)} />
+								<Stat label={t("cache")} value={fmt(stats.totals.cacheRead)} />
+								<Stat label={t("output")} value={fmt(stats.totals.output + (stats.totals.reasoning ?? 0))} />
 								<Stat label={t("hitRate")} value={fmtPercent(cacheRate(stats.totals))} />
 								<Stat label={t("cost")} value={money(stats.totals.cost)} />
 							</div>
@@ -171,8 +176,8 @@ export function UsageView() {
 								<h2 className="font-mono text-[10.5px] tracking-[0.18em] text-ink-500 uppercase">{t("byDay")}</h2>
 								<div className="flex h-32 items-end gap-1 rounded-xl border border-ink-800 bg-ink-900/40 p-3">
 									{stats.byDay.map((d) => (
-										<div key={d.date} className="group relative flex h-full min-w-1 flex-1 items-end" title={`${d.date}: ${fmt(d.input + d.output)} tokens · ${money(d.cost)}`}>
-											<div className="w-full rounded-t bg-ember-500/70 transition-colors group-hover:bg-ember-400" style={{ height: `${Math.max(2, ((d.input + d.output) / peak) * 100)}%` }} />
+										<div key={d.date} className="group relative flex h-full min-w-1 flex-1 items-end" title={`${d.date}: ${fmt(barTotal(d))} tokens · ${money(d.cost)}`}>
+											<div className="w-full rounded-t bg-ember-500/70 transition-colors group-hover:bg-ember-400" style={{ height: `${Math.max(2, (barTotal(d) / peak) * 100)}%` }} />
 										</div>
 									))}
 								</div>

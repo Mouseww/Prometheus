@@ -5,8 +5,8 @@ import type { AutomationTask, ImageContent } from "@prometheus/protocol";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { type Attachment, AttachmentError, fileToAttachment, formatSize, isPicture, MAX_FILE_MB, MAX_FILES } from "../lib/attachments.ts";
 import { fileToImage, ImageError, imageSrc, MAX_IMAGES } from "../lib/images.ts";
-import { onPluginChange, openAssistantMain, openSession, type PendingQuestion, pluginCall, refreshCommands, sendPrompt, toast, useStore } from "../lib/store.ts";
-import { delegatedRuns, delegationTitle } from "../lib/spaces.ts";
+import { onPluginChange, openSession, type PendingQuestion, pluginCall, refreshCommands, sendPrompt, startPersonalChat, toast, useStore } from "../lib/store.ts";
+import { delegatedRuns, delegationTitle, samePath } from "../lib/spaces.ts";
 import { answerStar, REPO_URL, useStar } from "../lib/star.ts";
 import { openExternal } from "../lib/links.ts";
 import { Badge, Button } from "./ui.tsx";
@@ -454,9 +454,12 @@ export function PersonalHome() {
 			if (!hasPayload || sending || reading > 0) return;
 			setSending(true);
 			try {
-				await openAssistantMain();
-				// openAssistantMain resolves once the chat is on screen; without a session there is nothing to prompt.
-				if (!useStore.getState().session) {
+				// Every home-page message opens a fresh conversation instead of reusing the assistant's main chat.
+				await startPersonalChat();
+				// If creating the chat failed, the page may still be on some other blank chat (a work one): never send into it.
+				const opened = useStore.getState().session;
+				const homePath = useStore.getState().assistant?.home;
+				if (!opened || !homePath || !samePath(opened.cwd, homePath)) {
 					toast(t("sendFailed"), "error");
 					return;
 				}
@@ -464,7 +467,8 @@ export function PersonalHome() {
 				const sent = await sendPrompt(said, undefined, pictures.length ? pictures : undefined, docs.length ? docs : undefined);
 				if (!sent) {
 					// The chat was already busy with another run: keep what was typed so it is not lost.
-					setDraft(said);
+					// Keep what was typed, unless the user already started on something else while it was sending.
+					setDraft((cur) => (cur ? cur : said));
 					toast(t("sendBusy"), "warning");
 					return;
 				}
@@ -575,7 +579,8 @@ export function PersonalHome() {
 											}
 										}
 									}
-									if (e.key === "Enter" && !e.shiftKey) {
+									// Enter that confirms an IME candidate (pinyin, kana...) must not send the half-typed message.
+									if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
 										e.preventDefault();
 										void ask();
 									}
@@ -595,7 +600,7 @@ export function PersonalHome() {
 								placeholder={t("composerHint")}
 								rows={2}
 								aria-label={t("composerHint")}
-								className="w-full resize-none bg-transparent text-[14.5px] leading-relaxed text-ink-100 outline-none placeholder:text-ink-500"
+								className="min-h-[4.5rem] w-full flex-1 resize-none bg-transparent text-[14.5px] leading-relaxed text-ink-100 outline-none placeholder:text-ink-500"
 							/>
 							{showMention && (
 								<SuggestionPanel>

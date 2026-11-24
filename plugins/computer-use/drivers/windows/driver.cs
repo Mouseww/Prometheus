@@ -122,6 +122,9 @@ namespace PrometheusCU
                 case "tree.snapshot": return Snapshot(HwndOf(p), Str(p, "scope"), Int(p, "maxNodes", 4000), Int(p, "maxDepth", 60));
                 case "node.act": return Act(Str(p, "ref"), Str(p, "op"), Str(p, "value"));
                 case "input.keys": return Keys(Str(p, "keys"), p.ContainsKey("window") ? (int?)HwndOf(p) : null);
+                case "window.manage": return ManageWindow(HwndOf(p), Str(p, "action"), p);
+                case "clipboard.get": return ClipboardGet();
+                case "clipboard.set": return ClipboardSet(Str(p, "text"));
                 case "input.text": return TypeText(Str(p, "text"), p.ContainsKey("window") ? (int?)HwndOf(p) : null);
                 default: throw new DriverError("unknown_method", "Unknown method: " + method);
             }
@@ -166,7 +169,7 @@ namespace PrometheusCU
             d["version"] = VERSION;
             d["os"] = Environment.OSVersion.VersionString;
             d["pid"] = Process.GetCurrentProcess().Id;
-            d["capabilities"] = new[] { "tree", "semantic_actions", "background_actions", "synthetic_input" };
+            d["capabilities"] = new[] { "tree", "semantic_actions", "background_actions", "synthetic_input", "window_manage", "clipboard", "drag" };
             var perms = new Dictionary<string, object>();
             perms["accessibility"] = "granted"; // UIA needs no grant; elevated targets fail per window instead.
             perms["elevated"] = IsElevated();
@@ -594,6 +597,7 @@ namespace PrometheusCU
                     }
                     return PointerClick(entry, 1, false);
                 }
+                case "drag": return Drag(entry, value);
                 case "double_click": return PointerClick(entry, 2, false);
                 case "right_click": return PointerClick(entry, 1, true);
                 case "focus": e.SetFocus(); return Ok("focus");
@@ -726,6 +730,124 @@ namespace PrometheusCU
             return Ok("synthetic");
         }
 
+        // ---------- drag, window management, clipboard ----------
+
+        static POINT CenterOf(RefEntry entry)
+        {
+            Rect r;
+            try { r = entry.Element.Current.BoundingRectangle; } catch { throw new DriverError("stale_ref", "Element is gone"); }
+            if (r.IsEmpty || r.Width <= 0) throw new DriverError("unsupported", "Element has no on-screen position");
+            POINT pt; pt.X = (int)(r.X + r.Width / 2); pt.Y = (int)(r.Y + r.Height / 2);
+            return pt;
+        }
+
+        // Drags the element onto the element whose ref is `destRef`. Uses the real pointer (restored afterwards).
+        static object Drag(RefEntry entry, string destRef)
+        {
+            if (string.IsNullOrEmpty(destRef)) throw new DriverError("bad_params", "drag needs value = the ref of the drop target");
+            var dest = Resolve(destRef);
+            var a = CenterOf(entry); var b = CenterOf(dest);
+            Activate(entry.Hwnd);
+            POINT old; GetCursorPos(out old);
+            SetCursorPos(a.X, a.Y); Thread.Sleep(60);
+            mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
+            Thread.Sleep(80);
+            const int steps = 12;
+            for (int i = 1; i <= steps; i++)
+            {
+                SetCursorPos(a.X + (b.X - a.X) * i / steps, a.Y + (b.Y - a.Y) * i / steps);
+                Thread.Sleep(20);
+            }
+            Thread.Sleep(80);
+            mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
+            Thread.Sleep(60);
+            SetCursorPos(old.X, old.Y);
+            return Ok("synthetic");
+        }
+
+        static object ManageWindow(int hwnd, string action, Dictionary<string, object> p)
+        {
+            var h = new IntPtr(hwnd);
+            switch (action)
+            {
+                case "minimize": ShowWindow(h, 6); break;
+                case "maximize": ShowWindow(h, 3); break;
+                case "restore": ShowWindow(h, 9); break;
+                case "close": PostMessage(h, 0x0010, UIntPtr.Zero, IntPtr.Zero); break; // WM_CLOSE: the app may still ask to save
+                case "move":
+                case "resize":
+                {
+                    RECT r; GetWindowRect(h, out r);
+                    int x = r.Left, y = r.Top, w = r.Right - r.Left, ht = r.Bottom - r.Top;
+                    if (action == "move")
+                    {
+                        if (!p.ContainsKey("x") || !p.ContainsKey("y")) throw new DriverError("bad_params", "move needs x and y");
+                        x = Int(p, "x", x); y = Int(p, "y", y);
+                    }
+                    else
+                    {
+                        if (!p.ContainsKey("width") || !p.ContainsKey("height")) throw new DriverError("bad_params", "resize needs width and height");
+                        w = Int(p, "width", w); ht = Int(p, "height", ht);
+                        if (w < 100 || ht < 60) throw new DriverError("bad_params", "width/height too small");
+                    }
+                    if (IsIconic(h) || IsZoomed(h)) ShowWindow(h, 9);
+                    // SWP_NOZORDER | SWP_NOACTIVATE
+                    if (!SetWindowPos(h, IntPtr.Zero, x, y, w, ht, 0x0004 | 0x0010)) throw new DriverError("internal", "SetWindowPos failed");
+                    break;
+                }
+                default: throw new DriverError("bad_params", "action must be minimize, maximize, restore, close, move or resize");
+            }
+            Thread.Sleep(120);
+            return Ok("window_" + action);
+        }
+
+        static bool OpenClip()
+        {
+            for (int i = 0; i < 10; i++) { if (OpenClipboard(IntPtr.Zero)) return true; Thread.Sleep(30); }
+            return false;
+        }
+
+        static object ClipboardGet()
+        {
+            var d = new Dictionary<string, object>();
+            d["ok"] = true;
+            if (!OpenClip()) throw new DriverError("internal", "Clipboard is locked by another process");
+            try
+            {
+                d["text"] = ""; d["hasText"] = false;
+                if (!IsClipboardFormatAvailable(13)) return d;
+                var h = GetClipboardData(13); // CF_UNICODETEXT
+                var ptr = h == IntPtr.Zero ? IntPtr.Zero : GlobalLock(h);
+                if (ptr == IntPtr.Zero) return d;
+                try { d["text"] = Marshal.PtrToStringUni(ptr); d["hasText"] = true; }
+                finally { GlobalUnlock(h); }
+                return d;
+            }
+            finally { CloseClipboard(); }
+        }
+
+        // text null or empty clears the clipboard.
+        static object ClipboardSet(string text)
+        {
+            if (!OpenClip()) throw new DriverError("internal", "Clipboard is locked by another process");
+            try
+            {
+                EmptyClipboard();
+                if (!string.IsNullOrEmpty(text))
+                {
+                    var bytes = (text.Length + 1) * 2;
+                    var h = GlobalAlloc(0x0002, new UIntPtr((uint)bytes)); // GMEM_MOVEABLE
+                    if (h == IntPtr.Zero) throw new DriverError("internal", "Out of memory");
+                    var ptr = GlobalLock(h);
+                    Marshal.Copy((text + "\0").ToCharArray(), 0, ptr, text.Length + 1);
+                    GlobalUnlock(h);
+                    if (SetClipboardData(13, h) == IntPtr.Zero) throw new DriverError("internal", "SetClipboardData failed");
+                }
+            }
+            finally { CloseClipboard(); }
+            return Ok("clipboard");
+        }
+
         // ---------- keyboard ----------
 
         static object Keys(string combo, int? hwnd)
@@ -845,6 +967,21 @@ namespace PrometheusCU
         [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int attr, out int value, int size);
         [DllImport("user32.dll", SetLastError = true)] static extern uint SendInput(uint n, INPUT[] inputs, int size);
 
+        [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr h);
+        [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+        [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+        [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint msg, UIntPtr w, IntPtr l);
+        [DllImport("user32.dll")] static extern bool OpenClipboard(IntPtr owner);
+        [DllImport("user32.dll")] static extern bool CloseClipboard();
+        [DllImport("user32.dll")] static extern bool EmptyClipboard();
+        [DllImport("user32.dll")] static extern bool IsClipboardFormatAvailable(uint fmt);
+        [DllImport("user32.dll")] static extern IntPtr GetClipboardData(uint fmt);
+        [DllImport("user32.dll")] static extern IntPtr SetClipboardData(uint fmt, IntPtr mem);
+        [DllImport("kernel32.dll")] static extern IntPtr GlobalAlloc(uint flags, UIntPtr bytes);
+        [DllImport("kernel32.dll")] static extern IntPtr GlobalLock(IntPtr h);
+        [DllImport("kernel32.dll")] static extern bool GlobalUnlock(IntPtr h);
+
+        [StructLayout(LayoutKind.Sequential)] struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
         [StructLayout(LayoutKind.Sequential)] struct POINT { public int X; public int Y; }
 
         [StructLayout(LayoutKind.Sequential)]

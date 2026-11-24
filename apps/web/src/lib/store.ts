@@ -13,6 +13,7 @@ import type {
 	SessionWorktree,
 	WorktreeOverride,
 	WorktreeStatus,
+	WorktreeResolve,
 	WorktreeStrategy,
 	ImageContent,
 	MessageRef,
@@ -44,7 +45,7 @@ import { localizeError } from "./errors.ts";
 import { defineMessages, tr } from "./i18n.ts";
 import { noteToolResult } from "./runtimes.ts";
 import { noteUse } from "./star.ts";
-import { effectiveSpace, samePath, type Space, spaceOf } from "./spaces.ts";
+import { effectiveSpace, samePath, type Space, sessionSpace, setPersonalRoots, spaceOf } from "./spaces.ts";
 
 const M = defineMessages({
 	zh: {
@@ -182,7 +183,7 @@ function savedSort(): SubagentSort {
 	return v === "started" || v === "ended" ? v : "status";
 }
 
-export type SettingsTab = "general" | "appearance" | "chat" | "agents" | "gateways" | "mcp" | "connectors" | "skills" | "modes" | "subagents" | "market" | "veil" | "logs" | "plugins" | "voice" | "network" | "runtimes" | "platforms" | "ssh" | "usage" | "about";
+export type SettingsTab = "general" | "appearance" | "chat" | "agents" | "gateways" | "mcp" | "connectors" | "skills" | "modes" | "subagents" | "market" | "veil" | "logs" | "plugins" | "voice" | "channels" | "network" | "runtimes" | "platforms" | "ssh" | "usage" | "about";
 /** A question a delegated run asked and is waiting on (plugins/assistant/src/ask.ts). */
 export interface PendingQuestion {
 	id: string;
@@ -687,11 +688,12 @@ export async function refreshAssistant(): Promise<void> {
 	}
 	const info = (await get()
 		.client?.rpc("plugin.call", { plugin: "assistant", method: "info", params: {} })
-		.catch(() => undefined)) as { home?: string; sessionId?: string | null; delegated?: string[]; pending?: PendingQuestion[] } | undefined;
+		.catch(() => undefined)) as { home?: string; sessionId?: string | null; delegated?: string[]; pending?: PendingQuestion[]; personalRoots?: string[] } | undefined;
 	if (!info?.home) {
 		if (get().assistant) set({ assistant: null });
 		return;
 	}
+	setPersonalRoots(info.personalRoots ?? []);
 	const mainId = info.sessionId ?? null;
 	const delegated = new Set(info.delegated ?? []);
 	const cur = get().assistant;
@@ -732,14 +734,14 @@ export async function setSpace(space: Space): Promise<void> {
 	set({ space, view: space === "personal" ? "home" : "chat" });
 	localStorage.setItem(SPACE_KEY, space);
 	if (space === "personal") return;
-	const here = get().sessions.filter((s) => !s.archived && spaceOf(s.cwd, home) === space);
+	const here = get().sessions.filter((s) => !s.archived && sessionSpace(s, home) === space);
 	const target = here.find((s) => s.id === lastInSpace[space]) ?? here[0];
 	if (target) await openSession(target.id);
 	else {
 		// The new-chat page keeps a blank chat it is already on, and the blank one here belongs to the other space:
 		// a first message typed now would land in it. Let go of it so the page starts from a workspace choice.
 		const blank = get().session;
-		if (blank && blank.messages.length === 0 && !blank.pending && !blank.isStreaming && spaceOf(blank.cwd, home) !== space) {
+		if (blank && blank.messages.length === 0 && !blank.pending && !blank.isStreaming && sessionSpace(blank, home) !== space) {
 			get().client?.unsubscribe(blank.id);
 			set({ session: null, commands: [] });
 		}
@@ -766,7 +768,7 @@ function followSession(s: State, prev: State): void {
 	if (!s.session || s.session.id === prev.session?.id) return;
 	const home = s.assistant?.home;
 	if (!home) return;
-	const space = spaceOf(s.session.cwd, home);
+	const space = sessionSpace(s.session, home);
 	if (space === s.space) return;
 	localStorage.setItem(SPACE_KEY, space);
 	useStore.setState({ space });
@@ -807,6 +809,7 @@ export async function refreshHostInfo(): Promise<void> {
 export async function updateHostSettings(patch: Partial<HostSettings>): Promise<void> {
 	const hostSettings = await call((c) => c.rpc("settings.set", patch));
 	if (hostSettings) applyHostSettings(hostSettings);
+	if (hostSettings && patch.recycleDays !== undefined) void refreshSessions();
 }
 
 export async function refreshModels(): Promise<void> {
@@ -912,8 +915,24 @@ export async function createSession(cwd?: string): Promise<void> {
 	if (snap) activate(snap);
 }
 
-export function setDraftWorktree(on: boolean): void {
+/**
+ * Sets the new-chat worktree switch. The blank chat already exists (it is made when the folder is chosen) and
+ * its worktree was decided then, so a changed choice starts a fresh blank chat in the same folder.
+ */
+export async function setDraftWorktree(on: boolean): Promise<void> {
 	set({ draftWorktree: on });
+	const prev = get().session;
+	if (!prev || prev.preview || prev.pending || prev.isStreaming || prev.messages.length > 0) return;
+	if (!!prev.worktree === on) return;
+	const permission = prev.permissionMode;
+	const model = prev.model;
+	get().client?.unsubscribe(prev.id);
+	await createSession(prev.worktree?.root ?? prev.cwd);
+	const created = get().session;
+	if (!created || created.id === prev.id) return;
+	void get().client?.rpc("session.delete", { sessionId: prev.id }).catch(() => {});
+	set({ draftModel: model ?? null });
+	if (permission !== created.permissionMode) await setPermissionMode(permission);
 }
 
 /** Whether the new-chat switch is on: its own choice, else the configured default. */
@@ -938,8 +957,20 @@ export async function worktreeSync(sessionId: string): Promise<WorktreeStatus | 
 	return r;
 }
 
-export async function worktreeMerge(sessionId: string, strategy: WorktreeStrategy, message?: string): Promise<WorktreeStatus | undefined> {
-	const r = await call((c) => c.rpc("worktree.merge", { sessionId, strategy, ...(message?.trim() ? { message: message.trim() } : {}) }));
+export async function worktreePullBase(sessionId: string): Promise<WorktreeStatus | undefined> {
+	const r = await call((c) => c.rpc("worktree.pullBase", { sessionId }));
+	if (r) applyWorktree(sessionId, r.worktree);
+	return r;
+}
+
+export async function worktreeRestoreBackup(sessionId: string, drop = false): Promise<WorktreeStatus | undefined> {
+	const r = await call((c) => c.rpc("worktree.restoreBackup", { sessionId, drop }));
+	if (r) applyWorktree(sessionId, r.worktree);
+	return r;
+}
+
+export async function worktreeMerge(sessionId: string, strategy: WorktreeStrategy, message?: string, resolve?: WorktreeResolve): Promise<WorktreeStatus | undefined> {
+	const r = await call((c) => c.rpc("worktree.merge", { sessionId, strategy, ...(message?.trim() ? { message: message.trim() } : {}), ...(resolve ? { resolve } : {}) }));
 	if (r) {
 		applyWorktree(sessionId, r.worktree);
 		toast(tr(M, "worktreeMerged"));
@@ -1072,7 +1103,7 @@ export function startNewChat(): void {
 	buffer = [];
 	const draft = defaultDraft();
 	const wasPi = draft.draftRuntime === "pi" && get().draftRuntime === "pi" && (current.runtime ?? "pi") === "pi";
-	set({ session: null, commands: [], draftModel: wasPi ? current.model : null, draftPermission: defaultPermission(), ...draft });
+	set({ session: null, commands: [], draftModel: wasPi ? current.model : null, draftPermission: defaultPermission(), draftWorktree: null, ...draft });
 	if (!wasPi) void refreshDraftModels();
 }
 
@@ -1146,7 +1177,7 @@ async function leaveSession(sessionId: string): Promise<void> {
 	const next = get().sessions.find((s) => !s.archived && s.id !== sessionId && s.workspaceId === current.workspaceId);
 	if (next) await openSession(next.id);
 	// A personal chat has no folder to pick on the new-chat page, so go straight to a fresh one.
-	else if (spaceOf(current.cwd, get().assistant?.home ?? null) === "personal") await startPersonalChat();
+	else if (sessionSpace(current, get().assistant?.home ?? null) === "personal") await startPersonalChat();
 }
 
 export async function archiveSession(sessionId: string, archived: boolean): Promise<void> {

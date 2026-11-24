@@ -67,6 +67,7 @@ import { CC_CAPABILITIES } from "./agent/claude-code/cc-session.ts";
 import type { PiRuntime } from "./agent/pi/pi-runtime.ts";
 import { PI_CAPABILITIES } from "./agent/pi/capabilities.ts";
 import { collectUsage } from "./usage.ts";
+import { cleanSyncSettings, emptyReport, pickSyncSettings, SyncLedger } from "./sync.ts";
 import { installOptionalPackage, isOptionalPackage, OPTIONAL_PACKAGES, type OptionalPackageId, optionalPackageStatus, uninstallOptionalPackage } from "./optional-packages.ts";
 import { isPiMissing, piAgentDir } from "./pi-paths.ts";
 import { buildHandoff, handoffBlock } from "./agent/handoff.ts";
@@ -209,6 +210,7 @@ export class PrometheusHost {
 	private readonly workspaces: WorkspaceStore;
 	private readonly worktrees: WorktreeManager;
 	private readonly index: SessionIndex;
+	private readonly syncLedger: SyncLedger;
 	private readonly permissions: PermissionStore;
 	private readonly owners: OwnerStore;
 	private readonly badges: BadgeStore;
@@ -232,6 +234,7 @@ export class PrometheusHost {
 		this.listener = options.listener;
 		this.workspaces = new WorkspaceStore(join(runtime.dataDir, "workspaces.json"));
 		this.worktrees = new WorktreeManager(runtime.dataDir);
+		this.syncLedger = new SyncLedger(join(runtime.dataDir, "sessions", "sync-ledger.json"));
 		this.index = new SessionIndex(join(runtime.dataDir, "sessions", "index.json"));
 		this.permissions = new PermissionStore(join(runtime.dataDir, "sessions", "permissions.json"));
 		this.owners = new OwnerStore(join(runtime.dataDir, "sessions", "owners.json"));
@@ -801,6 +804,7 @@ ${extras.map((p) => `- ${p}`).join("\n")}` }, guidelines: [] } };
 	private async tryWorktree(dir: string, asked: boolean | undefined): Promise<{ wt?: SessionWorktree; note?: string }> {
 		if (!(await this.wantsWorktree(dir, asked))) return {};
 		try {
+			if (this.runtime.config.get().worktreeAutoPull) await this.worktrees.pullLatest(dir);
 			return { wt: await this.worktrees.create(dir) };
 		} catch (err) {
 			return { note: encodeError(err instanceof AppError ? err : new AppError("worktreeFailed", { error: err instanceof Error ? err.message : String(err) })) };
@@ -833,8 +837,17 @@ ${extras.map((p) => `- ${p}`).join("\n")}` }, guidelines: [] } };
 		this.emitSessionsChanged();
 	}
 
+	/** Drops chats idle past the recycle window; chats that are open in memory stay. Files are kept, only the listing shrinks. */
+	private recycle<T extends { ref: { id: string }; modified: string }>(infos: T[]): T[] {
+		const days = this.runtime.config.get().recycleDays;
+		if (!(days >= 1)) return infos;
+		const cutoff = Date.now() - days * 86_400_000;
+		return infos.filter((i) => this.live.has(i.ref.id) || !(Date.parse(i.modified) < cutoff));
+	}
+
 	private async listSessions(): Promise<SessionSummary[]> {
-		const infos = (await this.pi?.listNative()) ?? [];
+		const all = (await this.pi?.listNative()) ?? [];
+		const infos = this.recycle(all);
 		for (const info of infos) if (info.ref.path) this.paths.set(info.ref.id, info.ref.path);
 		await this.workspaces.ensure(infos.map((i) => ({ path: this.worktrees.rootOf(i.cwd), modified: i.modified })));
 		const archived = await this.workspaces.archived();
@@ -865,6 +878,7 @@ ${extras.map((p) => `- ${p}`).join("\n")}` }, guidelines: [] } };
 		for (const e of this.index.list()) {
 			if (e.runtime === "pi") continue;
 			const live = this.live.get(e.id);
+			if (!live && this.recycle([{ ref: { id: e.id }, modified: e.modified }]).length === 0) continue;
 			external.push({
 				id: e.id,
 				name: e.name,
@@ -883,7 +897,7 @@ ${extras.map((p) => `- ${p}`).join("\n")}` }, guidelines: [] } };
 			});
 		}
 		await this.workspaces.ensure(external.map((e) => ({ path: this.worktrees.rootOf(e.cwd), modified: e.modified })));
-		const all = [...external, ...infos
+		const sessions = [...external, ...infos
 			.map((info) => ({
 				id: info.ref.id,
 				name: info.name,
@@ -899,7 +913,7 @@ ${extras.map((p) => `- ${p}`).join("\n")}` }, guidelines: [] } };
 				...this.worktreeField(info.ref.id),
 			})), ...unsaved]
 			.sort((a, b) => b.modified.localeCompare(a.modified));
-		return all.map((s) => {
+		return sessions.map((s) => {
 			const owner = this.owners.get(s.id);
 			const badge = this.badges.get(s.id);
 			return owner || badge ? { ...s, ...(owner ? { owner } : {}), ...(badge ? { badge } : {}) } : s;
@@ -1106,7 +1120,14 @@ ${extras.map((p) => `- ${p}`).join("\n")}` }, guidelines: [] } };
 		if (!live.session.rewind) throw new AppError("generic");
 		const input = await live.session.rewind(ref, edited);
 		this.resetMessages(sessionId, live);
-		await this.prompt(sessionId, input.text, input.images, undefined);
+		try {
+			await this.prompt(sessionId, input.text, input.images, undefined);
+		} catch (err) {
+			// The send was refused (no model, no key...): bring the chat back instead of leaving the message only in an old branch.
+			live.session.undoRewind?.();
+			this.resetMessages(sessionId, live);
+			throw err;
+		}
 	}
 
 	/** Take one waiting message out of the steer / follow-up queue so it can be edited or dropped. */
@@ -1184,7 +1205,7 @@ ${extras.map((p) => `- ${p}`).join("\n")}` }, guidelines: [] } };
 
 	private hostSettings(): HostSettings {
 		const policy = this.runtime.config.policy();
-		return { ...(policy ? { policy: publicPolicy(policy) } : {}), ...(this.runtime.config.readOutsideProject() !== "allow" ? { readOutsideProject: "ask" as const } : {}), autoCompaction: this.pi?.autoCompaction() ?? true, workspaceRoot: this.workspaceRoot(), defaultAgent: this.defaultAgent(), defaultPermission: this.defaultPermission(), defaultThinking: this.defaultThinking(), goalTurns: this.runtime.config.get().goalTurns || GOAL_DEFAULT_TURNS, compactPercent: this.compactPercent(), worktreeMode: this.worktreeMode(), worktreeDefault: this.runtime.config.get().worktreeDefault, worktreeStrategy: this.worktreeStrategy() };
+		return { ...(policy ? { policy: publicPolicy(policy) } : {}), ...(this.runtime.config.readOutsideProject() !== "allow" ? { readOutsideProject: "ask" as const } : {}), autoCompaction: this.pi?.autoCompaction() ?? true, workspaceRoot: this.workspaceRoot(), defaultAgent: this.defaultAgent(), defaultPermission: this.defaultPermission(), defaultThinking: this.defaultThinking(), goalTurns: this.runtime.config.get().goalTurns || GOAL_DEFAULT_TURNS, compactPercent: this.compactPercent(), worktreeMode: this.worktreeMode(), worktreeDefault: this.runtime.config.get().worktreeDefault, worktreeStrategy: this.worktreeStrategy(), worktreeAutoPull: this.runtime.config.get().worktreeAutoPull, recycleDays: this.runtime.config.get().recycleDays };
 	}
 
 	/** The permission mode new chats start in; unknown values (a hand-edited config) fall back to asking first. */
@@ -1420,9 +1441,20 @@ ${extras.map((p) => `- ${p}`).join("\n")}` }, guidelines: [] } };
 			this.refuseWhileRunning(sessionId);
 			return this.worktrees.sync(sessionId);
 		},
-		"worktree.merge": async ({ sessionId, strategy, message }) => {
+		"worktree.pullBase": async ({ sessionId }) => {
 			this.refuseWhileRunning(sessionId);
-			const result = await this.worktrees.merge(sessionId, strategy ?? this.worktreeStrategy(), message);
+			const result = await this.worktrees.pullBase(sessionId);
+			this.emitSessionsChanged();
+			return result;
+		},
+		"worktree.restoreBackup": async ({ sessionId, drop }) => {
+			const result = await this.worktrees.restoreBackup(sessionId, drop);
+			this.emitSessionsChanged();
+			return result;
+		},
+		"worktree.merge": async ({ sessionId, strategy, message, resolve }) => {
+			this.refuseWhileRunning(sessionId);
+			const result = await this.worktrees.merge(sessionId, strategy ?? this.worktreeStrategy(), message, resolve);
 			this.emitSessionsChanged();
 			return result;
 		},
@@ -1457,7 +1489,7 @@ ${extras.map((p) => `- ${p}`).join("\n")}` }, guidelines: [] } };
 		"fs.mkdir": ({ parent, name }) => this.createDir(parent, name),
 
 		"settings.get": () => this.hostSettings(),
-		"settings.set": async ({ autoCompaction, workspaceRoot, defaultAgent, defaultPermission, defaultThinking, goalTurns, compactPercent, worktreeMode, worktreeDefault, worktreeStrategy, readOutsideProject }) => {
+		"settings.set": async ({ autoCompaction, workspaceRoot, defaultAgent, defaultPermission, defaultThinking, goalTurns, compactPercent, worktreeMode, worktreeDefault, worktreeStrategy, worktreeAutoPull, recycleDays, readOutsideProject }) => {
 			if (typeof autoCompaction === "boolean") {
 				await this.pi?.setAutoCompaction(autoCompaction);
 				// Live sessions cache their own SettingsManager.
@@ -1477,11 +1509,12 @@ ${extras.map((p) => `- ${p}`).join("\n")}` }, guidelines: [] } };
 				if (!PERMISSION_MODES.includes(defaultPermission)) throw new AppError("unknownPermissionMode", { mode: String(defaultPermission) });
 				await this.runtime.config.setDefaultPermission(defaultPermission);
 			}
-			if (worktreeMode !== undefined || worktreeDefault !== undefined || worktreeStrategy !== undefined) {
+			if (worktreeMode !== undefined || worktreeDefault !== undefined || worktreeStrategy !== undefined || worktreeAutoPull !== undefined) {
 				if (worktreeMode !== undefined && !["off", "ask", "on"].includes(worktreeMode)) throw new AppError("generic");
 				if (worktreeStrategy !== undefined && !["squash", "merge", "apply"].includes(worktreeStrategy)) throw new AppError("generic");
-				await this.runtime.config.setWorktree({ mode: worktreeMode, default: typeof worktreeDefault === "boolean" ? worktreeDefault : undefined, strategy: worktreeStrategy });
+				await this.runtime.config.setWorktree({ mode: worktreeMode, default: typeof worktreeDefault === "boolean" ? worktreeDefault : undefined, strategy: worktreeStrategy, autoPull: typeof worktreeAutoPull === "boolean" ? worktreeAutoPull : undefined });
 			}
+			if (typeof recycleDays === "number") await this.runtime.config.setRecycleDays(recycleDays);
 			if (typeof compactPercent === "number") await this.runtime.config.setCompactPercent(compactPercent);
 			if (readOutsideProject === "allow" || readOutsideProject === "ask") {
 				await this.runtime.config.setReadOutsideProject(readOutsideProject);
@@ -1804,6 +1837,91 @@ ${extras.map((p) => `- ${p}`).join("\n")}` }, guidelines: [] } };
 				this.listener.gatewaysChanged();
 			}
 			return { imported, skipped };
+		},
+
+		"sync.export": async ({ scopes }) => {
+			const want = new Set(scopes);
+			return {
+				...(want.has("gateways") ? { gateways: this.runtime.config.gateways() } : {}),
+				...(want.has("settings") ? { settings: pickSyncSettings(this.hostSettings()) } : {}),
+				...(want.has("projects") ? { projects: (await this.workspaces.list()).map((w) => ({ path: w.path, name: w.name, ...(w.extraPaths?.length ? { extraPaths: w.extraPaths } : {}) })) } : {}),
+				...(want.has("sessions") ? { sessionList: await this.listSessions() } : {}),
+			};
+		},
+		"sync.exportSession": async ({ sessionId }) => {
+			const live = await this.open(sessionId);
+			const state = live.session.snapshotState();
+			const meta = (await this.listSessions()).find((s) => s.id === sessionId);
+			const now = new Date().toISOString();
+			return { id: sessionId, ...(state.name ? { name: state.name } : {}), cwd: state.cwd, created: meta?.created ?? now, modified: meta?.modified ?? now, messages: state.messages.slice(-SEED_MESSAGES) };
+		},
+		"sync.import": async ({ bundle, overwrite }) => {
+			const report = emptyReport();
+			const replace = overwrite !== false;
+			for (const g of Array.isArray(bundle.gateways) ? bundle.gateways : []) {
+				try {
+					const had = this.runtime.config.gateways().some((x) => x.id === g.id);
+					if (had && !replace) {
+						report.gateways.skipped.push({ id: g.id, reason: "exists" });
+						continue;
+					}
+					await this.runtime.config.saveGateway(g);
+					if (had) report.gateways.updated++;
+					else report.gateways.added++;
+				} catch (err) {
+					report.gateways.skipped.push({ id: String(g?.id), reason: err instanceof Error ? err.message : String(err) });
+				}
+			}
+			if (report.gateways.added || report.gateways.updated) {
+				this.pi?.syncGateways();
+				this.listener.gatewaysChanged();
+			}
+			if (bundle.settings) {
+				const clean = cleanSyncSettings(bundle.settings);
+				// Settings validate themselves; one bad field must not drop the others.
+				for (const [k, v] of Object.entries(clean)) {
+					try {
+						await this.handlers["settings.set"]({ [k]: v } as Partial<HostSettings>);
+					} catch {}
+				}
+				report.settings = true;
+			}
+			for (const p of Array.isArray(bundle.projects) ? bundle.projects : []) {
+				if (typeof p?.path !== "string" || !existsSync(p.path) || !statSync(p.path).isDirectory()) {
+					report.projects.skipped.push({ id: String(p?.path), reason: "dirNotFound" });
+					continue;
+				}
+				const known = (await this.workspaces.list()).some((w) => workspaceId(w.path) === workspaceId(p.path));
+				if (known) {
+					report.projects.skipped.push({ id: p.path, reason: "exists" });
+					continue;
+				}
+				const extra = (p.extraPaths ?? []).filter((x) => existsSync(x));
+				await this.workspaces.add(p.path, p.name, extra.length ? extra : undefined).catch(() => {});
+				report.projects.added++;
+			}
+			for (const s of Array.isArray(bundle.sessions) ? bundle.sessions : []) {
+				if (typeof s?.id !== "string" || !Array.isArray(s.messages)) continue;
+				const done = await this.syncLedger.get(s.id);
+				if (done) {
+					report.sessions.skipped.push({ id: s.id, reason: "exists" });
+					continue;
+				}
+				try {
+					// The original folder usually does not exist on another machine; the chat then lands in the default one.
+					const dir = s.cwd && existsSync(s.cwd) && statSync(s.cwd).isDirectory() ? s.cwd : this.cwd;
+					await this.workspaces.add(dir);
+					const live = await this.attach((init) => this.needPi.create({ ...init, cwd: normalizeDir(dir), history: s.messages.slice(-SEED_MESSAGES) }));
+					if (s.name) live.session.setName(s.name);
+					await this.syncLedger.set(s.id, live.session.id);
+					await this.closeSession(live.session.id);
+					report.sessions.added++;
+				} catch (err) {
+					report.sessions.skipped.push({ id: s.id, reason: err instanceof Error ? err.message : String(err) });
+				}
+			}
+			if (report.sessions.added) this.emitSessionsChanged();
+			return report;
 		},
 
 		"kb.list": () => this.runtime.knowledge.list(),

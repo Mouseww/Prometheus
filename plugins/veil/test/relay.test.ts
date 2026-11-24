@@ -47,7 +47,7 @@ describe("restoreEventStream", () => {
 
 	beforeEach(async () => {
 		dir = await mkdtemp(join(tmpdir(), "veil-sse-"));
-		store = new MappingStore({ path: join(dir, "m.json"), ttlDays: 0 });
+		store = new MappingStore({ path: join(dir, "m.json"), key: KEY, ttlDays: 0 });
 	});
 	afterEach(async () => {
 		await store.flush();
@@ -97,6 +97,8 @@ describe("restoreEventStream", () => {
 	});
 });
 
+const KEY = Buffer.alloc(32, 7);
+
 describe("VeilRelay", () => {
 	let upstream: Server;
 	let relay: VeilRelay;
@@ -111,7 +113,7 @@ describe("VeilRelay", () => {
 
 	beforeEach(async () => {
 		dir = await mkdtemp(join(tmpdir(), "veil-relay-"));
-		store = new MappingStore({ path: join(dir, "m.json"), ttlDays: 0 });
+		store = new MappingStore({ path: join(dir, "m.json"), key: KEY, ttlDays: 0 });
 		seen = [];
 		upstream = createServer((req, res) => {
 			const chunks: Buffer[] = [];

@@ -4,6 +4,7 @@ import { FileViewer } from "@open-file-viewer/react";
 import { fallbackPlugin, imagePlugin, officePlugin, pdfPlugin, textPlugin } from "@open-file-viewer/core";
 import "@open-file-viewer/core/style.css";
 import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.mjs?url";
+import pdfLegacyWorkerSrc from "pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 import { LoaderCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { defineMessages, useT } from "../lib/i18n.ts";
@@ -20,7 +21,7 @@ const LIMIT_MB = 100;
 const plugins = [
 	imagePlugin(),
 	textPlugin(),
-	pdfPlugin({ workerSrc: pdfWorkerSrc }),
+	pdfPlugin({ workerSrc: pdfWorkerSrc, legacyWorkerSrc: pdfLegacyWorkerSrc }),
 	officePlugin(),
 	fallbackPlugin(),
 ];
@@ -69,7 +70,7 @@ export default function DocumentPreview({ path, name, refreshKey }: { path: stri
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [client, sessionId, path, name, refreshKey]);
 
-	const viewer = useMemo(() => (file ? <FileViewer file={file} fileName={file.name} width="100%" height="100%" fit="contain" toolbar theme="dark" plugins={plugins} onError={() => setError(t("failed"))} /> : null), [file]); // eslint-disable-line react-hooks/exhaustive-deps
+	const viewer = useMemo(() => (file ? <FileViewer file={file} fileName={file.name} width="100%" height="100%" fit="contain" toolbar={{ download: false }} theme="dark" plugins={plugins} onError={() => setError(t("failed"))} /> : null), [file]); // eslint-disable-line react-hooks/exhaustive-deps
 	if (error) return <p className="p-4 text-sm text-ink-500">{error}</p>;
 	if (!viewer)
 		return (

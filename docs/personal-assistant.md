@@ -15,6 +15,23 @@
 - 只能从家里派活，项目里的对话不能转包。
 - 工具标成了"只读"，所以不会每次都弹确认；真正的限制在宿主那一层。
 
+## IM 通道（Telegram / 飞书 / QQ / 企业微信）
+
+配置存在助理插件数据目录的 `channels.json`，也可通过 `plugin.call assistant channels`（查看，密钥打码）和 `channels.set`（`{channel, config}`）修改，保存即生效。每个发消息的人在个人空间里有自己的一个对话，运行同样只读。
+
+每个通道必须填 `allow`（发送者 ID 白名单）。不在名单里的人只会收到自己的 ID，消息不会到达助理。
+
+| 通道 | 方式 | 需要 | 说明 |
+| --- | --- | --- | --- |
+| Telegram | 长轮询，无需公网 | `token`（BotFather） | allow 填 Telegram 用户数字 ID |
+| QQ | 官方机器人网关（出站 WebSocket） | `appId`、`appSecret`，可选 `sandbox` | 支持单聊和群里 @；allow 填 openid |
+| 飞书 | 事件订阅回调 | `appId`、`appSecret`、`verificationToken`，可选 `encryptKey` | 请求地址 `https://<公网地址>/plugins/assistant/hook/feishu`；订阅 `im.message.receive_v1`；allow 填 open_id |
+| 企业微信 | 自建应用回调 | `corpId`、`agentId`、`secret`、`token`、`aesKey` | 回调地址 `https://<公网地址>/plugins/assistant/hook/wecom`；allow 填成员账号 |
+
+个人微信没有官方接口，不内置。可用第三方桥接工具把消息转到上面的 `POST /plugins/assistant/inbound`。
+
+`/plugins/*/hook/*` 不要求登录（平台调用时带不了），由插件按平台的签名或令牌自行校验。
+
 ## 渠道入口
 
 `POST /plugins/assistant/inbound`，和其他接口用同一个登录（`Authorization: Bearer <令牌>` 或登录 cookie）。

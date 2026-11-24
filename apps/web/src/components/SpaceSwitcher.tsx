@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { Briefcase, User } from "lucide-react";
 import { useMemo } from "react";
 import { defineMessages, useT } from "../lib/i18n.ts";
-import { type Space, spaceOf } from "../lib/spaces.ts";
+import { type Space, sessionSpace } from "../lib/spaces.ts";
 import { setSpace, useSpace, useStore } from "../lib/store.ts";
 
 const M = defineMessages({
@@ -21,7 +21,7 @@ export function SpaceSwitcher() {
 	// Computed here, not in the selector: a selector that returns a new object every time makes the store re-render forever.
 	const unseen = useMemo(() => {
 		const n: Record<Space, number> = { personal: 0, work: 0 };
-		for (const sess of sessions) if (marks[sess.id]) n[spaceOf(sess.cwd, home)]++;
+		for (const sess of sessions) if (marks[sess.id]) n[sessionSpace(sess, home)]++;
 		n.personal += waiting;
 		return n;
 	}, [sessions, marks, home, waiting]);

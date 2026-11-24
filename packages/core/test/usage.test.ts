@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { collectUsage } from "../src/usage.ts";
 
 const usage = (input: number, output: number, cost: number) => ({ input, output, cacheRead: 5, cacheWrite: 0, totalTokens: input + output, cost: { total: cost } });
-const reply = (timestamp: string, model: string, u: ReturnType<typeof usage>) =>
+const reply = (timestamp: string, model: string, u: ReturnType<typeof usage> | (ReturnType<typeof usage> & { reasoning: number })) =>
 	JSON.stringify({ type: "message", timestamp, message: { role: "assistant", provider: "p", model, usage: u, content: [] } });
 
 describe("collectUsage", () => {
@@ -39,5 +39,22 @@ describe("collectUsage", () => {
 		const stats = await collectUsage([file], 1, new Date("2026-10-15T12:00:00"));
 		expect(stats.totals.input).toBe(7);
 		expect(stats.byDay).toHaveLength(1);
+	});
+
+	it("sums reasoning tokens apart from output", async () => {
+		// Some providers bill thinking outside `output`; dropping it here under-reported the totals they were charged for.
+		const dir = await mkdtemp(join(tmpdir(), "usage-"));
+		const file = join(dir, "s.jsonl");
+		await writeFile(
+			file,
+			[
+				reply("2026-10-15T10:00:00", "a", { ...usage(10, 20, 0), reasoning: 30 }),
+				reply("2026-10-15T10:01:00", "a", usage(1, 2, 0)),
+			].join("\n"),
+		);
+
+		const stats = await collectUsage([file], 0, new Date("2026-10-15T12:00:00"));
+		expect(stats.totals.reasoning).toBe(30);
+		expect(stats.totals.output).toBe(22);
 	});
 });

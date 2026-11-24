@@ -3,7 +3,7 @@
 // a destination (File System Access API) the pieces are written straight to disk, which has no size limit; elsewhere
 // they are collected in memory and handed to the browser as a download, which is capped.
 import { defineMessages, tr } from "./i18n.ts";
-import { isTauri } from "./backend.ts";
+import { isAndroid, isTauri } from "./backend.ts";
 import { openExternal } from "./links.ts";
 import { call, toast, useStore } from "./store.ts";
 
@@ -13,12 +13,14 @@ const M = defineMessages({
 		failed: "下载失败：{name}",
 		tooBig: "文件 {size} 超过浏览器下载上限 {max}，请换用 Chrome 或 Edge，或在服务器上直接取",
 		starting: "正在下载 {name}…",
+		started: "已开始下载 {name}，可在通知或「下载」文件夹查看",
 	},
 	en: {
 		saved: "Saved {name}",
 		failed: "Download failed: {name}",
 		tooBig: "The file is {size}, over this browser's download limit of {max}. Use Chrome or Edge, or fetch it on the server",
 		starting: "Downloading {name}…",
+		started: "Download started: {name}. Check notifications or the Downloads folder",
 	},
 });
 
@@ -64,7 +66,20 @@ export async function downloadFile(path: string, suggestedName?: string): Promis
 		const client = useStore.getState().client;
 		const link = await call((c) => c.rpc("file.link", { sessionId: session.id, path }));
 		if (!client || !link) return false;
-		await openExternal(`${client.target.httpBase}/api/download/${encodeURIComponent(link.id)}`);
+		const url = `${client.target.httpBase}/api/download/${encodeURIComponent(link.id)}`;
+		if (isAndroid()) {
+			const host = window.PrometheusHost;
+			if (typeof host?.download === "function") {
+				try {
+					host.download(url, name);
+					toast(tr(M, "started", { name }), "info");
+					return true;
+				} catch {
+					// fall through to the system browser
+				}
+			}
+		}
+		await openExternal(url);
 		return true;
 	}
 
@@ -118,6 +133,26 @@ export async function downloadFile(path: string, suggestedName?: string): Promis
 	return true;
 }
 
+/** A one-time URL that serves an HTML file of the open conversation rendered, under the server's own CSP (so inline styles work even where the app's CSP would block them in a srcDoc frame). */
+export async function htmlViewUrl(path: string): Promise<string | undefined> {
+	const session = useStore.getState().session;
+	const client = useStore.getState().client;
+	if (!session || !client) return undefined;
+	// Quiet on failure: the caller has a fallback (the preview pane) and must not toast.
+	const link = await client.rpc("file.link", { sessionId: session.id, path }).catch(() => undefined);
+	if (!link) return undefined;
+	return `${client.target.httpBase}/api/download/${encodeURIComponent(link.id)}?view=1`;
+}
+
+/** Opens an HTML file of the open conversation in the system browser, rendered (a one-time link served inline). */
+export async function previewInBrowser(path: string): Promise<boolean> {
+	const url = await htmlViewUrl(path);
+	if (!url) return false;
+	if (isTauri()) await openExternal(url);
+	else window.open(url, "_blank", "noopener");
+	return true;
+}
+
 // ---------- does a mentioned path exist? ----------
 
 const known = new Map<string, Promise<boolean>>();
@@ -150,4 +185,22 @@ const PATH_LIKE = new RegExp(`^(?:[A-Za-z]:)?[^\\s"'<>|*?:()\\[\\]{}\`]*[^\\s"'<
 /** Inline code that reads like the path of a file: worth asking the server whether it is there. */
 export function looksLikeFilePath(text: string): boolean {
 	return text.length > 3 && text.length < 260 && !text.includes("://") && PATH_LIKE.test(text);
+}
+
+/**
+ * The server-side path a Markdown link points at, or null when it is a real web link. The model often writes files as
+ * `[下载](/data/out.pptx)` or `[x](file:///C:/out.pptx)`: opened as a URL that is a 404 on our own site, so such links are
+ * downloaded instead. Markdown percent-encodes non-ASCII characters in link targets, so the path is decoded first.
+ */
+export function fileLinkPath(href: string | undefined): string | null {
+	if (!href) return null;
+	let path = href.trim();
+	if (/^file:/i.test(path)) path = path.replace(/^file:\/*/i, "/").replace(/^\/([A-Za-z]:)/, "$1");
+	else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(path) || /^(?:mailto|tel|data|javascript):/i.test(path) || path.startsWith("#")) return null;
+	try {
+		path = decodeURIComponent(path);
+	} catch {
+		// a stray % that is not an escape: keep the text as written
+	}
+	return looksLikeFilePath(path) ? path : null;
 }

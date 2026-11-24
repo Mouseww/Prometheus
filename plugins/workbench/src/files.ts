@@ -23,6 +23,8 @@ const LANGUAGES: Record<string, string> = {
 	".yml": "yaml", ".yaml": "yaml", ".toml": "toml", ".sh": "shell", ".ps1": "powershell", ".sql": "sql", ".txt": "text",
 };
 
+const DOCUMENTS = new Set([".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".odt", ".ods", ".odp", ".epub"]);
+
 export const languageOf = (path: string): string => LANGUAGES[extname(path).toLowerCase()] ?? "text";
 
 /** NUL bytes in the first 8 KB: the same cheap test git uses to call a file binary. */
@@ -73,6 +75,8 @@ export async function readForViewer(real: string): Promise<WorkbenchFile> {
 		const data = await readFile(real);
 		return { ...base, kind: "image", dataUrl: `data:${mime};base64,${data.toString("base64")}` };
 	}
+	// PDFs and Office files often have no NUL in their first 8 KB, so the content test alone would show them as text.
+	if (DOCUMENTS.has(extname(real).toLowerCase())) return { ...base, kind: "binary" };
 	const data = await readFile(real);
 	if (looksBinary(data)) return { ...base, kind: "binary" };
 	if (data.length > MAX_TEXT) return { ...base, kind: "text", text: data.subarray(0, MAX_TEXT).toString("utf8"), truncated: true };

@@ -1,6 +1,8 @@
+import { DownloadButton } from "./FileDownloadButton.tsx";
 import clsx from "clsx";
-import { Check, Copy, Eye, FileText, FolderTree, Globe, LoaderCircle, PanelRightClose, RefreshCw, SquareTerminal, X } from "lucide-react";
+import { Check, Copy, ExternalLink, Eye, FileText, FolderTree, Globe, LoaderCircle, PanelRightClose, RefreshCw, SquareTerminal, X } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { htmlViewUrl, previewInBrowser } from "../lib/download.ts";
 import { copyToClipboard } from "../lib/clipboard.ts";
 import { usePanelWidth } from "../lib/panelWidth.ts";
 import { useIsMobile } from "../lib/viewport.ts";
@@ -32,6 +34,7 @@ const M = defineMessages({
 		truncated: "文件较大，只显示前 1 MB",
 		preview: "渲染预览",
 		source: "源码",
+		openBrowser: "在浏览器中打开",
 	},
 	en: {
 		title: "Viewer",
@@ -48,6 +51,7 @@ const M = defineMessages({
 		truncated: "Large file: showing the first 1 MB",
 		preview: "Preview",
 		source: "Source",
+		openBrowser: "Open in browser",
 	},
 });
 
@@ -122,6 +126,25 @@ export function WorkbenchPanel() {
 	);
 }
 
+/** Rendered HTML preview. Loaded from the server's view route (own CSP) because a srcDoc frame inherits the desktop CSP, which drops inline <style>; falls back to srcDoc if no link can be made. */
+function HtmlFrame({ path, name, text }: { path: string; name: string; text: string }) {
+	const [url, setUrl] = useState<string | null | undefined>(undefined);
+	useEffect(() => {
+		let live = true;
+		void htmlViewUrl(path).then((u) => live && setUrl(u ?? null));
+		return () => {
+			live = false;
+		};
+	}, [path]);
+	if (url === undefined) return <div className="grid size-full place-items-center bg-white"><LoaderCircle className="size-5 animate-spin text-ink-500" /></div>;
+	const sandbox = "allow-scripts allow-forms allow-popups allow-modals";
+	return url ? (
+		<iframe title={name} src={url} sandbox={sandbox} className="size-full border-0 bg-white" />
+	) : (
+		<iframe title={name} srcDoc={text} sandbox={sandbox} className="size-full border-0 bg-white" />
+	);
+}
+
 const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
 
 function FileView({ tab }: { tab: Extract<WorkbenchTab, { kind: "file" }> }) {
@@ -158,6 +181,7 @@ function FileView({ tab }: { tab: Extract<WorkbenchTab, { kind: "file" }> }) {
 	const [copied, setCopied] = useState(false);
 	const lines = useMemo(() => (file?.kind === "text" ? (file.text ?? "").split("\n") : []), [file]);
 	const isMd = file?.language === "markdown";
+	const isHtml = file?.language === "html";
 	// Coloured lines, same count as `lines`; null shows the text plain (unknown language, or too big to colour quickly).
 	const colored = useMemo(() => {
 		if (file?.kind !== "text") return null;
@@ -170,7 +194,14 @@ function FileView({ tab }: { tab: Extract<WorkbenchTab, { kind: "file" }> }) {
 				<span className="min-w-0 flex-1 truncate font-mono text-ink-400" title={file?.path ?? tab.path}>
 					{file?.path ?? tab.path}
 				</span>
-				{isMd && (
+				<DownloadButton path={file?.path ?? tab.path} className="max-md:size-8" />
+				{isHtml && (
+					<button type="button" onClick={() => void previewInBrowser(file?.path ?? tab.path)} className="flex items-center gap-1 rounded px-1.5 py-0.5 text-ink-400 hover:bg-ink-800 hover:text-ink-100">
+						<ExternalLink className="size-3.5" />
+						{t("openBrowser")}
+					</button>
+				)}
+				{(isMd || isHtml) && (
 					<button type="button" onClick={() => setRendered(!rendered)} className="flex items-center gap-1 rounded px-1.5 py-0.5 text-ink-400 hover:bg-ink-800 hover:text-ink-100">
 						<Eye className="size-3.5" />
 						{rendered ? t("source") : t("preview")}
@@ -220,7 +251,10 @@ function FileView({ tab }: { tab: Extract<WorkbenchTab, { kind: "file" }> }) {
 						<Markdown text={file.text ?? ""} />
 					</div>
 				)}
-				{file?.kind === "text" && !(isMd && rendered) && (
+				{file?.kind === "text" && isHtml && rendered && (
+					<HtmlFrame key={reloads} path={file.path ?? tab.path} name={file.name} text={file.text ?? ""} />
+				)}
+				{file?.kind === "text" && !((isMd || isHtml) && rendered) && (
 					<table className={clsx("code-view w-full border-collapse font-mono text-[12px] leading-5", colored && "hljs")}>
 						<tbody>
 							{lines.map((line, i) => (

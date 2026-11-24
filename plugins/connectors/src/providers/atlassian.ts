@@ -98,6 +98,8 @@ export const atlassian: ConnectorProvider = {
 		],
 	},
 	async test(c) {
+		// /myself needs the extra read:jira-user scope that OAuth does not request; the identity API works with read:me.
+		if (!c.credentials.config.email) return (await request<{ name?: string; email?: string }>("https://api.atlassian.com/me", { headers: { authorization: `Bearer ${c.credentials.token}` }, signal: c.signal })).name ?? "Atlassian";
 		return (await call<{ displayName: string }>(c, "/rest/api/3/myself")).displayName;
 	},
 	operations: [

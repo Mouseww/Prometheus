@@ -38,6 +38,7 @@ const M = defineMessages({
 	zh: {
 		thinkingLive: "思考中…",
 		statIn: "输入 {n}",
+		statPrompt: "上下文 {n}",
 		statOut: "输出 {n}",
 		statCache: "缓存命中 {r}",
 		statTtft: "首字 {v}",
@@ -66,6 +67,7 @@ const M = defineMessages({
 	en: {
 		thinkingLive: "Thinking…",
 		statIn: "in {n}",
+		statPrompt: "context {n}",
 		statOut: "out {n}",
 		statCache: "cache hit {r}",
 		statTtft: "first token {v}",
@@ -409,6 +411,7 @@ function TurnStats({ group, sessionId }: { group: { message: AssistantMessage; i
 	const t = useT(M);
 	let input = 0;
 	let output = 0;
+	let reasoning = 0;
 	let cacheRead = 0;
 	let cacheWrite = 0;
 	let tokens = 0;
@@ -419,20 +422,26 @@ function TurnStats({ group, sessionId }: { group: { message: AssistantMessage; i
 		if (!u) continue;
 		input += u.input ?? 0;
 		output += u.output ?? 0;
+		reasoning += u.reasoning ?? 0;
 		cacheRead += u.cacheRead ?? 0;
 		cacheWrite += u.cacheWrite ?? 0;
 		const sp = speedTracker.of(sessionId, message.timestamp);
 		if (sp) {
+			// `outputTokens` already includes reasoning, so it is the same base the rate was measured on.
 			tokens += sp.outputTokens;
 			ms += (sp.outputTokens / sp.tps) * 1000;
 			ttft ??= sp.ttftMs;
 		}
 	}
-	if (input + output + cacheRead + cacheWrite === 0) return null;
+	if (input + output + reasoning + cacheRead + cacheWrite === 0) return null;
 	const hit = cacheRate({ input, cacheRead, cacheWrite });
 	const parts = [
-		t("statIn", { n: fmtTokens(input + cacheRead + cacheWrite) }),
-		t("statOut", { n: fmtTokens(output) }),
+		// `input` alone is newly billed prompt tokens; the cached prefix is billed separately and shows up as the hit
+		// rate. Merging the two under one "input" label made a long conversation look like it burned that many fresh
+		// tokens, which is why the numbers read as far too high.
+		t("statIn", { n: fmtTokens(input) }),
+		...(cacheRead + cacheWrite > 0 ? [t("statPrompt", { n: fmtTokens(input + cacheRead + cacheWrite) })] : []),
+		t("statOut", { n: fmtTokens(output + reasoning) }),
 		...(hit != null && cacheRead + cacheWrite > 0 ? [t("statCache", { r: fmtPercent(hit) })] : []),
 		...(ms > 0 ? [`${(tokens / (ms / 1000)).toFixed(tokens / (ms / 1000) >= 100 ? 0 : 1)} t/s`] : []),
 		...(ttft != null ? [t("statTtft", { v: ttft < 1000 ? `${Math.round(ttft)} ms` : `${(ttft / 1000).toFixed(1)} s` })] : []),

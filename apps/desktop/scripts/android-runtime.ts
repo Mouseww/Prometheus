@@ -6,9 +6,9 @@
 // Node comes from Termux: Google and nodejs.org publish no Android build, and Termux's is the maintained one.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, closeSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO = "https://packages.termux.dev/apt/termux-main";
@@ -278,10 +278,34 @@ try {
 	rmSync(libOut, { recursive: true, force: true });
 	mkdirSync(libOut, { recursive: true });
 	const libSrc = join(prefix, "lib");
+	// Termux names one library several times (`libicudata.so`, `.so.78`, `.so.78.3`) with the long name as the real file and
+	// the others as links. Copying every name after resolving it stored the same 33 MB of ICU data three times (~40 MB in the
+	// APK). Store each real file once and recreate the links as relative ones, so every soname still resolves on the phone
+	// while the archive only carries the bytes once.
+	const stored = new Map<string, string>();
 	for (const f of readdirSync(libSrc)) {
 		if (!/\.so(\.|$)/.test(f)) continue;
-		// dereference: the tarball should hold real files, not links into a Termux prefix that does not exist on the phone.
-		cpSync(realpathSync(join(libSrc, f)), join(libOut, f));
+		const real = realpathSync(join(libSrc, f));
+		const target = basename(real);
+		if (!stored.has(real)) {
+			copyFileSync(real, join(libOut, target));
+			stored.set(real, target);
+		}
+		if (f === target) continue;
+		try {
+			symlinkSync(target, join(libOut, f));
+		} catch {
+			// No symlink privilege (a local Windows build): copy the bytes instead; the phone only sees the tarball.
+			copyFileSync(real, join(libOut, f));
+		}
+	}
+	// Every name has to resolve on the phone: a link whose file was never stored would make Node fail to start there.
+	for (const f of readdirSync(libOut)) {
+		try {
+			realpathSync(join(libOut, f));
+		} catch {
+			throw new Error(`server/lib/${f} points at a library that is missing from the archive`);
+		}
 	}
 
 	const tarball = join(jniDir, "libserver_bundle.so");
@@ -315,6 +339,11 @@ try {
 		"android.permission.ACCESS_WIFI_STATE",
 		"android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
 		"android.permission.MANAGE_EXTERNAL_STORAGE",
+		// Newer Android gates traffic to other devices on the home network behind a runtime permission (NEARBY_WIFI_DEVICES
+		// on 16, ACCESS_LOCAL_NETWORK after). Without it the local server (node, ssh, git) cannot reach 192.168.x.x hosts,
+		// while loopback and the internet keep working.
+		"android.permission.NEARBY_WIFI_DEVICES",
+		"android.permission.ACCESS_LOCAL_NETWORK",
 	];
 	for (const perm of perms) {
 		if (!manifest.includes(perm)) manifest = manifest.replace(/<manifest[^>]*>/, (m) => `${m}
@@ -369,6 +398,13 @@ try {
 		if (/applySystemBarTheme\(true\)\n/.test(activity)) activity = activity.replace(/applySystemBarTheme\(true\)\n/, "applySystemBarTheme(true)\n    installBackBridge()\n");
 		else if (/startPrometheusService\(\)\n/.test(activity)) activity = activity.replace(/startPrometheusService\(\)\n/, "startPrometheusService()\n    installBackBridge()\n");
 		if (!/\n\s+installBackBridge\(\)\n/.test(activity)) throw new Error("could not patch MainActivity.kt (template changed?)");
+	}
+	// Download, status-bar height and keyboard insets live in the same bridge; older generated projects get them added.
+	if (!activity.includes("fun safeTop")) {
+		activity = activity.replace(/inner class SystemBarBridge \{\n/, () => `inner class SystemBarBridge {\n${bridgeExtraSource()}`);
+		activity = activity.replace(/\n\}\s*$/, () => `\n${insetsSource()}}\n`);
+		activity = activity.replace(/(super\.onWebViewCreate\(webView\)\n)/, () => `$1    installInsets(webView)\n`);
+		if (!activity.includes("fun safeTop") || !activity.includes("installInsets(webView)")) throw new Error("could not patch MainActivity.kt (template changed?)");
 	}
 	writeFileSync(activityPath, activity);
 	console.log("patched MainActivity.kt");
@@ -479,6 +515,18 @@ function activityHelpersSource(): string {
     ) {
       requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
     }
+    // Local-network access: the system blocks LAN addresses for the whole app (including the node server) until this is granted.
+    // Unknown permission names are simply denied on older Android, so asking is safe everywhere.
+    val lan = arrayOf("android.permission.NEARBY_WIFI_DEVICES", "android.permission.ACCESS_LOCAL_NETWORK")
+      .filter { checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED }
+    val lprefs = getSharedPreferences("prometheus", MODE_PRIVATE)
+    if (android.os.Build.VERSION.SDK_INT >= 33 && lan.isNotEmpty() && lprefs.getInt("asked_lan", 0) < 2) {
+      lprefs.edit().putInt("asked_lan", lprefs.getInt("asked_lan", 0) + 1).apply()
+      try {
+        requestPermissions(lan.toTypedArray(), 2)
+      } catch (_: Exception) {
+      }
+    }
     // Ask once to be exempt from battery optimisation, otherwise Doze cuts background network access.
     val pm = getSystemService(android.os.PowerManager::class.java)
     val bprefs = getSharedPreferences("prometheus", MODE_PRIVATE)
@@ -572,6 +620,7 @@ function systemBarSource(): string {
   // The page reports its own theme (Settings > Appearance), which may differ from the phone's dark mode.
   override fun onWebViewCreate(webView: android.webkit.WebView) {
     super.onWebViewCreate(webView)
+    installInsets(webView)
     try {
       webView.addJavascriptInterface(SystemBarBridge(), "PrometheusHost")
     } catch (_: Throwable) {
@@ -579,6 +628,7 @@ function systemBarSource(): string {
   }
 
   inner class SystemBarBridge {
+${bridgeExtraSource()}
     @android.webkit.JavascriptInterface
     fun theme(dark: Boolean) {
       runOnUiThread { applySystemBarTheme(dark) }
@@ -608,6 +658,80 @@ function systemBarSource(): string {
     }
     // Behind the transparent bars: the app's own background, so no white strip appears in dark mode.
     w.setBackgroundDrawableResource(if (dark) android.R.color.black else android.R.color.white)
+  }
+${insetsSource()}`;
+}
+
+/** Methods of the PrometheusHost bridge beyond theme(): file download and status bar height. */
+function bridgeExtraSource(): string {
+	return `
+    /** Saves a one-time download link into the public Downloads folder with the system DownloadManager (the opener plugin refuses loopback URLs). */
+    @android.webkit.JavascriptInterface
+    fun download(url: String, name: String) {
+      try {
+        val clean = name.map { if (it < ' ' || "/\\\\:*?\\"<>|".indexOf(it) >= 0) '_' else it }.joinToString("").trim().ifEmpty { "file" }
+        val dir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+        var target = clean
+        var n = 1
+        val dot = clean.lastIndexOf('.')
+        while (java.io.File(dir, target).exists()) {
+          target = if (dot > 0) clean.substring(0, dot) + " (" + n + ")" + clean.substring(dot) else clean + " (" + n + ")"
+          n++
+        }
+        val req = android.app.DownloadManager.Request(android.net.Uri.parse(url))
+          .setTitle(target)
+          .setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+          .setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, target)
+        getSystemService(android.app.DownloadManager::class.java).enqueue(req)
+      } catch (_: Throwable) {
+      }
+    }
+
+    /** Status bar height in CSS px; the page asks because it may load before the insets callback ran. */
+    @android.webkit.JavascriptInterface
+    fun safeTop(): Int = cssPx(if (statusTopPx > 0) statusTopPx else resourceStatusTopPx())
+`;
+}
+
+/** Keyboard (IME) and status bar insets: the shell is edge-to-edge, so neither is applied for us. */
+function insetsSource(): string {
+	return `
+  private var statusTopPx = 0
+
+  /** Insets and dimension resources are physical pixels; the page lays out in CSS px (= dp). */
+  private fun cssPx(devicePx: Int): Int {
+    val density = resources.displayMetrics.density
+    return if (density > 0f) Math.round(devicePx / density) else devicePx
+  }
+
+  private fun resourceStatusTopPx(): Int {
+    val id = resources.getIdentifier("status_bar_height", "dimen", "android")
+    return if (id > 0) resources.getDimensionPixelSize(id) else 0
+  }
+
+  private fun installInsets(webView: android.webkit.WebView) {
+    androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(webView) { v, insets ->
+      val top = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars() or androidx.core.view.WindowInsetsCompat.Type.displayCutout()).top
+      statusTopPx = top
+      v.post {
+        webView.evaluateJavascript("document.documentElement.style.setProperty('--safe-top','" + cssPx(top) + "px')", null)
+      }
+      // edge-to-edge windows stop resizing for the keyboard from API 30, so shrink the WebView by hand.
+      if (android.os.Build.VERSION.SDK_INT >= 30) {
+        val ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime()).bottom
+        val lp = v.layoutParams
+        if (lp is android.view.ViewGroup.MarginLayoutParams) {
+          if (lp.bottomMargin != ime) {
+            lp.bottomMargin = ime
+            v.layoutParams = lp
+          }
+        } else {
+          v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, ime)
+        }
+      }
+      insets
+    }
+    webView.post { androidx.core.view.ViewCompat.requestApplyInsets(webView) }
   }
 `;
 }

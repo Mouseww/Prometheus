@@ -50,6 +50,10 @@ export interface PrometheusConfig {
 	worktreeStrategy: string;
 	/** "ask": reading outside a chat's working folder needs confirmation. Absent means "allow". An administrator policy overrides it. */
 	readOutsideProject?: "allow" | "ask";
+	/** Pull the base branch up to date before a new chat gets its own worktree. */
+	worktreeAutoPull: boolean;
+	/** Chats untouched for more than this many days drop out of the session list; 0 keeps everything. */
+	recycleDays: number;
 }
 
 function normalizeNetwork(raw: Partial<NetworkConfig> | undefined): NetworkConfig {
@@ -67,7 +71,7 @@ export function defaultDataDir(): string {
 	return process.env.PROMETHEUS_HOME || join(homedir(), ".prometheus");
 }
 
-const EMPTY: PrometheusConfig = { gateways: [], agents: [], plugins: [], disabledPlugins: [], pluginSettings: {}, network: normalizeNetwork(undefined), workspaceRoot: "", defaultAgent: "", defaultPermission: "", defaultThinking: "", goalTurns: 0, compactPercent: 0, worktreeMode: "", worktreeDefault: true, worktreeStrategy: "" };
+const EMPTY: PrometheusConfig = { gateways: [], agents: [], plugins: [], disabledPlugins: [], pluginSettings: {}, network: normalizeNetwork(undefined), workspaceRoot: "", defaultAgent: "", defaultPermission: "", defaultThinking: "", goalTurns: 0, compactPercent: 0, worktreeMode: "", worktreeDefault: true, worktreeStrategy: "", worktreeAutoPull: false, recycleDays: 0 };
 
 /** config.json holds API keys, so it is always written owner-only. */
 export class ConfigStore {
@@ -102,6 +106,8 @@ export class ConfigStore {
 				worktreeMode: typeof raw.worktreeMode === "string" ? raw.worktreeMode : "",
 				worktreeDefault: raw.worktreeDefault !== false,
 				worktreeStrategy: typeof raw.worktreeStrategy === "string" ? raw.worktreeStrategy : "",
+				worktreeAutoPull: raw.worktreeAutoPull === true,
+				recycleDays: typeof raw.recycleDays === "number" && raw.recycleDays >= 1 ? Math.floor(raw.recycleDays) : 0,
 				goalTurns: typeof raw.goalTurns === "number" && raw.goalTurns >= 1 ? Math.floor(raw.goalTurns) : 0,
 				// Out-of-range values are dropped rather than clamped: the caller falls back to the default.
 				...(raw.readOutsideProject === "ask" ? { readOutsideProject: "ask" as const } : {}),
@@ -175,10 +181,17 @@ export class ConfigStore {
 		await this.persist();
 	}
 
-	async setWorktree(patch: { mode?: string; default?: boolean; strategy?: string }): Promise<void> {
+	async setWorktree(patch: { mode?: string; default?: boolean; strategy?: string; autoPull?: boolean }): Promise<void> {
 		if (patch.mode !== undefined) this.config.worktreeMode = patch.mode === "ask" ? "" : patch.mode;
 		if (patch.default !== undefined) this.config.worktreeDefault = patch.default;
 		if (patch.strategy !== undefined) this.config.worktreeStrategy = patch.strategy === "squash" ? "" : patch.strategy;
+		if (patch.autoPull !== undefined) this.config.worktreeAutoPull = patch.autoPull;
+		await this.persist();
+	}
+
+	/** Days of inactivity after which a chat is recycled out of the list; anything below 1 turns it off. */
+	async setRecycleDays(days: number): Promise<void> {
+		this.config.recycleDays = Number.isFinite(days) && days >= 1 ? Math.min(3650, Math.floor(days)) : 0;
 		await this.persist();
 	}
 

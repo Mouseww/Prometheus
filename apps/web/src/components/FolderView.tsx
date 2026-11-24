@@ -79,10 +79,12 @@ export function FolderView({ cwd }: { cwd: string }) {
 							<Collapse open={open.has(e.path)}>{render(e.path, depth + 1)}</Collapse>
 						</div>
 					) : (
-						<button key={e.path} type="button" onClick={() => openFile(e.path, cwd)} className="flex w-full items-center gap-1.5 rounded px-2 py-[3px] text-left text-[13px] text-ink-300 hover:bg-ink-800 hover:text-ink-100" style={{ paddingLeft: 8 + depth * 14 + 16 }} title={e.path}>
-							<File className="size-3.5 shrink-0 text-ink-500" />
-							<span className="truncate">{e.name}</span>
-						</button>
+						<div key={e.path} className="group flex w-full items-center rounded text-ink-300 hover:bg-ink-800 hover:text-ink-100">
+							<button type="button" onClick={() => openFile(e.path, cwd)} className="flex min-w-0 flex-1 items-center gap-1.5 py-[3px] pr-1 text-left text-[13px] max-md:py-2" style={{ paddingLeft: 8 + depth * 14 + 16 }} title={e.path}>
+								<File className="size-3.5 shrink-0 text-ink-500" />
+								<span className="truncate">{e.name}</span>
+							</button>
+						</div>
 					),
 				)}
 				{l.truncated && <p className="px-3 py-1 text-[11px] text-ink-500">{t("truncated")}</p>}

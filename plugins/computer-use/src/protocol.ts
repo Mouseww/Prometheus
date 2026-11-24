@@ -17,6 +17,8 @@ export const OPS = [
 	"expand",
 	"collapse",
 	"scroll",
+	/** Drag the element onto the element whose ref is `value` (capability "drag"). */
+	"drag",
 ] as const;
 export type Op = (typeof OPS)[number];
 
@@ -97,6 +99,12 @@ export interface DriverMethods {
 	"tree.snapshot": { params: { window: string; scope?: string; maxNodes?: number; maxDepth?: number }; result: SnapshotResult };
 	"node.act": { params: { ref: string; op: Op; value?: string }; result: ActResult };
 	"input.keys": { params: { keys: string; window?: string }; result: ActResult };
+	/** Capability "window_manage". move needs x,y; resize needs width,height. */
+	"window.manage": { params: { window: string; action: WindowAction; x?: number; y?: number; width?: number; height?: number }; result: ActResult };
+	/** Capability "clipboard". Text only. */
+	"clipboard.get": { params: Record<string, never>; result: { ok: boolean; text: string; hasText: boolean } };
+	/** Empty or missing text clears the clipboard. */
+	"clipboard.set": { params: { text?: string }; result: ActResult };
 	"input.text": { params: { text: string; window?: string }; result: ActResult };
 	/**
 	 * Block until the window's app has sent no accessibility events for `quietMs` (capability
@@ -106,6 +114,8 @@ export interface DriverMethods {
 }
 
 export type DriverMethod = keyof DriverMethods;
+
+export type WindowAction = "minimize" | "maximize" | "restore" | "close" | "move" | "resize";
 
 export interface Driver {
 	readonly hello: DriverHello;

@@ -10,14 +10,23 @@
  * read off. The plaintext side still has to be stored to restore it, and that file lives in the
  * plugin data dir with owner-only permissions.
  */
-import { createHash, randomInt } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { formatPlaceholder, newUlid, parsePlaceholder } from "./placeholder.ts";
+import { formatPlaceholder, keyedId, MAX_ID_LEN, MIN_ID_LEN, parsePlaceholder } from "./placeholder.ts";
 
-/** First 16 hex chars of SHA-256; enough to be collision-free for a personal mapping table. */
-export function plaintextKey(plaintext: string): string {
-	return createHash("sha256").update(plaintext, "utf8").digest("hex").slice(0, 16);
+/** Per-install secret: generated on first run, then read back. Owner-only file, never leaves the machine. */
+export async function loadOrCreateKey(path: string): Promise<Buffer> {
+	try {
+		const existing = Buffer.from((await readFile(path, "utf8")).trim(), "hex");
+		if (existing.length >= 32) return existing;
+	} catch {
+		// first run
+	}
+	const key = randomBytes(32);
+	await mkdir(dirname(path), { recursive: true });
+	await writeFile(path, key.toString("hex"), { mode: 0o600 });
+	return key;
 }
 
 interface Entry {
@@ -37,6 +46,8 @@ interface File {
 
 export interface StoreOptions {
 	path: string;
+	/** The install key; every placeholder is derived from it with HMAC, so it must stay stable. */
+	key: Buffer;
 	/** Entries untouched for this long are dropped on load. 0 disables expiry. */
 	ttlDays?: number;
 	/** Hard cap; oldest entries are evicted beyond it. */
@@ -49,11 +60,13 @@ export class MappingStore {
 	private dirty = false;
 	private writing: Promise<void> = Promise.resolve();
 	private readonly path: string;
+	private readonly secret: Buffer;
 	private readonly ttlMs: number;
 	private readonly cap: number;
 
 	constructor(options: StoreOptions) {
 		this.path = options.path;
+		this.secret = options.key;
 		this.ttlMs = (options.ttlDays ?? 90) > 0 ? (options.ttlDays ?? 90) * 24 * 60 * 60 * 1000 : 0;
 		this.cap = options.cap ?? 100_000;
 	}
@@ -85,15 +98,22 @@ export class MappingStore {
 
 	/** The placeholder for `plaintext`, creating one on first sight. */
 	getOrInsert(typePrefix: string, plaintext: string): string {
-		const key = plaintextKey(plaintext);
+		const key = this.plaintextKey(typePrefix, plaintext);
 		const existing = this.entries.get(key);
 		if (existing) {
 			existing.lastSeen = Date.now();
 			this.dirty = true;
 			return existing.token;
 		}
+		// Deterministic and short; a longer id is used only if a different secret already owns the short one.
+		let token = "";
+		for (let len = MIN_ID_LEN; len <= MAX_ID_LEN; len++) {
+			token = formatPlaceholder({ typePrefix, id: keyedId(this.secret, typePrefix, plaintext, len) });
+			const owner = this.byToken.get(token);
+			if (!owner || owner.plaintext === plaintext) break;
+		}
 		const entry: Entry = {
-			token: formatPlaceholder({ typePrefix, id: newUlid(Date.now(), () => randomInt(1 << 20) / (1 << 20)) }),
+			token,
 			plaintext,
 			createdAt: Date.now(),
 			lastSeen: Date.now(),
@@ -104,6 +124,11 @@ export class MappingStore {
 		this.dirty = true;
 		this.scheduleWrite();
 		return entry.token;
+	}
+
+	/** Table key: HMAC of type + plaintext, so the file holds nothing that can be checked against a guess without the install key. */
+	private plaintextKey(typePrefix: string, plaintext: string): string {
+		return createHmac("sha256", this.secret).update("k\u0000").update(typePrefix).update("\u0000").update(plaintext, "utf8").digest("hex").slice(0, 16);
 	}
 
 	/** The plaintext a token stands for, or undefined when this table never issued it. */

@@ -1,7 +1,9 @@
 import clsx from "clsx";
+import { sessionSpace } from "../lib/spaces.ts";
 import { ArrowUp, Brain, Check, ChevronDown, CornerDownRight, Cpu, File as FileIcon, FileText, Folder as FolderIcon, ListEnd, Maximize2, Paperclip, Pencil, Search, Square, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CommandInfo, ImageContent, ThinkingLevel } from "@prometheus/protocol";
+import { isTouchPrimary } from "../lib/backend.ts";
 import { defineMessages, useT } from "../lib/i18n.ts";
 import { Mentions, SlashCommands } from "./suggestions.tsx";
 import { type Attachment, AttachmentError, fileToAttachment, formatSize, isPicture, MAX_FILE_MB, MAX_FILES } from "../lib/attachments.ts";
@@ -256,7 +258,7 @@ ${current.provider}/${current.id}` : undefined}
 				<div className="absolute bottom-full left-3 right-3 z-40 mb-2 md:left-0 md:right-auto md:w-[26rem] animate-rise overflow-hidden rounded-xl border border-ink-700 bg-ink-900/97 shadow-2xl shadow-black/40 backdrop-blur">
 					<div className="flex items-center gap-2 border-b border-ink-800 px-3">
 						<Search className="size-3.5 text-ink-500" />
-						<input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("searchModel")} className="w-full bg-transparent py-2.5 text-sm focus:outline-none" />
+						<input autoFocus={!isTouchPrimary()} value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("searchModel")} className="w-full bg-transparent py-2.5 text-sm focus:outline-none" />
 					</div>
 					<div className="max-h-[min(20rem,45dvh)] overflow-y-auto py-1">
 						{groups.length === 0 && (
@@ -495,10 +497,12 @@ let appliedEditorNonce = 0;
 
 export function Composer({ newChat = false }: { newChat?: boolean }) {
 	const t = useT(M);
-	const personalSpace = useSpace() === "personal";
 	const session = useStore((s) => s.session);
 	// A team session whose brain moved to the other side only mirrors here: its prompts would be refused anyway.
 	const mirrored = useReadOnlyCopy(session?.id) !== undefined;
+	const home = useStore((s) => s.assistant?.home ?? null);
+	// A blank chat in the assistant's home is personal whatever tab is selected: it must not offer a project chooser.
+	const personalSpace = useSpace() === "personal" || (newChat && !!session && sessionSpace(session, home) === "personal");
 	const commands = useStore((s) => s.commands);
 	const editorText = useStore((s) => s.editorText);
 	// The unsent text, pictures and files belong to the conversation on screen, not to this component (which is
@@ -899,7 +903,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 						<WorkspacePicker>
 							<BranchPicker />
 						</WorkspacePicker>
-						{!session && <WorktreeSwitch />}
+						<WorktreeSwitch />
 					</div>
 				) : (
 					<div className="flex min-w-0 items-center gap-2">
@@ -940,7 +944,7 @@ export function Composer({ newChat = false }: { newChat?: boolean }) {
 				</button>
 				<textarea
 					ref={ref}
-					autoFocus
+					autoFocus={!isTouchPrimary()}
 					value={text}
 					onChange={(e) => {
 						setText(e.target.value);

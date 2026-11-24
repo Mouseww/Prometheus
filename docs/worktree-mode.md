@@ -161,12 +161,15 @@ interface SessionWorktree {
 - 新 RPC:
   - `worktree.status { sessionId }`:返回 ahead/behind、改动文件数、与主目录冲突的文件、与其他会话重叠的文件、可否合并及原因
   - `worktree.sync { sessionId }`:把 base 并入工作树
-  - `worktree.merge { sessionId, strategy, message?, cleanup }`
+  - `worktree.merge { sessionId, strategy, message?, resolve? }`:`resolve` 一键绕过阻塞。`overwrite` 把项目文件夹里同名的未提交版本 stash 备份后用对话版本覆盖;`keepMain` 对话放弃这些文件、只合并其余;`switchBase` 先把项目文件夹切回基础分支。合并失败会自动把备份放回去
+  - `worktree.restoreBackup { sessionId, drop? }`:把 `overwrite` 备份的版本放回项目文件夹(未提交状态);`drop` 只丢弃备份
   - `worktree.discard { sessionId }`
   - `worktree.pending { workspaceId }`:该项目所有未合并的工作树,给侧栏和清理提示用
 - 新事件:`worktree.changed`(状态变化,驱动徽标刷新)
 
 错误走现有的 `AppError(code, params)`,新增 `worktreeNotGit`、`worktreeNoCommit`、`worktreeBaseMoved`、`worktreeMainDirty`、`worktreeConflict`、`worktreeBusy`。
+
+远程感知:`worktree.status` 会对基础分支的 upstream 做一次节流的 `git fetch`(30 秒一次,合并前强制刷新),返回 `remote { ref, behind, landed, overlap }`。若远程已包含本对话的全部改动(`landed`,例如 PR 已在远程合并而本地未 pull),或远程改了同样的文件(`overlap`),合并被拦下并提示先在项目文件夹 pull,新增 `worktreeLanded`、`worktreeRemoteMoved`。无 upstream 或离线时跳过检查。
 
 ### 界面
 

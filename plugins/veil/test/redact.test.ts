@@ -5,17 +5,18 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_ALLOWLIST, RuleSet, builtinRules } from "../src/engine/rules.ts";
 import { RestoreWindow } from "../src/engine/sliding.ts";
 import { MappingStore } from "../src/engine/store.ts";
-import { desensitizeJson, desensitizeString, restoreJson, restoreString, type Json } from "../src/engine/walk.ts";
+import { desensitizeJson, desensitizeString, restoreAssistantMessage, restoreInPlace, restoreJson, restoreString, type Json } from "../src/engine/walk.ts";
 import { findPlaceholders, parsePlaceholder } from "../src/engine/placeholder.ts";
 import { shouldSkipDesensitize } from "../src/engine/binary.ts";
 
+const KEY = Buffer.alloc(32, 7);
 let dir: string;
 let store: MappingStore;
 const rules = () => new RuleSet({ rules: builtinRules(), allowlist: DEFAULT_ALLOWLIST });
 
 beforeEach(async () => {
 	dir = await mkdtemp(join(tmpdir(), "veil-test-"));
-	store = new MappingStore({ path: join(dir, "mappings.json"), ttlDays: 0 });
+	store = new MappingStore({ path: join(dir, "mappings.json"), key: KEY, ttlDays: 0 });
 });
 
 afterEach(async () => {
@@ -26,7 +27,7 @@ afterEach(async () => {
 describe("placeholder", () => {
 	it("formats and parses a round trip", () => {
 		const token = store.getOrInsert("PHONE", "13800138000");
-		expect(token).toMatch(/^\{\{PHONE_[0-9A-HJKMNP-TV-Z]{26}\}\}$/);
+		expect(token).toMatch(/^\{\{PHONE_[0-9A-HJKMNP-TV-Z]{8}\}\}$/);
 		const parsed = parsePlaceholder(token);
 		expect(parsed?.typePrefix).toBe("PHONE");
 	});
@@ -35,6 +36,26 @@ describe("placeholder", () => {
 		expect(parsePlaceholder("{{PHONE_xxxx}}")).toBeUndefined();
 		expect(parsePlaceholder("{{TODO_1}}")).toBeUndefined();
 		expect(parsePlaceholder("{{phone_01ARZ3NDEKTSV4RRFFQ69G5FAV}}")).toBeUndefined();
+	});
+});
+
+describe("keyed placeholder", () => {
+	it("is short, stable for one install and different across installs", async () => {
+		const other = new MappingStore({ path: join(dir, "o.json"), key: Buffer.alloc(32, 9), ttlDays: 0 });
+		const same = new MappingStore({ path: join(dir, "x.json"), key: KEY, ttlDays: 0 });
+		const a = store.getOrInsert("PHONE", "13800138000");
+		expect(a.length).toBeLessThanOrEqual("{{PHONE_}}".length + 8);
+		expect(same.getOrInsert("PHONE", "13800138000")).toBe(a);
+		expect(other.getOrInsert("PHONE", "13800138000")).not.toBe(a);
+		// Background writes must land before the temp dir is removed (EBUSY on Windows otherwise).
+		await Promise.all([same.flush(), other.flush()]);
+	});
+
+	it("restores a token whose closing brace is split off", () => {
+		const token = store.getOrInsert("PHONE", "13800138000");
+		const window = new RestoreWindow(store);
+		const out = window.push(token.slice(0, -1)) + window.push(token.slice(-1)) + window.flush();
+		expect(out).toBe("13800138000");
 	});
 });
 
@@ -54,7 +75,7 @@ describe("store", () => {
 	it("persists across reloads so old conversations still restore", async () => {
 		const token = store.getOrInsert("PHONE", "13800138000");
 		await store.flush();
-		const second = new MappingStore({ path: join(dir, "mappings.json"), ttlDays: 0 });
+		const second = new MappingStore({ path: join(dir, "mappings.json"), key: KEY, ttlDays: 0 });
 		const loaded = await second.load();
 		expect(loaded.loaded).toBe(1);
 		expect(second.lookup(token)).toBe("13800138000");
@@ -140,5 +161,53 @@ describe("streaming window", () => {
 		const window = new RestoreWindow(store);
 		const fake = "{{PHONE_01ARZ3NDEKTSV4RRFFQ69G5FAV}}";
 		expect(window.push(fake) + window.flush()).toBe(fake);
+	});
+});
+
+describe("restore the reply shown to the user (PI path)", () => {
+	it("puts real values back into text and tool-call arguments", () => {
+		const phone = "13800138000";
+		const token = store.getOrInsert("PHONE", phone);
+		const message = {
+			role: "assistant",
+			content: [
+				{ type: "text", text: `电话是 ${token}` },
+				{ type: "toolCall", id: "c1", name: "bash", arguments: { command: `echo ${token}`, nested: { list: [token] } } },
+			],
+		};
+		const out = restoreAssistantMessage(message, store);
+		expect(out).not.toBe(message);
+		expect(out.content[0]).toEqual({ type: "text", text: `电话是 ${phone}` });
+		expect((out.content[1] as { arguments: unknown }).arguments).toEqual({ command: `echo ${phone}`, nested: { list: [phone] } });
+		// The input is not mutated, and a second pass has nothing left to do.
+		expect((message.content[0] as { text: string }).text).toContain(token);
+		expect(restoreAssistantMessage(out, store)).toBe(out);
+	});
+
+	it("leaves signed thinking, unknown tokens and other roles alone", () => {
+		const token = store.getOrInsert("PHONE", "13800138000");
+		const signed = { role: "assistant", content: [{ type: "thinking", thinking: token, thinkingSignature: "sig" }, { type: "text", text: "{{PHONE_ZZZZZZZZ}}" }] };
+		expect(restoreAssistantMessage(signed, store)).toBe(signed);
+		const user = { role: "user", content: [{ type: "text", text: token }] };
+		expect(restoreAssistantMessage(user, store)).toBe(user);
+		const plain = { role: "assistant", content: [{ type: "thinking", thinking: `想到 ${token}` }] };
+		expect((restoreAssistantMessage(plain, store).content[0] as { thinking: string }).thinking).toBe("想到 13800138000");
+	});
+
+	it("restores tool input in place and reports whether it changed", () => {
+		const token = store.getOrInsert("APIKEY", "sk-abcdefghijklmnop");
+		const input = { command: `curl -H "Authorization: ${token}"`, args: [token, 1] };
+		expect(restoreInPlace(input, store)).toBe(true);
+		expect(input).toEqual({ command: 'curl -H "Authorization: sk-abcdefghijklmnop"', args: ["sk-abcdefghijklmnop", 1] });
+		expect(restoreInPlace(input, store)).toBe(false);
+	});
+
+	it("round-trips a masked request through a reply that quotes the alias", () => {
+		const payload = { messages: [{ role: "user", content: "我的手机 13800138000" }] };
+		const masked = desensitizeJson(payload as unknown as Json, rules(), store) as typeof payload;
+		const alias = String(masked.messages[0]?.content).replace("我的手机 ", "");
+		expect(alias).toMatch(/^\{\{PHONE_/);
+		const reply = restoreAssistantMessage({ role: "assistant", content: [{ type: "text", text: `收到 ${alias}` }] }, store);
+		expect((reply.content[0] as { text: string }).text).toBe("收到 13800138000");
 	});
 });

@@ -36,6 +36,8 @@ export interface ToolCallContent { type: "toolCall"; id: string; name: string; a
 export interface Usage {
 	input: number;
 	output: number;
+	/** Thinking tokens. Counted outside `output` by providers that report it here, so display code adds it to `output` rather than assuming it is included. */
+	reasoning?: number;
 	cacheRead: number;
 	cacheWrite: number;
 	totalTokens: number;
@@ -415,11 +417,20 @@ export interface SessionWorktree {
 	createdAt: string;
 	/** Paths (relative to `path`) that are linked or copied in from the project and never committed. */
 	skip?: string[];
+	/** Project-folder versions set aside by the last merge that replaced uncommitted edits; they can be put back. */
+	backup?: { commit: string; files: string[] };
 }
 
 export type WorktreeSetting = "off" | "ask" | "on";
 export type WorktreeOverride = "inherit" | "off" | "on";
 export type WorktreeStrategy = "squash" | "merge" | "apply";
+/**
+ * How to get past what blocks a merge, chosen by the user in one click:
+ * `overwrite` backs up the project folder's uncommitted copies of the chat's files, then replaces them;
+ * `keepMain` leaves those files as they are in the project folder and merges the rest;
+ * `switchBase` checks the base branch out in the project folder first.
+ */
+export type WorktreeResolve = "overwrite" | "keepMain" | "switchBase";
 
 export interface WorktreeFile {
 	path: string;
@@ -429,6 +440,18 @@ export interface WorktreeFile {
 	added?: number;
 	deleted?: number;
 	binary?: boolean;
+}
+
+/** Where the base branch stands against its upstream; the project folder may not know yet that the remote moved on. */
+export interface WorktreeRemote {
+	/** Upstream ref, e.g. origin/main. */
+	ref: string;
+	/** Commits the upstream has that the local base branch lacks. */
+	behind: number;
+	/** The upstream already holds every change of the chat (merged there, e.g. by a pull request): merging locally would diverge. */
+	landed: boolean;
+	/** Changed files the upstream also changed since; merging locally would fork from the remote. */
+	overlap: string[];
 }
 
 /** What the review panel shows and the merge button depends on. */
@@ -445,8 +468,10 @@ export interface WorktreeStatus {
 	mainDirty: string[];
 	/** Other chats of the same project that changed the same files. */
 	overlaps: { sessionId: string; files: string[] }[];
+	/** The base branch's upstream (after a quiet fetch); absent when it has none or is unreachable. */
+	remote?: WorktreeRemote;
 	/** Error code of what blocks merging right now, if anything. */
-	blocked?: "worktreeBaseMoved" | "worktreeMainDirty" | "worktreeConflict" | "worktreeBusy" | "worktreeGone" | "worktreeEmpty";
+	blocked?: "worktreeLanded" | "worktreeRemoteMoved" | "worktreeBaseMoved" | "worktreeMainDirty" | "worktreeConflict" | "worktreeBusy" | "worktreeGone" | "worktreeEmpty";
 	/** Parameter of the blocking error (branch name, file list). */
 	blockedDetail?: string;
 }
@@ -510,6 +535,10 @@ export interface HostSettings {
 	readOutsideProject?: "allow" | "ask";
 	/** Locks the administrator set; absent when nobody manages this install. Older servers omit it. */
 	policy?: PublicAdminPolicy;
+	/** Pull the base branch to the latest before creating a chat worktree. False when unset. */
+	worktreeAutoPull?: boolean;
+	/** Chats idle for more than this many days are recycled out of the session list; 0 or unset keeps all. */
+	recycleDays?: number;
 }
 
 // ---------- Subagents ----------
@@ -682,6 +711,39 @@ export interface PiGatewayInfo {
 	missingKey: boolean;
 }
 
+/** What a platform-to-platform sync moves. Every part is optional and off unless asked for. */
+export type SyncScope = "gateways" | "settings" | "projects" | "sessions";
+export const SYNC_SCOPES: readonly SyncScope[] = ["gateways", "settings", "projects", "sessions"];
+
+/** Settings that are the same on any machine; paths and executables stay where they are. */
+export type SyncSettings = Pick<HostSettings, "autoCompaction" | "defaultAgent" | "defaultPermission" | "defaultThinking" | "goalTurns" | "compactPercent" | "worktreeMode" | "worktreeDefault" | "worktreeStrategy" | "worktreeAutoPull" | "recycleDays">;
+
+/** One conversation on its way between platforms. `id` is the id on the platform it came from and is how repeats are recognised. */
+export interface SyncSession {
+	id: string;
+	name?: string;
+	cwd: string;
+	created: string;
+	modified: string;
+	messages: ChatMessage[];
+}
+
+export interface SyncBundle {
+	/** Gateways with their keys: the whole point is that the other side can use them. */
+	gateways?: GatewayConfig[];
+	settings?: SyncSettings;
+	projects?: { path: string; name: string; extraPaths?: string[] }[];
+	sessions?: SyncSession[];
+}
+
+/** What the receiving side did with a bundle, per scope. `skipped` entries say why. */
+export interface SyncReport {
+	gateways: { added: number; updated: number; skipped: { id: string; reason: string }[] };
+	settings: boolean;
+	projects: { added: number; skipped: { id: string; reason: string }[] };
+	sessions: { added: number; skipped: { id: string; reason: string }[] };
+}
+
 export interface GatewayConfig {
 	id: string;
 	name: string;
@@ -732,6 +794,8 @@ export interface KnowledgeBaseInfo {
 export interface UsageTotals {
 	input: number;
 	output: number;
+	/** Thinking tokens, kept apart from `output` because providers report them separately. */
+	reasoning?: number;
 	cacheRead: number;
 	cacheWrite: number;
 	cost: number;
@@ -1398,8 +1462,12 @@ export interface RpcMethods {
 	"worktree.status": { params: { sessionId: string }; result: WorktreeStatus };
 	/** Folds the base branch into the chat's checkout; conflicts stay there. */
 	"worktree.sync": { params: { sessionId: string }; result: WorktreeStatus };
+	/** Fast-forwards the project folder's base branch to its remote, for changes that already landed there. */
+	"worktree.pullBase": { params: { sessionId: string }; result: WorktreeStatus };
 	/** Lands the chat's changes in the project folder, then starts the chat over from the new base. */
-	"worktree.merge": { params: { sessionId: string; strategy?: WorktreeStrategy; message?: string }; result: WorktreeStatus };
+	"worktree.merge": { params: { sessionId: string; strategy?: WorktreeStrategy; message?: string; resolve?: WorktreeResolve }; result: WorktreeStatus };
+	/** Puts back (or, with `drop`, just forgets) the project-folder versions a merge set aside. */
+	"worktree.restoreBackup": { params: { sessionId: string; drop?: boolean }; result: WorktreeStatus };
 	/** Deletes the checkout and the branch; the chat stays as read-only history. */
 	"worktree.discard": { params: { sessionId: string }; result: null };
 	/** Unmerged worktree chats of a project. */
@@ -1456,6 +1524,13 @@ export interface RpcMethods {
 	"gateway.piList": { params: Record<string, never>; result: PiGatewayInfo[] };
 	/** Import the named PI providers (all importable ones when `ids` is omitted); returns the ids imported. */
 	"gateway.piImport": { params: { ids?: string[] }; result: { imported: string[]; skipped: { id: string; reason: string }[] } };
+
+	/** The syncable settings, gateways and projects of this platform, plus a light list of its sessions (no messages). */
+	"sync.export": { params: { scopes: SyncScope[] }; result: SyncBundle & { sessionList?: SessionSummary[] } };
+	/** One session with its messages, for `sync.import` on the other platform. */
+	"sync.exportSession": { params: { sessionId: string }; result: SyncSession };
+	/** Applies a bundle from another platform. With `overwrite` false, gateways that already exist are left alone. */
+	"sync.import": { params: { bundle: SyncBundle; overwrite?: boolean }; result: SyncReport };
 
 	"kb.list": { params: Record<string, never>; result: KnowledgeBaseInfo[] };
 	"kb.create": { params: { name: string; description?: string; store?: string; embedding: { gatewayId: string; model: string } }; result: KnowledgeBaseInfo };
@@ -1539,9 +1614,26 @@ export interface GatewayPreset {
 	models: GatewayModel[];
 	/** Page where the user creates an API key. */
 	keyUrl: string;
+	/** Sponsored provider: listed first and badged in the picker; keyUrl is its registration page. */
+	sponsored?: boolean;
 }
 
 export const GATEWAY_PRESETS: readonly GatewayPreset[] = [
+	{
+		id: "infistar",
+		name: "无限星河AI",
+		description: { zh: "赞助合作 · 无限星河AI（Infistar）OpenAI 兼容网关，注册即用", en: "Sponsored · Infistar OpenAI-compatible gateway, sign up and go" },
+		format: "openai-completions",
+		baseUrl: "https://infistar.cc/v1",
+		auth: { type: "bearer" },
+		keyUrl: "https://www.infistar.cc/register?aff=5NAGNQX3&ref_source=link",
+		sponsored: true,
+		// A starting point only; use "load models" in the editor to sync the live list.
+		models: [
+			{ id: "gpt-5.5", name: "GPT-5.5", contextWindow: 1_000_000, maxTokens: 128_000, reasoning: true },
+			{ id: "gpt-5.4", name: "GPT-5.4", contextWindow: 1_000_000, maxTokens: 128_000, reasoning: true, vision: true },
+		],
+	},
 	{
 		id: "deepseek",
 		name: "DeepSeek",

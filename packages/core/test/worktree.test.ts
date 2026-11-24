@@ -53,6 +53,15 @@ describe("worktree mode", () => {
 		expect(st.blocked).toBeUndefined();
 	});
 
+	it("carries uncommitted and untracked edits of the project folder into a new checkout", async () => {
+		writeFileSync(join(repo, "a.txt"), "dirty\n");
+		writeFileSync(join(repo, "loose.txt"), "loose\n");
+		const wt = await open("s1");
+		expect(readFileSync(join(wt.cwd, "a.txt"), "utf8")).toBe("dirty\n");
+		expect(readFileSync(join(wt.cwd, "loose.txt"), "utf8")).toBe("loose\n");
+		expect(readFileSync(join(repo, "a.txt"), "utf8")).toBe("dirty\n");
+	});
+
 	it("drops files whose content already landed on the base branch some other way", async () => {
 		const wt = await open("s1");
 		writeFileSync(join(wt.cwd, "a.txt"), "same\n");
@@ -169,6 +178,91 @@ describe("worktree mode", () => {
 		await mgr.merge("s1", "squash");
 		expect(readFileSync(join(repo, "a.txt"), "utf8")).toBe("chat\n");
 		expect(readFileSync(join(repo, "b.txt"), "utf8")).toBe("unrelated edit\n");
+	});
+
+	it("overwrite: sets the project folder's edits aside in a stash, merges, and can put them back", async () => {
+		const wt = await open("s1");
+		writeFileSync(join(wt.cwd, "a.txt"), "chat\n");
+		writeFileSync(join(wt.cwd, "new.txt"), "chat-new\n");
+		writeFileSync(join(repo, "a.txt"), "mine\n");
+		writeFileSync(join(repo, "new.txt"), "mine-new\n");
+		const st = await mgr.merge("s1", "squash", undefined, "overwrite");
+		expect(readFileSync(join(repo, "a.txt"), "utf8")).toBe("chat\n");
+		expect(readFileSync(join(repo, "new.txt"), "utf8")).toBe("chat-new\n");
+		expect(st.worktree.backup?.files.sort()).toEqual(["a.txt", "new.txt"]);
+		const back = await mgr.restoreBackup("s1");
+		expect(back.worktree.backup).toBeUndefined();
+		expect(readFileSync(join(repo, "a.txt"), "utf8")).toBe("mine\n");
+		expect(readFileSync(join(repo, "new.txt"), "utf8")).toBe("mine-new\n");
+		expect(sh(repo, "stash", "list")).toBe("");
+	});
+
+	it("keepMain: merges the other files and leaves the project folder's edited ones alone", async () => {
+		const wt = await open("s1");
+		writeFileSync(join(wt.cwd, "a.txt"), "chat\n");
+		writeFileSync(join(wt.cwd, "b.txt"), "chat-b\n");
+		writeFileSync(join(repo, "a.txt"), "mine\n");
+		await mgr.merge("s1", "squash", undefined, "keepMain");
+		expect(readFileSync(join(repo, "a.txt"), "utf8")).toBe("mine\n");
+		expect(readFileSync(join(repo, "b.txt"), "utf8")).toBe("chat-b\n");
+		expect(sh(repo, "status", "--porcelain")).toBe("M a.txt");
+	});
+
+	it("switchBase: checks the base branch out in the project folder, then merges", async () => {
+		const wt = await open("s1");
+		writeFileSync(join(wt.cwd, "a.txt"), "chat\n");
+		sh(repo, "checkout", "-q", "-b", "other");
+		await mgr.merge("s1", "squash", undefined, "switchBase");
+		expect(sh(repo, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
+		expect(readFileSync(join(repo, "a.txt"), "utf8")).toBe("chat\n");
+	});
+
+	it("blocks the merge when the remote already holds the chat's changes but the project folder has not pulled", async () => {
+		const bare = join(tmp, "remote.git");
+		sh(tmp, "init", "-q", "--bare", "-b", "main", bare);
+		sh(repo, "remote", "add", "origin", bare);
+		sh(repo, "push", "-q", "-u", "origin", "main");
+		const wt = await open("s1");
+		writeFileSync(join(wt.cwd, "a.txt"), "remote-merged\n");
+		await mgr.checkpoint("s1");
+		// Someone merges the same change on the remote (pull request); the project folder has not pulled.
+		const other = join(tmp, "other");
+		sh(tmp, "clone", "-q", bare, other);
+		sh(other, "config", "user.email", "o@o");
+		sh(other, "config", "user.name", "o");
+		sh(other, "config", "commit.gpgsign", "false");
+		writeFileSync(join(other, "a.txt"), "remote-merged\n");
+		sh(other, "commit", "-qam", "pr merged");
+		sh(other, "push", "-q", "origin", "main");
+		const st = await mgr.status("s1", true);
+		expect(st.remote).toMatchObject({ ref: "origin/main", behind: 1, landed: true });
+		expect(st.blocked).toBe("worktreeLanded");
+		await expect(mgr.merge("s1", "squash")).rejects.toMatchObject({ code: "worktreeLanded" });
+		// After pulling, the changes are no longer pending at all.
+		sh(repo, "pull", "-q", "--ff-only");
+		const after = await mgr.status("s1", true);
+		expect(after.files).toEqual([]);
+		expect(after.remote?.behind).toBe(0);
+	});
+
+	it("blocks when the remote changed the same files the chat did", async () => {
+		const bare = join(tmp, "remote.git");
+		sh(tmp, "init", "-q", "--bare", "-b", "main", bare);
+		sh(repo, "remote", "add", "origin", bare);
+		sh(repo, "push", "-q", "-u", "origin", "main");
+		const wt = await open("s1");
+		writeFileSync(join(wt.cwd, "a.txt"), "mine\n");
+		const other = join(tmp, "other");
+		sh(tmp, "clone", "-q", bare, other);
+		sh(other, "config", "user.email", "o@o");
+		sh(other, "config", "user.name", "o");
+		sh(other, "config", "commit.gpgsign", "false");
+		writeFileSync(join(other, "a.txt"), "theirs\n");
+		sh(other, "commit", "-qam", "remote edit");
+		sh(other, "push", "-q", "origin", "main");
+		const st = await mgr.status("s1", true);
+		expect(st.blocked).toBe("worktreeRemoteMoved");
+		expect(st.remote?.overlap).toEqual(["a.txt"]);
 	});
 
 	it("blocks when the project folder left the base branch", async () => {

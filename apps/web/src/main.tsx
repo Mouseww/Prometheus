@@ -7,10 +7,13 @@ import { installBackHandler } from "./lib/back.ts";
 import { installGlobalGuards } from "./lib/links.ts";
 import "./lib/prefs.ts";
 import { detectHubMode } from "./team/hubMode.ts";
+import { installKeyboardInset, installSafeArea } from "./lib/viewport.ts";
 import "./styles.css";
 
 installGlobalGuards();
 installBackHandler();
+installKeyboardInset();
+installSafeArea();
 
 // The desktop tray panel is a second window running this same bundle.
 const isPanel = (window as { __PROMETHEUS_PANEL__?: boolean }).__PROMETHEUS_PANEL__ === true;

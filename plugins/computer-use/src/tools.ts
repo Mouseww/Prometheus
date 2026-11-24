@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@prometheus/plugin-sdk";
 import { type ComputerService, UserFacingError } from "./computer.ts";
-import { OPS } from "./protocol.ts";
+import { OPS, type WindowAction } from "./protocol.ts";
 
 const text = (value: string) => ({ content: [{ type: "text" as const, text: value }], details: {} });
 
@@ -106,7 +106,7 @@ export function registerTools(pi: ExtensionAPI, svc: ComputerService): void {
 		description:
 			"Perform one or more actions on elements by ref, in order, then report what changed in the window (and any dialog or menu that opened). " +
 			`ops: ${OPS.join(", ")}. set_value replaces a field's text; type inserts at the caret; select takes an option name as value for combo boxes; ` +
-			"scroll takes value up/down/left/right/into_view. Stops at the first failure.",
+			"scroll takes value up/down/left/right/into_view; drag takes the ref of the drop target as value (moves the real pointer, Windows only). Stops at the first failure.",
 		parameters: Type.Object({
 			actions: Type.Array(
 				Type.Object({
@@ -138,6 +138,38 @@ export function registerTools(pi: ExtensionAPI, svc: ComputerService): void {
 		executionMode: "sequential",
 		async execute(_id, p, signal, _u, ctx) {
 			return run(() => svc.keys(sid(ctx), ctx, p.window, p.keys, p.text, signal));
+		},
+	});
+
+	pi.registerTool({
+		name: "computer_clipboard",
+		label: "剪贴板",
+		description: "Read, replace or clear the clipboard text (Windows only). Useful to paste long or non-ASCII text with ctrl+v, or to read what the user copied. The clipboard may hold private data: do not repeat it unless needed.",
+		parameters: Type.Object({
+			action: Type.Union([Type.Literal("get"), Type.Literal("set"), Type.Literal("clear")]),
+			text: Type.Optional(Type.String({ description: "For set: the text to put on the clipboard" })),
+		}),
+		executionMode: "sequential",
+		async execute(_id, p, _signal, _u, ctx) {
+			return run(() => svc.clipboard(sid(ctx), p.action, p.text));
+		},
+	});
+
+	pi.registerTool({
+		name: "computer_window",
+		label: "窗口管理",
+		description: "Minimize, maximize, restore, move, resize or close a window (Windows only). move needs x and y (screen pixels); resize needs width and height. Closing asks the user first.",
+		parameters: Type.Object({
+			action: Type.Union(["minimize", "maximize", "restore", "close", "move", "resize"].map((a) => Type.Literal(a))),
+			window: WINDOW,
+			x: Type.Optional(Type.Number()),
+			y: Type.Optional(Type.Number()),
+			width: Type.Optional(Type.Number()),
+			height: Type.Optional(Type.Number()),
+		}),
+		executionMode: "sequential",
+		async execute(_id, p, _signal, _u, ctx) {
+			return run(() => svc.manageWindow(sid(ctx), ctx, p.window, p.action as WindowAction, { x: p.x, y: p.y, width: p.width, height: p.height }));
 		},
 	});
 

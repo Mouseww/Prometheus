@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { delegatedRuns, delegationTitle, effectiveSpace, groupByAge, samePath, spaceOf } from "../src/lib/spaces.ts";
+import { delegatedRuns, delegationTitle, effectiveSpace, groupByAge, samePath, setPersonalRoots, spaceOf } from "../src/lib/spaces.ts";
 
 describe("spaces", () => {
 	it("compares paths across slash style, case and trailing separators", () => {
@@ -10,8 +10,16 @@ describe("spaces", () => {
 
 	it("puts the assistant home in the personal space and everything else in work", () => {
 		expect(spaceOf("/data/home", "/data/home")).toBe("personal");
-		expect(spaceOf("/data/home/notes", "/data/home")).toBe("work");
+		expect(spaceOf("/data/home/notes", "/data/home")).toBe("personal");
+		expect(spaceOf("/data/homework", "/data/home")).toBe("work");
 		expect(spaceOf("/proj", null)).toBe("work");
+	});
+
+	it("counts the companion's group folders as personal", () => {
+		setPersonalRoots(["/data/pet"]);
+		expect(spaceOf("/data/pet/婚礼", "/data/home")).toBe("personal");
+		expect(spaceOf("/proj/婚礼", "/data/home")).toBe("work");
+		setPersonalRoots([]);
 	});
 
 	it("has only the work space without an assistant", () => {
