@@ -21,7 +21,7 @@ export const CC_CAPABILITIES: RuntimeCapabilities = {
 	compaction: "manual+auto",
 	fork: false,
 	treeNavigation: false,
-	thinkingLevels: [],
+	thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
 	images: true,
 	liveToolListChange: true,
 	systemPromptReplace: "restart",
@@ -94,6 +94,8 @@ export class ClaudeCodeSession implements RuntimeSession {
 	private readonly extraEnv: Record<string, string>;
 	/** Where model traffic goes; changes when the user picks a model of another gateway. */
 	private gatewayChoice: GatewayChoice | undefined;
+	/** Reasoning effort chosen for this chat; undefined leaves it to the model's default. */
+	private effort: "low" | "medium" | "high" | "xhigh" | "max" | undefined;
 
 	constructor(opts: CcSessionOptions) {
 		this.id = opts.id;
@@ -192,6 +194,7 @@ export class ClaudeCodeSession implements RuntimeSession {
 			tools: NATIVE_TOOLS,
 			disallowedTools: ["Task", "Agent"],
 			strictMcpConfig: true,
+			...(this.effort ? { effort: this.effort } : {}),
 			mcpServers: {
 				[PROMETHEUS_MCP_SERVER]: { type: "http", url: this.busSession.url, headers: { Authorization: `Bearer ${this.busSession.token}` }, alwaysLoad: true } as never,
 				// The servers from Settings -> MCP, so they work without the PI agent too.
@@ -441,7 +444,13 @@ export class ClaudeCodeSession implements RuntimeSession {
 		this.q = undefined;
 		this.resume = this.persisted;
 	}
-	async setThinking(_level: ThinkingLevel): Promise<void> {}
+	async setThinking(level: ThinkingLevel): Promise<void> {
+		// Claude Code has no "off": the lowest effort is the closest thing.
+		this.effort = level === "off" || level === "minimal" ? "low" : level;
+		// A running process takes the change for its next request; a process not started yet reads it from the options.
+		await this.q?.applyFlagSettings({ effortLevel: this.effort }).catch((err) => this.services.log.warn(`[claude-code ${this.id}] effort: ${err instanceof Error ? err.message : String(err)}`));
+		this.emit({ type: "thinking_level_changed", level });
+	}
 	async setPermissionMode(mode: PermissionMode): Promise<void> {
 		this.gate.setMode(mode);
 		await this.syncNativeMode();
@@ -474,8 +483,8 @@ export class ClaudeCodeSession implements RuntimeSession {
 			cwd: this.cwd,
 			messages: this.messages(),
 			model: this.model,
-			thinkingLevel: "off",
-			availableThinkingLevels: [],
+			thinkingLevel: this.effort ?? "medium",
+			availableThinkingLevels: CC_CAPABILITIES.thinkingLevels,
 			isStreaming: this.isStreaming,
 			queue: { steering: [], followUp: [] },
 		} as RuntimeSnapshot;

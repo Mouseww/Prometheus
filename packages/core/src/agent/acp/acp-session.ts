@@ -6,7 +6,7 @@ import { userMcpServers } from "../user-mcp.ts";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { PluginTool, PluginToolContext } from "@prometheus/plugin-sdk";
-import { AppError, type ChatMessage, type CommandInfo, type GatewayFormat, type ModelRef, type PermissionMode, type PromptDisposition, type SessionEvent, type SessionStats, type ThinkingLevel, type ToolInfo, gatewayAs, pickGatewayFormat } from "@prometheus/protocol";
+import { AppError, type ChatMessage, type CommandInfo, type GatewayFormat, type ModelRef, type PermissionMode, type PromptDisposition, type SessionEvent, type SessionStats, type ThinkingLevel, THINKING_LEVELS, type ToolInfo, gatewayAs, pickGatewayFormat } from "@prometheus/protocol";
 import type { PermissionGate } from "../../permission-gate.ts";
 import { applyPermissionPrompt } from "../../permission-gate.ts";
 import type { BusSession } from "../bus/tool-bus.ts";
@@ -346,6 +346,7 @@ export class AcpSession implements RuntimeSession {
 
 	/** Models and modes the agent announced for the session: report the models, keep the agent asking before it acts. */
 	private async adoptSession(result: Record<string, any>): Promise<void> {
+		this.adoptThoughtOption(result.configOptions);
 		const models = asObject(result.models);
 		const available: any[] = Array.isArray(models.availableModels) ? models.availableModels : [];
 		if (available.length) {
@@ -358,6 +359,29 @@ export class AcpSession implements RuntimeSession {
 			await this.conn!.request("session/set_mode", { sessionId: this.nativeSessionId, modeId: "default" }, 30_000).catch((err) => this.services.log.warn(`[acp ${this.id}] set_mode: ${errText(err)}`));
 		}
 		if (this.model.provider === ACP_PROVIDER && this.model.id !== ACP_DEFAULT_MODEL && models.currentModelId !== this.model.id) await this.applyModel(this.model.id).catch((err) => this.services.log.warn(`[acp ${this.id}] set_model: ${errText(err)}`));
+	}
+
+	/** The agent's reasoning-effort config option (ACP `thought_level` category), when it announces one. */
+	private thoughtOption: { id: string; values: Map<ThinkingLevel, string> } | undefined;
+	private thinking: ThinkingLevel = "off";
+
+	private adoptThoughtOption(raw: unknown): void {
+		this.thoughtOption = undefined;
+		for (const o of Array.isArray(raw) ? raw : []) {
+			const opt = asObject(o);
+			if (opt.category !== "thought_level" || !opt.id || !Array.isArray(opt.options)) continue;
+			const values = new Map<ThinkingLevel, string>();
+			for (const v of opt.options) {
+				const value = String(asObject(v).value ?? "");
+				const level = THINKING_LEVELS.find((l) => l === value.toLowerCase());
+				if (level) values.set(level, value);
+			}
+			if (!values.size) continue;
+			this.thoughtOption = { id: String(opt.id), values };
+			const current = THINKING_LEVELS.find((l) => l === String(opt.currentValue ?? "").toLowerCase());
+			if (current) this.thinking = current;
+			return;
+		}
 	}
 
 	private async applyModel(modelId: string): Promise<void> {
@@ -581,7 +605,13 @@ export class AcpSession implements RuntimeSession {
 		this.emit({ type: "model_changed", model });
 	}
 	async setThinking(level: ThinkingLevel): Promise<void> {
-		this.emit({ type: "thinking_level_changed", level });
+		const opt = this.thoughtOption;
+		const value = opt?.values.get(level);
+		if (opt && value && this.conn) {
+			await this.conn.request("session/set_config_option", { sessionId: this.nativeSessionId, configId: opt.id, value }, 30_000);
+			this.thinking = level;
+		}
+		this.emit({ type: "thinking_level_changed", level: this.thinking });
 	}
 	async setPermissionMode(mode: PermissionMode): Promise<void> {
 		this.gate.setMode(mode);
@@ -614,8 +644,8 @@ export class AcpSession implements RuntimeSession {
 			cwd: this.cwd,
 			messages: this.messages(),
 			model: this.model,
-			thinkingLevel: "off",
-			availableThinkingLevels: ACP_CAPABILITIES.thinkingLevels,
+			thinkingLevel: this.thinking,
+			availableThinkingLevels: this.thoughtOption ? [...this.thoughtOption.values.keys()] : ACP_CAPABILITIES.thinkingLevels,
 			isStreaming: this.isStreaming,
 			queue: { steering: [], followUp: this.queue.map((q) => q.text) },
 		} as RuntimeSnapshot;

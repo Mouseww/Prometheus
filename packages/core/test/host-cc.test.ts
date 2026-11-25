@@ -69,6 +69,8 @@ describe("Claude Code through the host", { timeout: 120_000 }, () => {
 		expect(list.slice(4).map((r) => r.id)).toEqual(["qwen"]);
 		expect(list[1]!.health.available).toBe(true);
 		expect(list[1]!.capabilities.followUpQueue).toBe(false);
+		// Claude Code's own login now offers reasoning effort (SDK `effort` / applyFlagSettings).
+		expect(list[1]!.capabilities.thinkingLevels).toEqual(["low", "medium", "high", "xhigh", "max"]);
 		const models = await host.call("runtime.models", { runtime: "claude-code" });
 		// Own-login models first, then every compatible gateway's.
 		expect(models.map((m) => m.id)).toEqual(["sonnet", "opus", "haiku", "fake-model"]);
