@@ -391,11 +391,17 @@ export class AcpSession implements RuntimeSession {
 	private async applyModel(modelId: string): Promise<void> {
 		const conn = this.conn;
 		if (!conn) return;
+		let res: any;
 		try {
-			await conn.request("session/set_model", { sessionId: this.nativeSessionId, modelId }, 30_000);
+			res = await conn.request("session/set_model", { sessionId: this.nativeSessionId, modelId }, 30_000);
 		} catch (err) {
 			if (!(err instanceof AcpError) || err.code !== -32601) throw err;
-			await conn.request("session/set_config_option", { sessionId: this.nativeSessionId, configId: "model", value: modelId }, 30_000);
+			res = await conn.request("session/set_config_option", { sessionId: this.nativeSessionId, configId: "model", value: modelId }, 30_000);
+		}
+		// The thinking levels on offer can depend on the model: take the agent's fresh list when it sends one.
+		if (Array.isArray(res?.configOptions)) {
+			this.adoptThoughtOption(res.configOptions);
+			this.emit({ type: "thinking_level_changed", level: this.thinking });
 		}
 	}
 
@@ -612,8 +618,9 @@ export class AcpSession implements RuntimeSession {
 		const opt = this.thoughtOption;
 		const value = opt?.values.get(level);
 		if (opt && value && this.conn) {
-			await this.conn.request("session/set_config_option", { sessionId: this.nativeSessionId, configId: opt.id, value }, 30_000);
+			const res: any = await this.conn.request("session/set_config_option", { sessionId: this.nativeSessionId, configId: opt.id, value }, 30_000);
 			this.thinking = level;
+			if (Array.isArray(res?.configOptions)) this.adoptThoughtOption(res.configOptions);
 		}
 		this.emit({ type: "thinking_level_changed", level: this.thinking });
 	}

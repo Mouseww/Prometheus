@@ -3,6 +3,10 @@
 import { spawn } from "node:child_process";
 
 const httpMcp = process.env.FAKE_ACP_HTTP !== "0";
+// FAKE_ACP_THOUGHT=1 announces a `thought_level` config option whose values depend on the model (m1: low/medium/high, m2: low/high).
+const thought = process.env.FAKE_ACP_THOUGHT === "1";
+const levelsFor = (model) => (model === "m2" ? ["low", "high"] : ["low", "medium", "high"]);
+const configOptions = (s) => ({ configOptions: [{ id: "thought_level", name: "Thinking Level", category: "thought_level", type: "select", currentValue: s.thought, options: levelsFor(s.model).map((v) => ({ value: v, name: v })) }] });
 let seq = 0;
 const pending = new Map();
 const sessions = new Map();
@@ -106,8 +110,8 @@ function handle(msg) {
 			return send({ id, result: { protocolVersion: 1, agentInfo: { name: "fake", title: "Fake", version: "9.9.9" }, agentCapabilities: { loadSession: true, promptCapabilities: { image: true }, mcpCapabilities: { http: httpMcp, sse: false } }, authMethods: [] } });
 		case "session/new": {
 			const sessionId = `s${sessions.size + 1}`;
-			sessions.set(sessionId, { mcpServers: params.mcpServers, mode: "auto", model: "m1" });
-			send({ id, result: { sessionId, models: { currentModelId: "m1", availableModels: [{ modelId: "m1", name: "Model One" }, { modelId: "m2", name: "Model Two" }] }, modes: { currentModeId: "auto", availableModes: [{ id: "default", name: "Default" }, { id: "auto", name: "Auto" }] } } });
+			sessions.set(sessionId, { mcpServers: params.mcpServers, mode: "auto", model: "m1", thought: "medium" });
+			send({ id, result: { sessionId, models: { currentModelId: "m1", availableModels: [{ modelId: "m1", name: "Model One" }, { modelId: "m2", name: "Model Two" }] }, modes: { currentModeId: "auto", availableModes: [{ id: "default", name: "Default" }, { id: "auto", name: "Auto" }] }, ...(thought ? configOptions(sessions.get(sessionId)) : {}) } });
 			update(sessionId, { sessionUpdate: "available_commands_update", availableCommands: [{ name: "compress", description: "Compress the context" }] });
 			return;
 		}
@@ -121,9 +125,20 @@ function handle(msg) {
 		case "session/set_mode":
 			sessions.get(params.sessionId).mode = params.modeId;
 			return send({ id, result: {} });
-		case "session/set_model":
-			sessions.get(params.sessionId).model = params.modelId;
-			return send({ id, result: {} });
+		case "session/set_model": {
+			const s = sessions.get(params.sessionId);
+			s.model = params.modelId;
+			if (!levelsFor(s.model).includes(s.thought)) s.thought = "low";
+			return send({ id, result: thought ? configOptions(s) : {} });
+		}
+		case "session/set_config_option": {
+			const s = sessions.get(params.sessionId);
+			if (params.configId === "thought_level") {
+				if (!levelsFor(s.model).includes(params.value)) return send({ id, error: { code: -32602, message: `Thinking level "${params.value}" is not offered for model "${s.model}"` } });
+				s.thought = params.value;
+			} else if (params.configId === "model") s.model = params.value;
+			return send({ id, result: thought ? configOptions(s) : {} });
+		}
 		case "session/prompt":
 			return void prompt(id, params).catch((err) => send({ id, error: { code: -32603, message: String(err.message ?? err) } }));
 		case "session/cancel":

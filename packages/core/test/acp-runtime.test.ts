@@ -263,4 +263,33 @@ describe("ACP runtime with a scripted agent", { timeout: 60_000 }, () => {
 		expect(text).not.toContain("hidden");
 		await replayed.dispose();
 	});
+
+	it("offers no thinking levels unless the agent announces a thought_level option", async () => {
+		const h = await open(runtime());
+		expect(h.session.snapshotState().availableThinkingLevels).toEqual([]);
+		await h.session.setThinking("high");
+		expect(h.session.snapshotState().thinkingLevel).toBe("off");
+		await h.session.dispose();
+	});
+
+	it("uses the agent's thought_level option and refreshes the levels when the model changes", async () => {
+		const h = await open(runtime({ FAKE_ACP_THOUGHT: "1" }));
+		let snap = h.session.snapshotState();
+		expect(snap.availableThinkingLevels).toEqual(["low", "medium", "high"]);
+		expect(snap.thinkingLevel).toBe("medium");
+
+		await h.session.setThinking("high");
+		expect(h.session.snapshotState().thinkingLevel).toBe("high");
+
+		// m2 only offers low/high: the list shrinks and the agent keeps a level it supports
+		await h.session.setModel({ provider: "acp", id: "m2" });
+		snap = h.session.snapshotState();
+		expect(snap.availableThinkingLevels).toEqual(["low", "high"]);
+		expect(snap.thinkingLevel).toBe("high");
+
+		// a level the agent does not offer for this model is not sent, so nothing throws or changes
+		await h.session.setThinking("medium");
+		expect(h.session.snapshotState().thinkingLevel).toBe("high");
+		await h.session.dispose();
+	});
 });
