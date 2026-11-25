@@ -323,7 +323,7 @@ modes 的 replace/strict 会返回完整的 `systemPrompt`。
 
 - 原生模式：CC 用 SDK 的 `supportedModels()`，Codex 用 app-server 的模型列表接口。
 - Prometheus 网关模式：用网关配置的模型，按格式过滤。
-- thinking 档位映射：CC 用 effort / thinking token 预算；Codex 用 `model_reasoning_effort`。不支持的档位不显示。
+- thinking 档位映射：CC 用 `Options.effort`（档位 low / medium / high / xhigh / max，运行中用 `applyFlagSettings({ effortLevel })` 切换，`off` 和 `minimal` 按 low 处理；运行中切换还没用真实进程验证）；Codex 用 `model_reasoning_effort`。不支持的档位不显示。
 
 ### 8.2 中止、插话、压缩、分叉、用量
 
@@ -506,7 +506,7 @@ opencode 本来就是“起一个服务、多个客户端连上来用”的形�
 
 ### 12.6 ACP Agent（Agent Client Protocol，`packages/core/src/agent/acp`）
 
-第五种运行时 `acp`，一份适配器支持所有实现了 [ACP](https://agentclientprotocol.com) 的 Agent：内置 Qwen Code（`qwen --acp`），设置里另有 Goose（`goose acp`）、Kimi CLI、Auggie、Claude Code / Codex 的 ACP 适配器等预设，其它 Agent 选“ACP”填命令和参数即可。内置与预设定义在 `packages/protocol` 的 `BUILTIN_AGENTS` / `ACP_PRESETS`（含一键安装用的 npm 包）。
+第五种运行时 `acp`，一份适配器支持所有实现了 [ACP](https://agentclientprotocol.com) 的 Agent：内置 Qwen Code（`qwen --acp`），设置里另有 Goose（`goose acp`）、Antigravity（`agy acp`，需要 1.5.1 及以上）、Kimi CLI、Auggie、Claude Code / Codex 的 ACP 适配器等预设，其它 Agent 选“ACP”填命令和参数即可。内置与预设定义在 `packages/protocol` 的 `BUILTIN_AGENTS` / `ACP_PRESETS`（含一键安装用的 npm 包）。
 
 - **传输：** stdio 上的 JSON-RPC 2.0，一行一条，双向请求（`acp-connection.ts`）。Windows 上 npm 的 `.cmd` 垫片解析成真实脚本或二进制，避免 shell 改写参数。每个会话一个进程，崩溃后下一条消息重启并 `session/load`。
 - **握手：** `initialize` 声明 `fs`、`terminal` 都不提供，Agent 用自己的工具读写和执行；probe 也是一次握手（拿 `agentInfo.version`），结果缓存 5 分钟，`runtime.list` 并行探测。
@@ -518,7 +518,9 @@ opencode 本来就是“起一个服务、多个客户端连上来用”的形�
 - **模型：** “Agent 配置的默认模型”加上 Agent 在 `session/new` 里报告的 `models.availableModels`；切换用 `session/set_model`，不支持时退到 `session/set_config_option`。
 - **网关：** ACP 本身不能指定端点，所以按 Agent 适配（`acp-gateway.ts`）。目前 Qwen Code 支持 Prometheus 网关（openai-completions，经中继：`OPENAI_BASE_URL`/`OPENAI_API_KEY`/`--auth-type openai --model`），其它 ACP Agent 只用自己的登录。
 - **会话：** 会话列表由 Prometheus 索引维护；界面上的记录另存一份在 `<data>/sessions/acp/<id>.json`。恢复时优先 `session/load`（Agent 回放的内容静默重建，界面用存下的记录）；Agent 不支持或加载失败时开新会话，并把旧记录作为交接内容随第一条消息交给它。
-- **未做：** 压缩、分叉、回退、思考档位、`fs`/`terminal` 客户端能力（让 Agent 通过 Prometheus 读写文件和跑命令）、作为子智能体的执行器。
+- **思考档位：** 只在 Agent 于 `session/new|load` 的 `configOptions` 里声明了 `category: "thought_level"` 的选项时开放，档位取该选项里能对上 Prometheus 档位名的值，设置用 `session/set_config_option`；没声明的 Agent 行为不变。结构按规范实现，还没有用真实 Agent 验证。
+- **版本门槛：** 预设可带 `minVersion` / `updateHint`（Antigravity：`1.5.1`、`agy update`）。probe 握手拿到 `agentInfo.version` 后低于门槛就报不可用并给出升级命令，版本无法解析时不判定。1.5.1 这个数字来自 T3 Code 的公开资料，尚未用真实 `agy` 核实；本机 `agy` 是 1.0.1 且未登录，`agy acp` 的握手、模型列表还没实测。
+- **未做：** 压缩、分叉、回退、`fs`/`terminal` 客户端能力（让 Agent 通过 Prometheus 读写文件和跑命令）、作为子智能体的执行器。
 - 测试：`acp-runtime.test.ts`（脚本化的假 ACP Agent，含 HTTP 与 stdio 桥两种总线接法、权限、队列、中止、崩溃重启、恢复）、`conformance-acp-qwen.test.ts`（真实 Qwen Code 经中继连假模型）。
 
 ## 13. 实施阶段与验收
