@@ -252,6 +252,10 @@ export interface AgentPreset {
 	/** npm package and the command it installs, for one-click installs. */
 	npm?: { pkg: string; bin: string };
 	homepage?: string;
+	/** Oldest CLI version that works well; an older one is reported as unavailable with an upgrade hint. */
+	minVersion?: string;
+	/** Shell command that upgrades the CLI, shown in the hint. */
+	updateHint?: string;
 }
 
 /** Agents every host offers; the user can configure them but not delete them. */
@@ -269,6 +273,7 @@ export const BUILTIN_AGENTS: readonly AgentPreset[] = [
 export const ACP_PRESETS: readonly AgentPreset[] = [
 	...BUILTIN_AGENTS.filter((a) => a.kind === "acp"),
 	{ id: "goose", name: "Goose", kind: "acp", command: "goose", args: ["acp"], homepage: "https://block.github.io/goose" },
+	{ id: "antigravity", name: "Antigravity", kind: "acp", command: "agy", args: ["acp"], minVersion: "1.5.1", updateHint: "agy update", homepage: "https://antigravity.google" },
 	{ id: "kimi", name: "Kimi CLI", kind: "acp", command: "kimi", args: ["--acp"], homepage: "https://github.com/MoonshotAI/kimi-cli" },
 	{ id: "auggie", name: "Auggie (Augment)", kind: "acp", command: "auggie", args: ["--acp"], npm: { pkg: "@augmentcode/auggie", bin: "auggie" } },
 	{ id: "claude-code-acp", name: "Claude Code (ACP adapter)", kind: "acp", command: "claude-code-acp", args: [], npm: { pkg: "@zed-industries/claude-code-acp", bin: "claude-code-acp" } },

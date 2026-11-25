@@ -47,6 +47,10 @@ export interface AcpAgentSpec {
 	name: string;
 	command: string;
 	args: string[];
+	/** Oldest CLI version that is supported; the probe reports an older one as unavailable. */
+	minVersion?: string;
+	/** Command that upgrades the CLI, for the hint. */
+	updateHint?: string;
 	/** Environment for the agent process (already includes the user's own and the profile's). */
 	env: Record<string, string | undefined>;
 }

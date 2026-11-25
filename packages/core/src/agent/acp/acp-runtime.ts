@@ -9,6 +9,19 @@ import { ACP_DEFAULT_MODEL, ACP_PROVIDER, type AcpAgentSpec, AcpSession, deleteA
 
 const PROBE_TTL = 5 * 60_000;
 
+/** True when `version` (e.g. "1.0.1") is older than `min`; non-numeric parts are ignored, an unparsable version is not judged. */
+export function versionBelow(version: string, min: string): boolean {
+	const nums = (v: string) => (/\d+(?:\.\d+)*/.exec(v)?.[0] ?? "").split(".").filter(Boolean).map(Number);
+	const a = nums(version);
+	const b = nums(min);
+	if (!a.length) return false;
+	for (let i = 0; i < Math.max(a.length, b.length); i++) {
+		const d = (a[i] ?? 0) - (b[i] ?? 0);
+		if (d !== 0) return d < 0;
+	}
+	return false;
+}
+
 export class AcpRuntime implements AgentRuntime {
 	readonly kind = "acp" as const;
 	private readonly getServices: () => Promise<RuntimeServices>;
@@ -51,7 +64,11 @@ export class AcpRuntime implements AgentRuntime {
 			conn.start();
 			const init = await conn.request("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: "prometheus", version: "1" } }, 25_000);
 			const info = init?.agentInfo ?? {};
-			return { available: true, ...(info.version ? { version: String(info.version) } : {}) };
+			const version = info.version ? String(info.version) : undefined;
+			if (spec.minVersion && version && versionBelow(version, spec.minVersion)) {
+				return { available: false, version, reason: `${spec.name} ${version} is too old: ${spec.minVersion} or newer is required.${spec.updateHint ? ` Run \`${spec.updateHint}\` to upgrade.` : ""}` };
+			}
+			return { available: true, ...(version ? { version } : {}) };
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
 			const hint = spec.args.includes("--acp") ? " Older versions use --experimental-acp instead of --acp: change the arguments under Edit." : "";

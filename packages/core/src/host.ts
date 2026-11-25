@@ -356,7 +356,7 @@ ${extras.map((p) => `- ${p}`).join("\n")}` }, guidelines: [] } };
 				rt = new AcpRuntime(() => this.servicesFor(), () => {
 					const profile = this.profileOf(key);
 					const preset = agentPreset(key);
-					return { id: key, name: profile?.name || preset?.name || key, command: profile?.executable || preset?.command || "", args: profile?.args ?? preset?.args ?? [], env: env() };
+					return { id: key, name: profile?.name || preset?.name || key, command: profile?.executable || preset?.command || "", args: profile?.args ?? preset?.args ?? [], ...(preset?.minVersion ? { minVersion: preset.minVersion } : {}), ...(preset?.updateHint ? { updateHint: preset.updateHint } : {}), env: env() };
 				});
 				break;
 			default:
