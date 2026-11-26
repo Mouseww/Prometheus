@@ -100,9 +100,9 @@ function installGuestSsh(): Promise<void> {
 }
 
 /** Runs `bin` with the host's auth settings. If ssh is missing on Android it is installed into PRoot first, then the call is retried once. */
-async function run(bin: "ssh" | "scp", h: SshHost, args: string[], timeoutMs: number): Promise<SshResult> {
+async function run(bin: "ssh" | "scp", h: SshHost, args: string[], timeoutMs: number, signal?: AbortSignal): Promise<SshResult> {
 	try {
-		return await runOnce(bin, h, args, timeoutMs);
+		return await runOnce(bin, h, args, timeoutMs, signal);
 	} catch (err) {
 		if ((err as NodeJS.ErrnoException).code !== "ENOENT" || !guestRoot()) throw err;
 	}
@@ -111,11 +111,12 @@ async function run(bin: "ssh" | "scp", h: SshHost, args: string[], timeoutMs: nu
 	} catch (err) {
 		throw new Error(`找不到 ${bin}，自动安装 OpenSSH 客户端失败：${(err as Error).message}`);
 	}
-	return runOnce(bin, h, args, timeoutMs);
+	return runOnce(bin, h, args, timeoutMs, signal);
 }
 
 /** Passwords reach ssh through a throwaway SSH_ASKPASS helper, never argv. */
-async function runOnce(bin: "ssh" | "scp", h: SshHost, args: string[], timeoutMs: number): Promise<SshResult> {
+async function runOnce(bin: "ssh" | "scp", h: SshHost, args: string[], timeoutMs: number, signal?: AbortSignal): Promise<SshResult> {
+	if (signal?.aborted) throw new Error("已取消");
 	let dir: string | undefined;
 	const env: NodeJS.ProcessEnv = { ...process.env };
 	if (h.auth === "password") {
@@ -150,8 +151,17 @@ async function runOnce(bin: "ssh" | "scp", h: SshHost, args: string[], timeoutMs
 				timedOut = true;
 				child.kill();
 			}, timeoutMs);
+			let aborted = false;
+			const onAbort = () => {
+				aborted = true;
+				child.kill();
+				// Escalate if ssh ignores SIGTERM (e.g. stuck on a dead connection).
+				setTimeout(() => child.exitCode === null && child.kill("SIGKILL"), 2000).unref();
+			};
+			signal?.addEventListener("abort", onAbort, { once: true });
 			child.on("error", (err) => {
 				clearTimeout(timer);
+				signal?.removeEventListener("abort", onAbort);
 				if ((err as NodeJS.ErrnoException).code === "ENOENT") {
 					// run() installs ssh on Android and retries; elsewhere the user has to install it.
 					reject(Object.assign(new Error(`找不到 ${bin}，请先安装 OpenSSH 客户端`), { code: "ENOENT" }));
@@ -161,6 +171,8 @@ async function runOnce(bin: "ssh" | "scp", h: SshHost, args: string[], timeoutMs
 			});
 			child.on("close", (code) => {
 				clearTimeout(timer);
+				signal?.removeEventListener("abort", onAbort);
+				if (aborted) return reject(new Error("已取消"));
 				resolve({ code, stdout: stdout.slice(0, MAX_OUTPUT), stderr: stderr.slice(0, MAX_OUTPUT), timedOut, truncated });
 			});
 		});
@@ -169,16 +181,16 @@ async function runOnce(bin: "ssh" | "scp", h: SshHost, args: string[], timeoutMs
 	}
 }
 
-export function sshExec(h: SshHost, command: string, timeoutMs = 60_000): Promise<SshResult> {
+export function sshExec(h: SshHost, command: string, timeoutMs = 60_000, signal?: AbortSignal): Promise<SshResult> {
 	validateHost(h);
-	return run("ssh", h, [...baseArgs(h, "-p"), "--", `${h.user}@${h.host}`, command], timeoutMs);
+	return run("ssh", h, [...baseArgs(h, "-p"), "--", `${h.user}@${h.host}`, command], timeoutMs, signal);
 }
 
-export function scpTransfer(h: SshHost, dir: "up" | "down", local: string, remote: string, timeoutMs = 300_000): Promise<SshResult> {
+export function scpTransfer(h: SshHost, dir: "up" | "down", local: string, remote: string, timeoutMs = 300_000, signal?: AbortSignal): Promise<SshResult> {
 	validateHost(h);
 	const target = `${h.user}@${h.host}:${remote}`;
 	const args = [...baseArgs(h, "-P"), "-r", "--", ...(dir === "up" ? [local, target] : [target, local])];
-	return run("scp", h, args, timeoutMs);
+	return run("scp", h, args, timeoutMs, signal);
 }
 
 export function formatResult(r: SshResult): string {

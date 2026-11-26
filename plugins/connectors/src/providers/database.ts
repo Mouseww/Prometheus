@@ -66,7 +66,8 @@ async function runSqlite(path: string, sql: string, params: unknown[], readOnly:
 	}
 }
 
-async function runPostgres(url: string, sql: string, params: unknown[], readOnly: boolean): Promise<Rows> {
+async function runPostgres(url: string, sql: string, params: unknown[], readOnly: boolean, signal?: AbortSignal): Promise<Rows> {
+	if (signal?.aborted) throw new Error("已取消");
 	// `pg` is an optional dependency: only users of PostgreSQL need to install it.
 	let mod: { Client: new (o: { connectionString: string; statement_timeout?: number }) => PgClient };
 	try {
@@ -76,8 +77,11 @@ async function runPostgres(url: string, sql: string, params: unknown[], readOnly
 		throw new Error("使用 PostgreSQL 需要先安装驱动：在 Prometheus 目录执行 `pnpm add pg`");
 	}
 	const client = new mod.Client({ connectionString: url, statement_timeout: 30_000 });
-	await client.connect();
+	// Closing the socket aborts the running statement; the server rolls back the open transaction.
+	const onAbort = () => void client.end().catch(() => {});
+	signal?.addEventListener("abort", onAbort, { once: true });
 	try {
+		await client.connect();
 		await client.query(readOnly ? "BEGIN READ ONLY" : "BEGIN");
 		const r = await client.query({ text: sql, values: params, rowMode: "array" });
 		await client.query(readOnly ? "ROLLBACK" : "COMMIT");
@@ -87,9 +91,11 @@ async function runPostgres(url: string, sql: string, params: unknown[], readOnly
 			r.fields.length ? undefined : (r.rowCount ?? 0),
 		);
 	} catch (err) {
+		if (signal?.aborted) throw new Error("已取消");
 		await client.query("ROLLBACK").catch(() => {});
 		throw err;
 	} finally {
+		signal?.removeEventListener("abort", onAbort);
 		await client.end().catch(() => {});
 	}
 }
@@ -108,7 +114,7 @@ function connectionOf(c: OperationContext): string {
 
 function exec(c: OperationContext, sql: string, params: unknown[], readOnly: boolean): Promise<Rows> {
 	const conn = connectionOf(c);
-	return dialectOf(conn) === "sqlite" ? runSqlite(conn.replace(/^sqlite:/i, ""), sql, params, readOnly) : runPostgres(conn, sql, params, readOnly);
+	return dialectOf(conn) === "sqlite" ? runSqlite(conn.replace(/^sqlite:/i, ""), sql, params, readOnly) : runPostgres(conn, sql, params, readOnly, c.signal);
 }
 
 const sqlParam = Type.String({ description: "SQL，使用 $1/$2（Postgres）或 ?（SQLite）占位符传参" });
