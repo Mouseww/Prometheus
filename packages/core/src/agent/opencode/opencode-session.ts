@@ -3,7 +3,7 @@
 // remote MCP server), permission requests through the single PermissionGate (docs/agent-runtime.md §4, §6, §7, §12.3).
 import { withLoopbackNoProxy } from "../loopback-env.ts";
 import type { PluginTool, PluginToolContext } from "@prometheus/plugin-sdk";
-import { AppError, type ChatMessage, type CommandInfo, type GatewayConfig, type ModelRef, type PermissionMode, type PromptDisposition, type SessionEvent, type SessionStats, type ThinkingLevel, type ToolInfo, gatewayAs, pickGatewayFormat } from "@prometheus/protocol";
+import { AppError, type ChatMessage, type CommandInfo, type GatewayConfig, type ModelRef, type PermissionMode, type PromptDisposition, type SessionEvent, type SessionStats, type ThinkingLevel, THINKING_LEVELS, type ToolInfo, gatewayAs, pickGatewayFormat } from "@prometheus/protocol";
 import type { PermissionGate } from "../../permission-gate.ts";
 import { applyPermissionPrompt } from "../../permission-gate.ts";
 import type { BusSession } from "../bus/tool-bus.ts";
@@ -266,6 +266,7 @@ export class OpenCodeSession implements RuntimeSession {
 		});
 		await this.server.start();
 		await this.openSession();
+		await this.loadVariants();
 	}
 
 	/** Server mode: connect to the shared server, add this chat's tool bus to it, and lock the session's permissions. */
@@ -292,6 +293,7 @@ export class OpenCodeSession implements RuntimeSession {
 		}
 		await this.openSession();
 		await this.lockTools(server);
+		await this.loadVariants();
 	}
 
 	/** Server mode: (re)writes the session's rules, so that it asks before acting and sees only this chat's tool bus. */
@@ -446,6 +448,38 @@ export class OpenCodeSession implements RuntimeSession {
 		return this.server!;
 	}
 
+	/** Reasoning variants the current model offers, by Prometheus level (opencode's `none` is `off`), and the one the user picked. */
+	private variants = new Map<ThinkingLevel, string>();
+	private thinking: ThinkingLevel = "off";
+	private chosenVariant: string | undefined;
+
+	/** Reads the current model's variants from the server; a model without any (or an unknown default model) offers no levels. */
+	private async loadVariants(): Promise<void> {
+		this.variants = new Map();
+		const arg = this.modelArg();
+		const server = this.server;
+		if (arg && server?.running) {
+			try {
+				const data = await server.request("GET", "/config/providers");
+				const provider = (Array.isArray(data?.providers) ? data.providers : []).find((p: any) => p?.id === arg.providerID);
+				const models = asObject(provider?.models);
+				const model: any = models[arg.modelID] ?? Object.values(models).find((m: any) => m?.id === arg.modelID);
+				for (const name of Object.keys(asObject(model?.variants))) {
+					const key = name.toLowerCase() === "none" ? "off" : name.toLowerCase();
+					const level = THINKING_LEVELS.find((l) => l === key);
+					if (level) this.variants.set(level, name);
+				}
+			} catch (err) {
+				this.services.log.warn(`[opencode ${this.id}] variants: ${err instanceof Error ? err.message : String(err)}`);
+			}
+		}
+		// The level picked for the previous model may not exist on this one.
+		if (this.chosenVariant && ![...this.variants.values()].includes(this.chosenVariant)) {
+			this.chosenVariant = undefined;
+			this.thinking = "off";
+		}
+	}
+
 	/** `providerID/modelID` of the model to name in a request; undefined lets opencode use its configured default. */
 	private modelArg(): { providerID: string; modelID: string } | undefined {
 		if (this.gatewayChoice?.mode === "prometheus") return { providerID: GATEWAY_PROVIDER, modelID: this.model.id };
@@ -483,6 +517,7 @@ export class OpenCodeSession implements RuntimeSession {
 				parts,
 				agent: "build",
 				...(model ? { model } : {}),
+				...(model && this.chosenVariant ? { variant: this.chosenVariant } : {}),
 				...(system ? { system } : {}),
 			});
 		} catch (err) {
@@ -556,10 +591,18 @@ export class OpenCodeSession implements RuntimeSession {
 		} else if (next.mode === "prometheus") {
 			this.contextWindow = this.services.gateway(next.gatewayId)?.models.find((m) => m.id === model.id)?.contextWindow ?? this.contextWindow;
 		}
+		await this.loadVariants();
 		this.emit({ type: "model_changed", model });
+		this.emit({ type: "thinking_level_changed", level: this.thinking });
 	}
 	async setThinking(level: ThinkingLevel): Promise<void> {
-		this.emit({ type: "thinking_level_changed", level });
+		// Only levels the model's variants offer are sent; anything else leaves the current choice.
+		const name = this.variants.get(level);
+		if (name) {
+			this.thinking = level;
+			this.chosenVariant = name;
+		}
+		this.emit({ type: "thinking_level_changed", level: this.thinking });
 	}
 	async setPermissionMode(mode: PermissionMode): Promise<void> {
 		this.gate.setMode(mode);
@@ -614,8 +657,8 @@ export class OpenCodeSession implements RuntimeSession {
 			cwd: this.cwd,
 			messages: this.messages(),
 			model: this.model,
-			thinkingLevel: "off",
-			availableThinkingLevels: OPENCODE_CAPABILITIES.thinkingLevels,
+			thinkingLevel: this.thinking,
+			availableThinkingLevels: this.variants.size ? [...this.variants.keys()] : OPENCODE_CAPABILITIES.thinkingLevels,
 			isStreaming: this.isStreaming,
 			queue: { steering: [], followUp: [] },
 		} as RuntimeSnapshot;

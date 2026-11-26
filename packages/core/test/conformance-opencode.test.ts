@@ -58,7 +58,7 @@ beforeAll(async () => {
 	await relay.start();
 	bus = new ToolBus();
 	await bus.start();
-	gateway = { id: "up", name: "up", format: "openai-completions", baseUrl: `${llm.baseUrl}/v1`, auth: { type: "bearer" }, apiKey: REAL_KEY, models: [{ id: "fake-model", name: "fake", contextWindow: 100_000 }] };
+	gateway = { id: "up", name: "up", format: "openai-completions", baseUrl: `${llm.baseUrl}/v1`, auth: { type: "bearer" }, apiKey: REAL_KEY, models: [{ id: "fake-model", name: "fake", contextWindow: 100_000 }, { id: "think-model", name: "think", contextWindow: 100_000, reasoning: true }] };
 	services = {
 		bus,
 		relay,
@@ -184,6 +184,27 @@ describe("conformance harness on opencode", { timeout: 120_000 }, () => {
 		const end = find("tool_execution_end");
 		expect(end[0]?.isError).toBe(false);
 		expect(JSON.stringify(end[0]?.result)).toContain("from-opencode-shell");
+	});
+
+	it("offers the model's reasoning variants as thinking levels and sends the chosen one", async () => {
+		// a model without reasoning has no variants
+		expect(session!.snapshotState().availableThinkingLevels).toEqual([]);
+		await session!.setModel({ provider: "up", id: "think-model" });
+		expect(session!.snapshotState().availableThinkingLevels).toEqual(["low", "medium", "high"]);
+		// a level the model does not offer changes nothing
+		await session!.setThinking("max");
+		expect(session!.snapshotState().thinkingLevel).toBe("off");
+		await session!.setThinking("high");
+		expect(session!.snapshotState().thinkingLevel).toBe("high");
+		llm.enqueue({ blocks: [{ type: "text", text: "thought hard" }] });
+		await session!.prompt({ text: "think about it" }, "send");
+		await settle();
+		const req = llm.requests.find((r) => r.lastUser.includes("think about it"))!;
+		expect(req.body.reasoning_effort).toBe("high");
+		// back to a model without variants: the choice is dropped
+		await session!.setModel({ provider: "up", id: "fake-model" });
+		expect(session!.snapshotState().availableThinkingLevels).toEqual([]);
+		expect(session!.snapshotState().thinkingLevel).toBe("off");
 	});
 
 	it("abort during streaming settles as aborted", async () => {
