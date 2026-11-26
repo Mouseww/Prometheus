@@ -66,6 +66,7 @@ jobs:
             {
               echo "body<<__RELEASE_NOTES__"
               cat "$file"
+              echo
               echo "__RELEASE_NOTES__"
             } >> "$GITHUB_OUTPUT"
           else
